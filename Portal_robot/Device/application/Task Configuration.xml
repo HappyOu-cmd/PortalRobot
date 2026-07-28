@@ -94,7 +94,7 @@
         <Single Name="Event" Type="string"></Single>
         <Single Name="ExternalEvent" Type="string"></Single>
         <Single Name="TaskGuid" Type="System.Guid">52d1668d-500a-4fe3-a208-c83a68301de1</Single>
-        <Single Name="EventPOUGuid" Type="System.Guid">a84ce861-b9f5-433c-b34b-893af2b0fccb</Single>
+        <Single Name="EventPOUGuid" Type="System.Guid">87a5f52e-585c-42aa-b204-a17741e9617e</Single>
         <List Name="PouList" Type="{33f568bb-4a2c-48cb-a762-34cca3066d03}">
           <Single Type="{f194d1ef-7376-42ce-a729-4a5485a97a46}" Method="IArchivable">
             <Single Name="Name" Type="string">PLC_PRG</Single>
@@ -152,7 +152,7 @@
         <Single Name="Event" Type="string"></Single>
         <Single Name="ExternalEvent" Type="string"></Single>
         <Single Name="TaskGuid" Type="System.Guid">f87c0833-8113-498f-ace4-e83dc31d466a</Single>
-        <Single Name="EventPOUGuid" Type="System.Guid">0367da4e-3c15-4e51-a23d-3af135e6e625</Single>
+        <Single Name="EventPOUGuid" Type="System.Guid">02cfe289-5d55-4852-8f82-da6d10feef89</Single>
         <List Name="PouList" Type="{33f568bb-4a2c-48cb-a762-34cca3066d03}">
           <Single Type="{f194d1ef-7376-42ce-a729-4a5485a97a46}" Method="IArchivable">
             <Single Name="Name" Type="string">VisuElems.Visu_Prg</Single>
@@ -162,7 +162,7 @@
         <Single Name="Implicit" Type="bool">False</Single>
         <Single Name="WithinSPSTimeSlicing" Type="bool">True</Single>
         <Single Name="Core" Type="int">-1</Single>
-        <Single Name="Core2" Type="int">-1</Single>
+        <Single Name="Core2" Type="int">-2</Single>
         <Single Name="TaskGroup" Type="string">IEC-Tasks</Single>
         <Single Name="SynchTask" Type="string"></Single>
       </Single>
@@ -210,12 +210,12 @@
         <Single Name="Event" Type="string"></Single>
         <Single Name="ExternalEvent" Type="string"></Single>
         <Single Name="TaskGuid" Type="System.Guid">b18394ce-cc47-4efa-a0bc-f292c3668cd5</Single>
-        <Single Name="EventPOUGuid" Type="System.Guid">36b33616-20ca-4c79-8e8c-9eaff86ce9ae</Single>
+        <Single Name="EventPOUGuid" Type="System.Guid">d16589a8-fc7a-4212-ab7e-383fce76fb83</Single>
         <List Name="PouList" Type="{33f568bb-4a2c-48cb-a762-34cca3066d03}" />
         <Single Name="Implicit" Type="bool">False</Single>
         <Single Name="WithinSPSTimeSlicing" Type="bool">True</Single>
         <Single Name="Core" Type="int">-1</Single>
-        <Single Name="Core2" Type="int">-1</Single>
+        <Single Name="Core2" Type="int">-2</Single>
         <Single Name="TaskGroup" Type="string">IEC-Tasks</Single>
         <Single Name="SynchTask" Type="string"></Single>
       </Single>

@@ -1,0 +1,15 @@
+{attribute 'qualified_only'}
+{attribute 'strict'}
+TYPE E_MAGAZINE_STATE :
+(
+	DISABLED,
+	IDLE,
+	CHOOSE,
+	PREPARE_STEP,
+	ROBOT_COMMAND,
+	RELEASE_ROBOT_COMMAND,
+	NEXT,
+	DONE,
+	ERROR
+);
+END_TYPE

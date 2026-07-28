@@ -22,7 +22,7 @@
                       <Single Type="System.Guid">d9b2b2cc-ea99-4c3b-aa42-1e5c49e65b84</Single>
                     </Key>
                     <Value>
-                      <Single Type="System.Guid">22071d43-450e-4a4e-b34f-4f8aa9f639b6</Single>
+                      <Single Type="System.Guid">037b5209-ed5b-49db-ab1e-313d868f9608</Single>
                     </Value>
                   </Entry>
                 </Dictionary>
@@ -40,12 +40,21 @@
         <Single Name="Interface" Type="{a9ed5b7e-75c5-4651-af16-d2c27e98cb94}" Method="IArchivable">
           <Single Name="TextDocument" Type="{f3878285-8e4f-490b-bb1b-9acbb7eb04db}" Method="IArchivable">
             <Single Name="TextBlobForSerialisation" Type="string">{attribute 'qualified_only'}
+VAR_GLOBAL CONSTANT
+	// Maximum number of magazine slots used for static array bounds.
+	NumberDetail        : SINT := 70;
+END_VAR
+
 VAR_GLOBAL
 	//Количество станков
 	MachineCount 		: UINT := 3;
-	
-	//Количество деталей в матрице
-	NumberDetail        : SINT := 70;
+
+	// Magazine geometry. MAGAZINE_DETAIL is the work point of slot 1.
+	MagazineRows        : UINT := 10;
+	MagazineColumns     : UINT := 7;
+	MagazinePitchX      : LREAL := 60.0;
+	MagazinePitchY      : LREAL := 60.0;
+	MagazineSafeZ       : LREAL := 300.0;
 	
 	//Порядок команд для смены, загрузки и выгрузки станков
 	CHANGE_MACHINE 		: ARRAY [0..40] OF ST_MACHINE_RECIPE
@@ -85,7 +94,7 @@ END_VAR
         <Single Name="ParameterList" Type="bool">False</Single>
         <Single Name="AddAttributeSubsequent" Type="bool">False</Single>
       </Single>
-      <Single Name="ParentSVNodeGuid" Type="System.Guid">22071d43-450e-4a4e-b34f-4f8aa9f639b6</Single>
+      <Single Name="ParentSVNodeGuid" Type="System.Guid">037b5209-ed5b-49db-ab1e-313d868f9608</Single>
       <Array Name="Path" Type="string">
         <Single Type="string">Device</Single>
         <Single Type="string">PLC Logic</Single>

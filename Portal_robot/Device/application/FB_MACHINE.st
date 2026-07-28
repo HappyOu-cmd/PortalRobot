@@ -1,47 +1,46 @@
 FUNCTION_BLOCK FB_MACHINE
 VAR_INPUT
-	xExecute             	: BOOL;
-    xReset               	: BOOL; //Сброс ошибки конкретного станка
-	xResetGlobal            : BOOL; //Глобальный сброс ошибки 
-	xGlobalError         	: BOOL;
-	xHmiSetPartLoaded    	: BOOL;
-    xHmiSetPartEmpty     	: BOOL;
-	xHmiEnable              : BOOL;
-	xHmiDisable             : BOOL;
-	stChangeRecipe 		 	: ARRAY [0..40] OF ST_MACHINE_RECIPE;
-	stLoadRecipe 		 	: ARRAY [0..40] OF ST_MACHINE_RECIPE;
-	stUnloadRecipe 		 	: ARRAY [0..40] OF ST_MACHINE_RECIPE;
-	stPoints             	: ST_MACHINE_POINTS;
-	stRobotStatus  			: ST_ROBOT_STATUS;
-	stMachineStatus      	: ST_MACHINE_IO_STATUS;
+	xExecute          : BOOL; // Запуск разрешённой операции обслуживания
+    xReset            : BOOL; // Сброс ошибки конкретного станка
+	xResetGlobal      : BOOL; // Общий сброс ошибок ячейки
+	xGlobalError      : BOOL; // Глобальная ошибка ячейки
+	xHmiSetPartLoaded : BOOL; // Ручное подтверждение загруженной детали
+    xHmiSetPartEmpty  : BOOL; // Ручное подтверждение пустого патрона
+	xHmiEnable        : BOOL; // Импульс включения станка в работу
+	xHmiDisable       : BOOL; // Импульс отключения станка от работы
+	stChangeRecipe    : ARRAY [0..40] OF ST_MACHINE_RECIPE; // Рецепт смены детали
+	stLoadRecipe      : ARRAY [0..40] OF ST_MACHINE_RECIPE; // Рецепт загрузки заготовки
+	stUnloadRecipe    : ARRAY [0..40] OF ST_MACHINE_RECIPE; // Рецепт выгрузки детали
+	stPoints          : ST_MACHINE_POINTS; // Имена рабочих точек станка
+	stRobotStatus     : ST_ROBOT_STATUS; // Статусы робота
+	stMachineStatus   : ST_MACHINE_IO_STATUS; // Состояние исполнительных механизмов станка
 END_VAR
 VAR_OUTPUT
-	stMachineCommand     	: ST_MACHINE_IO_COMMAND;
-	stRobotCommand 			: ST_ROBOT_COMMAND;
-	eState               	: E_MACHINE_STATE := E_MACHINE_STATE.DISABLED;
-	ePartState           	: E_PART_STATE := E_PART_STATE.UNKNOWN;
-	stPublic             	: ST_MACHINE_PUBLIC;
-	dwErrorActive        	: DWORD;
-    dwErrorLast          	: DWORD;
+	Command : ST_MACHINE_COMMAND; // Команды станку и роботу
+	Status  : ST_MACHINE_PUBLIC; // Публичные статусы станка
+	Diag    : ST_MACHINE_DIAG; // Состояние автомата и выбранная операция
+	Error   : ST_MACHINE_ERRORS; // Активные и последние ошибки
 END_VAR
 VAR
-	uiIndex                 : UINT;
-	tofErrorDoor            : TOF;
-	rtExectue               : R_TRIG;
-	rtEnabledMachine        : R_TRIG;
-	rtDisabledMachine       : R_TRIG;
-	rtCycleDone             : R_TRIG;
-    rtSetPartLoaded         : R_TRIG;
-    rtSetPartEmpty          : R_TRIG;
-	xRetreatStarted         : BOOL;
-	xRobotInsideMachine     : BOOL;
-	xRobotDone              : BOOL;
-	xServiceDoorCloseDemand : BOOL;
-	xServiceDoorOpenDemand  : BOOL;
-	xAutoDoorOpenLatched    : BOOL;
-	eGrantedOperation       : E_MACHINE_OPERATION;
-	eActualOperation        : E_MACHINE_OPERATION;
-	stRecipe                : ARRAY [0..40] OF ST_MACHINE_RECIPE;
+	eState                  : E_MACHINE_STATE := E_MACHINE_STATE.DISABLED; // Текущее состояние автомата
+	ePartState              : E_PART_STATE := E_PART_STATE.UNKNOWN; // Состояние детали в патроне
+	uiIndex                 : UINT; // Индекс команды рецепта
+	tofErrorDoor            : TOF; // Контроль закрытия двери при нахождении робота внутри
+	rtExectue               : R_TRIG; // Фронт команды запуска
+	rtEnabledMachine        : R_TRIG; // Фронт команды включения
+	rtDisabledMachine       : R_TRIG; // Фронт команды отключения
+	rtCycleDone             : R_TRIG; // Фронт завершения цикла станка
+    rtSetPartLoaded         : R_TRIG; // Фронт ручного подтверждения детали
+    rtSetPartEmpty          : R_TRIG; // Фронт ручного подтверждения пустого патрона
+	xRetreatStarted         : BOOL; // Начат отход робота от станка
+	xRobotInsideMachine     : BOOL; // Робот находится внутри рабочей зоны
+	xRobotDone              : BOOL; // Робот освобождён алгоритмом станка
+	xServiceDoorCloseDemand : BOOL; // Внутренний запрос закрытия двери
+	xServiceDoorOpenDemand  : BOOL; // Внутренний запрос открытия двери
+	xAutoDoorOpenLatched    : BOOL; // Защёлка автоматического открытия двери
+	eGrantedOperation       : E_MACHINE_OPERATION; // Разрешённая операция обслуживания
+	eActualOperation        : E_MACHINE_OPERATION; // Выполняемая операция обслуживания
+	stRecipe                : ARRAY [0..40] OF ST_MACHINE_RECIPE; // Активный рецепт операции
 END_VAR
 
 VAR CONSTANT
@@ -55,12 +54,13 @@ VAR CONSTANT
 	ERR_CHUCK_CLOSE 		: DWORD := 128; 	// Приводит к глобальной ошибке 
 	ERR_CYCLE_START			: DWORD := 256;     // Не приводит к глобальной ошибке
 	ERR_SAFETY_STOP         : DWORD := 512;		// Глобальная ошибка из вне (Другой блок не создаём новую ошибку)
-	ERR_UNKNOWN_DETAIL      : DWORD := 1028;    // Приводит к глобальной ошибке
+	ERR_UNKNOWN_DETAIL      : DWORD := 1024;    // Приводит к глобальной ошибке
 	ERR_MACHINE_ALARM       : DWORD := 2048;    // Приводит к глобальной ошибке
-	ERR_INDEX               : DWORD := 5092;    // Приводит к глобальной ошибке
-	ERR_DOOR_ROBOT          : DWORD := 10184;   // Приводит к глобальной ошибке
-	ERR_MACHINE_IDLE        : DWORD := 20368;   // Не приводит к глобальной ошибке
+	ERR_INDEX               : DWORD := 4096;    // Приводит к глобальной ошибке
+	ERR_DOOR_ROBOT          : DWORD := 8192;    // Приводит к глобальной ошибке
+	ERR_MACHINE_IDLE        : DWORD := 16384;   // Не приводит к глобальной ошибке
 	
+	// Ошибки, требующие формирования глобальной аварии ячейки.
 	MASK_CRITICAL_ERROR		: DWORD :=
 								ERR_WRONG_OPERATION OR
 								ERR_WRONG_COMMAND OR
@@ -71,12 +71,14 @@ VAR CONSTANT
 								ERR_INDEX OR
 								ERR_DOOR_ROBOT;
 								
+	// Некритические ошибки конкретного станка.
 	MASK_ALARM_ERROR		: DWORD := 
 								ERR_DOOR_OPEN OR
 								ERR_DOOR_CLOSE OR
 								ERR_CYCLE_START OR
 								ERR_MACHINE_IDLE;
 								
+	// Ошибки, полученные от других блоков или общей логики ячейки.
 	MASK_EXTERNAL_ERROR  	: DWORD :=
 								ERR_SAFETY_STOP OR
 								ERR_ROBOT_ACTION OR
@@ -84,6 +86,7 @@ VAR CONSTANT
 							
 	
 END_VAR
+
 // --- BEGIN IMPLEMENTATION ---
 
 (* 
@@ -97,16 +100,16 @@ rtSetPartLoaded(CLK := xHmiSetPartLoaded);
 rtSetPartEmpty(CLK := xHmiSetPartEmpty);
 
 // Команды по умолчанию
-stMachineCommand.xOpenDoor := FALSE;
-stMachineCommand.xCloseDoor := FALSE;
-stMachineCommand.xClampChuck := FALSE;
-stMachineCommand.xUnclampChuck := FALSE;
-stMachineCommand.xStartCycle := FALSE;
-stMachineCommand.xReset := xReset;
+Command.stIo.xOpenDoor := FALSE;
+Command.stIo.xCloseDoor := FALSE;
+Command.stIo.xClampChuck := FALSE;
+Command.stIo.xUnclampChuck := FALSE;
+Command.stIo.xStartCycle := FALSE;
+Command.stIo.xReset := xReset OR xResetGlobal;
 
-stRobotCommand.xExecute := FALSE;
-stRobotCommand.xStop := FALSE;
-stRobotCommand.eAction := E_ROBOT_ACTION.NONE;
+Command.stRobot.xExecute := FALSE;
+Command.stRobot.xStop := FALSE;
+Command.stRobot.eAction := E_ROBOT_ACTION.NONE;
 xServiceDoorOpenDemand := FALSE;
 xServiceDoorCloseDemand := FALSE;
 
@@ -171,12 +174,12 @@ IF xGlobalError
 AND (eState <> E_MACHINE_STATE.IDLE)
 AND (eState <> E_MACHINE_STATE.DISABLED)
 AND (eState <> E_MACHINE_STATE.ERROR) THEN
-    dwErrorActive := dwErrorActive OR ERR_SAFETY_STOP;
+    Error.dwErrorActive := Error.dwErrorActive OR ERR_SAFETY_STOP;
     eState := E_MACHINE_STATE.ERROR;
 END_IF;
 
 IF stMachineStatus.xAlarm AND (eState = E_MACHINE_STATE.IDLE) THEN
-	dwErrorActive := dwErrorActive OR ERR_MACHINE_IDLE;
+	Error.dwErrorActive := Error.dwErrorActive OR ERR_MACHINE_IDLE;
     eState := E_MACHINE_STATE.ERROR;
 END_IF
 
@@ -191,8 +194,8 @@ xRobotInsideMachine := (eState = E_MACHINE_STATE.ROBOT_ACTION)
 						OR (eState = E_MACHINE_STATE.RELEASE_ROBOT_ACTION);
 						
 IF xRobotInsideMachine AND NOT tofErrorDoor.Q THEN
-	stRobotCommand.xStop := TRUE;	
-	dwErrorActive := dwErrorActive OR ERR_DOOR_ROBOT;
+	Command.stRobot.xStop := TRUE;
+	Error.dwErrorActive := Error.dwErrorActive OR ERR_DOOR_ROBOT;
     eState := E_MACHINE_STATE.ERROR;
 END_IF
 
@@ -213,7 +216,7 @@ CASE eState OF
 				eActualOperation := eGrantedOperation;
 				eState := E_MACHINE_STATE.CHOSE;
 			ELSIF ePartState = E_PART_STATE.UNKNOWN THEN
-				dwErrorActive := dwErrorActive OR ERR_UNKNOWN_DETAIL;
+				Error.dwErrorActive := Error.dwErrorActive OR ERR_UNKNOWN_DETAIL;
 				eState := E_MACHINE_STATE.ERROR ;
 			END_IF
 		END_IF
@@ -230,7 +233,7 @@ CASE eState OF
 				stRecipe := stUnloadRecipe;
 				eState := E_MACHINE_STATE.READ;
 		ELSE
-			dwErrorActive := dwErrorActive OR ERR_WRONG_OPERATION ;
+			Error.dwErrorActive := Error.dwErrorActive OR ERR_WRONG_OPERATION ;
 			eState := E_MACHINE_STATE.ERROR;
 		END_CASE
 		
@@ -261,40 +264,40 @@ CASE eState OF
 				eState := E_MACHINE_STATE.DONE;
 				
 		ELSE
-			dwErrorActive := dwErrorActive OR ERR_WRONG_COMMAND;
+			Error.dwErrorActive := Error.dwErrorActive OR ERR_WRONG_COMMAND;
 			eState := E_MACHINE_STATE.ERROR;
 		END_CASE
 	
 	E_MACHINE_STATE.NEXT:
 			uiIndex := uiIndex + 1;
 			IF uiIndex > 40 THEN
-				dwErrorActive := dwErrorActive OR ERR_INDEX;
+				Error.dwErrorActive := Error.dwErrorActive OR ERR_INDEX;
 				eState := E_MACHINE_STATE.ERROR;
 			ELSE
 				eState := E_MACHINE_STATE.READ;
 			END_IF;
 	
 	E_MACHINE_STATE.ROBOT_MOVE:
-		stRobotCommand.xExecute  := TRUE;
-		stRobotCommand.eAction   := E_ROBOT_ACTION.MOVE_TO_POINT;
+		Command.stRobot.xExecute  := TRUE;
+		Command.stRobot.eAction   := E_ROBOT_ACTION.MOVE_TO_POINT;
 		xRetreatStarted          := stRecipe[uiIndex].xRetreatStarted;
 		IF stRecipe[uiIndex].stPoint = E_MACHINE_POINTS.ABOVE  THEN
-			stRobotCommand.eSetPoint := stPoints.eAbove;
+			Command.stRobot.eSetPoint := stPoints.eAbove;
 		ELSIF stRecipe[uiIndex].stPoint = E_MACHINE_POINTS.CHUCK THEN
-			stRobotCommand.eSetPoint := stPoints.eChuck;
+			Command.stRobot.eSetPoint := stPoints.eChuck;
 		ELSIF stRecipe[uiIndex].stPoint = E_MACHINE_POINTS.CHUCK_APPROACH THEN
-			stRobotCommand.eSetPoint := stPoints.eChuckApproach;
+			Command.stRobot.eSetPoint := stPoints.eChuckApproach;
 		ELSIF stRecipe[uiIndex].stPoint = E_MACHINE_POINTS.INSIDE THEN
-			stRobotCommand.eSetPoint := stPoints.eInside;
+			Command.stRobot.eSetPoint := stPoints.eInside;
 		END_IF
 
 		IF stRobotStatus.xError THEN
-			dwErrorActive := dwErrorActive OR ERR_ROBOT_MOTION;
+			Error.dwErrorActive := Error.dwErrorActive OR ERR_ROBOT_MOTION;
 			eState := E_MACHINE_STATE.ERROR ;
 			
 		ELSIF stMachineStatus.xAlarm THEN
-			stRobotCommand.xStop := TRUE;
-			dwErrorActive := dwErrorActive OR ERR_MACHINE_ALARM;
+			Command.stRobot.xStop := TRUE;
+			Error.dwErrorActive := Error.dwErrorActive OR ERR_MACHINE_ALARM;
 			eState := E_MACHINE_STATE.ERROR ;
 			
 		ELSIF stRobotStatus.xDone THEN
@@ -303,16 +306,16 @@ CASE eState OF
     	END_IF;
 	
 	E_MACHINE_STATE.ROBOT_ACTION:
-		stRobotCommand.xExecute  := TRUE;
-		stRobotCommand.eAction   := stRecipe[uiIndex].eRobotAction;
+		Command.stRobot.xExecute  := TRUE;
+		Command.stRobot.eAction   := stRecipe[uiIndex].eRobotAction;
 		
 		IF stMachineStatus.xAlarm THEN
-			stRobotCommand.xStop := TRUE;
-			dwErrorActive := dwErrorActive OR ERR_MACHINE_ALARM;
+			Command.stRobot.xStop := TRUE;
+			Error.dwErrorActive := Error.dwErrorActive OR ERR_MACHINE_ALARM;
 			eState := E_MACHINE_STATE.ERROR ;
 	
 		ELSIF stRobotStatus.xError THEN
-			dwErrorActive := dwErrorActive OR ERR_ROBOT_ACTION;
+			Error.dwErrorActive := Error.dwErrorActive OR ERR_ROBOT_ACTION;
 			eState := E_MACHINE_STATE.ERROR ;
 			
 		ELSIF stRobotStatus.xDone THEN   
@@ -327,11 +330,11 @@ CASE eState OF
         	eState := E_MACHINE_STATE.NEXT;
 			
 		ELSIF stRobotStatus.xError AND  stRecipe[uiIndex].eRobotAction = E_ROBOT_ACTION.MOVE_TO_POINT THEN
-			dwErrorActive := dwErrorActive OR ERR_ROBOT_MOTION;
+			Error.dwErrorActive := Error.dwErrorActive OR ERR_ROBOT_MOTION;
 			eState := E_MACHINE_STATE.ERROR;
 			
 		ELSIF stRobotStatus.xError THEN
-			dwErrorActive := dwErrorActive OR ERR_ROBOT_ACTION;
+			Error.dwErrorActive := Error.dwErrorActive OR ERR_ROBOT_ACTION;
 			eState := E_MACHINE_STATE.ERROR;
     	END_IF;
 		
@@ -343,7 +346,7 @@ CASE eState OF
 			xServiceDoorOpenDemand := FALSE;
         	eState := E_MACHINE_STATE.NEXT;
 		ELSIF stMachineStatus.xAlarm THEN
-			dwErrorActive := dwErrorActive OR ERR_DOOR_OPEN;
+			Error.dwErrorActive := Error.dwErrorActive OR ERR_DOOR_OPEN;
 			eState := E_MACHINE_STATE.ERROR;
     	END_IF;
 	
@@ -355,49 +358,49 @@ CASE eState OF
 			xServiceDoorCloseDemand := FALSE;
         	eState := E_MACHINE_STATE.NEXT;
 		ELSIF stMachineStatus.xAlarm THEN
-			dwErrorActive := dwErrorActive OR ERR_DOOR_CLOSE;
+			Error.dwErrorActive := Error.dwErrorActive OR ERR_DOOR_CLOSE;
 			eState := E_MACHINE_STATE.ERROR;
     	END_IF;
 		
 	E_MACHINE_STATE.CHUCK_OPEN: 
-		stMachineCommand.xUnclampChuck := TRUE;
+		Command.stIo.xUnclampChuck := TRUE;
 
     	IF stMachineStatus.xChuckUnclamped 
 		AND NOT stMachineStatus.xAlarm  THEN
-			stMachineCommand.xUnclampChuck := FALSE;
+			Command.stIo.xUnclampChuck := FALSE;
        		eState := E_MACHINE_STATE.NEXT;
 		ELSIF stMachineStatus.xAlarm THEN
-			stMachineCommand.xUnclampChuck := FALSE;
-			dwErrorActive := dwErrorActive OR ERR_CHUCK_OPEN;
+			Command.stIo.xUnclampChuck := FALSE;
+			Error.dwErrorActive := Error.dwErrorActive OR ERR_CHUCK_OPEN;
 			eState := E_MACHINE_STATE.ERROR;
     	END_IF;
 		
 	
 	E_MACHINE_STATE.CHUCK_CLOSE: 
-		stMachineCommand.xClampChuck := TRUE;
+		Command.stIo.xClampChuck := TRUE;
 
     	IF stMachineStatus.xChuckClamped 
 		AND NOT stMachineStatus.xAlarm  THEN
-			stMachineCommand.xClampChuck := FALSE;
+			Command.stIo.xClampChuck := FALSE;
        		eState := E_MACHINE_STATE.NEXT;
 		ELSIF stMachineStatus.xAlarm THEN
-			stMachineCommand.xClampChuck := FALSE;
-			dwErrorActive := dwErrorActive OR ERR_CHUCK_CLOSE;
+			Command.stIo.xClampChuck := FALSE;
+			Error.dwErrorActive := Error.dwErrorActive OR ERR_CHUCK_CLOSE;
 			eState := E_MACHINE_STATE.ERROR;
     	END_IF;
 		
 	E_MACHINE_STATE.CYCLE_START:
 		IF stMachineStatus.xChuckClamped
     	AND stMachineStatus.xDoorClosed THEN
-        	stMachineCommand.xStartCycle := TRUE;
+		Command.stIo.xStartCycle := TRUE;
 		END_IF;
 		
         IF stMachineStatus.xCycleActive AND NOT stMachineStatus.xAlarm THEN
-			stMachineCommand.xStartCycle := FALSE;
+			Command.stIo.xStartCycle := FALSE;
             eState := E_MACHINE_STATE.NEXT;
 		ELSIF stMachineStatus.xAlarm THEN
-			stMachineCommand.xStartCycle := FALSE;
-			dwErrorActive := dwErrorActive OR ERR_CHUCK_CLOSE;
+			Command.stIo.xStartCycle := FALSE;
+			Error.dwErrorActive := Error.dwErrorActive OR ERR_CHUCK_CLOSE;
 			eState := E_MACHINE_STATE.ERROR;
         END_IF;
 	
@@ -425,8 +428,8 @@ CASE eState OF
     	AND NOT xGlobalError
     	AND NOT xExecute 
 		AND NOT stMachineStatus.xAlarm THEN
-			dwErrorLast := dwErrorActive;
-        	dwErrorActive := DWORD#0;
+			Error.dwErrorLast := Error.dwErrorActive;
+			Error.dwErrorActive := DWORD#0;
         	eState := E_MACHINE_STATE.DISABLED;
     	END_IF;
 END_CASE;
@@ -436,17 +439,17 @@ AND NOT xGlobalError THEN
     IF xServiceDoorCloseDemand 
 	AND NOT (xAutoDoorOpenLatched OR xServiceDoorOpenDemand)
 	AND NOT stMachineStatus.xAlarm THEN
-        stMachineCommand.xCloseDoor := TRUE;
+        Command.stIo.xCloseDoor := TRUE;
 
     ELSIF (xAutoDoorOpenLatched OR xServiceDoorOpenDemand)
 	AND NOT xServiceDoorCloseDemand
     AND NOT stMachineStatus.xCycleActive
     AND NOT stMachineStatus.xAlarm THEN
-        stMachineCommand.xOpenDoor := TRUE;
+        Command.stIo.xOpenDoor := TRUE;
     END_IF;
 END_IF;
 
-stPublic.xCanAcceptService := (eState = E_MACHINE_STATE.IDLE) 
+Status.xCanAcceptService := (eState = E_MACHINE_STATE.IDLE)
 			AND (stRobotStatus.eCurrentPoint = stPoints.eAbove)
 			AND ePartState <> E_PART_STATE.UNKNOWN
 			AND NOT stMachineStatus.xAlarm
@@ -455,17 +458,33 @@ stPublic.xCanAcceptService := (eState = E_MACHINE_STATE.IDLE)
 			AND NOT stRobotStatus.xError
 			AND NOT xGlobalError;
 
-stPublic.xProcessing := stMachineStatus.xCycleActive;
-stPublic.xPartReady := stMachineStatus.xCycleDone;
-stPublic.xRobotReleased := xRobotDone;
-stPublic.xDone := (eState = E_MACHINE_STATE.DONE);
-stPublic.xBusy := (eState <> E_MACHINE_STATE.IDLE)
+Status.xProcessing := stMachineStatus.xCycleActive;
+Status.xPartReady := stMachineStatus.xCycleDone;
+Status.xServiceRequired := (eGrantedOperation <> E_MACHINE_OPERATION.NONE)
+	AND (eState = E_MACHINE_STATE.IDLE);
+Status.xRobotReleased := xRobotDone;
+Status.xDone := (eState = E_MACHINE_STATE.DONE);
+Status.xBusy := (eState <> E_MACHINE_STATE.IDLE)
     AND (eState <> E_MACHINE_STATE.DISABLED)
     AND (eState <> E_MACHINE_STATE.ERROR)
 	AND (eState <> E_MACHINE_STATE.DONE);
-stPublic.xError := (eState = E_MACHINE_STATE.ERROR);
-stPublic.xCriticalError := (dwErrorActive AND MASK_CRITICAL_ERROR) <> DWORD#0;
-stPublic.xAlarmError    := (dwErrorActive AND MASK_ALARM_ERROR) <> DWORD#0;
-stPublic.xExternalError := (dwErrorActive AND MASK_EXTERNAL_ERROR) <> DWORD#0;
-							
-stPublic.ePartState := ePartState;
+Status.xError := (eState = E_MACHINE_STATE.ERROR);
+Status.xCriticalError := (Error.dwErrorActive AND MASK_CRITICAL_ERROR) <> DWORD#0;
+Status.xAlarmError    := (Error.dwErrorActive AND MASK_ALARM_ERROR) <> DWORD#0;
+Status.xExternalError := (Error.dwErrorActive AND MASK_EXTERNAL_ERROR) <> DWORD#0;
+Status.xDoorOpen := stMachineStatus.xDoorOpen;
+Status.xAlarm := stMachineStatus.xAlarm;
+Status.eRecommendedOperation := eGrantedOperation;
+Status.ePartState := ePartState;
+Status.eAbovePoint := stPoints.eAbove;
+
+Diag.eState := eState;
+Diag.eGrantedOperation := eGrantedOperation;
+Diag.eActualOperation := eActualOperation;
+
+IF Error.dwErrorActive <> DWORD#0 THEN
+	Error.dwErrorLast := Error.dwErrorActive;
+END_IF;
+
+Error.stErrorActive := UpdateErrorView(dwError := Error.dwErrorActive);
+Error.stErrorLast := UpdateErrorView(dwError := Error.dwErrorLast);

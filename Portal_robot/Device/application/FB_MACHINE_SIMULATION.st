@@ -1,39 +1,47 @@
 FUNCTION_BLOCK FB_MACHINE_SIMULATION 
 VAR_INPUT
-    stCommand : ST_MACHINE_IO_COMMAND;
+    Command : ST_MACHINE_IO_COMMAND; // Команды исполнительным механизмам
 
-    xSimMachineAlarm : BOOL;
-    xSimDoorFault    : BOOL;
-    xSimChuckFault   : BOOL;
+    xSimMachineAlarm : BOOL; // Имитация общей аварии станка
+    xSimDoorFault    : BOOL; // Имитация неисправности двери
+    xSimChuckFault   : BOOL; // Имитация неисправности патрона
 
-    tDoorTime  : TIME := T#5S;
-    tChuckTime : TIME := T#3S;
-    tCycleTime : TIME := T#60S;
+    tDoorTime  : TIME := T#5S; // Время открытия или закрытия двери
+    tChuckTime : TIME := T#3S; // Время зажима или разжима патрона
+    tCycleTime : TIME := T#60S; // Время цикла обработки
 END_VAR
 
 VAR_OUTPUT
-    stStatus : ST_MACHINE_IO_STATUS;
+    Status : ST_MACHINE_IO_STATUS; // Состояние исполнительных механизмов
+	Diag   : ST_MACHINE_SIM_DIAG; // Текущие действия симулятора
+	Error  : ST_MACHINE_SIM_ERRORS; // Активные и последние ошибки
+END_VAR
+VAR CONSTANT
+	ERR_MACHINE_ALARM : DWORD := DWORD#16#0000_0001; // Авария станка
+	ERR_DOOR_FAULT    : DWORD := DWORD#16#0000_0002; // Ошибка двери
+	ERR_CHUCK_FAULT   : DWORD := DWORD#16#0000_0004; // Ошибка патрона
 END_VAR
 
 VAR
-    rtStartCycle : R_TRIG;
+    rtStartCycle : R_TRIG; // Фронт команды запуска цикла
 
-    tonDoorOpen   : TON;
-    tonDoorClose  : TON;
-    tonChuckClamp : TON;
-    tonChuckOpen  : TON;
-    tonCycleStart : TON;
-    tonCycle      : TON;
+    tonDoorOpen   : TON; // Таймер открытия двери
+    tonDoorClose  : TON; // Таймер закрытия двери
+    tonChuckClamp : TON; // Таймер зажима патрона
+    tonChuckOpen  : TON; // Таймер разжима патрона
+    tonCycleStart : TON; // Таймер подтверждения запуска цикла
+    tonCycle      : TON; // Таймер обработки
 
-    xDoorOpening   : BOOL;
-    xDoorClosing   : BOOL;
-    xChuckClamping : BOOL;
-    xChuckOpening  : BOOL;
-    xCycleStarting : BOOL;
+    xDoorOpening   : BOOL; // Выполняется открытие двери
+    xDoorClosing   : BOOL; // Выполняется закрытие двери
+    xChuckClamping : BOOL; // Выполняется зажим патрона
+    xChuckOpening  : BOOL; // Выполняется разжим патрона
+    xCycleStarting : BOOL; // Выполняется запуск цикла
 
-    xAlarmLatched : BOOL;
-    xInitialized  : BOOL;
+    xAlarmLatched : BOOL; // Защёлкнутая авария симулятора
+    xInitialized  : BOOL; // Начальные состояния установлены
 END_VAR
+
 // --- BEGIN IMPLEMENTATION ---
 
 // =====================================================
@@ -41,15 +49,15 @@ END_VAR
 // =====================================================
 
 IF NOT xInitialized THEN
-    stStatus.xDoorOpen := FALSE;
-    stStatus.xDoorClosed := TRUE;
+    Status.xDoorOpen := FALSE;
+    Status.xDoorClosed := TRUE;
 
-    stStatus.xChuckClamped := TRUE;
-    stStatus.xChuckUnclamped := FALSE;
+    Status.xChuckClamped := TRUE;
+    Status.xChuckUnclamped := FALSE;
 
-    stStatus.xCycleActive := FALSE;
-    stStatus.xCycleDone := FALSE;
-    stStatus.xAlarm := FALSE;
+    Status.xCycleActive := FALSE;
+    Status.xCycleDone := FALSE;
+    Status.xAlarm := FALSE;
 
     xInitialized := TRUE;
 END_IF;
@@ -59,7 +67,7 @@ END_IF;
 // Детектор запуска цикла
 // =====================================================
 
-rtStartCycle(CLK := stCommand.xStartCycle);
+rtStartCycle(CLK := Command.xStartCycle);
 
 
 // =====================================================
@@ -67,25 +75,28 @@ rtStartCycle(CLK := stCommand.xStartCycle);
 // =====================================================
 
 IF xSimMachineAlarm THEN
-    xAlarmLatched := TRUE;
+	Error.dwErrorActive := Error.dwErrorActive OR ERR_MACHINE_ALARM;
 END_IF;
 
 IF xSimDoorFault
 AND (xDoorOpening OR xDoorClosing) THEN
-    xAlarmLatched := TRUE;
+	Error.dwErrorActive := Error.dwErrorActive OR ERR_DOOR_FAULT;
 END_IF;
 
 IF xSimChuckFault
 AND (xChuckClamping OR xChuckOpening) THEN
-    xAlarmLatched := TRUE;
+	Error.dwErrorActive := Error.dwErrorActive OR ERR_CHUCK_FAULT;
 END_IF;
 
-IF stCommand.xReset
+IF Command.xReset
 AND NOT xSimMachineAlarm
 AND NOT xSimDoorFault
 AND NOT xSimChuckFault THEN
-    xAlarmLatched := FALSE;
+	Error.dwErrorLast := Error.dwErrorActive;
+	Error.dwErrorActive := DWORD#0;
 END_IF;
+
+xAlarmLatched := Error.dwErrorActive <> DWORD#0;
 
 
 // =====================================================
@@ -95,43 +106,43 @@ END_IF;
 IF NOT xAlarmLatched THEN
 
     // Открытие двери
-    IF stCommand.xOpenDoor
-    AND NOT stStatus.xDoorOpen
-    AND NOT stStatus.xCycleActive THEN
+    IF Command.xOpenDoor
+    AND NOT Status.xDoorOpen
+    AND NOT Status.xCycleActive THEN
         xDoorOpening := TRUE;
         xDoorClosing := FALSE;
     END_IF;
 
     // Закрытие двери
-    IF stCommand.xCloseDoor
-    AND NOT stStatus.xDoorClosed THEN
+    IF Command.xCloseDoor
+    AND NOT Status.xDoorClosed THEN
         xDoorClosing := TRUE;
         xDoorOpening := FALSE;
     END_IF;
 
     // Зажим патрона
-    IF stCommand.xClampChuck
-    AND NOT stStatus.xChuckClamped
-    AND NOT stStatus.xCycleActive THEN
+    IF Command.xClampChuck
+    AND NOT Status.xChuckClamped
+    AND NOT Status.xCycleActive THEN
         xChuckClamping := TRUE;
         xChuckOpening := FALSE;
     END_IF;
 
     // Разжим патрона
-    IF stCommand.xUnclampChuck
-    AND NOT stStatus.xChuckUnclamped
-    AND NOT stStatus.xCycleActive THEN
+    IF Command.xUnclampChuck
+    AND NOT Status.xChuckUnclamped
+    AND NOT Status.xCycleActive THEN
         xChuckOpening := TRUE;
         xChuckClamping := FALSE;
     END_IF;
 
     // Запуск обработки
     IF rtStartCycle.Q
-    AND stStatus.xDoorClosed
-    AND stStatus.xChuckClamped
-    AND NOT stStatus.xCycleActive THEN
+    AND Status.xDoorClosed
+    AND Status.xChuckClamped
+    AND NOT Status.xCycleActive THEN
         xCycleStarting := TRUE;
-        stStatus.xCycleDone := FALSE;
+        Status.xCycleDone := FALSE;
     END_IF;
 
 END_IF;
@@ -167,7 +178,7 @@ tonCycleStart(
 );
 
 tonCycle(
-    IN := stStatus.xCycleActive AND NOT xAlarmLatched,
+    IN := Status.xCycleActive AND NOT xAlarmLatched,
     PT := tCycleTime
 );
 
@@ -177,8 +188,8 @@ tonCycle(
 // =====================================================
 
 IF tonDoorOpen.Q THEN
-    stStatus.xDoorOpen := TRUE;
-    stStatus.xDoorClosed := FALSE;
+    Status.xDoorOpen := TRUE;
+    Status.xDoorClosed := FALSE;
 
     xDoorOpening := FALSE;
 END_IF;
@@ -189,8 +200,8 @@ END_IF;
 // =====================================================
 
 IF tonDoorClose.Q THEN
-    stStatus.xDoorClosed := TRUE;
-    stStatus.xDoorOpen := FALSE;
+    Status.xDoorClosed := TRUE;
+    Status.xDoorOpen := FALSE;
 
     xDoorClosing := FALSE;
 END_IF;
@@ -201,8 +212,8 @@ END_IF;
 // =====================================================
 
 IF tonChuckClamp.Q THEN
-    stStatus.xChuckClamped := TRUE;
-    stStatus.xChuckUnclamped := FALSE;
+    Status.xChuckClamped := TRUE;
+    Status.xChuckUnclamped := FALSE;
 
     xChuckClamping := FALSE;
 END_IF;
@@ -213,8 +224,8 @@ END_IF;
 // =====================================================
 
 IF tonChuckOpen.Q THEN
-    stStatus.xChuckUnclamped := TRUE;
-    stStatus.xChuckClamped := FALSE;
+    Status.xChuckUnclamped := TRUE;
+    Status.xChuckClamped := FALSE;
 
     xChuckOpening := FALSE;
 END_IF;
@@ -225,7 +236,7 @@ END_IF;
 // =====================================================
 
 IF tonCycleStart.Q THEN
-    stStatus.xCycleActive := TRUE;
+    Status.xCycleActive := TRUE;
     xCycleStarting := FALSE;
 END_IF;
 
@@ -235,8 +246,8 @@ END_IF;
 // =====================================================
 
 IF tonCycle.Q THEN
-    stStatus.xCycleActive := FALSE;
-    stStatus.xCycleDone := TRUE;
+    Status.xCycleActive := FALSE;
+    Status.xCycleDone := TRUE;
 END_IF;
 
 
@@ -245,7 +256,7 @@ END_IF;
 // =====================================================
 
 IF xAlarmLatched THEN
-    stStatus.xCycleActive := FALSE;
+    Status.xCycleActive := FALSE;
 
     xDoorOpening := FALSE;
     xDoorClosing := FALSE;
@@ -261,4 +272,18 @@ END_IF;
 // Выходной статус
 // =====================================================
 
-stStatus.xAlarm := xAlarmLatched;
+Status.xAlarm := xAlarmLatched;
+Status.xReady := NOT xAlarmLatched AND NOT Status.xCycleActive;
+
+Diag.xDoorOpening := xDoorOpening;
+Diag.xDoorClosing := xDoorClosing;
+Diag.xChuckClamping := xChuckClamping;
+Diag.xChuckOpening := xChuckOpening;
+Diag.xCycleStarting := xCycleStarting;
+
+IF Error.dwErrorActive <> DWORD#0 THEN
+	Error.dwErrorLast := Error.dwErrorActive;
+END_IF;
+
+Error.stErrorActive := UpdateErrorView(dwError := Error.dwErrorActive);
+Error.stErrorLast := UpdateErrorView(dwError := Error.dwErrorLast);

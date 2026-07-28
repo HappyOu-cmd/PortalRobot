@@ -1,9 +1,9 @@
 TYPE ST_POINT :
 STRUCT
-	Name                : STRING[80];
-	X    				: LREAL;
-	Y    				: LREAL;
-	Z    				: LREAL;
-	SpeedFactor 		: LREAL; 
+	Name        : STRING[80]; // Имя точки
+	X           : LREAL; // Координата X
+	Y           : LREAL; // Координата Y
+	Z           : LREAL; // Координата Z
+	SpeedFactor : LREAL; // Коэффициент скорости движения
 END_STRUCT
 END_TYPE

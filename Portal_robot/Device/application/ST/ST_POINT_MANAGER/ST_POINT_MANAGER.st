@@ -1,24 +1,8 @@
 TYPE ST_POINT_MANAGER :
 STRUCT
-	xExecute : BOOL;
-	xBusy    : BOOL;
-	xDone    : BOOL;
-	xInvalid   : BOOL;
-	
-	eState   : E_POINT_MANAGER_STATE;
-	
-	dwErrorActive : DWORD;
-	dwErrorLast : DWORD;
-	
-	stErrorActive : ST_POINT_MANAGER_ERROR;
-	stErrorLast  : ST_POINT_MANAGER_ERROR;
-	
-	lrX_MinLimit : LREAL;
-	lrY_MinLimit : LREAL;
-	lrZ_MinLimit : LREAL;
-
-	lrX_MaxLimit : LREAL;
-	lrY_MaxLimit : LREAL;
-	lrZ_MaxLimit : LREAL;
+	Command : ST_POINT_MANAGER_COMMAND; // Команды менеджера точки
+	Status  : ST_POINT_MANAGER_STATUS; // Рабочие статусы менеджера точки
+	Diag    : ST_POINT_MANAGER_DIAG; // Состояние автомата и допустимые пределы
+	Error   : ST_POINT_MANAGER_ERRORS; // Активные и последние ошибки
 END_STRUCT
 END_TYPE

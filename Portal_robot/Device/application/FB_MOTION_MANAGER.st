@@ -1,29 +1,34 @@
 FUNCTION_BLOCK FB_MOTION_MANAGER
 VAR_INPUT
-	stPoint   : ARRAY [0..GVL_POINT.iPointNumber] OF ST_POINT;
-	xReset    : BOOL;
+	stPoint : ARRAY [0..GVL_POINT.iPointNumber] OF ST_POINT; // Глобальная таблица точек
+	xReset  : BOOL; // Сброс ошибок менеджера движения
 END_VAR
 VAR_OUTPUT
 END_VAR
 VAR
-	curPoint : ST_POINT;
-	curPointName : E_POINT_NAME;
-	fbPointManager : FB_POINT_MANAGER;
+	curPoint      : ST_POINT; // Координаты выбранной точки
+	curPointName  : E_POINT_NAME; // Имя выбранной точки
+	fbPointManager: FB_POINT_MANAGER; // Проверка координат и скорости точки
+END_VAR
+VAR CONSTANT
+	ERR_POINT_INVALID : DWORD := DWORD#16#0000_0001; // Недопустимая точка
+	ERR_GROUP         : DWORD := DWORD#16#0000_0002; // Ошибка группы осей
+	ERR_GLOBAL_STOP   : DWORD := DWORD#16#0000_0004; // Глобальная ошибка ячейки
 END_VAR
 VAR_IN_OUT
-	stMotionManager : ST_MOTION_MANAGER;
-	GroupData       : ST_AXIS_GROUP;
-	stPointManager  : ST_POINT_MANAGER;
+	stMotionManager : ST_MOTION_MANAGER; // Команды, статусы и диагностика менеджера движения
+	GroupData       : ST_AXIS_GROUP; // Команды, статусы и диагностика группы XYZ
+	stPointManager  : ST_POINT_MANAGER; // Команды, статусы и диагностика проверки точки
 END_VAR
 
 // --- BEGIN IMPLEMENTATION ---
 
-stPointManager.lrX_MinLimit := -1000;
-stPointManager.lrX_MaxLimit := 17000;
-stPointManager.lrY_MinLimit := -1000;
-stPointManager.lrY_MaxLimit := 17000;
-stPointManager.lrZ_MinLimit := -1000;
-stPointManager.lrZ_MaxLimit := 17000;
+stPointManager.Diag.lrX_MinLimit := -1000;
+stPointManager.Diag.lrX_MaxLimit := 17000;
+stPointManager.Diag.lrY_MinLimit := -1000;
+stPointManager.Diag.lrY_MaxLimit := 17000;
+stPointManager.Diag.lrZ_MinLimit := -1000;
+stPointManager.Diag.lrZ_MaxLimit := 17000;
 fbPointManager(
 			stPointManager := stPointManager,
 			stPoint := curPoint
@@ -45,6 +50,7 @@ CASE stMotionManager.Diag.eState OF
 			stMotionManager.Status.xBusy := TRUE;
 			stMotionManager.Diag.eState := E_MOTION_MANAGER_STATE.VALIDATE;
 		ELSIF stMotionManager.Command.xGlobalError THEN
+			stMotionManager.Error.dwErrorActive := stMotionManager.Error.dwErrorActive OR ERR_GLOBAL_STOP;
 			stMotionManager.Diag.eState := E_MOTION_MANAGER_STATE.ERROR;
 		END_IF
 	
@@ -55,16 +61,17 @@ CASE stMotionManager.Diag.eState OF
 		curPoint := stPoint[stMotionManager.Command.eTargetPoint];
 		curPointName := stMotionManager.Command.eTargetPoint;
 		
-		stPointManager.xExecute := TRUE;
+		stPointManager.Command.xExecute := TRUE;
 		
-		IF stPointManager.xDone AND NOT stPointManager.xInvalid THEN
-			stPointManager.xExecute := FALSE;
+		IF stPointManager.Status.xDone AND NOT stPointManager.Status.xInvalid THEN
+			stPointManager.Command.xExecute := FALSE;
 			IF stMotionManager.Command.xMode THEN
 				stMotionManager.Diag.eState := 	E_MOTION_MANAGER_STATE.MOTION_MODBUS;
 			ELSE
 				stMotionManager.Diag.eState := 	E_MOTION_MANAGER_STATE.MOTION_SIM;
 			END_IF
-		ELSIF stPointManager.xDone AND stPointManager.xInvalid THEN
+		ELSIF stPointManager.Status.xDone AND stPointManager.Status.xInvalid THEN
+			stMotionManager.Error.dwErrorActive := stMotionManager.Error.dwErrorActive OR ERR_POINT_INVALID;
 			stMotionManager.Diag.eState := 	E_MOTION_MANAGER_STATE.ERROR;
 		END_IF
 	
@@ -80,15 +87,21 @@ CASE stMotionManager.Diag.eState OF
 		GroupData.MotionParam.VelFactor := curPoint.SpeedFactor;
 		GroupData.MotionParam.AccFactor := curPoint.SpeedFactor;
 		GroupData.MotionParam.JerkFactor := curPoint.SpeedFactor;
-		IF GroupData.Diag.iStep = E_AXIS_GROUP_STATE.READY AND NOT GroupData.Cmd.xMoveDirect AND NOT stMotionManager.Command.xGlobalError THEN
-			GroupData.Cmd.xMoveDirect := TRUE;
+		IF GroupData.Diag.iStep = E_AXIS_GROUP_STATE.READY AND NOT GroupData.Command.xMoveDirect AND NOT stMotionManager.Command.xGlobalError THEN
+			GroupData.Command.xMoveDirect := TRUE;
 		END_IF;
 		
-		IF GroupData.Status.xMoveDirectDone AND GroupData.Cmd.xMoveDirect THEN
-			GroupData.Cmd.xMoveDirect := FALSE;
+		IF GroupData.Status.xMoveDirectDone AND GroupData.Command.xMoveDirect THEN
+			GroupData.Command.xMoveDirect := FALSE;
 			stMotionManager.Status.eCurrentPoint := curPointName;
 			stMotionManager.Diag.eState := 	E_MOTION_MANAGER_STATE.DONE;
 		ELSIF GroupData.Diag.iStep = E_AXIS_GROUP_STATE.ERROR OR stMotionManager.Command.xGlobalError  THEN
+			IF GroupData.Diag.iStep = E_AXIS_GROUP_STATE.ERROR THEN
+				stMotionManager.Error.dwErrorActive := stMotionManager.Error.dwErrorActive OR ERR_GROUP;
+			END_IF;
+			IF stMotionManager.Command.xGlobalError THEN
+				stMotionManager.Error.dwErrorActive := stMotionManager.Error.dwErrorActive OR ERR_GLOBAL_STOP;
+			END_IF;
 			stMotionManager.Diag.eState := 	E_MOTION_MANAGER_STATE.ERROR;
 		END_IF
 	
@@ -97,6 +110,8 @@ CASE stMotionManager.Diag.eState OF
 	// --------------------------------------------------
 		stMotionManager.Status.xError := TRUE;
 		IF NOT stMotionManager.Command.xGlobalError AND stMotionManager.Command.xReset THEN
+			stMotionManager.Error.dwErrorLast := stMotionManager.Error.dwErrorActive;
+			stMotionManager.Error.dwErrorActive := DWORD#0;
 			stMotionManager.Status.xError := FALSE;
 			stMotionManager.Diag.eState := 	E_MOTION_MANAGER_STATE.IDLE;
 		END_IF
@@ -111,4 +126,10 @@ CASE stMotionManager.Diag.eState OF
 			stMotionManager.Diag.eState := 	E_MOTION_MANAGER_STATE.IDLE;
 		END_IF
 	END_CASE
- 
+
+stMotionManager.Error.stErrorActive := UpdateErrorView(
+	dwError := stMotionManager.Error.dwErrorActive
+);
+stMotionManager.Error.stErrorLast := UpdateErrorView(
+	dwError := stMotionManager.Error.dwErrorLast
+);

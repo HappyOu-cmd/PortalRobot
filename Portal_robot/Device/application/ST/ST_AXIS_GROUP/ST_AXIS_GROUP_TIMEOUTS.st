@@ -1,10 +1,10 @@
 TYPE ST_AXIS_GROUP_TIMEOUTS :
 STRUCT
-    tPowerTimeout        : TIME := T#5S;
-	tGroupTimeout       : TIME := T#5S;
-    tStopTimeout         : TIME := T#5S;
-	tHaltTimeout         : TIME := T#5S;
-    tHomeTimeout         : TIME := T#30S;
-    tMoveTimeout         : TIME := T#30S;
+    tPowerTimeout : TIME := T#5S; // Время ожидания включения или отключения питания
+	tGroupTimeout : TIME := T#5S; // Время ожидания включения или отключения группы
+    tStopTimeout  : TIME := T#5S; // Время ожидания остановки
+	tHaltTimeout  : TIME := T#5S; // Время ожидания плавной остановки
+    tHomeTimeout  : TIME := T#30S; // Время ожидания поиска домашней позиции
+    tMoveTimeout  : TIME := T#30S; // Время ожидания завершения перемещения
 END_STRUCT
 END_TYPE

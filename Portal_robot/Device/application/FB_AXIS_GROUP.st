@@ -6,86 +6,86 @@ VAR_OUTPUT
 END_VAR
 VAR
 	// Внутренние исполняемые булевые переменные
-	xEnable : BOOL;
-	xRegulatorOn: BOOL;
-	xDriveStart :BOOL;
-	xDisable : BOOL;
-	xPowerEnable : BOOL;
-	xReset : BOOL;
-	xResetMC : BOOL;
-	xMoveDirect : BOOL;
-	xMoveLinear : BOOL;
-	xStopCmd : BOOL;
-	xHaltCmd : BOOL; 
+	xEnable      : BOOL; // Импульс включения группы
+	xRegulatorOn : BOOL; // Запрос включения регуляторов
+	xDriveStart  : BOOL; // Запрос разрешения приводов
+	xDisable     : BOOL; // Импульс отключения группы
+	xPowerEnable : BOOL; // Защёлкнутый запрос питания
+	xReset       : BOOL; // Импульс сброса ошибок
+	xResetMC     : BOOL; // Выполняется сброс SoftMotion
+	xMoveDirect  : BOOL; // Выполняется прямое перемещение
+	xMoveLinear  : BOOL; // Выполняется линейное перемещение
+	xStopCmd     : BOOL; // Выполняется остановка
+	xHaltCmd     : BOOL; // Выполняется плавная остановка
 	
-	iPrevStep        : E_AXIS_GROUP_STATE;
+	iPrevStep : E_AXIS_GROUP_STATE; // Предыдущий шаг автомата
 	
 	// Для таймера шага
-	tonStepTimeout : TON;
-	xStepTimeout   : BOOL;
-	xStepChanged   : BOOL;
-	xStepTimerEnable : BOOL;
-	xStepInitialized : BOOL;	
+	tonStepTimeout   : TON; // Таймер превышения времени шага
+	xStepTimeout     : BOOL; // Время шага превышено
+	xStepChanged     : BOOL; // Шаг изменился в текущем цикле
+	xStepTimerEnable : BOOL; // Разрешение таймера шага
+	xStepInitialized : BOOL; // Предыдущий шаг инициализирован
 	
 	// Для удержания предупреждений
-    tpWarningHold        : TP;
-    xWarningPulse        : BOOL;
+    tpWarningHold : TP; // Удержание предупреждения для отображения
+    xWarningPulse : BOOL; // Импульс нового предупреждения
 	
 	// ФБ группы осей
-	fbReadStatus: MC_GroupReadStatus;
-	fbReadPosition: MC_GroupReadActualPosition;
-	fbGroupEnable: MC_GroupEnable;
-	fbGroupDisable: MC_GroupDisable;
-	fbGroupPower : SMC_GroupPower;
-	fbGroupReset: MC_GroupReset;
+	fbReadStatus   : MC_GroupReadStatus; // Чтение состояния группы
+	fbReadPosition : MC_GroupReadActualPosition; // Чтение текущей позиции группы
+	fbGroupEnable  : MC_GroupEnable; // Включение группы
+	fbGroupDisable : MC_GroupDisable; // Отключение группы
+	fbGroupPower   : SMC_GroupPower; // Управление питанием группы
+	fbGroupReset   : MC_GroupReset; // Сброс ошибок группы
 
 	
-	fbMoveDirect: MC_MoveDirectAbsolute;
-	fbMoveLinear: MC_MoveLinearAbsolute;
+	fbMoveDirect : MC_MoveDirectAbsolute; // Прямое абсолютное перемещение
+	fbMoveLinear : MC_MoveLinearAbsolute; // Линейное абсолютное перемещение
 	
-	fbGroupHalt: MC_GroupHalt;
-	fbGroupStop: MC_GroupStop;
+	fbGroupHalt : MC_GroupHalt; // Плавная остановка группы
+	fbGroupStop : MC_GroupStop; // Остановка группы
 	
-	stPosition: SMC_POS_REF;
+	stPosition : SMC_POS_REF; // Текущая позиция группы
 	
 	// Триггеры на команды
-    rtEnable             : R_TRIG;
-    rtDisable            : R_TRIG;
-	rtEnablePower        : R_TRIG;
-    rtResetAllError      : R_TRIG;
-    rtMoveDirect         : R_TRIG;
-    rtMoveLinear         : R_TRIG;
-	rtStopCmd            : R_TRIG;
-	rtHaltCmd			 : R_TRIG;
+    rtEnable        : R_TRIG; // Фронт команды включения
+    rtDisable       : R_TRIG; // Фронт команды отключения
+	rtEnablePower   : R_TRIG; // Фронт запроса питания
+    rtResetAllError : R_TRIG; // Фронт команды сброса
+    rtMoveDirect    : R_TRIG; // Фронт прямого перемещения
+    rtMoveLinear    : R_TRIG; // Фронт линейного перемещения
+	rtStopCmd       : R_TRIG; // Фронт команды остановки
+	rtHaltCmd       : R_TRIG; // Фронт плавной остановки
 	
 END_VAR
 VAR_IN_OUT
-	AxisGroup: AXIS_GROUP_REF_SM3;
-	GroupData: ST_AXIS_GROUP;
+	AxisGroup : AXIS_GROUP_REF_SM3; // Ссылка на группу осей SoftMotion
+	GroupData : ST_AXIS_GROUP; // Команды, статусы и диагностика группы
 END_VAR
 
 VAR CONSTANT
 	// ==================================================
-    // LOGICAL ERRORS
+    // Логические ошибки группы
     // ==================================================
-	LOG_STEP_TIMEOUT             : DWORD := 1;
-	LOG_INVALID_STATE            : DWORD := 2;
-	LOG_POWER_PERMIT_READY       : DWORD := 4;
-	LOG_POWER_PERMIT_LOST_DIRECT : DWORD := 8;
+	LOG_STEP_TIMEOUT             : DWORD := 1; // Превышено время шага
+	LOG_INVALID_STATE            : DWORD := 2; // Неизвестный шаг автомата
+	LOG_POWER_PERMIT_READY       : DWORD := 4; // Нет разрешения питания в готовности
+	LOG_POWER_PERMIT_LOST_DIRECT : DWORD := 8; // Разрешение питания снято при движении
 	
 	// ==================================================
-    // MOTION ERRORS
+    // Ошибки блоков движения группы
     // ==================================================
-	MOTION_ERR_ENABLE            : DWORD := 1;
-	MOTION_ERR_POWER             : DWORD := 2;
-	MOTION_ERR_DISABLE 		     : DWORD := 4;
-	MOTION_ERR_RESET             : DWORD := 8;
-	MOTION_ERR_MOVE_DIRECT       : DWORD := 16;
-	MOTION_ERR_MOVE_LINEAR       : DWORD := 32;
-	MOTION_ERR_HALT              : DWORD := 64;
-	MOTION_ERR_STOP              : DWORD := 128;
-	MOTION_ERR_READ_POSITION     : DWORD := 256;
-	MOTION_ERR_READ_STATUS       : DWORD := 512;
+	MOTION_ERR_ENABLE        : DWORD := 1; // Ошибка включения группы
+	MOTION_ERR_POWER         : DWORD := 2; // Ошибка питания группы
+	MOTION_ERR_DISABLE       : DWORD := 4; // Ошибка отключения группы
+	MOTION_ERR_RESET         : DWORD := 8; // Ошибка сброса группы
+	MOTION_ERR_MOVE_DIRECT   : DWORD := 16; // Ошибка прямого перемещения
+	MOTION_ERR_MOVE_LINEAR   : DWORD := 32; // Ошибка линейного перемещения
+	MOTION_ERR_HALT          : DWORD := 64; // Ошибка плавной остановки
+	MOTION_ERR_STOP          : DWORD := 128; // Ошибка остановки
+	MOTION_ERR_READ_POSITION : DWORD := 256; // Ошибка чтения позиции
+	MOTION_ERR_READ_STATUS   : DWORD := 512; // Ошибка чтения статуса
 END_VAR
 
 // --- BEGIN IMPLEMENTATION ---
@@ -102,20 +102,20 @@ END_VAR
 xWarningPulse := FALSE;
 
 GroupData.Diag.xStepChanged := FALSE;
-GroupData.Diag.dwError.dwLogicalErrorNew := DWORD#0;
-GroupData.Diag.dwError.dwMotionErrorNew := DWORD#0;
+GroupData.Error.dwLogicalErrorNew := DWORD#0;
+GroupData.Error.dwMotionErrorNew := DWORD#0;
 
 
 // =============================================================================
 // 2. Фронты команд
 // =============================================================================
-rtDisable(CLK := GroupData.Cmd.xDisable);
-rtEnablePower(CLK := GroupData.Cmd.xPowerEnable);
-rtResetAllError(CLK := GroupData.Cmd.xReset);
-rtMoveDirect(CLK := GroupData.Cmd.xMoveDirect);
-rtMoveLinear(CLK := GroupData.Cmd.xMoveLinear);
-rtHaltCmd(CLK := GroupData.Cmd.xHaltCmd);
-rtStopCmd(CLK := GroupData.Cmd.xStopCmd);
+rtDisable(CLK := GroupData.Command.xDisable);
+rtEnablePower(CLK := GroupData.Command.xPowerEnable);
+rtResetAllError(CLK := GroupData.Command.xReset);
+rtMoveDirect(CLK := GroupData.Command.xMoveDirect);
+rtMoveLinear(CLK := GroupData.Command.xMoveLinear);
+rtHaltCmd(CLK := GroupData.Command.xHaltCmd);
+rtStopCmd(CLK := GroupData.Command.xStopCmd);
 
 
 // =============================================================================
@@ -145,11 +145,11 @@ END_IF;
 GroupData.Status.xGroupError :=
     fbReadStatus.Error
     OR fbReadStatus.GroupErrorStop
-    OR (GroupData.Diag.dwError.dwMotionErrorLatched <> DWORD#0);
+    OR (GroupData.Error.dwMotionErrorLatched <> DWORD#0);
 
 GroupData.Status.xLocalError :=
     GroupData.Status.xGroupError
-    OR (GroupData.Diag.dwError.dwLogicalErrorLatched <> DWORD#0);
+    OR (GroupData.Error.dwLogicalErrorLatched <> DWORD#0);
 
 
 // =============================================================================
@@ -176,12 +176,12 @@ CASE GroupData.Diag.iStep OF
         GroupData.Diag.tStepPreset := T#0S;
         GroupData.Diag.iPowerMode := E_AXIS_GROUP_POWER_MODE.OFF;
 
-        IF GroupData.Cmd.xGlobalError
+        IF GroupData.Command.xGlobalError
            OR GroupData.Status.xLocalError THEN
 
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
 
-        ELSIF rtEnablePower.Q AND NOT GroupData.Cmd.xPowerPermit THEN
+        ELSIF rtEnablePower.Q AND NOT GroupData.Command.xPowerPermit THEN
             GroupData.Diag.sWarningText := 'Power permit is not active';
             xWarningPulse := TRUE;
 
@@ -202,14 +202,14 @@ CASE GroupData.Diag.iStep OF
 
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
 
-        ELSIF NOT GroupData.Cmd.xPowerPermit
-           OR GroupData.Cmd.xGlobalError THEN
+        ELSIF NOT GroupData.Command.xPowerPermit
+           OR GroupData.Command.xGlobalError THEN
 
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.DISABLING_POWER;
 
         ELSIF xStepTimeout THEN
-            GroupData.Diag.dwError.dwLogicalErrorNew :=
-                GroupData.Diag.dwError.dwLogicalErrorNew
+            GroupData.Error.dwLogicalErrorNew :=
+                GroupData.Error.dwLogicalErrorNew
                 OR LOG_STEP_TIMEOUT;
 
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.DISABLING_POWER;
@@ -233,14 +233,14 @@ CASE GroupData.Diag.iStep OF
 
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
 
-        ELSIF NOT GroupData.Cmd.xPowerPermit
-           OR GroupData.Cmd.xGlobalError THEN
+        ELSIF NOT GroupData.Command.xPowerPermit
+           OR GroupData.Command.xGlobalError THEN
 
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.DISABLING_GROUP;
 
         ELSIF xStepTimeout THEN
-            GroupData.Diag.dwError.dwLogicalErrorNew :=
-                GroupData.Diag.dwError.dwLogicalErrorNew
+            GroupData.Error.dwLogicalErrorNew :=
+                GroupData.Error.dwLogicalErrorNew
                 OR LOG_STEP_TIMEOUT;
 
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.DISABLING_GROUP;
@@ -264,8 +264,8 @@ CASE GroupData.Diag.iStep OF
         IF fbReadStatus.GroupErrorStop THEN
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
 
-        ELSIF NOT GroupData.Cmd.xPowerPermit
-           OR GroupData.Cmd.xGlobalError
+        ELSIF NOT GroupData.Command.xPowerPermit
+           OR GroupData.Command.xGlobalError
            OR GroupData.Status.xLocalError
            OR rtDisable.Q THEN
 
@@ -306,14 +306,14 @@ CASE GroupData.Diag.iStep OF
             END_IF;
 
         ELSIF xStepTimeout THEN
-            GroupData.Diag.dwError.dwLogicalErrorNew :=
-                GroupData.Diag.dwError.dwLogicalErrorNew
+            GroupData.Error.dwLogicalErrorNew :=
+                GroupData.Error.dwLogicalErrorNew
                 OR LOG_STEP_TIMEOUT;
 
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.EMG_STOP;
 
-        ELSIF NOT GroupData.Cmd.xPowerPermit
-           OR GroupData.Cmd.xGlobalError
+        ELSIF NOT GroupData.Command.xPowerPermit
+           OR GroupData.Command.xGlobalError
            OR GroupData.Status.xLocalError
            OR rtStopCmd.Q THEN
 
@@ -343,14 +343,14 @@ CASE GroupData.Diag.iStep OF
 
         ELSIF fbGroupHalt.Error
            OR xStepTimeout
-           OR NOT GroupData.Cmd.xPowerPermit
-           OR GroupData.Cmd.xGlobalError
+           OR NOT GroupData.Command.xPowerPermit
+           OR GroupData.Command.xGlobalError
            OR GroupData.Status.xLocalError
            OR rtStopCmd.Q THEN
 
             IF xStepTimeout THEN
-                GroupData.Diag.dwError.dwLogicalErrorNew :=
-                    GroupData.Diag.dwError.dwLogicalErrorNew
+                GroupData.Error.dwLogicalErrorNew :=
+                    GroupData.Error.dwLogicalErrorNew
                     OR LOG_STEP_TIMEOUT;
             END_IF;
 
@@ -379,8 +379,8 @@ CASE GroupData.Diag.iStep OF
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
 
         ELSIF xStepTimeout THEN
-            GroupData.Diag.dwError.dwLogicalErrorNew :=
-                GroupData.Diag.dwError.dwLogicalErrorNew
+            GroupData.Error.dwLogicalErrorNew :=
+                GroupData.Error.dwLogicalErrorNew
                 OR LOG_STEP_TIMEOUT;
 
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
@@ -403,8 +403,8 @@ CASE GroupData.Diag.iStep OF
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
 
         ELSIF xStepTimeout THEN
-            GroupData.Diag.dwError.dwLogicalErrorNew :=
-                GroupData.Diag.dwError.dwLogicalErrorNew
+            GroupData.Error.dwLogicalErrorNew :=
+                GroupData.Error.dwLogicalErrorNew
                 OR LOG_STEP_TIMEOUT;
 
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
@@ -429,8 +429,8 @@ CASE GroupData.Diag.iStep OF
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
 
         ELSIF xStepTimeout THEN
-            GroupData.Diag.dwError.dwLogicalErrorNew :=
-                GroupData.Diag.dwError.dwLogicalErrorNew
+            GroupData.Error.dwLogicalErrorNew :=
+                GroupData.Error.dwLogicalErrorNew
                 OR LOG_STEP_TIMEOUT;
 
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
@@ -451,17 +451,17 @@ CASE GroupData.Diag.iStep OF
             E_AXIS_GROUP_POWER_MODE.OFF_REQUEST;
 
         IF xStepTimeout THEN
-            GroupData.Diag.dwError.dwLogicalErrorNew :=
-                GroupData.Diag.dwError.dwLogicalErrorNew
+            GroupData.Error.dwLogicalErrorNew :=
+                GroupData.Error.dwLogicalErrorNew
                 OR LOG_STEP_TIMEOUT;
 
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
 
         ELSIF NOT fbGroupPower.Status THEN
 
-            IF GroupData.Cmd.xGlobalError
+            IF GroupData.Command.xGlobalError
                OR GroupData.Status.xLocalError
-			   OR NOT GroupData.Cmd.xPowerPermit THEN
+			   OR NOT GroupData.Command.xPowerPermit THEN
 
                 GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
             ELSE
@@ -480,7 +480,7 @@ CASE GroupData.Diag.iStep OF
 
         IF rtResetAllError.Q THEN
 
-            IF GroupData.Cmd.xGlobalError THEN
+            IF GroupData.Command.xGlobalError THEN
                 GroupData.Diag.sWarningText :=
                     'Global error is still active';
 
@@ -490,7 +490,7 @@ CASE GroupData.Diag.iStep OF
                     GroupData.Diag.iStep :=
                         E_AXIS_GROUP_STATE.RESETTING;
 
-            ELSIF GroupData.Diag.dwError.dwMotionErrorActive
+            ELSIF GroupData.Error.dwMotionErrorActive
                   <> DWORD#0 THEN
 
                 GroupData.Diag.sWarningText :=
@@ -500,9 +500,9 @@ CASE GroupData.Diag.iStep OF
 
             ELSE
                 // Ошибка устранена — очищаем защёлки.
-                GroupData.Diag.dwError.dwLogicalErrorLatched := DWORD#0;
-                GroupData.Diag.dwError.dwMotionErrorLatched := DWORD#0;
-                GroupData.Diag.dwError.dwMotionErrorPrevious := DWORD#0;
+                GroupData.Error.dwLogicalErrorLatched := DWORD#0;
+                GroupData.Error.dwMotionErrorLatched := DWORD#0;
+                GroupData.Error.dwMotionErrorPrevious := DWORD#0;
 
                 IF NOT fbGroupPower.Status THEN
                     GroupData.Diag.iStep :=
@@ -533,14 +533,14 @@ CASE GroupData.Diag.iStep OF
 
         xResetMC := TRUE;
 
-        IF GroupData.Cmd.xGlobalError
+        IF GroupData.Command.xGlobalError
            OR fbGroupReset.Error THEN
 
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
 
         ELSIF xStepTimeout THEN
-            GroupData.Diag.dwError.dwLogicalErrorNew :=
-                GroupData.Diag.dwError.dwLogicalErrorNew
+            GroupData.Error.dwLogicalErrorNew :=
+                GroupData.Error.dwLogicalErrorNew
                 OR LOG_STEP_TIMEOUT;
 
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
@@ -550,9 +550,9 @@ CASE GroupData.Diag.iStep OF
             IF fbReadStatus.GroupErrorStop THEN
                 GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
             ELSE
-                GroupData.Diag.dwError.dwLogicalErrorLatched := DWORD#0;
-                GroupData.Diag.dwError.dwMotionErrorLatched := DWORD#0;
-                GroupData.Diag.dwError.dwMotionErrorPrevious := DWORD#0;
+                GroupData.Error.dwLogicalErrorLatched := DWORD#0;
+                GroupData.Error.dwMotionErrorLatched := DWORD#0;
+                GroupData.Error.dwMotionErrorPrevious := DWORD#0;
 
                 IF NOT fbGroupPower.Status THEN
                     GroupData.Diag.iStep :=
@@ -577,8 +577,8 @@ CASE GroupData.Diag.iStep OF
     // -------------------------------------------------------------------------
     ELSE
     // -------------------------------------------------------------------------
-        GroupData.Diag.dwError.dwLogicalErrorNew :=
-            GroupData.Diag.dwError.dwLogicalErrorNew
+        GroupData.Error.dwLogicalErrorNew :=
+            GroupData.Error.dwLogicalErrorNew
             OR LOG_INVALID_STATE;
 
         GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
@@ -666,88 +666,88 @@ fbGroupStop(
 // =============================================================================
 // 10. Маска Motion-ошибок
 // =============================================================================
-GroupData.Diag.dwError.dwMotionErrorActive := DWORD#0;
+GroupData.Error.dwMotionErrorActive := DWORD#0;
 
 IF fbGroupEnable.Error THEN
-    GroupData.Diag.dwError.dwMotionErrorActive :=
-        GroupData.Diag.dwError.dwMotionErrorActive
+    GroupData.Error.dwMotionErrorActive :=
+        GroupData.Error.dwMotionErrorActive
         OR MOTION_ERR_ENABLE;
 END_IF;
 
 IF fbGroupPower.Error THEN
-    GroupData.Diag.dwError.dwMotionErrorActive :=
-        GroupData.Diag.dwError.dwMotionErrorActive
+    GroupData.Error.dwMotionErrorActive :=
+        GroupData.Error.dwMotionErrorActive
         OR MOTION_ERR_POWER;
 END_IF;
 
 IF fbGroupDisable.Error THEN
-    GroupData.Diag.dwError.dwMotionErrorActive :=
-        GroupData.Diag.dwError.dwMotionErrorActive
+    GroupData.Error.dwMotionErrorActive :=
+        GroupData.Error.dwMotionErrorActive
         OR MOTION_ERR_DISABLE;
 END_IF;
 
 IF fbGroupReset.Error THEN
-    GroupData.Diag.dwError.dwMotionErrorActive :=
-        GroupData.Diag.dwError.dwMotionErrorActive
+    GroupData.Error.dwMotionErrorActive :=
+        GroupData.Error.dwMotionErrorActive
         OR MOTION_ERR_RESET;
 END_IF;
 
 IF fbMoveDirect.Error THEN
-    GroupData.Diag.dwError.dwMotionErrorActive :=
-        GroupData.Diag.dwError.dwMotionErrorActive
+    GroupData.Error.dwMotionErrorActive :=
+        GroupData.Error.dwMotionErrorActive
         OR MOTION_ERR_MOVE_DIRECT;
 END_IF;
 
 IF fbMoveLinear.Error THEN
-    GroupData.Diag.dwError.dwMotionErrorActive :=
-        GroupData.Diag.dwError.dwMotionErrorActive
+    GroupData.Error.dwMotionErrorActive :=
+        GroupData.Error.dwMotionErrorActive
         OR MOTION_ERR_MOVE_LINEAR;
 END_IF;
 
 IF fbGroupHalt.Error THEN
-    GroupData.Diag.dwError.dwMotionErrorActive :=
-        GroupData.Diag.dwError.dwMotionErrorActive
+    GroupData.Error.dwMotionErrorActive :=
+        GroupData.Error.dwMotionErrorActive
         OR MOTION_ERR_HALT;
 END_IF;
 
 IF fbGroupStop.Error THEN
-    GroupData.Diag.dwError.dwMotionErrorActive :=
-        GroupData.Diag.dwError.dwMotionErrorActive
+    GroupData.Error.dwMotionErrorActive :=
+        GroupData.Error.dwMotionErrorActive
         OR MOTION_ERR_STOP;
 END_IF;
 
 IF fbReadPosition.Error THEN
-    GroupData.Diag.dwError.dwMotionErrorActive :=
-        GroupData.Diag.dwError.dwMotionErrorActive
+    GroupData.Error.dwMotionErrorActive :=
+        GroupData.Error.dwMotionErrorActive
         OR MOTION_ERR_READ_POSITION;
 END_IF;
 
 IF fbReadStatus.Error THEN
-    GroupData.Diag.dwError.dwMotionErrorActive :=
-        GroupData.Diag.dwError.dwMotionErrorActive
+    GroupData.Error.dwMotionErrorActive :=
+        GroupData.Error.dwMotionErrorActive
         OR MOTION_ERR_READ_STATUS;
 END_IF;
 
 
 // Только ошибки, которых не было в предыдущем цикле.
-GroupData.Diag.dwError.dwMotionErrorNew :=
-    GroupData.Diag.dwError.dwMotionErrorActive
-    AND NOT GroupData.Diag.dwError.dwMotionErrorPrevious;
+GroupData.Error.dwMotionErrorNew :=
+    GroupData.Error.dwMotionErrorActive
+    AND NOT GroupData.Error.dwMotionErrorPrevious;
 
 
 // Защёлкиваем новые логические и Motion-ошибки.
-GroupData.Diag.dwError.dwLogicalErrorLatched :=
-    GroupData.Diag.dwError.dwLogicalErrorLatched
-    OR GroupData.Diag.dwError.dwLogicalErrorNew;
+GroupData.Error.dwLogicalErrorLatched :=
+    GroupData.Error.dwLogicalErrorLatched
+    OR GroupData.Error.dwLogicalErrorNew;
 
-GroupData.Diag.dwError.dwMotionErrorLatched :=
-    GroupData.Diag.dwError.dwMotionErrorLatched
-    OR GroupData.Diag.dwError.dwMotionErrorNew;
+GroupData.Error.dwMotionErrorLatched :=
+    GroupData.Error.dwMotionErrorLatched
+    OR GroupData.Error.dwMotionErrorNew;
 
 
 // Сохраняем Motion-маску для следующего цикла.
-GroupData.Diag.dwError.dwMotionErrorPrevious :=
-    GroupData.Diag.dwError.dwMotionErrorActive;
+GroupData.Error.dwMotionErrorPrevious :=
+    GroupData.Error.dwMotionErrorActive;
 
 
 // =============================================================================
@@ -791,11 +791,26 @@ GroupData.Diag.xStepTimeout := xStepTimeout;
 GroupData.Status.xGroupError :=
     fbReadStatus.Error
     OR fbReadStatus.GroupErrorStop
-    OR (GroupData.Diag.dwError.dwMotionErrorLatched <> DWORD#0);
+    OR (GroupData.Error.dwMotionErrorLatched <> DWORD#0);
 
 GroupData.Status.xLocalError :=
     GroupData.Status.xGroupError
-    OR (GroupData.Diag.dwError.dwLogicalErrorLatched <> DWORD#0);
+    OR (GroupData.Error.dwLogicalErrorLatched <> DWORD#0);
 	
 GroupData.Status.xMoveDirectDone := fbMoveDirect.Done;
 
+// Сохраняем последнюю ненулевую ошибку и формируем удобное представление для HMI.
+IF (GroupData.Error.dwMotionErrorLatched <> DWORD#0)
+OR (GroupData.Error.dwLogicalErrorLatched <> DWORD#0) THEN
+	GroupData.Error.dwMotionErrorLast := GroupData.Error.dwMotionErrorLatched;
+	GroupData.Error.dwLogicalErrorLast := GroupData.Error.dwLogicalErrorLatched;
+END_IF;
+
+GroupData.Error.stErrorActive := UpdateErrorView(
+	dwMotionError := GroupData.Error.dwMotionErrorLatched OR GroupData.Error.dwMotionErrorActive,
+	dwLogicalError := GroupData.Error.dwLogicalErrorLatched
+);
+GroupData.Error.stErrorLast := UpdateErrorView(
+	dwMotionError := GroupData.Error.dwMotionErrorLast,
+	dwLogicalError := GroupData.Error.dwLogicalErrorLast
+);
