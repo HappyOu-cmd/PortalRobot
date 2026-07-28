@@ -1,0 +1,134 @@
+PROGRAM PLC_PRG
+VAR
+	AXIS_X         : FB_AXIS;
+	AXIS_Y         : FB_AXIS;
+	AXIS_Z         : FB_AXIS;
+	GROUP_XYZ      : FB_AXIS_GROUP;
+	HMI            : FB_HMI;
+	MOTION_MANAGER : FB_MOTION_MANAGER;
+	MACHINE_1      : FB_MACHINE;
+	MACHINE_2      : FB_MACHINE;
+	MACHINE_3      : FB_MACHINE;
+	MACHINE_1_SIM  : FB_MACHINE_SIMULATION;
+	MACHINE_2_SIM  : FB_MACHINE_SIMULATION;
+	MACHINE_3_SIM  : FB_MACHINE_SIMULATION;
+	ROBOT          : FB_ROBOT;
+END_VAR
+// --- BEGIN IMPLEMENTATION ---
+
+//Над станком 1
+GVL_POINT.Points[E_POINT_NAME.MACHINE_1_ABOVE].X := 425;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_1_ABOVE].Y := 100;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_1_ABOVE].Z := 216;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_1_ABOVE].SpeedFactor := 1.0;
+
+//В станке 1
+GVL_POINT.Points[E_POINT_NAME.MACHINE_1_INSIDE].X := 425;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_1_INSIDE].Y := 100;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_1_INSIDE].Z := 458;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_1_INSIDE].SpeedFactor := 1.0;
+
+//У патрона 1
+GVL_POINT.Points[E_POINT_NAME.MACHINE_1_CHUCK_APROACH].X := 425;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_1_CHUCK_APROACH].Y := 100;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_1_CHUCK_APROACH].Z := 506;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_1_CHUCK_APROACH].SpeedFactor := 1.0;
+
+//В патроне 1 
+GVL_POINT.Points[E_POINT_NAME.MACHINE_1_CHUCK_POSITION].X := 378;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_1_CHUCK_POSITION].Y := 100;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_1_CHUCK_POSITION].Z := 506;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_1_CHUCK_POSITION].SpeedFactor := 1.0;
+
+
+
+AXIS_X(
+	Axis:= X,
+	AxisData := GVL_AXIS.arrAxis[1]
+);
+
+AXIS_Y(
+	Axis:= Y,
+	AxisData := GVL_AXIS.arrAxis[2]
+);
+
+AXIS_Z(
+	Axis:= Z,
+	AxisData := GVL_AXIS.arrAxis[3]
+);
+	
+GROUP_XYZ(
+	AxisGroup :=AXIS_GROUP, 
+	GroupData :=GVL_AXIS_GROUP.AxisGroup
+);
+
+HMI(
+	GroupData := GVL_AXIS_GROUP.AxisGroup,
+	HMI := GVL_HMI.HMI
+);
+
+
+MACHINE_1.stPoints.eAbove := E_POINT_NAME.MACHINE_1_ABOVE;
+MACHINE_1.stPoints.eChuck := E_POINT_NAME.MACHINE_1_CHUCK_POSITION;
+MACHINE_1.stPoints.eChuckApproach := E_POINT_NAME.MACHINE_1_CHUCK_APROACH;
+MACHINE_1.stPoints.eInside := E_POINT_NAME.MACHINE_1_INSIDE;
+MACHINE_1.stPoints.eNone := E_POINT_NAME.NONE;
+
+MACHINE_1( 
+	stChangeRecipe := GVL_CELL_SETTINGS.CHANGE_MACHINE,
+	stMachineStatus := 	MACHINE_1_SIM.stStatus,
+	stRobotStatus := ROBOT.stStatus
+);
+
+MACHINE_2.stPoints.eAbove := E_POINT_NAME.MACHINE_2_ABOVE;
+MACHINE_2.stPoints.eChuck := E_POINT_NAME.MACHINE_2_CHUCK_POSITION;
+MACHINE_2.stPoints.eChuckApproach := E_POINT_NAME.MACHINE_2_CHUCK_APROACH;
+MACHINE_2.stPoints.eInside := E_POINT_NAME.MACHINE_2_INSIDE;
+MACHINE_2.stPoints.eNone := E_POINT_NAME.NONE;
+
+MACHINE_2( 
+	stChangeRecipe := GVL_CELL_SETTINGS.CHANGE_MACHINE,
+	stMachineStatus := 	MACHINE_2_SIM.stStatus,
+	stRobotStatus := ROBOT.stStatus
+);
+
+MACHINE_3.stPoints.eAbove := E_POINT_NAME.MACHINE_3_ABOVE;
+MACHINE_3.stPoints.eChuck := E_POINT_NAME.MACHINE_3_CHUCK_POSITION;
+MACHINE_3.stPoints.eChuckApproach := E_POINT_NAME.MACHINE_3_CHUCK_APROACH;
+MACHINE_3.stPoints.eInside := E_POINT_NAME.MACHINE_3_INSIDE;
+MACHINE_3.stPoints.eNone := E_POINT_NAME.NONE;
+
+MACHINE_3( 
+	stChangeRecipe := GVL_CELL_SETTINGS.CHANGE_MACHINE,
+	stMachineStatus := 	MACHINE_3_SIM.stStatus,
+	stRobotStatus := ROBOT.stStatus
+);
+	 
+MACHINE_1_SIM(
+	stCommand:= MACHINE_1.stMachineCommand
+);
+
+MACHINE_2_SIM(
+	stCommand:= MACHINE_2.stMachineCommand
+);
+
+MACHINE_3_SIM(
+	stCommand:= MACHINE_3.stMachineCommand
+);
+
+
+ 
+
+ROBOT(
+	stMachine_1_command := MACHINE_1.stRobotCommand,
+	stMachine_2_command := MACHINE_2.stRobotCommand,
+	stMachine_3_command := MACHINE_3.stRobotCommand,
+	stHmiCommand := GVL_HMI.HMI.stHmiCommand,
+    xMode := FALSE,
+
+    stPoint := GVL_POINT.Points,
+
+    stMotionManager := GVL_MOTION_MANAGER.stMotionManager,
+    GroupData := GVL_AXIS_GROUP.AxisGroup,
+    stPointManager := GVL_POINT_MANAGER.PointManager
+);

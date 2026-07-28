@@ -1,0 +1,21 @@
+{attribute 'qualified_only'}
+{attribute 'strict'}
+TYPE E_MACHINE_STATE :
+(
+	DISABLED := 0,
+    IDLE,
+	CHOSE,
+	READ,
+	NEXT,
+	RELEASE_ROBOT_ACTION,
+	ROBOT_MOVE,
+	ROBOT_ACTION,
+	DOOR_OPEN,
+	DOOR_CLOSE,
+	CHUCK_OPEN,
+	CHUCK_CLOSE,
+	CYCLE_START,
+	DONE,
+	ERROR
+);
+END_TYPE

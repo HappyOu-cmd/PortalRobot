@@ -1,0 +1,6 @@
+TYPE ST_DETAIL :
+STRUCT
+	eDetailType : E_DETAIL_TYPE;
+	xInPosition : BOOL;
+END_STRUCT
+END_TYPE

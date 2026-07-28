@@ -1,0 +1,7 @@
+TYPE ST_MAGAZINE_COMMAND :
+STRUCT
+	xExecute 	: BOOL;
+	xReset   	: BOOL;
+	xGlobalError : BOOL;
+END_STRUCT
+END_TYPE

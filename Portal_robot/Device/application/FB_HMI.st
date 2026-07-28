@@ -1,0 +1,18 @@
+FUNCTION_BLOCK FB_HMI
+VAR_INPUT
+END_VAR
+VAR_OUTPUT
+END_VAR
+VAR
+END_VAR
+VAR_IN_OUT
+	GroupData: ST_AXIS_GROUP;
+	HMI: ST_HMI;
+END_VAR
+
+// --- BEGIN IMPLEMENTATION ---
+
+HMI.ActualX := LREAL_TO_INT(GroupData.Status.ActualX);
+HMI.ActualY := LREAL_TO_INT(GroupData.Status.ActualY);
+HMI.ActualZ := LREAL_TO_INT(GroupData.Status.ActualZ);
+

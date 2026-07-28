@@ -1,0 +1,9 @@
+TYPE ST_MOTION_MANAGER_STATUS :
+STRUCT
+	xReady : BOOL;
+	xBusy  : BOOL;
+	xDone  : BOOL;
+	xError : BOOL;
+	eCurrentPoint : E_POINT_NAME;
+END_STRUCT
+END_TYPE

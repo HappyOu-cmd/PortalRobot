@@ -1,0 +1,17 @@
+METHOD FIND_BLANK : SINT
+VAR_INPUT
+	stDetail : ARRAY [1..GVL_CELL_SETTINGS.NumberDetail] OF ST_DETAIL;
+END_VAR
+VAR
+	i: SINT;
+END_VAR
+
+// --- BEGIN IMPLEMENTATION ---
+
+FOR i:= 1 TO GVL_CELL_SETTINGS.NumberDetail DO
+	IF stDetail[i].xInPosition = TRUE AND stDetail[i].eDetailType =  E_DETAIL_TYPE.BLANK THEN
+		FIND_FREE_SLOT := i;
+		EXIT;	
+	END_IF
+END_FOR
+i := 0;
