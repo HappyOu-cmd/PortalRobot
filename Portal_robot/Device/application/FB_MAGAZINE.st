@@ -353,10 +353,10 @@ CASE Diag.eState OF
 				E_MAGAZINE_OPERATION.TAKE:
 					CASE uiStep OF
 						0:
-							IF stRobotStatus.xRotatedToBlank THEN
+							IF stRobotStatus.xRotatedToDetail THEN
 								Diag.eState := E_MAGAZINE_STATE.NEXT;
 							ELSE
-								stActiveRobotCommand.eAction := E_ROBOT_ACTION.ROTATE_TO_BLANK;
+								stActiveRobotCommand.eAction := E_ROBOT_ACTION.ROTATE_TO_DETAIL;
 							END_IF;
 						1:
 							stPoint[E_POINT_NAME.MAGAZINE_TAKE_DETAIL] := stTakePoint;
@@ -380,10 +380,10 @@ CASE Diag.eState OF
 				E_MAGAZINE_OPERATION.PUT:
 					CASE uiStep OF
 						0:
-							IF stRobotStatus.xRotatedToDetail THEN
+							IF stRobotStatus.xRotatedToBlank THEN
 								Diag.eState := E_MAGAZINE_STATE.NEXT;
 							ELSE
-								stActiveRobotCommand.eAction := E_ROBOT_ACTION.ROTATE_TO_DETAIL;
+								stActiveRobotCommand.eAction := E_ROBOT_ACTION.ROTATE_TO_BLANK;
 							END_IF;
 						1:
 							stPoint[E_POINT_NAME.MAGAZINE_PUT_DETAIL] := stPutPoint;
@@ -407,10 +407,10 @@ CASE Diag.eState OF
 				E_MAGAZINE_OPERATION.CHANGE:
 					CASE uiStep OF
 						0:
-							IF stRobotStatus.xRotatedToDetail THEN
+							IF stRobotStatus.xRotatedToBlank THEN
 								Diag.eState := E_MAGAZINE_STATE.NEXT;
 							ELSE
-								stActiveRobotCommand.eAction := E_ROBOT_ACTION.ROTATE_TO_DETAIL;
+								stActiveRobotCommand.eAction := E_ROBOT_ACTION.ROTATE_TO_BLANK;
 							END_IF;
 						1:
 							stPoint[E_POINT_NAME.MAGAZINE_PUT_DETAIL] := stPutPoint;
@@ -428,10 +428,10 @@ CASE Diag.eState OF
 							stActiveRobotCommand.eAction := E_ROBOT_ACTION.MOVE_TO_POINT;
 							stActiveRobotCommand.eSetPoint := E_POINT_NAME.MAGAZINE_PUT_DETAIL;
 						5:
-							IF stRobotStatus.xRotatedToBlank THEN
+							IF stRobotStatus.xRotatedToDetail THEN
 								Diag.eState := E_MAGAZINE_STATE.NEXT;
 							ELSE
-								stActiveRobotCommand.eAction := E_ROBOT_ACTION.ROTATE_TO_BLANK;
+								stActiveRobotCommand.eAction := E_ROBOT_ACTION.ROTATE_TO_DETAIL;
 							END_IF;
 						6:
 							stPoint[E_POINT_NAME.MAGAZINE_TAKE_DETAIL] := stTakePoint;

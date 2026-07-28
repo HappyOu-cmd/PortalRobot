@@ -6,9 +6,9 @@
     <Single Type="{6198ad31-4b98-445c-927f-3258a0e82fe3}" Method="IArchivable">
       <Single Name="IsRoot" Type="bool">True</Single>
       <Single Name="MetaObject" Type="{81297157-7ec9-45ce-845e-84cab2b88ade}" Method="IArchivable">
-        <Single Name="Guid" Type="System.Guid">11066058-cc5f-48d8-9f3e-9314ca66aa1b</Single>
+        <Single Name="Guid" Type="System.Guid">23ee1b32-a31e-4068-a79e-e531d2af986e</Single>
         <Single Name="ParentGuid" Type="System.Guid">5bef6f4a-9ee3-4870-95e1-3c0f42454292</Single>
-        <Single Name="Name" Type="string">GVL_POINT_MANAGER</Single>
+        <Single Name="Name" Type="string">GVL_CELL_CONTROL</Single>
         <Dictionary Type="{2c41fa04-1834-41c1-816e-303c7aa2c05b}" Name="Properties">
           <Entry>
             <Key>
@@ -41,10 +41,16 @@
           <Single Name="TextDocument" Type="{f3878285-8e4f-490b-bb1b-9acbb7eb04db}" Method="IArchivable">
             <Single Name="TextBlobForSerialisation" Type="string">{attribute 'qualified_only'}
 VAR_GLOBAL
-	PointManager : ST_POINT_MANAGER; // Команды, статусы и диагностика проверки точки
+	xGlobalError : BOOL; // Глобальная ошибка ячейки
+	xReset       : BOOL; // Общий сброс ошибок ячейки
+	xManual      : BOOL; // Ручной режим управления ячейкой
+	xEnable      : BOOL; // Импульс включения оборудования ячейки
+	xDisable     : BOOL; // Импульс отключения оборудования ячейки
+	xStart       : BOOL; // Импульс запуска автоматического цикла
+	xStop        : BOOL; // Импульс остановки автоматического цикла
 END_VAR
 </Single>
-            <Single Name="LineInfoPersistence" Type="string">11066058-cc5f-48d8-9f3e-9314ca66aa1b_Decl_LineIds</Single>
+            <Single Name="LineInfoPersistence" Type="string">23ee1b32-a31e-4068-a79e-e531d2af986e_Decl_LineIds</Single>
           </Single>
         </Single>
         <Null Name="NetVarProperties" />

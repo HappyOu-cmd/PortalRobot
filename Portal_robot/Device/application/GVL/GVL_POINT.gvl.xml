@@ -22,7 +22,7 @@
                       <Single Type="System.Guid">d9b2b2cc-ea99-4c3b-aa42-1e5c49e65b84</Single>
                     </Key>
                     <Value>
-                      <Single Type="System.Guid">037b5209-ed5b-49db-ab1e-313d868f9608</Single>
+                      <Single Type="System.Guid">f11151f8-ae7b-4dab-b040-129b1900664e</Single>
                     </Value>
                   </Entry>
                 </Dictionary>
@@ -41,11 +41,11 @@
           <Single Name="TextDocument" Type="{f3878285-8e4f-490b-bb1b-9acbb7eb04db}" Method="IArchivable">
             <Single Name="TextBlobForSerialisation" Type="string">{attribute 'qualified_only'}
 VAR_GLOBAL
-	Points : ARRAY [0..iPointNumber] OF ST_POINT;
+	Points : ARRAY [0..iPointNumber] OF ST_POINT; // Глобальная таблица именованных точек
 END_VAR
 
 VAR_GLOBAL CONSTANT 
-	iPointNumber : INT := 100; 
+	iPointNumber : INT := 100; // Максимальный индекс таблицы точек
 END_VAR
 </Single>
             <Single Name="LineInfoPersistence" Type="string">4b236f90-4faa-4bb7-98a2-91000a5c901d_Decl_LineIds</Single>
@@ -55,7 +55,7 @@ END_VAR
         <Single Name="ParameterList" Type="bool">False</Single>
         <Single Name="AddAttributeSubsequent" Type="bool">False</Single>
       </Single>
-      <Single Name="ParentSVNodeGuid" Type="System.Guid">037b5209-ed5b-49db-ab1e-313d868f9608</Single>
+      <Single Name="ParentSVNodeGuid" Type="System.Guid">f11151f8-ae7b-4dab-b040-129b1900664e</Single>
       <Array Name="Path" Type="string">
         <Single Type="string">Device</Single>
         <Single Type="string">PLC Logic</Single>

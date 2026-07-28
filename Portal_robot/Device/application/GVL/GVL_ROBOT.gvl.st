@@ -1,7 +1,12 @@
 {attribute 'qualified_only'}
 VAR_GLOBAL
-	stModbusCommand       : ST_ROBOT_COMMAND; // Команда внешнему роботу
-	xModbusBusy           : BOOL; // Внешний робот выполняет команду
-	xModbusDone           : BOOL; // Внешний робот завершил команду
-	xModbusError          : BOOL; // Ошибка внешнего робота или обмена
+	Command       : ST_ROBOT_COMMAND; // Выбранная команда робота
+	ModbusCommand : ST_ROBOT_COMMAND; // Команда внешнему роботу
+	Status        : ST_ROBOT_STATUS; // Рабочие статусы робота
+	Diag          : ST_ROBOT_DIAG; // Состояние автомата робота
+	Error         : ST_ROBOT_ERRORS; // Активные и последние ошибки робота
+
+	xModbusBusy  : BOOL; // Внешний робот выполняет команду
+	xModbusDone  : BOOL; // Внешний робот завершил команду
+	xModbusError : BOOL; // Ошибка внешнего робота или обмена
 END_VAR

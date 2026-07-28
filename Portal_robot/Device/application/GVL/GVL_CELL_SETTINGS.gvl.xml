@@ -22,7 +22,7 @@
                       <Single Type="System.Guid">d9b2b2cc-ea99-4c3b-aa42-1e5c49e65b84</Single>
                     </Key>
                     <Value>
-                      <Single Type="System.Guid">037b5209-ed5b-49db-ab1e-313d868f9608</Single>
+                      <Single Type="System.Guid">f11151f8-ae7b-4dab-b040-129b1900664e</Single>
                     </Value>
                   </Entry>
                 </Dictionary>
@@ -41,23 +41,13 @@
           <Single Name="TextDocument" Type="{f3878285-8e4f-490b-bb1b-9acbb7eb04db}" Method="IArchivable">
             <Single Name="TextBlobForSerialisation" Type="string">{attribute 'qualified_only'}
 VAR_GLOBAL CONSTANT
-	// Maximum number of magazine slots used for static array bounds.
-	NumberDetail        : SINT := 70;
+	// Максимальное число слотов магазина, используемое в статических границах массивов.
+	NumberDetail : SINT := 70; // Максимальное число слотов магазина
 END_VAR
 
 VAR_GLOBAL
-	//Количество станков
-	MachineCount 		: UINT := 3;
-
-	// Magazine geometry. MAGAZINE_DETAIL is the work point of slot 1.
-	MagazineRows        : UINT := 10;
-	MagazineColumns     : UINT := 7;
-	MagazinePitchX      : LREAL := 60.0;
-	MagazinePitchY      : LREAL := 60.0;
-	MagazineSafeZ       : LREAL := 300.0;
-	
 	//Порядок команд для смены, загрузки и выгрузки станков
-	CHANGE_MACHINE 		: ARRAY [0..40] OF ST_MACHINE_RECIPE
+	CHANGE_MACHINE : ARRAY [0..40] OF ST_MACHINE_RECIPE // Рецепт смены детали в станке
 	:=[
 	   (eCommand := E_MACHINE_STATE.DOOR_OPEN),
 	   (eCommand := E_MACHINE_STATE.ROBOT_MOVE, stPoint := E_MACHINE_POINTS.INSIDE),
@@ -83,8 +73,39 @@ VAR_GLOBAL
 	   
 	   
 ];
-	LOAD_MACHINE 		: ARRAY [0..40] OF ST_MACHINE_RECIPE;
-	UNLOAD_MACHINE      : ARRAY [0..40] OF ST_MACHINE_RECIPE; 
+	LOAD_MACHINE : ARRAY [0..40] OF ST_MACHINE_RECIPE // Рецепт загрузки станка
+	:=[
+	   (eCommand := E_MACHINE_STATE.DOOR_OPEN),
+	   (eCommand := E_MACHINE_STATE.ROBOT_MOVE, stPoint := E_MACHINE_POINTS.INSIDE),
+	   (eCommand := E_MACHINE_STATE.ROBOT_ACTION, eRobotAction := E_ROBOT_ACTION.ROTATE_TO_BLANK),
+	   (eCommand := E_MACHINE_STATE.ROBOT_MOVE, stPoint := E_MACHINE_POINTS.CHUCK_APPROACH),
+	   (eCommand := E_MACHINE_STATE.ROBOT_MOVE, stPoint := E_MACHINE_POINTS.CHUCK),
+	   (eCommand := E_MACHINE_STATE.CHUCK_CLOSE),
+	   (eCommand := E_MACHINE_STATE.ROBOT_ACTION, eRobotAction := E_ROBOT_ACTION.UNCLAMP_1),
+	   (eCommand := E_MACHINE_STATE.ROBOT_MOVE, stPoint := E_MACHINE_POINTS.CHUCK_APPROACH),
+	   (eCommand := E_MACHINE_STATE.ROBOT_MOVE, stPoint := E_MACHINE_POINTS.INSIDE),
+	   (eCommand := E_MACHINE_STATE.ROBOT_MOVE, stPoint := E_MACHINE_POINTS.ABOVE, xRobotDone := TRUE),
+	   (eCommand := E_MACHINE_STATE.DOOR_CLOSE),
+	   (eCommand := E_MACHINE_STATE.CYCLE_START),
+	   (eCommand := E_MACHINE_STATE.DONE)
+	];
+
+	UNLOAD_MACHINE : ARRAY [0..40] OF ST_MACHINE_RECIPE // Рецепт выгрузки станка
+	:=[
+	   (eCommand := E_MACHINE_STATE.DOOR_OPEN),
+	   (eCommand := E_MACHINE_STATE.ROBOT_MOVE, stPoint := E_MACHINE_POINTS.INSIDE),
+	   (eCommand := E_MACHINE_STATE.ROBOT_ACTION, eRobotAction := E_ROBOT_ACTION.ROTATE_TO_DETAIL),
+	   (eCommand := E_MACHINE_STATE.ROBOT_ACTION, eRobotAction := E_ROBOT_ACTION.UNCLAMP_2),
+	   (eCommand := E_MACHINE_STATE.ROBOT_MOVE, stPoint := E_MACHINE_POINTS.CHUCK_APPROACH),
+	   (eCommand := E_MACHINE_STATE.ROBOT_MOVE, stPoint := E_MACHINE_POINTS.CHUCK),
+	   (eCommand := E_MACHINE_STATE.ROBOT_ACTION, eRobotAction := E_ROBOT_ACTION.CLAMP_2),
+	   (eCommand := E_MACHINE_STATE.CHUCK_OPEN),
+	   (eCommand := E_MACHINE_STATE.ROBOT_MOVE, stPoint := E_MACHINE_POINTS.CHUCK_APPROACH),
+	   (eCommand := E_MACHINE_STATE.ROBOT_MOVE, stPoint := E_MACHINE_POINTS.INSIDE),
+	   (eCommand := E_MACHINE_STATE.ROBOT_MOVE, stPoint := E_MACHINE_POINTS.ABOVE, xRobotDone := TRUE),
+	   (eCommand := E_MACHINE_STATE.DOOR_CLOSE),
+	   (eCommand := E_MACHINE_STATE.DONE)
+	];
 END_VAR
 </Single>
             <Single Name="LineInfoPersistence" Type="string">ac2f5e78-5663-44cb-ab39-af42bb64ee6c_Decl_LineIds</Single>
@@ -94,7 +115,7 @@ END_VAR
         <Single Name="ParameterList" Type="bool">False</Single>
         <Single Name="AddAttributeSubsequent" Type="bool">False</Single>
       </Single>
-      <Single Name="ParentSVNodeGuid" Type="System.Guid">037b5209-ed5b-49db-ab1e-313d868f9608</Single>
+      <Single Name="ParentSVNodeGuid" Type="System.Guid">f11151f8-ae7b-4dab-b040-129b1900664e</Single>
       <Array Name="Path" Type="string">
         <Single Type="string">Device</Single>
         <Single Type="string">PLC Logic</Single>
