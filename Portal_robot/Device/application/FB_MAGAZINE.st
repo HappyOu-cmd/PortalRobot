@@ -9,6 +9,8 @@ VAR_INPUT
 	xMode             : BOOL; // Режим робота: TRUE — Modbus, FALSE — SoftMotion
 	xHmiEnable        : BOOL; // Импульс включения магазина с HMI
 	xHmiDisable       : BOOL; // Импульс отключения магазина с HMI
+	xHmiFillBlanks    : BOOL; // Заполнить матрицу заготовками с резервом обменного слота
+	xHmiClear         : BOOL; // Полностью очистить содержимое магазина
 	uiRows            : UINT; // Число строк матрицы магазина
 	uiColumns         : UINT; // Число столбцов матрицы магазина
 	lrPitchX          : LREAL; // Шаг между слотами по оси X
@@ -32,6 +34,8 @@ VAR
 	rtExecute          : R_TRIG; // Фронт команды запуска
 	rtEnable           : R_TRIG; // Фронт команды включения
 	rtDisable          : R_TRIG; // Фронт команды отключения
+	rtFillBlanks       : R_TRIG; // Фронт заполнения магазина заготовками
+	rtClear            : R_TRIG; // Фронт очистки магазина
 
 	xExecuteRequest    : BOOL; // Активный запрос выполнения операции
 	xResetRequest      : BOOL; // Активный запрос сброса
@@ -39,6 +43,7 @@ VAR
 	xManualCommand     : BOOL; // Команда получена из ручного интерфейса
 
 	iActiveSlotCount   : SINT; // Число активных слотов выбранной матрицы
+	iInventoryIndex    : SINT; // Индекс изменения содержимого магазина
 	iTakeSlot          : SINT; // Слот выбранной заготовки
 	iPutSlot           : SINT; // Выбранный свободный слот
 	uiStep             : UINT; // Шаг последовательности робота
@@ -49,6 +54,7 @@ VAR
 	stTakePoint          : ST_POINT; // Рассчитанная рабочая точка взятия
 	stPutPoint           : ST_POINT; // Рассчитанная рабочая точка укладки
 	stActiveRobotCommand : ST_ROBOT_COMMAND; // Команда роботу текущего шага
+	xFinishedCondition   : BOOL; // Текущее содержимое не позволяет продолжить цикл
 END_VAR
 VAR CONSTANT
 	ERR_WRONG_OPERATION : DWORD := DWORD#16#0000_0001; // Недопустимая операция магазина
@@ -63,6 +69,9 @@ END_VAR
 
 // --- BEGIN IMPLEMENTATION ---
 
+rtFillBlanks(CLK := xHmiFillBlanks);
+rtClear(CLK := xHmiClear);
+
 // Активный размер матрицы может быть меньше полного массива деталей.
 IF (uiRows > 0)
 AND (uiColumns > 0)
@@ -70,6 +79,27 @@ AND ((uiRows * uiColumns) <= SINT_TO_UINT(GVL_CELL_SETTINGS.NumberDetail)) THEN
 	iActiveSlotCount := UINT_TO_SINT(uiRows * uiColumns);
 ELSE
 	iActiveSlotCount := 0;
+END_IF;
+
+// Содержимое магазина изменяется только в отключенном состоянии.
+IF Diag.eState = E_MAGAZINE_STATE.DISABLED THEN
+	IF rtClear.Q THEN
+		FOR iInventoryIndex := 1 TO GVL_CELL_SETTINGS.NumberDetail DO
+			stDetail[iInventoryIndex].xInPosition := FALSE;
+			stDetail[iInventoryIndex].eDetailType := E_DETAIL_TYPE.NONE;
+		END_FOR;
+	ELSIF rtFillBlanks.Q
+	AND (iActiveSlotCount > 0) THEN
+		FOR iInventoryIndex := 1 TO GVL_CELL_SETTINGS.NumberDetail DO
+			IF iInventoryIndex < iActiveSlotCount THEN
+				stDetail[iInventoryIndex].xInPosition := TRUE;
+				stDetail[iInventoryIndex].eDetailType := E_DETAIL_TYPE.BLANK;
+			ELSE
+				stDetail[iInventoryIndex].xInPosition := FALSE;
+				stDetail[iInventoryIndex].eDetailType := E_DETAIL_TYPE.NONE;
+			END_IF;
+		END_FOR;
+	END_IF;
 END_IF;
 
 IF iActiveSlotCount > 0 THEN
@@ -88,6 +118,32 @@ END_IF;
 
 Status.xOutBlank := Status.iCurrentBlank = 0;
 Status.xOutFreeSlot := Status.iCurrentFreeSlot = 0;
+Status.xCanTake := NOT Status.xOutBlank;
+Status.xCanPut := NOT Status.xOutFreeSlot;
+Status.xCanChange := Status.xCanTake AND Status.xCanPut;
+Status.xCanEnable := FALSE;
+
+IF stRobotStatus.xBlankAvailable
+AND NOT stRobotStatus.xDetailAvailable THEN
+	Status.xCanEnable := Status.xCanPut;
+ELSIF stRobotStatus.xDetailAvailable
+AND NOT stRobotStatus.xBlankAvailable THEN
+	Status.xCanEnable := Status.xCanPut;
+ELSIF NOT stRobotStatus.xBlankAvailable
+AND NOT stRobotStatus.xDetailAvailable THEN
+	Status.xCanEnable := Status.xCanTake;
+END_IF;
+
+xFinishedCondition :=
+	(NOT stRobotStatus.xBlankAvailable
+		AND NOT stRobotStatus.xDetailAvailable
+		AND NOT Status.xCanTake)
+	OR (stRobotStatus.xBlankAvailable
+		AND NOT stRobotStatus.xDetailAvailable
+		AND NOT Status.xCanPut)
+	OR (NOT stRobotStatus.xBlankAvailable
+		AND stRobotStatus.xDetailAvailable
+		AND NOT Status.xCanPut);
 
 // Автоматический выбор доступной операции.
 eGrantedOperation := E_MAGAZINE_OPERATION.NONE;
@@ -130,13 +186,8 @@ END_IF;
 
 xResetRequest := xReset;
 
-IF xManual THEN
-	rtEnable(CLK := xHmiEnable);
-	rtDisable(CLK := xHmiDisable);
-ELSE
-	rtEnable(CLK := stMagazineCommand.xEnable);
-	rtDisable(CLK := stMagazineCommand.xDisable);
-END_IF;
+rtEnable(CLK := xHmiEnable OR (NOT xManual AND stMagazineCommand.xEnable));
+rtDisable(CLK := xHmiDisable OR (NOT xManual AND stMagazineCommand.xDisable));
 
 rtExecute(CLK := xExecuteRequest);
 
@@ -159,7 +210,9 @@ END_IF;
 
 CASE Diag.eState OF
 	E_MAGAZINE_STATE.DISABLED:
-		IF rtEnable.Q AND NOT xGlobalError THEN
+		IF rtEnable.Q
+		AND Status.xCanEnable
+		AND NOT xGlobalError THEN
 			Diag.eState := E_MAGAZINE_STATE.IDLE;
 		END_IF;
 
@@ -167,7 +220,9 @@ CASE Diag.eState OF
 		uiStep := 0;
 		eActualOperation := E_MAGAZINE_OPERATION.NONE;
 
-		IF rtDisable.Q THEN
+		IF xFinishedCondition THEN
+			Diag.eState := E_MAGAZINE_STATE.DISABLED;
+		ELSIF rtDisable.Q THEN
 			Diag.eState := E_MAGAZINE_STATE.DISABLED;
 		ELSIF xGlobalError THEN
 			Error.dwErrorActive := Error.dwErrorActive OR ERR_GLOBAL_STOP;
@@ -297,7 +352,12 @@ CASE Diag.eState OF
 			CASE eActualOperation OF
 				E_MAGAZINE_OPERATION.TAKE:
 					CASE uiStep OF
-						0: stActiveRobotCommand.eAction := E_ROBOT_ACTION.ROTATE_TO_BLANK;
+						0:
+							IF stRobotStatus.xRotatedToBlank THEN
+								Diag.eState := E_MAGAZINE_STATE.NEXT;
+							ELSE
+								stActiveRobotCommand.eAction := E_ROBOT_ACTION.ROTATE_TO_BLANK;
+							END_IF;
 						1:
 							stPoint[E_POINT_NAME.MAGAZINE_TAKE_DETAIL] := stTakePoint;
 							stPoint[E_POINT_NAME.MAGAZINE_TAKE_DETAIL].Z := lrSafeZ;
@@ -319,7 +379,12 @@ CASE Diag.eState OF
 
 				E_MAGAZINE_OPERATION.PUT:
 					CASE uiStep OF
-						0: stActiveRobotCommand.eAction := E_ROBOT_ACTION.ROTATE_TO_DETAIL;
+						0:
+							IF stRobotStatus.xRotatedToDetail THEN
+								Diag.eState := E_MAGAZINE_STATE.NEXT;
+							ELSE
+								stActiveRobotCommand.eAction := E_ROBOT_ACTION.ROTATE_TO_DETAIL;
+							END_IF;
 						1:
 							stPoint[E_POINT_NAME.MAGAZINE_PUT_DETAIL] := stPutPoint;
 							stPoint[E_POINT_NAME.MAGAZINE_PUT_DETAIL].Z := lrSafeZ;
@@ -341,7 +406,12 @@ CASE Diag.eState OF
 
 				E_MAGAZINE_OPERATION.CHANGE:
 					CASE uiStep OF
-						0: stActiveRobotCommand.eAction := E_ROBOT_ACTION.ROTATE_TO_DETAIL;
+						0:
+							IF stRobotStatus.xRotatedToDetail THEN
+								Diag.eState := E_MAGAZINE_STATE.NEXT;
+							ELSE
+								stActiveRobotCommand.eAction := E_ROBOT_ACTION.ROTATE_TO_DETAIL;
+							END_IF;
 						1:
 							stPoint[E_POINT_NAME.MAGAZINE_PUT_DETAIL] := stPutPoint;
 							stPoint[E_POINT_NAME.MAGAZINE_PUT_DETAIL].Z := lrSafeZ;
@@ -357,7 +427,12 @@ CASE Diag.eState OF
 							stPoint[E_POINT_NAME.MAGAZINE_PUT_DETAIL].Z := lrSafeZ;
 							stActiveRobotCommand.eAction := E_ROBOT_ACTION.MOVE_TO_POINT;
 							stActiveRobotCommand.eSetPoint := E_POINT_NAME.MAGAZINE_PUT_DETAIL;
-						5: stActiveRobotCommand.eAction := E_ROBOT_ACTION.ROTATE_TO_BLANK;
+						5:
+							IF stRobotStatus.xRotatedToBlank THEN
+								Diag.eState := E_MAGAZINE_STATE.NEXT;
+							ELSE
+								stActiveRobotCommand.eAction := E_ROBOT_ACTION.ROTATE_TO_BLANK;
+							END_IF;
 						6:
 							stPoint[E_POINT_NAME.MAGAZINE_TAKE_DETAIL] := stTakePoint;
 							stPoint[E_POINT_NAME.MAGAZINE_TAKE_DETAIL].Z := lrSafeZ;
@@ -477,11 +552,7 @@ Status.eGrantedOperation := eGrantedOperation;
 Status.eActualOperation := eActualOperation;
 Status.iSelectedBlank := iTakeSlot;
 Status.iSelectedFreeSlot := iPutSlot;
-Status.xFinished := Status.xOutBlank
-	AND Status.xOutFreeSlot
-	AND NOT stRobotStatus.xBlankAvailable
-	AND NOT stRobotStatus.xDetailAvailable
-	AND NOT Status.xBusy;
+Status.xFinished := xFinishedCondition AND NOT Status.xBusy;
 
 IF Error.dwErrorActive <> DWORD#0 THEN
 	Error.dwErrorLast := Error.dwErrorActive;

@@ -21,6 +21,8 @@ VAR
 
     tonAction      : TON; // Таймер выполнения действия
     xActionFault   : BOOL; // Неисправность, относящаяся к текущему действию
+	xActionValid   : BOOL; // Получено допустимое действие захвата
+	xActionRequired: BOOL; // Для действия требуется физическое переключение
     tActionTime    : TIME; // Нормативное время текущего действия
     xInitialized   : BOOL; // Начальные состояния установлены
 END_VAR
@@ -38,8 +40,8 @@ IF NOT xInitialized THEN
     Status.xGripper1Open := TRUE;
     Status.xGripper1Closed := FALSE;
 
-    Status.xGripper2Open := FALSE;
-    Status.xGripper2Closed := TRUE;
+    Status.xGripper2Open := TRUE;
+    Status.xGripper2Closed := FALSE;
 
     Status.xRotatedToBlank := TRUE;
     Status.xRotatedToDetail := FALSE;
@@ -87,22 +89,42 @@ CASE eState OF
 
         IF Command.xExecute THEN
             eActiveAction := Command.eAction;
+			xActionValid := TRUE;
+			xActionRequired := TRUE;
 
             CASE Command.eAction OF
 
-                E_ROBOT_ACTION.UNCLAMP_1,
-                E_ROBOT_ACTION.CLAMP_1,
-                E_ROBOT_ACTION.UNCLAMP_2,
-                E_ROBOT_ACTION.CLAMP_2,
-                E_ROBOT_ACTION.ROTATE_TO_BLANK,
-                E_ROBOT_ACTION.ROTATE_TO_DETAIL:
+				E_ROBOT_ACTION.UNCLAMP_1:
+					xActionRequired := NOT Status.xGripper1Open;
 
-                    eState := E_GRIPPER_STATE.EXECUTE;
+				E_ROBOT_ACTION.CLAMP_1:
+					xActionRequired := NOT Status.xGripper1Closed;
+
+				E_ROBOT_ACTION.UNCLAMP_2:
+					xActionRequired := NOT Status.xGripper2Open;
+
+				E_ROBOT_ACTION.CLAMP_2:
+					xActionRequired := NOT Status.xGripper2Closed;
+
+				E_ROBOT_ACTION.ROTATE_TO_BLANK:
+					xActionRequired := NOT Status.xRotatedToBlank;
+
+				E_ROBOT_ACTION.ROTATE_TO_DETAIL:
+					xActionRequired := NOT Status.xRotatedToDetail;
 
             ELSE
+				xActionValid := FALSE;
                 Error.dwErrorActive := Error.dwErrorActive OR ERR_GRIP_ACTION;
                 eState := E_GRIPPER_STATE.ERROR;
             END_CASE;
+
+			IF xActionValid THEN
+				IF xActionRequired THEN
+					eState := E_GRIPPER_STATE.EXECUTE;
+				ELSE
+					eState := E_GRIPPER_STATE.DONE;
+				END_IF;
+			END_IF;
         END_IF;
 
 

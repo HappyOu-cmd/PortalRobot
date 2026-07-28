@@ -1,6 +1,5 @@
 {attribute 'qualified_only'}
 VAR_GLOBAL
-	stMagazineAutoCommand : ST_MAGAZINE_COMMAND; // Автоматическая команда магазину
 	stModbusCommand       : ST_ROBOT_COMMAND; // Команда внешнему роботу
 	xModbusBusy           : BOOL; // Внешний робот выполняет команду
 	xModbusDone           : BOOL; // Внешний робот завершил команду

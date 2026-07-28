@@ -8,6 +8,8 @@ VAR_INPUT
     xHmiSetPartEmpty  : BOOL; // Ручное подтверждение пустого патрона
 	xHmiEnable        : BOOL; // Импульс включения станка в работу
 	xHmiDisable       : BOOL; // Импульс отключения станка от работы
+	xUseHmiCycleTime  : BOOL; // TRUE: использовать время цикла, заданное с HMI
+	tHmiCycleTime     : TIME; // Начальная или постоянная оценка времени цикла
 	stChangeRecipe    : ARRAY [0..40] OF ST_MACHINE_RECIPE; // Рецепт смены детали
 	stLoadRecipe      : ARRAY [0..40] OF ST_MACHINE_RECIPE; // Рецепт загрузки заготовки
 	stUnloadRecipe    : ARRAY [0..40] OF ST_MACHINE_RECIPE; // Рецепт выгрузки детали
@@ -30,14 +32,24 @@ VAR
 	rtEnabledMachine        : R_TRIG; // Фронт команды включения
 	rtDisabledMachine       : R_TRIG; // Фронт команды отключения
 	rtCycleDone             : R_TRIG; // Фронт завершения цикла станка
+	rtCycleStarted          : R_TRIG; // Фронт фактического запуска обработки
+	ftCycleStopped          : F_TRIG; // Спад фактического цикла обработки
     rtSetPartLoaded         : R_TRIG; // Фронт ручного подтверждения детали
     rtSetPartEmpty          : R_TRIG; // Фронт ручного подтверждения пустого патрона
+	tonCycleMeasure         : TON; // Измерение длительности автоматического цикла
+	xAutoCycleCommanded     : BOOL; // Цикл был запущен этим блоком
+	xCycleMeasureActive     : BOOL; // Измеряется текущий автоматический цикл
+	xCycleMeasureValid      : BOOL; // Текущее измерение можно сохранить
+	xMeasuredTimeValid      : BOOL; // Получено корректное измеренное время
+	tMeasuredCycle          : TIME; // Последнее корректное измеренное время
+	tExpectedCycle          : TIME; // Ожидаемое время текущего цикла
 	xRetreatStarted         : BOOL; // Начат отход робота от станка
 	xRobotInsideMachine     : BOOL; // Робот находится внутри рабочей зоны
 	xRobotDone              : BOOL; // Робот освобождён алгоритмом станка
 	xServiceDoorCloseDemand : BOOL; // Внутренний запрос закрытия двери
 	xServiceDoorOpenDemand  : BOOL; // Внутренний запрос открытия двери
 	xAutoDoorOpenLatched    : BOOL; // Защёлка автоматического открытия двери
+	xRobotActionDone        : BOOL; // Запрошенное действие захвата уже выполнено
 	eGrantedOperation       : E_MACHINE_OPERATION; // Разрешённая операция обслуживания
 	eActualOperation        : E_MACHINE_OPERATION; // Выполняемая операция обслуживания
 	stRecipe                : ARRAY [0..40] OF ST_MACHINE_RECIPE; // Активный рецепт операции
@@ -96,8 +108,50 @@ END_VAR
 rtEnabledMachine (CLK :=xHmiEnable);
 rtDisabledMachine (CLK :=xHmiDisable);
 rtCycleDone(CLK := stMachineStatus.xCycleDone);
+rtCycleStarted(CLK := stMachineStatus.xCycleActive);
+ftCycleStopped(CLK := stMachineStatus.xCycleActive);
 rtSetPartLoaded(CLK := xHmiSetPartLoaded);
 rtSetPartEmpty(CLK := xHmiSetPartEmpty);
+
+// Измеряются только циклы, запущенные автоматикой этого блока.
+IF rtCycleStarted.Q THEN
+	xCycleMeasureActive := xAutoCycleCommanded;
+	xCycleMeasureValid := xAutoCycleCommanded;
+END_IF;
+
+IF xCycleMeasureActive
+AND (stMachineStatus.xAlarm
+	OR xGlobalError
+	OR (eState = E_MACHINE_STATE.ERROR)
+	OR (eState = E_MACHINE_STATE.DISABLED)) THEN
+	xCycleMeasureValid := FALSE;
+END_IF;
+
+IF ftCycleStopped.Q THEN
+	IF xCycleMeasureActive
+	AND xCycleMeasureValid
+	AND (tonCycleMeasure.ET > T#0S) THEN
+		tMeasuredCycle := tonCycleMeasure.ET;
+		xMeasuredTimeValid := TRUE;
+	END_IF;
+	xCycleMeasureActive := FALSE;
+	xCycleMeasureValid := FALSE;
+	xAutoCycleCommanded := FALSE;
+END_IF;
+
+tonCycleMeasure(
+	IN := stMachineStatus.xCycleActive AND xCycleMeasureActive,
+	PT := T#24H
+);
+
+// В автоматическом режиме до первого измерения используется время с HMI.
+IF xUseHmiCycleTime THEN
+	tExpectedCycle := tHmiCycleTime;
+ELSIF xMeasuredTimeValid THEN
+	tExpectedCycle := tMeasuredCycle;
+ELSE
+	tExpectedCycle := tHmiCycleTime;
+END_IF;
 
 // Команды по умолчанию
 Command.stIo.xOpenDoor := FALSE;
@@ -147,6 +201,8 @@ IF stMachineStatus.xDoorOpen THEN
     xAutoDoorOpenLatched := FALSE;
 END_IF;
 
+eGrantedOperation := E_MACHINE_OPERATION.NONE;
+
 IF (ePartState = E_PART_STATE.EMPTY)
 AND stRobotStatus.xBlankAvailable THEN
     eGrantedOperation := E_MACHINE_OPERATION.LOAD;
@@ -162,7 +218,8 @@ ELSIF (ePartState = E_PART_STATE.UNKNOWN) THEN
 END_IF;
 
 // Включение и отключение блока
-IF rtDisabledMachine.Q AND (eState = E_MACHINE_STATE.IDLE) THEN
+IF (rtDisabledMachine.Q OR xHmiDisable)
+AND (eState = E_MACHINE_STATE.IDLE) THEN
     eState := E_MACHINE_STATE.DISABLED;
 ELSIF rtEnabledMachine.Q AND eState = E_MACHINE_STATE.DISABLED AND NOT stMachineStatus.xAlarm THEN
     eState := E_MACHINE_STATE.IDLE;
@@ -201,7 +258,9 @@ END_IF
 
 CASE eState OF
 	E_MACHINE_STATE.DISABLED:
-	;
+		IF NOT stMachineStatus.xCycleActive THEN
+			xAutoCycleCommanded := FALSE;
+		END_IF;
 	E_MACHINE_STATE.IDLE:
 		uiIndex := 0;
 		xRobotDone := FALSE;
@@ -306,19 +365,43 @@ CASE eState OF
     	END_IF;
 	
 	E_MACHINE_STATE.ROBOT_ACTION:
-		Command.stRobot.xExecute  := TRUE;
-		Command.stRobot.eAction   := stRecipe[uiIndex].eRobotAction;
+		xRobotActionDone := FALSE;
+
+		CASE stRecipe[uiIndex].eRobotAction OF
+			E_ROBOT_ACTION.UNCLAMP_1:
+				xRobotActionDone := stRobotStatus.xGripper1Open;
+			E_ROBOT_ACTION.CLAMP_1:
+				xRobotActionDone := stRobotStatus.xGripper1Closed;
+			E_ROBOT_ACTION.UNCLAMP_2:
+				xRobotActionDone := stRobotStatus.xGripper2Open;
+			E_ROBOT_ACTION.CLAMP_2:
+				xRobotActionDone := stRobotStatus.xGripper2Closed;
+			E_ROBOT_ACTION.ROTATE_TO_BLANK:
+				xRobotActionDone := stRobotStatus.xRotatedToBlank;
+			E_ROBOT_ACTION.ROTATE_TO_DETAIL:
+				xRobotActionDone := stRobotStatus.xRotatedToDetail;
+		END_CASE;
+
+		IF xRobotActionDone THEN
+			eState := E_MACHINE_STATE.NEXT;
+		ELSE
+			Command.stRobot.xExecute := TRUE;
+			Command.stRobot.eAction := stRecipe[uiIndex].eRobotAction;
+		END_IF;
 		
-		IF stMachineStatus.xAlarm THEN
+		IF (eState = E_MACHINE_STATE.ROBOT_ACTION)
+		AND stMachineStatus.xAlarm THEN
 			Command.stRobot.xStop := TRUE;
 			Error.dwErrorActive := Error.dwErrorActive OR ERR_MACHINE_ALARM;
 			eState := E_MACHINE_STATE.ERROR ;
 	
-		ELSIF stRobotStatus.xError THEN
+		ELSIF (eState = E_MACHINE_STATE.ROBOT_ACTION)
+		AND stRobotStatus.xError THEN
 			Error.dwErrorActive := Error.dwErrorActive OR ERR_ROBOT_ACTION;
 			eState := E_MACHINE_STATE.ERROR ;
 			
-		ELSIF stRobotStatus.xDone THEN   
+		ELSIF (eState = E_MACHINE_STATE.ROBOT_ACTION)
+		AND stRobotStatus.xDone THEN
         	eState := E_MACHINE_STATE.RELEASE_ROBOT_ACTION;
     	END_IF;
 		
@@ -393,6 +476,7 @@ CASE eState OF
 		IF stMachineStatus.xChuckClamped
     	AND stMachineStatus.xDoorClosed THEN
 		Command.stIo.xStartCycle := TRUE;
+		xAutoCycleCommanded := TRUE;
 		END_IF;
 		
         IF stMachineStatus.xCycleActive AND NOT stMachineStatus.xAlarm THEN
@@ -400,7 +484,7 @@ CASE eState OF
             eState := E_MACHINE_STATE.NEXT;
 		ELSIF stMachineStatus.xAlarm THEN
 			Command.stIo.xStartCycle := FALSE;
-			Error.dwErrorActive := Error.dwErrorActive OR ERR_CHUCK_CLOSE;
+			Error.dwErrorActive := Error.dwErrorActive OR ERR_CYCLE_START;
 			eState := E_MACHINE_STATE.ERROR;
         END_IF;
 	
@@ -423,6 +507,9 @@ CASE eState OF
 		uiIndex := 0;
 		eActualOperation := E_MACHINE_OPERATION.NONE;
 		eGrantedOperation := E_MACHINE_OPERATION.NONE;
+		IF NOT stMachineStatus.xCycleActive THEN
+			xAutoCycleCommanded := FALSE;
+		END_IF;
 
     	IF (xReset OR xResetGlobal)
     	AND NOT xGlobalError
@@ -450,14 +537,12 @@ AND NOT xGlobalError THEN
 END_IF;
 
 Status.xCanAcceptService := (eState = E_MACHINE_STATE.IDLE)
-			AND (stRobotStatus.eCurrentPoint = stPoints.eAbove)
 			AND ePartState <> E_PART_STATE.UNKNOWN
 			AND NOT stMachineStatus.xAlarm
 			AND NOT stMachineStatus.xCycleActive
-    		AND NOT stRobotStatus.xBusy 
-			AND NOT stRobotStatus.xError
 			AND NOT xGlobalError;
 
+Status.xEnabled := eState <> E_MACHINE_STATE.DISABLED;
 Status.xProcessing := stMachineStatus.xCycleActive;
 Status.xPartReady := stMachineStatus.xCycleDone;
 Status.xServiceRequired := (eGrantedOperation <> E_MACHINE_OPERATION.NONE)
@@ -477,6 +562,22 @@ Status.xAlarm := stMachineStatus.xAlarm;
 Status.eRecommendedOperation := eGrantedOperation;
 Status.ePartState := ePartState;
 Status.eAbovePoint := stPoints.eAbove;
+Status.tCycleExpected := tExpectedCycle;
+Status.tCycleElapsed := tonCycleMeasure.ET;
+Status.tMeasuredCycle := tMeasuredCycle;
+Status.xCycleTimeValid := tExpectedCycle > T#0S;
+Status.xMeasuredTimeValid := xMeasuredTimeValid;
+Status.xCycleOvertime := FALSE;
+Status.tRemaining := T#0S;
+
+IF stMachineStatus.xCycleActive
+AND Status.xCycleTimeValid THEN
+	IF Status.tCycleElapsed < Status.tCycleExpected THEN
+		Status.tRemaining := Status.tCycleExpected - Status.tCycleElapsed;
+	ELSE
+		Status.xCycleOvertime := TRUE;
+	END_IF;
+END_IF;
 
 Diag.eState := eState;
 Diag.eGrantedOperation := eGrantedOperation;

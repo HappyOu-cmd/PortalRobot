@@ -5,6 +5,7 @@ VAR_INPUT
 	stMachine_2_Command : ST_ROBOT_COMMAND; // Команда роботу от второго станка
 	stMachine_3_Command : ST_ROBOT_COMMAND; // Команда роботу от третьего станка
 	stMagazineCommand   : ST_ROBOT_COMMAND; // Команда роботу от магазина
+	stCellCommand       : ST_ROBOT_COMMAND; // Команда позиционирования от менеджера ячейки
 	stHmiCommand        : ST_ROBOT_COMMAND; // Ручная команда роботу с HMI
 	xReset              : BOOL; // Сброс ошибок робота
     xMode               : BOOL; // Режим робота: TRUE — Modbus, FALSE — SoftMotion
@@ -80,7 +81,9 @@ ModbusCommand.iPutSlot := 0;
 
 //Определяем какой режим работы активен
 IF NOT xManual THEN
-	IF stMachine_1_Command.xExecute THEN
+	IF stCellCommand.xExecute OR stCellCommand.xStop THEN
+		Command := stCellCommand;
+	ELSIF stMachine_1_Command.xExecute THEN
 		Command := stMachine_1_Command;
 	ELSIF stMachine_2_Command.xExecute THEN
 		Command := stMachine_2_Command;

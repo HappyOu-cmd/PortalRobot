@@ -1,5 +1,6 @@
 TYPE ST_MACHINE_PUBLIC :
 STRUCT
+	xEnabled             : BOOL; // Станок включен в работу
 	xProcessing          : BOOL; // Станок выполняет цикл обработки
     xPartReady           : BOOL; // Обработка детали завершена
     xServiceRequired     : BOOL; // Станку требуется обслуживание роботом
@@ -17,6 +18,12 @@ STRUCT
     ePartState           : E_PART_STATE; // Состояние детали в патроне
     eAbovePoint          : E_POINT_NAME; // Имя точки над станком
     lrAboveX             : LREAL; // Координата X точки над станком
-    tRemaining           : TIME; // Оставшееся время обработки
+	tCycleExpected       : TIME; // Ожидаемое время текущего цикла
+	tCycleElapsed        : TIME; // Прошедшее время текущего цикла
+	tMeasuredCycle       : TIME; // Последнее измеренное время корректного автоцикла
+	tRemaining           : TIME; // Оставшееся время обработки
+	xCycleTimeValid      : BOOL; // Доступна оценка времени цикла
+	xMeasuredTimeValid   : BOOL; // Получено измерение корректного автоцикла
+	xCycleOvertime       : BOOL; // Фактический цикл превысил ожидаемое время
 END_STRUCT
 END_TYPE
