@@ -14,33 +14,110 @@ VAR
 	MAGAZINE       : FB_MAGAZINE; // Управление магазином деталей
 	ROBOT          : FB_ROBOT; // Координация движений и захвата робота
 	CELL_MANAGER   : FB_CELL_MANAGER; // Автоматический цикл ячейки
+	uiMachine      : UINT; // Индекс станка при обработке команд HMI
+	iDetail        : SINT; // Индекс слота при передаче состояния магазина в HMI
 END_VAR
 
 // --- BEGIN IMPLEMENTATION ---
 
+// Глобальные команды ячейки поступают через единый интерфейс HMI.
+GVL_CELL_CONTROL.xEnable := GVL_HMI.xCellEnable;
+GVL_CELL_CONTROL.xDisable := GVL_HMI.xCellDisable;
+GVL_CELL_CONTROL.xStart := GVL_HMI.xCellStart;
+GVL_CELL_CONTROL.xStop := GVL_HMI.xCellStop;
+GVL_CELL_CONTROL.xReset := GVL_HMI.xCellReset;
+GVL_CELL_CONTROL.xManual := GVL_HMI.xCellManual;
+
+// =============================================================================
+// ТОЧКИ СТАНКА 1
+// =============================================================================
 //Над станком 1
-GVL_POINT.Points[E_POINT_NAME.MACHINE_1_ABOVE].X := 425;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_1_ABOVE].Y := 100;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_1_ABOVE].Z := 216;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_1_ABOVE].X := 1920;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_1_ABOVE].Y := 90;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_1_ABOVE].Z := 0;
 GVL_POINT.Points[E_POINT_NAME.MACHINE_1_ABOVE].SpeedFactor := 1.0;
 
 //В станке 1
-GVL_POINT.Points[E_POINT_NAME.MACHINE_1_INSIDE].X := 425;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_1_INSIDE].Y := 100;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_1_INSIDE].Z := 458;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_1_INSIDE].X := 1920;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_1_INSIDE].Y := 90;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_1_INSIDE].Z := 800;
 GVL_POINT.Points[E_POINT_NAME.MACHINE_1_INSIDE].SpeedFactor := 1.0;
 
 //У патрона 1
-GVL_POINT.Points[E_POINT_NAME.MACHINE_1_CHUCK_APROACH].X := 425;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_1_CHUCK_APROACH].Y := 100;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_1_CHUCK_APROACH].Z := 506;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_1_CHUCK_APROACH].X := 1920;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_1_CHUCK_APROACH].Y := 90;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_1_CHUCK_APROACH].Z := 1680;
 GVL_POINT.Points[E_POINT_NAME.MACHINE_1_CHUCK_APROACH].SpeedFactor := 1.0;
 
 //В патроне 1 
-GVL_POINT.Points[E_POINT_NAME.MACHINE_1_CHUCK_POSITION].X := 378;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_1_CHUCK_POSITION].Y := 100;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_1_CHUCK_POSITION].Z := 506;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_1_CHUCK_POSITION].X := 1700;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_1_CHUCK_POSITION].Y := 90;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_1_CHUCK_POSITION].Z := 1680;
 GVL_POINT.Points[E_POINT_NAME.MACHINE_1_CHUCK_POSITION].SpeedFactor := 1.0;
+
+// =============================================================================
+// ТОЧКИ СТАНКА 2
+// =============================================================================
+//Над станком 2
+GVL_POINT.Points[E_POINT_NAME.MACHINE_2_ABOVE].X := 6820;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_2_ABOVE].Y := 90;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_2_ABOVE].Z := 0;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_2_ABOVE].SpeedFactor := 1.0;
+
+//В станке 2
+GVL_POINT.Points[E_POINT_NAME.MACHINE_2_INSIDE].X := 6820;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_2_INSIDE].Y := 90;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_2_INSIDE].Z := 800;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_2_INSIDE].SpeedFactor := 1.0;
+
+//У патрона 2
+GVL_POINT.Points[E_POINT_NAME.MACHINE_2_CHUCK_APROACH].X := 6820;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_2_CHUCK_APROACH].Y := 90;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_2_CHUCK_APROACH].Z := 1680;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_2_CHUCK_APROACH].SpeedFactor := 1.0;
+
+//В патроне 2 
+GVL_POINT.Points[E_POINT_NAME.MACHINE_2_CHUCK_POSITION].X := 6600;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_2_CHUCK_POSITION].Y := 90;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_2_CHUCK_POSITION].Z := 1680;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_2_CHUCK_POSITION].SpeedFactor := 1.0;
+
+// =============================================================================
+// ТОЧКИ СТАНКА 3
+// =============================================================================
+//Над станком 3
+GVL_POINT.Points[E_POINT_NAME.MACHINE_3_ABOVE].X := 11720;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_3_ABOVE].Y := 90;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_3_ABOVE].Z := 0;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_3_ABOVE].SpeedFactor := 1.0;
+
+//В станке 3
+GVL_POINT.Points[E_POINT_NAME.MACHINE_3_INSIDE].X := 11720;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_3_INSIDE].Y := 90;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_3_INSIDE].Z := 800;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_3_INSIDE].SpeedFactor := 1.0;
+
+//У патрона 3
+GVL_POINT.Points[E_POINT_NAME.MACHINE_3_CHUCK_APROACH].X := 11720;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_3_CHUCK_APROACH].Y := 90;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_3_CHUCK_APROACH].Z := 1680;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_3_CHUCK_APROACH].SpeedFactor := 1.0;
+
+//В патроне 3
+GVL_POINT.Points[E_POINT_NAME.MACHINE_3_CHUCK_POSITION].X := 11500;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_3_CHUCK_POSITION].Y := 90;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_3_CHUCK_POSITION].Z := 1680;
+GVL_POINT.Points[E_POINT_NAME.MACHINE_3_CHUCK_POSITION].SpeedFactor := 1.0;
+
+// =============================================================================
+// ТОЧКИ МАГАЗИНА
+// =============================================================================
+//Базовая точка магазина
+GVL_POINT.Points[E_POINT_NAME.MAGAZINE_DETAIL].X := 3770;
+GVL_POINT.Points[E_POINT_NAME.MAGAZINE_DETAIL].Y := 200;
+GVL_POINT.Points[E_POINT_NAME.MAGAZINE_DETAIL].Z := 1570;
+GVL_POINT.Points[E_POINT_NAME.MAGAZINE_DETAIL].SpeedFactor := 1.0;
+
 
 GVL_AXIS.arrAxis[1].Command.xGlobalError := GVL_CELL_CONTROL.xGlobalError;
 GVL_AXIS.arrAxis[2].Command.xGlobalError := GVL_CELL_CONTROL.xGlobalError;
@@ -113,6 +190,15 @@ GVL_MAGAZINE.AutoCommand := GVL_CELL_MANAGER.Command.stMagazine;
 GVL_MAGAZINE.AutoCommand.xEnable := GVL_CELL_CONTROL.xEnable;
 GVL_MAGAZINE.AutoCommand.xDisable := GVL_CELL_CONTROL.xDisable;
 
+// Импульсные команды HMI изменяют сохранённое разрешение работы станка.
+FOR uiMachine := 1 TO 3 DO
+	IF GVL_HMI.axMachineDisable[uiMachine] THEN
+		GVL_HMI.axMachineUsed[uiMachine] := FALSE;
+	ELSIF GVL_HMI.axMachineEnable[uiMachine] THEN
+		GVL_HMI.axMachineUsed[uiMachine] := TRUE;
+	END_IF;
+END_FOR;
+
 
 MACHINE_1.stPoints.eAbove := E_POINT_NAME.MACHINE_1_ABOVE;
 MACHINE_1.stPoints.eChuck := E_POINT_NAME.MACHINE_1_CHUCK_POSITION;
@@ -122,11 +208,11 @@ MACHINE_1.stPoints.eNone := E_POINT_NAME.NONE;
 
 MACHINE_1( 
 	xExecute := GVL_CELL_MANAGER.Command.axMachineExecute[1],
-	xReset := GVL_CELL_CONTROL.xReset,
+	xReset := GVL_HMI.axMachineReset[1],
 	xResetGlobal := GVL_CELL_CONTROL.xReset,
 	xGlobalError := GVL_CELL_CONTROL.xGlobalError,
-	xHmiEnable := GVL_CELL_CONTROL.xEnable AND GVL_HMI.axMachineUsed[1],
-	xHmiDisable := GVL_CELL_CONTROL.xDisable OR NOT GVL_HMI.axMachineUsed[1],
+	xHmiEnable := GVL_HMI.axMachineEnable[1] AND GVL_HMI.axMachineUsed[1],
+	xHmiDisable := GVL_HMI.axMachineDisable[1],
 	xUseHmiCycleTime := GVL_HMI.xUseHmiCycleTime[1],
 	tHmiCycleTime := GVL_HMI.tMachineCycleTime[1],
 	stChangeRecipe := GVL_CELL_SETTINGS.CHANGE_MACHINE,
@@ -148,11 +234,11 @@ MACHINE_2.stPoints.eNone := E_POINT_NAME.NONE;
 
 MACHINE_2( 
 	xExecute := GVL_CELL_MANAGER.Command.axMachineExecute[2],
-	xReset := GVL_CELL_CONTROL.xReset,
+	xReset := GVL_HMI.axMachineReset[2],
 	xResetGlobal := GVL_CELL_CONTROL.xReset,
 	xGlobalError := GVL_CELL_CONTROL.xGlobalError,
-	xHmiEnable := GVL_CELL_CONTROL.xEnable AND GVL_HMI.axMachineUsed[2],
-	xHmiDisable := GVL_CELL_CONTROL.xDisable OR NOT GVL_HMI.axMachineUsed[2],
+	xHmiEnable := GVL_HMI.axMachineEnable[2] AND GVL_HMI.axMachineUsed[2],
+	xHmiDisable := GVL_HMI.axMachineDisable[2],
 	xUseHmiCycleTime := GVL_HMI.xUseHmiCycleTime[2],
 	tHmiCycleTime := GVL_HMI.tMachineCycleTime[2],
 	stChangeRecipe := GVL_CELL_SETTINGS.CHANGE_MACHINE,
@@ -174,11 +260,11 @@ MACHINE_3.stPoints.eNone := E_POINT_NAME.NONE;
 
 MACHINE_3( 
 	xExecute := GVL_CELL_MANAGER.Command.axMachineExecute[3],
-	xReset := GVL_CELL_CONTROL.xReset,
+	xReset := GVL_HMI.axMachineReset[3],
 	xResetGlobal := GVL_CELL_CONTROL.xReset,
 	xGlobalError := GVL_CELL_CONTROL.xGlobalError,
-	xHmiEnable := GVL_CELL_CONTROL.xEnable AND GVL_HMI.axMachineUsed[3],
-	xHmiDisable := GVL_CELL_CONTROL.xDisable OR NOT GVL_HMI.axMachineUsed[3],
+	xHmiEnable := GVL_HMI.axMachineEnable[3] AND GVL_HMI.axMachineUsed[3],
+	xHmiDisable := GVL_HMI.axMachineDisable[3],
 	xUseHmiCycleTime := GVL_HMI.xUseHmiCycleTime[3],
 	tHmiCycleTime := GVL_HMI.tMachineCycleTime[3],
 	stChangeRecipe := GVL_CELL_SETTINGS.CHANGE_MACHINE,
@@ -259,3 +345,33 @@ ROBOT(
 	Diag => GVL_ROBOT.Diag,
 	Error => GVL_ROBOT.Error
 );
+
+// Единый снимок состояния для внешней визуализации.
+GVL_HMI.udiPlcHeartbeat := GVL_HMI.udiPlcHeartbeat + 1;
+GVL_HMI.xGlobalError := GVL_CELL_CONTROL.xGlobalError;
+
+GVL_HMI.stCellStatus := GVL_CELL_MANAGER.Status;
+GVL_HMI.stCellDiag := GVL_CELL_MANAGER.Diag;
+GVL_HMI.stCellError := GVL_CELL_MANAGER.Error;
+
+GVL_HMI.stRobotStatus := GVL_ROBOT.Status;
+GVL_HMI.stRobotDiag := GVL_ROBOT.Diag;
+GVL_HMI.stRobotError := GVL_ROBOT.Error;
+
+GVL_HMI.stMagazineStatus := GVL_MAGAZINE.Status;
+GVL_HMI.stMagazineDiag := GVL_MAGAZINE.Diag;
+GVL_HMI.stMagazineError := GVL_MAGAZINE.Error;
+
+FOR uiMachine := 1 TO 3 DO
+	GVL_HMI.astMachineStatus[uiMachine] := GVL_MACHINE.Status[uiMachine];
+	GVL_HMI.astMachineDiag[uiMachine] := GVL_MACHINE.Diag[uiMachine];
+	GVL_HMI.astMachineError[uiMachine] := GVL_MACHINE.Error[uiMachine];
+END_FOR;
+
+GVL_HMI.astMachineIoStatus[1] := MACHINE_1_SIM.Status;
+GVL_HMI.astMachineIoStatus[2] := MACHINE_2_SIM.Status;
+GVL_HMI.astMachineIoStatus[3] := MACHINE_3_SIM.Status;
+
+FOR iDetail := 1 TO GVL_CELL_SETTINGS.NumberDetail DO
+	GVL_HMI.astMagazineSlot[iDetail] := GVL_DETAIL.arrDetail[iDetail];
+END_FOR;

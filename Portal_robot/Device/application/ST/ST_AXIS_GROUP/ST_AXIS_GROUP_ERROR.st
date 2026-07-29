@@ -10,6 +10,7 @@ STRUCT
 	STOP_ERROR            : BOOL; // Ошибка MC_GroupStop
 	READ_POSITION_ERROR   : BOOL; // Ошибка чтения позиции группы
 	READ_STATUS_ERROR     : BOOL; // Ошибка чтения статуса группы
+	READ_GROUP_ERROR      : BOOL; // Ошибка чтения кода ошибки группы
 	STEP_TIMEOUT          : BOOL; // Превышено время выполнения шага
 	INVALID_STATE         : BOOL; // Неизвестное состояние автомата
 	POWER_PERMIT_READY    : BOOL; // Нет разрешения питания в готовности

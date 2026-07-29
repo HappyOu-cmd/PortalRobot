@@ -1,0 +1,117 @@
+import type { CellLayout, CellState, MachineState, SlotType } from './types';
+
+const emptyMachine = (): MachineState => ({
+  enabled: true,
+  disablePending: false,
+  doorOpen: false,
+  doorClosed: true,
+  chuckOpen: false,
+  chuckClosed: true,
+  partPresent: false,
+  mode: 'idle',
+  currentStep: 'Ожидает загрузку',
+  serviceRequired: true,
+  canAcceptService: true,
+  recommendedOperation: 'LOAD',
+  actualOperation: 'NONE',
+  partState: 'EMPTY',
+  cycleExpectedS: 60,
+  cycleElapsedS: 0,
+  measuredCycleS: 64.2,
+  useHmiCycleTime: true,
+  cycleOvertime: false,
+  activeErrors: [],
+  lastErrors: [],
+});
+
+const initialMagazine = (): SlotType[] =>
+  Array.from({ length: 70 }, (_, index) => {
+    if (index === 69) return 'empty';
+    return index % 4 === 0 ? 'detail' : 'blank';
+  });
+
+export const DEFAULT_LAYOUT: CellLayout = {
+  coordinate: {
+    origin: { x: 0, y: 0, z: 0 },
+    direction: { x: 1, y: 1, z: 1 },
+  },
+  floor: { lengthX: 13200, widthY: 3900 },
+  machine: {
+    sizeX: 2806.7,
+    sizeY: 1670,
+    sizeZ: 1873.6,
+    doorTravel: 1120,
+    machines: [
+      { position: { x: 0, y: 1450, z: 0 } },
+      { position: { x: 4900, y: 1450, z: 0 } },
+      { position: { x: 9800, y: 1450, z: 0 } },
+    ],
+  },
+  portal: {
+    position: { x: 300, y: 1050, z: 0 },
+    lengthX: 12000,
+    widthY: 1350,
+    frameThicknessZ: 120,
+    frameDepthY: 110,
+    frameBottomZ: 2250,
+    supportSize: 180,
+    supportInsetX: 180,
+  },
+  robot: {
+    yBeamHeight: 190,
+    yBeamWidthX: 300,
+    zBaseLength: 520,
+    zColumnWidth: 120,
+  },
+  magazine: {
+    position: { x: 8500, y: 50, z: 720 },
+    sizeX: 846,
+    sizeY: 1350,
+    sizeZ: 90,
+    columnsX: 10,
+    rowsY: 7,
+    slotDiameter: 58,
+  },
+  animation: {
+    motionResponse: 7,
+    mechanismResponse: 6,
+  },
+};
+
+export const DEFAULT_STATE: CellState = {
+  robot: {
+    x: 6200,
+    y: 675,
+    z: 180,
+    gripper1Closed: true,
+    gripper2Closed: false,
+    rotatedToBlank: true,
+    rotatedToDetail: false,
+  },
+  machines: [
+    emptyMachine(),
+    {
+      ...emptyMachine(),
+      doorOpen: false,
+      doorClosed: true,
+      mode: 'processing',
+      partPresent: true,
+      partState: 'LOADED',
+      currentStep: 'Обрабатывает деталь',
+      serviceRequired: false,
+      canAcceptService: false,
+      recommendedOperation: 'UNLOAD',
+      cycleExpectedS: 60,
+      cycleElapsedS: 38,
+    },
+    {
+      ...emptyMachine(),
+      mode: 'waiting',
+      partPresent: true,
+      partState: 'LOADED',
+      currentStep: 'Готов к обслуживанию',
+      recommendedOperation: 'CHANGE',
+    },
+  ],
+  magazine: initialMagazine(),
+};

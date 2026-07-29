@@ -22,7 +22,7 @@
                       <Single Type="System.Guid">d9b2b2cc-ea99-4c3b-aa42-1e5c49e65b84</Single>
                     </Key>
                     <Value>
-                      <Single Type="System.Guid">f11151f8-ae7b-4dab-b040-129b1900664e</Single>
+                      <Single Type="System.Guid">8c9420aa-82ce-448d-a893-a5ebc77c5dad</Single>
                     </Value>
                   </Entry>
                 </Dictionary>
@@ -41,10 +41,15 @@
           <Single Name="TextDocument" Type="{f3878285-8e4f-490b-bb1b-9acbb7eb04db}" Method="IArchivable">
             <Single Name="TextBlobForSerialisation" Type="string">{attribute 'qualified_only'}
 VAR_GLOBAL
-	stModbusCommand       : ST_ROBOT_COMMAND; // Команда внешнему роботу
-	xModbusBusy           : BOOL; // Внешний робот выполняет команду
-	xModbusDone           : BOOL; // Внешний робот завершил команду
-	xModbusError          : BOOL; // Ошибка внешнего робота или обмена
+	Command       : ST_ROBOT_COMMAND; // Выбранная команда робота
+	ModbusCommand : ST_ROBOT_COMMAND; // Команда внешнему роботу
+	Status        : ST_ROBOT_STATUS; // Рабочие статусы робота
+	Diag          : ST_ROBOT_DIAG; // Состояние автомата робота
+	Error         : ST_ROBOT_ERRORS; // Активные и последние ошибки робота
+
+	xModbusBusy  : BOOL; // Внешний робот выполняет команду
+	xModbusDone  : BOOL; // Внешний робот завершил команду
+	xModbusError : BOOL; // Ошибка внешнего робота или обмена
 END_VAR
 </Single>
             <Single Name="LineInfoPersistence" Type="string">13cccee3-2363-4dcb-be28-7b67a53fd5b9_Decl_LineIds</Single>
@@ -54,7 +59,7 @@ END_VAR
         <Single Name="ParameterList" Type="bool">False</Single>
         <Single Name="AddAttributeSubsequent" Type="bool">False</Single>
       </Single>
-      <Single Name="ParentSVNodeGuid" Type="System.Guid">f11151f8-ae7b-4dab-b040-129b1900664e</Single>
+      <Single Name="ParentSVNodeGuid" Type="System.Guid">8c9420aa-82ce-448d-a893-a5ebc77c5dad</Single>
       <Array Name="Path" Type="string">
         <Single Type="string">Device</Single>
         <Single Type="string">PLC Logic</Single>

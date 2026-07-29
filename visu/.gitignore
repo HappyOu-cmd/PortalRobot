@@ -1,0 +1,9 @@
+node_modules/
+dist/
+artifacts/
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+cert.pem
+private_key.pem
+*.log

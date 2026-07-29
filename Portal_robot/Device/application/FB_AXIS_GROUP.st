@@ -33,6 +33,7 @@ VAR
 	
 	// ФБ группы осей
 	fbReadStatus   : MC_GroupReadStatus; // Чтение состояния группы
+	fbReadError    : MC_GroupReadError; // Чтение активной ошибки группы
 	fbReadPosition : MC_GroupReadActualPosition; // Чтение текущей позиции группы
 	fbGroupEnable  : MC_GroupEnable; // Включение группы
 	fbGroupDisable : MC_GroupDisable; // Отключение группы
@@ -86,6 +87,7 @@ VAR CONSTANT
 	MOTION_ERR_STOP          : DWORD := 128; // Ошибка остановки
 	MOTION_ERR_READ_POSITION : DWORD := 256; // Ошибка чтения позиции
 	MOTION_ERR_READ_STATUS   : DWORD := 512; // Ошибка чтения статуса
+	MOTION_ERR_READ_GROUP_ERROR : DWORD := 1024; // Ошибка чтения кода ошибки группы
 END_VAR
 
 // --- BEGIN IMPLEMENTATION ---
@@ -122,6 +124,11 @@ rtStopCmd(CLK := GroupData.Command.xStopCmd);
 // 3. Чтение состояния группы и координат
 // =============================================================================
 fbReadStatus(
+    Enable    := TRUE,
+    AxisGroup := AxisGroup
+);
+
+fbReadError(
     Enable    := TRUE,
     AxisGroup := AxisGroup
 );
@@ -546,30 +553,55 @@ CASE GroupData.Diag.iStep OF
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
 
         ELSIF fbGroupReset.Done THEN
+            // Статус группы был прочитан до вызова MC_GroupReset.
+            // Проверяем результат сброса только со следующего цикла.
+            GroupData.Diag.iStep := E_AXIS_GROUP_STATE.RESET_VERIFY;
+        END_IF;
 
-            IF fbReadStatus.GroupErrorStop THEN
-                GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
+
+    // -------------------------------------------------------------------------
+    E_AXIS_GROUP_STATE.RESET_VERIFY:
+    // -------------------------------------------------------------------------
+        GroupData.Diag.sStepName := 'RESET_VERIFY';
+        GroupData.Diag.tStepPreset := GroupData.Timeouts.tGroupTimeout;
+        GroupData.Diag.iPowerMode := E_AXIS_GROUP_POWER_MODE.ON;
+
+        IF GroupData.Command.xGlobalError THEN
+            GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
+
+        ELSIF xStepTimeout THEN
+            GroupData.Error.dwLogicalErrorNew :=
+                GroupData.Error.dwLogicalErrorNew
+                OR LOG_STEP_TIMEOUT;
+
+            GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
+
+        ELSIF fbReadStatus.Valid
+           AND fbReadStatus.GroupErrorStop
+           AND fbReadError.Valid
+           AND (TO_UDINT(fbReadError.GroupErrorID) <> UDINT#0) THEN
+
+            // Причина ошибки осталась активной после завершения сброса.
+            GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
+
+        ELSIF fbReadStatus.Valid
+           AND NOT fbReadStatus.GroupErrorStop THEN
+
+            GroupData.Error.dwLogicalErrorLatched := DWORD#0;
+            GroupData.Error.dwMotionErrorLatched := DWORD#0;
+            GroupData.Error.dwMotionErrorPrevious := DWORD#0;
+
+            IF NOT fbGroupPower.Status THEN
+                GroupData.Diag.iStep := E_AXIS_GROUP_STATE.DISABLED;
+
+            ELSIF fbReadStatus.GroupDisabled THEN
+                GroupData.Diag.iStep := E_AXIS_GROUP_STATE.DISABLING_POWER;
+
+            ELSIF fbReadStatus.GroupStandby THEN
+                GroupData.Diag.iStep := E_AXIS_GROUP_STATE.DISABLING_GROUP;
+
             ELSE
-                GroupData.Error.dwLogicalErrorLatched := DWORD#0;
-                GroupData.Error.dwMotionErrorLatched := DWORD#0;
-                GroupData.Error.dwMotionErrorPrevious := DWORD#0;
-
-                IF NOT fbGroupPower.Status THEN
-                    GroupData.Diag.iStep :=
-                        E_AXIS_GROUP_STATE.DISABLED;
-
-                ELSIF fbReadStatus.GroupDisabled THEN
-                    GroupData.Diag.iStep :=
-                        E_AXIS_GROUP_STATE.DISABLING_POWER;
-
-                ELSIF fbReadStatus.GroupStandby THEN
-                    GroupData.Diag.iStep :=
-                        E_AXIS_GROUP_STATE.DISABLING_GROUP;
-
-                ELSE
-                    GroupData.Diag.iStep :=
-                        E_AXIS_GROUP_STATE.DISABLING_POWER;
-                END_IF;
+                GroupData.Diag.iStep := E_AXIS_GROUP_STATE.DISABLING_POWER;
             END_IF;
         END_IF;
 
@@ -728,6 +760,12 @@ IF fbReadStatus.Error THEN
         OR MOTION_ERR_READ_STATUS;
 END_IF;
 
+IF fbReadError.Error THEN
+    GroupData.Error.dwMotionErrorActive :=
+        GroupData.Error.dwMotionErrorActive
+        OR MOTION_ERR_READ_GROUP_ERROR;
+END_IF;
+
 
 // Только ошибки, которых не было в предыдущем цикле.
 GroupData.Error.dwMotionErrorNew :=
@@ -798,6 +836,23 @@ GroupData.Status.xLocalError :=
     OR (GroupData.Error.dwLogicalErrorLatched <> DWORD#0);
 	
 GroupData.Status.xMoveDirectDone := fbMoveDirect.Done;
+
+// Код ошибки самой группы не совпадает с ErrorID диагностических Motion FB.
+IF fbReadError.Valid
+   AND (TO_UDINT(fbReadError.GroupErrorID) <> UDINT#0) THEN
+    GroupData.Diag.udiActualErrorID := TO_UDINT(fbReadError.GroupErrorID);
+    GroupData.Diag.sErrorText := 'Axis group error';
+ELSIF fbGroupReset.Error THEN
+    GroupData.Diag.udiActualErrorID := TO_UDINT(fbGroupReset.ErrorID);
+    GroupData.Diag.sErrorText := 'MC_GroupReset error';
+ELSE
+    GroupData.Diag.udiActualErrorID := UDINT#0;
+    GroupData.Diag.sErrorText := '';
+END_IF;
+
+IF GroupData.Diag.udiActualErrorID <> UDINT#0 THEN
+    GroupData.Diag.udiLastErrorID := GroupData.Diag.udiActualErrorID;
+END_IF;
 
 // Сохраняем последнюю ненулевую ошибку и формируем удобное представление для HMI.
 IF (GroupData.Error.dwMotionErrorLatched <> DWORD#0)

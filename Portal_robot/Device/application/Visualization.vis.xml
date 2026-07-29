@@ -35,7 +35,7 @@
       </Single>
       <Single Name="Object" Type="{f18bec89-9fef-401d-9953-2f11739a6808}" Method="IArchivable">
         <Null Name="LastVisuLanguageModelEntry" />
-        <Single Name="UniqueIdGenerator" Type="string">66</Single>
+        <Single Name="UniqueIdGenerator" Type="string">75</Single>
         <Single Name="VisualElemList" Type="{f285c9a3-7019-446b-b98c-ccec3a0af8fa}" Method="IArchivable">
           <List Name="VisualElementList" Type="{ef9d0b20-c96e-48db-b361-2ded4063150e}">
             <Single Type="{f86c2928-8614-4cca-824b-e819ac4d58c4}" Method="IArchivable">
@@ -918,18 +918,18 @@
                               </Entry>
                               <Entry>
                                 <Key>
-                                  <Single Type="string">DefaultArraySize</Single>
-                                </Key>
-                                <Value>
-                                  <Single Type="string">500</Single>
-                                </Value>
-                              </Entry>
-                              <Entry>
-                                <Key>
                                   <Single Type="string">''NORMAL__COMMENT</Single>
                                 </Key>
                                 <Value>
                                   <Single Type="string"> There is no more information than the parent provides</Single>
+                                </Value>
+                              </Entry>
+                              <Entry>
+                                <Key>
+                                  <Single Type="string">DefaultArraySize</Single>
+                                </Key>
+                                <Value>
+                                  <Single Type="string">500</Single>
                                 </Value>
                               </Entry>
                             </Dictionary>
@@ -995,6 +995,14 @@
                         <Dictionary Type="{02a85e84-ef2d-46fc-93f2-acb0bbff3eda}" Name="TypeNodeAttributesData">
                           <Entry>
                             <Key>
+                              <Single Type="string">PolygonPoints</Single>
+                            </Key>
+                            <Value>
+                              <Single Type="string"></Single>
+                            </Value>
+                          </Entry>
+                          <Entry>
+                            <Key>
                               <Single Type="string">DescriptionTextId</Single>
                             </Key>
                             <Value>
@@ -1055,14 +1063,6 @@
                             </Key>
                             <Value>
                               <Single Type="string">True</Single>
-                            </Value>
-                          </Entry>
-                          <Entry>
-                            <Key>
-                              <Single Type="string">PolygonPoints</Single>
-                            </Key>
-                            <Value>
-                              <Single Type="string"></Single>
                             </Value>
                           </Entry>
                         </Dictionary>
@@ -2249,18 +2249,18 @@
               </Entry>
               <Entry>
                 <Key>
-                  <Single Type="string">FB_Reinit</Single>
-                </Key>
-                <Value>
-                  <Single Type="System.Guid">15a6d98a-0f72-4b0d-aae7-5933336fcc57</Single>
-                </Value>
-              </Entry>
-              <Entry>
-                <Key>
                   <Single Type="string">FB_Exit</Single>
                 </Key>
                 <Value>
                   <Single Type="System.Guid">9c4f03ef-b215-4099-be76-68646f2a09fa</Single>
+                </Value>
+              </Entry>
+              <Entry>
+                <Key>
+                  <Single Type="string">FB_Reinit</Single>
+                </Key>
+                <Value>
+                  <Single Type="System.Guid">15a6d98a-0f72-4b0d-aae7-5933336fcc57</Single>
                 </Value>
               </Entry>
             </Dictionary>
