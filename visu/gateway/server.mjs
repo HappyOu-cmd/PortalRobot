@@ -29,11 +29,33 @@ const distDir = normalize(join(__dirname, '..', 'dist'));
 const requiredSymbols = [
   'udiPlcHeartbeat',
   'stCellStatus.xRunning',
+  'stCellStatus.xReadyToStart',
+  'stCellStatus.xDrivesReady',
+  'stCellStatus.xRobotReady',
+  'stCellStatus.xMagazineReady',
+  'stCellStatus.uiReadyMachines',
+  'xCellManual',
   'stRobotStatus.xGripper1Closed',
+  'xRobotDrivesEnable',
+  'xRobotDrivesDisable',
+  'xRobotStop',
+  'xRobotReset',
   'astMachineStatus[1].xEnabled',
+  'astMachineStatus[1].tCycleElapsed',
   'astMachineIoStatus[1].xDoorOpen',
+  'axMachineSetBlank[1]',
+  'axMachineSetDetail[1]',
+  'axMachineAcceptDoor[1]',
+  'axMachineRejectDoor[1]',
+  'axMachineAcceptRun[1]',
+  'axMachineRejectRun[1]',
   'stMagazineStatus.xEnabled',
+  'stMagazineStatus.xDisablePending',
   'astMagazineSlot[1].eDetailType',
+  'xMagazineCycleSlot',
+  'uiMagazineEditSlot',
+  'MagazineSafeZ_2',
+  'astMachineStatus[1].xDisablePending',
 ];
 
 const commandMap = {
@@ -43,10 +65,20 @@ const commandMap = {
   'cell.stop': { path: 'xCellStop', dataType: DataType.Boolean, pulse: true },
   'cell.reset': { path: 'xCellReset', dataType: DataType.Boolean, pulse: true },
   'cell.manual': { path: 'xCellManual', dataType: DataType.Boolean },
+  'robot.enableDrives': { path: 'xRobotDrivesEnable', dataType: DataType.Boolean, pulse: true },
+  'robot.disableDrives': { path: 'xRobotDrivesDisable', dataType: DataType.Boolean, pulse: true },
+  'robot.stop': { path: 'xRobotStop', dataType: DataType.Boolean, pulse: true },
+  'robot.reset': { path: 'xRobotReset', dataType: DataType.Boolean, pulse: true },
   'magazine.enable': { path: 'xMagazineEnable', dataType: DataType.Boolean, pulse: true },
   'magazine.disable': { path: 'xMagazineDisable', dataType: DataType.Boolean, pulse: true },
   'magazine.fillBlanks': { path: 'xMagazineFillBlanks', dataType: DataType.Boolean, pulse: true },
   'magazine.clear': { path: 'xMagazineClear', dataType: DataType.Boolean, pulse: true },
+  'magazine.rows': { path: 'MagazineRows', dataType: DataType.UInt16, transform: (v) => Math.max(1, Math.min(70, Math.round(Number(v)))) },
+  'magazine.columns': { path: 'MagazineColumns', dataType: DataType.UInt16, transform: (v) => Math.max(1, Math.min(70, Math.round(Number(v)))) },
+  'magazine.pitchX': { path: 'MagazinePitchX', dataType: DataType.Double, transform: (v) => Number(v) },
+  'magazine.pitchY': { path: 'MagazinePitchY', dataType: DataType.Double, transform: (v) => Number(v) },
+  'magazine.safeAbove': { path: 'MagazineSafeZ_1', dataType: DataType.Double, transform: (v) => Number(v) },
+  'magazine.safeInside': { path: 'MagazineSafeZ_2', dataType: DataType.Double, transform: (v) => Number(v) },
 };
 
 let opcua = null;
@@ -166,6 +198,14 @@ async function writeValue(path, dataType, value) {
 
 async function executeCommand(message) {
   const requestId = String(message.requestId ?? Date.now());
+  if (message.command === 'magazine.setSlot') {
+    const slot = Math.round(Number(message.value));
+    if (!Number.isInteger(slot) || slot < 1 || slot > 70) throw new Error('Неверный номер слота магазина');
+    await writeValue('uiMagazineEditSlot', DataType.UInt16, slot);
+    await writeValue('xMagazineCycleSlot', DataType.Boolean, true);
+    setTimeout(() => writeValue('xMagazineCycleSlot', DataType.Boolean, false).catch(console.error), 150);
+    return requestId;
+  }
   let definition = commandMap[message.command];
   if (message.command?.startsWith('machine.')) {
     const index = Number(message.machine);
@@ -175,6 +215,12 @@ async function executeCommand(message) {
       enable: { path: `axMachineEnable[${index}]`, dataType: DataType.Boolean, pulse: true },
       disable: { path: `axMachineDisable[${index}]`, dataType: DataType.Boolean, pulse: true },
       reset: { path: `axMachineReset[${index}]`, dataType: DataType.Boolean, pulse: true },
+      setBlank: { path: `axMachineSetBlank[${index}]`, dataType: DataType.Boolean, pulse: true },
+      setDetail: { path: `axMachineSetDetail[${index}]`, dataType: DataType.Boolean, pulse: true },
+      acceptDoor: { path: `axMachineAcceptDoor[${index}]`, dataType: DataType.Boolean, pulse: true },
+      rejectDoor: { path: `axMachineRejectDoor[${index}]`, dataType: DataType.Boolean, pulse: true },
+      acceptRun: { path: `axMachineAcceptRun[${index}]`, dataType: DataType.Boolean, pulse: true },
+      rejectRun: { path: `axMachineRejectRun[${index}]`, dataType: DataType.Boolean, pulse: true },
       used: { path: `axMachineUsed[${index}]`, dataType: DataType.Boolean },
       cycleMode: { path: `xUseHmiCycleTime[${index}]`, dataType: DataType.Boolean },
       cycleTime: { path: `tMachineCycleTime[${index}]`, dataType: DataType.UInt32, transform: (v) => Math.max(1000, Math.round(Number(v) * 1000)) },

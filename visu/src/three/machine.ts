@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { PART_GEOMETRY } from '../model/partGeometry';
 import type { CellLayout, MachineState } from '../model/types';
-import { box, COLORS, cylinder, damp, logicalPosition, makeLabel, material, mm } from './primitives';
+import { box, COLORS, cylinder, damp, logicalPosition, material, mm } from './primitives';
 
 export interface MachineRig {
   root: THREE.Group;
@@ -143,11 +143,6 @@ export function createMachine(layout: CellLayout, index: number): MachineRig {
   (stackLight.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.45;
   root.add(stackLight);
 
-  const label = makeLabel(`СТАНОК ${index + 1}`);
-  label.position.set(width / 2, 0.03, 0.58);
-  label.scale.set(1.25, 0.31, 1);
-  root.add(label);
-
   const selectionGeometry = new THREE.EdgesGeometry(new THREE.BoxGeometry(width + 0.08, height + 0.08, depth + 0.08));
   const selection = new THREE.LineSegments(selectionGeometry, new THREE.LineBasicMaterial({ color: COLORS.blue }));
   selection.position.set(width / 2, height / 2, -depth / 2);
@@ -192,9 +187,10 @@ export function updateMachineRig(rig: MachineRig, state: MachineState, dt: numbe
   rig.part.visible = state.partPresent;
 
   const modeColor = {
-    idle: COLORS.green,
-    processing: COLORS.blue,
-    waiting: COLORS.amber,
+    off: 0x8d99a3,
+    enabled: 0xe57e22,
+    processing: COLORS.green,
+    change: 0xe2b323,
     error: COLORS.red,
   }[state.mode];
   const lightMaterial = rig.stackLight.material as THREE.MeshStandardMaterial;

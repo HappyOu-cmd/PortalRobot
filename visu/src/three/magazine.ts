@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { CellLayout, SlotType } from '../model/types';
-import { box, COLORS, cylinder, logicalPosition, makeLabel, material, mm } from './primitives';
+import { box, COLORS, cylinder, logicalPosition, material, mm } from './primitives';
 
 interface SlotRig {
   emptyRing: THREE.Mesh;
@@ -68,10 +68,6 @@ export function createMagazine(layout: CellLayout): MagazineRig {
     }
   }
 
-  const label = makeLabel('МАГАЗИН');
-  label.position.set(sizeX / 2, -mm(config.position.z) + 0.025, 0.42);
-  label.scale.set(1.25, 0.31, 1);
-  root.add(label);
   return { root, slots };
 }
 

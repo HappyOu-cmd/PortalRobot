@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 export const COLORS = {
-  background: 0xf4f7fa,
+  background: 0xfdfdfe,
   floor: 0xe8edf2,
   grid: 0xb9c6d0,
   blue: 0x1769d2,

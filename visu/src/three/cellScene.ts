@@ -8,6 +8,17 @@ import { COLORS, disposeObject, logicalPosition, material, mm } from './primitiv
 
 export type CameraPreset = 'iso' | 'front' | 'top';
 
+export interface ScreenAnchor {
+  x: number;
+  y: number;
+  visible: boolean;
+}
+
+export interface EquipmentAnchors {
+  machines: ScreenAnchor[];
+  magazine: ScreenAnchor;
+}
+
 export class CellScene {
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.PerspectiveCamera(34, 1, 0.05, 100);
@@ -31,6 +42,7 @@ export class CellScene {
     layout: CellLayout,
     state: CellState,
     private readonly onMachineSelect: (index: number) => void,
+    private readonly onAnchorsUpdate?: (anchors: EquipmentAnchors) => void,
   ) {
     this.layout = layout;
     this.state = state;
@@ -45,7 +57,7 @@ export class CellScene {
     this.host.appendChild(this.renderer.domElement);
 
     this.scene.background = new THREE.Color(COLORS.background);
-    this.scene.fog = new THREE.Fog(0xf4f7fa, 18, 34);
+    this.scene.fog = new THREE.Fog(COLORS.background, 18, 34);
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.07;
@@ -137,11 +149,14 @@ export class CellScene {
 
   setCamera(preset: CameraPreset): void {
     const center = logicalPosition(this.layout.floor.lengthX * 0.5, this.layout.floor.widthY * 0.45, 900);
-    if (preset === 'front') this.camera.position.set(center.x, 3.7, 10.8);
+    const target = preset === 'front'
+      ? logicalPosition(this.layout.floor.lengthX * 0.5, this.layout.floor.widthY * 0.45, -100)
+      : center;
+    if (preset === 'front') this.camera.position.set(center.x, 5.8, 14.5);
     if (preset === 'top') this.camera.position.set(center.x, 15.5, center.z + 0.01);
     if (preset === 'iso') this.camera.position.set(center.x + 4.2, 7.4, center.z + 13.6);
-    this.controls.target.copy(center);
-    this.camera.lookAt(center);
+    this.controls.target.copy(target);
+    this.camera.lookAt(target);
     this.controls.update();
   }
 
@@ -161,8 +176,36 @@ export class CellScene {
     this.raycaster.setFromCamera(this.pointer, this.camera);
     const hit = this.raycaster.intersectObjects(this.machineRigs.map((rig) => rig.root), true)
       .find((item) => Number.isInteger(item.object.userData.machineIndex));
-    if (hit) this.onMachineSelect(hit.object.userData.machineIndex as number);
+    if (hit) {
+      event.stopPropagation();
+      this.onMachineSelect(hit.object.userData.machineIndex as number);
+    }
   };
+
+  private projectAnchor(position: THREE.Vector3): ScreenAnchor {
+    const projected = position.clone().project(this.camera);
+    return {
+      x: (projected.x * 0.5 + 0.5) * this.host.clientWidth,
+      y: (-projected.y * 0.5 + 0.5) * this.host.clientHeight,
+      visible: projected.z >= -1 && projected.z <= 1
+        && projected.x >= -1.1 && projected.x <= 1.1
+        && projected.y >= -1.1 && projected.y <= 1.1,
+    };
+  }
+
+  private updateEquipmentAnchors(): void {
+    if (!this.onAnchorsUpdate || !this.magazineRig) return;
+    const machineWidth = mm(this.layout.machine.sizeX);
+    const machines = this.machineRigs.map((rig) => this.projectAnchor(
+      rig.root.localToWorld(new THREE.Vector3(machineWidth / 2, 0.03, 0.58)),
+    ));
+    const magazine = this.projectAnchor(this.magazineRig.root.localToWorld(new THREE.Vector3(
+      mm(this.layout.magazine.sizeX) / 2,
+      -mm(this.layout.magazine.position.z) + 0.025,
+      0.42,
+    )));
+    this.onAnchorsUpdate({ machines, magazine });
+  }
 
   private readonly animate = (): void => {
     this.animationFrame = requestAnimationFrame(this.animate);
@@ -175,6 +218,7 @@ export class CellScene {
     if (this.magazineRig) updateMagazineRig(this.magazineRig, this.state.magazine);
     this.controls.update();
     this.renderer.render(this.scene, this.camera);
+    this.updateEquipmentAnchors();
   };
 
   dispose(): void {

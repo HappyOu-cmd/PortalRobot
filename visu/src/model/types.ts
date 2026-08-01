@@ -1,8 +1,9 @@
 export type Direction = 1 | -1;
 export type SlotType = 'empty' | 'blank' | 'detail';
-export type MachineMode = 'idle' | 'processing' | 'waiting' | 'error';
+export type MachineMode = 'off' | 'enabled' | 'processing' | 'change' | 'error';
 export type MachineOperation = 'NONE' | 'LOAD' | 'UNLOAD' | 'CHANGE';
 export type MachinePartState = 'EMPTY' | 'LOADED' | 'UNKNOWN';
+export type MagazineOperation = 'NONE' | 'TAKE' | 'PUT' | 'CHANGE';
 
 export interface Vec3Mm {
   x: number;
@@ -61,6 +62,7 @@ export interface CellLayout {
 }
 
 export interface MachineState {
+  plcState: number;
   enabled: boolean;
   disablePending: boolean;
   doorOpen: boolean;
@@ -68,6 +70,7 @@ export interface MachineState {
   chuckOpen: boolean;
   chuckClosed: boolean;
   partPresent: boolean;
+  partReady: boolean;
   mode: MachineMode;
   currentStep: string;
   serviceRequired: boolean;
@@ -88,14 +91,49 @@ export interface RobotState {
   x: number;
   y: number;
   z: number;
+  busy: boolean;
+  done: boolean;
+  error: boolean;
+  blankAvailable: boolean;
+  detailAvailable: boolean;
+  gripper1Open: boolean;
   gripper1Closed: boolean;
+  gripper2Open: boolean;
   gripper2Closed: boolean;
   rotatedToBlank: boolean;
   rotatedToDetail: boolean;
+}
+
+export interface MagazineState {
+  enabled: boolean;
+  disablePending: boolean;
+  ready: boolean;
+  busy: boolean;
+  done: boolean;
+  error: boolean;
+  finished: boolean;
+  canTake: boolean;
+  canPut: boolean;
+  canChange: boolean;
+  canEnable: boolean;
+  currentBlank: number;
+  currentFreeSlot: number;
+  selectedBlank: number;
+  selectedFreeSlot: number;
+  actualOperation: MagazineOperation;
+  rows: number;
+  columns: number;
+  pitchX: number;
+  pitchY: number;
+  safeAbove: number;
+  safeInside: number;
+  activeErrors: string[];
+  lastErrors: string[];
 }
 
 export interface CellState {
   robot: RobotState;
   machines: MachineState[];
   magazine: SlotType[];
+  magazineState: MagazineState;
 }

@@ -10,23 +10,40 @@
     "gateway": "node gateway/server.mjs",
     "start": "node gateway/server.mjs",
     "build": "tsc -b && vite build",
-    "preview": "vite preview --host 127.0.0.1"
+    "preview": "vite preview --host 127.0.0.1",
+    "storybook": "storybook dev -p 6006",
+    "build-storybook": "storybook build"
   },
   "dependencies": {
+    "@fontsource/inter": "^5.3.0",
+    "@iconify/react": "^6.0.2",
+    "@radix-ui/react-dialog": "^1.1.23",
+    "@radix-ui/react-dropdown-menu": "^2.1.24",
+    "@radix-ui/react-tabs": "^1.1.21",
+    "@radix-ui/react-tooltip": "^1.2.16",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
     "lucide-react": "^0.468.0",
     "node-opcua": "^2.175.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "recharts": "^3.10.1",
+    "tailwind-merge": "^3.6.0",
     "three": "^0.166.1",
     "ws": "^8.21.1"
   },
   "devDependencies": {
+    "@storybook/addon-a11y": "^10.5.5",
+    "@storybook/react-vite": "^10.5.5",
+    "@tailwindcss/vite": "^4.3.3",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@types/three": "^0.166.0",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^4.3.4",
     "concurrently": "^10.0.4",
+    "storybook": "^10.5.5",
+    "tailwindcss": "^4.3.3",
     "typescript": "^5.7.2",
     "vite": "^6.0.3"
   }

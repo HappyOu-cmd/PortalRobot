@@ -1,52 +1,300 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
-  Activity, AlertCircle, Bot, Box, Boxes, CheckCircle2, ChevronLeft, ChevronRight,
-  CircleStop, ClipboardList, Clock3, Cuboid, DoorOpen, Factory, Gauge, Hand, Home,
-  LockKeyhole, Menu, OctagonX, Play, Power, RotateCcw, Settings, ShieldAlert,
-  UnlockKeyhole, Wrench, type LucideIcon,
+  Activity, AlertCircle, ArrowRight, Bot, Box, Boxes, CheckCircle2, ChevronRight,
+  ChevronDown, Clock3, Cylinder, Disc3, DoorOpen, Factory, Home,
+  Grid2X2, LoaderCircle, LockKeyhole, Menu, Power, PackagePlus, RotateCcw, Settings,
+  ShieldAlert, Trash2, TriangleAlert, UnlockKeyhole, UserRound, X,
 } from 'lucide-react';
 import { CellViewport } from './components/CellViewport';
+import { MagazineMatrix } from './components/magazine/MagazineMatrix';
+import { RingStat } from './components/magazine/RingStat';
+import { Indicator } from './components/ui/Indicator';
 import { DEFAULT_LAYOUT, DEFAULT_STATE } from './model/defaults';
 import { getRobotTravelLimits } from './model/travel';
-import type { CellLayout, CellState, MachineMode, SlotType } from './model/types';
+import type { CellLayout, CellState, SlotType } from './model/types';
 import {
   createPlcClient, mapPlcSnapshot, mapRuntimeInfo,
   type PlcConnectionInfo, type PlcRuntimeInfo,
 } from './plc/client';
-import type { CameraPreset } from './three/cellScene';
 
 type Page = 'monitoring' | 'machines' | 'robot' | 'magazine' | 'manual' | 'events' | 'alarms' | 'settings';
+type BottomSection = 'cell' | 'machines' | 'robot' | 'magazine';
 
 const PAGE_TITLES: Record<Page, string> = {
-  monitoring: 'Мониторинг ячейки', machines: 'Станки', robot: 'Робот', magazine: 'Магазин',
+  monitoring: 'Главный экран', machines: 'Станки', robot: 'Робот', magazine: 'Магазин',
   manual: 'Ручное управление', events: 'Журнал событий', alarms: 'Аварии', settings: 'Настройки визуализации',
-};
-const MACHINE_MODE: Record<MachineMode, string> = {
-  idle: 'ГОТОВ', processing: 'ОБРАБОТКА', waiting: 'ОЖИДАНИЕ', error: 'АВАРИЯ',
 };
 const MACHINE_OPERATION = {
   NONE: 'Нет операции', LOAD: 'Загрузка заготовки', UNLOAD: 'Выгрузка детали', CHANGE: 'Замена детали',
 } as const;
-const NAV_ITEMS: Array<{ page: Page; label: string; icon: LucideIcon }> = [
-  { page: 'monitoring', label: 'Мониторинг', icon: Home },
-  { page: 'machines', label: 'Станки', icon: Factory },
-  { page: 'robot', label: 'Робот', icon: Bot },
-  { page: 'magazine', label: 'Магазин', icon: Boxes },
-  { page: 'manual', label: 'Ручное управление', icon: Hand },
-  { page: 'events', label: 'Журнал событий', icon: ClipboardList },
-  { page: 'alarms', label: 'Аварии', icon: ShieldAlert },
-  { page: 'settings', label: 'Настройки', icon: Settings },
-];
 const cloneLayout = (): CellLayout => structuredClone(DEFAULT_LAYOUT);
 const cloneState = (): CellState => structuredClone(DEFAULT_STATE);
 const LAYOUT_STORAGE_KEY = 'portal-robot.visualization-layout.v1';
 const INITIAL_CONNECTION: PlcConnectionInfo = { status: 'connecting', endpoint: '', message: 'Подключение к шлюзу', symbols: 0, missing: [] };
 const INITIAL_RUNTIME: PlcRuntimeInfo = {
-  cellRunning: false, globalError: false, selectedMachine: 0,
+  cellRunning: false, globalError: false, readyToStart: false, drivesReady: false,
+  robotReady: false, magazineReady: false, readyMachines: 0, manualMode: false,
+  selectedMachine: 0,
   cellStep: 'Ожидание данных PLC', robotStep: 'Ожидание данных PLC',
   machineSteps: ['Ожидание данных PLC', 'Ожидание данных PLC', 'Ожидание данных PLC'],
   magazineStep: 'Ожидание данных PLC',
 };
+
+function CellQuickPanel({ running, online, globalError, readyToStart, robotReady, magazineReady,
+  readyMachines, manualMode, onToggle, onReset, onModeChange, onExtended, onClose }: {
+  running: boolean;
+  online: boolean;
+  globalError: boolean;
+  readyToStart: boolean;
+  robotReady: boolean;
+  magazineReady: boolean;
+  readyMachines: number;
+  manualMode: boolean;
+  onToggle: () => void;
+  onReset: () => void;
+  onModeChange: (manual: boolean) => void;
+  onExtended: () => void;
+  onClose: () => void;
+}) {
+  const overallText = !online ? 'Нет связи' : globalError ? 'Ошибка' : running ? 'Работает' : readyToStart ? 'Готова к запуску' : 'Не готова к запуску';
+  const overallTone = online && !globalError && (running || readyToStart) ? 'green' : 'red';
+  const primaryDisabled = !online || (!running && !readyToStart);
+
+  return <section className="cell-quick-panel" aria-label="Управление ячейкой">
+    <i className="panel-grip" aria-hidden="true" />
+    <header>
+      <div className="cell-quick-heading">
+        <div><h2>Ячейка</h2><p><Indicator active tone={overallTone} />{overallText}</p></div>
+        <div className="cell-mode-switch" aria-label="Режим работы линии">
+          <button className={manualMode ? 'active manual' : ''} type="button" disabled={!online} onClick={() => onModeChange(true)}>Ручной</button>
+          <button className={!manualMode ? 'active auto' : ''} type="button" disabled={!online} onClick={() => onModeChange(false)}>Автомат</button>
+        </div>
+      </div>
+      <div className="quick-panel-header-actions">
+        <button className="extended-control" type="button" onClick={onExtended}>Расширенное управление <ArrowRight size={19} /></button>
+        <button className="quick-panel-close" type="button" onClick={onClose} title="Закрыть меню"><X /></button>
+      </div>
+    </header>
+    <div className="cell-quick-content">
+      <div className="cell-quick-actions">
+        <button className={`cell-primary-command ${running ? 'stop' : readyToStart ? 'ready' : ''}`} type="button" disabled={primaryDisabled} onClick={onToggle}>
+          <Power size={25} /><span>{running ? 'Выключить ячейку' : 'Включить ячейку'}</span>
+        </button>
+        <button className="cell-reset-command" type="button" disabled={!online || !globalError} onClick={onReset}><RotateCcw size={23} /><span>Сбросить аварии</span></button>
+      </div>
+      <div className="cell-quick-statuses">
+        <div><Bot /><span>Робот</span><p><Indicator active tone={robotReady ? 'green' : 'red'} />{robotReady ? 'Готов' : 'Не готов'}</p></div>
+        <div><Factory /><span>Станки</span><p><Indicator active tone={readyMachines > 0 ? 'green' : 'red'} />{readyMachines} / 3 готовы</p></div>
+        <div><Boxes /><span>Магазин</span><p><Indicator active tone={magazineReady ? 'green' : 'red'} />{magazineReady ? 'Готов' : 'Не готов'}</p></div>
+      </div>
+    </div>
+  </section>;
+}
+
+function RobotQuickPanel({ robot, step, online, globalError, drivesReady, robotReady, manualMode,
+  cellRunning, onToggleDrives, onStop, onReset, onExtended, onClose }: {
+  robot: CellState['robot'];
+  step: string;
+  online: boolean;
+  globalError: boolean;
+  drivesReady: boolean;
+  robotReady: boolean;
+  manualMode: boolean;
+  cellRunning: boolean;
+  onToggleDrives: () => void;
+  onStop: () => void;
+  onReset: () => void;
+  onExtended: () => void;
+  onClose: () => void;
+}) {
+  const hasError = globalError || robot.error;
+  const controlsEnabled = online && manualMode && !cellRunning;
+  const stateText = !online ? 'Нет связи'
+    : hasError ? 'Авария'
+      : !drivesReady ? 'Приводы выключены'
+        : robot.busy ? 'Выполняет команду'
+          : robotReady ? 'Готов' : 'Не готов';
+  const stateTone = hasError ? 'red' : drivesReady && (robotReady || robot.busy) ? 'green' : 'gray';
+  const orientation = robot.rotatedToBlank ? 'К заготовке' : robot.rotatedToDetail ? 'К детали' : 'Не определена';
+  const gripper1 = robot.gripper1Closed ? 'Заготовка' : robot.gripper1Open ? 'Открыт' : 'Движение';
+  const gripper2 = robot.gripper2Closed ? 'Деталь' : robot.gripper2Open ? 'Открыт' : 'Движение';
+
+  return <section className={`robot-quick-panel tone-${stateTone}`} aria-label="Управление роботом">
+    <i className="panel-grip" aria-hidden="true" />
+    <header className="robot-quick-header">
+      <div className="robot-quick-summary">
+        <h2>Робот</h2>
+        <p><Indicator active={stateTone !== 'gray'} tone={stateTone === 'gray' ? 'blue' : stateTone} />{stateText}</p>
+      </div>
+      <div className="robot-step-summary"><span>Текущий шаг</span><strong>{step || stateText}</strong></div>
+      <div className="quick-panel-header-actions">
+        <button className="extended-control" type="button" onClick={onExtended}>Расширенное управление <ArrowRight size={19} /></button>
+        <button className="quick-panel-close" type="button" onClick={onClose} title="Закрыть меню"><X /></button>
+      </div>
+    </header>
+    <div className="robot-quick-content-row">
+      <div className="robot-quick-command-row">
+        <button className={`robot-power-command ${drivesReady ? 'enabled' : 'ready'}`} type="button" disabled={!controlsEnabled || (hasError && !drivesReady)} onClick={onToggleDrives}>
+          <Power /><span>{drivesReady ? 'Выключить приводы' : 'Включить приводы'}</span>
+        </button>
+        <button className="robot-stop-command" type="button" disabled={!controlsEnabled || !drivesReady} onClick={onStop}>
+          <AlertCircle /><span>Остановить</span>
+        </button>
+        <button className="robot-reset-command" type="button" disabled={!controlsEnabled || !hasError} onClick={onReset}>
+          <RotateCcw /><span>Сбросить ошибку</span>
+        </button>
+      </div>
+      <div className="robot-quick-status-grid">
+        <div className="robot-position"><Activity /><span>Позиция, мм</span><p>X {Math.round(robot.x)} · Y {Math.round(robot.y)} · Z {Math.round(robot.z)}</p></div>
+        <div className={robot.gripper1Closed ? 'holding-blank' : ''}><Box /><span>Захват 1</span><p><Indicator active={robot.gripper1Closed} tone="blue" />{gripper1}</p></div>
+        <div className={robot.gripper2Closed ? 'holding-detail' : ''}><Box /><span>Захват 2</span><p><Indicator active={robot.gripper2Closed} tone="green" />{gripper2}</p></div>
+        <div><RotateCcw /><span>Ориентация</span><p><Indicator active={robot.rotatedToBlank || robot.rotatedToDetail} tone="blue" />{orientation}</p></div>
+      </div>
+    </div>
+  </section>;
+}
+
+function MagazineQuickPanel({ slots, state, onToggleEnabled, onFill, onClear, onExtended, onClose }: {
+  slots: CellState['magazine'];
+  state: CellState['magazineState'];
+  onToggleEnabled: () => void;
+  onFill: () => void;
+  onClear: () => void;
+  onExtended: () => void;
+  onClose: () => void;
+}) {
+  const total = Math.min(slots.length, Math.max(0, state.rows * state.columns));
+  const activeSlots = slots.slice(0, total);
+  const blanks = activeSlots.filter((slot) => slot === 'blank').length;
+  const details = activeSlots.filter((slot) => slot === 'detail').length;
+  const empty = activeSlots.filter((slot) => slot === 'empty').length;
+  const editable = !state.enabled && !state.disablePending;
+  const powerDisabled = state.disablePending || (!state.enabled && !state.canEnable);
+  const statusText = state.error ? 'Авария'
+    : state.disablePending ? 'Ожидается отключение'
+      : state.enabled ? 'Включен' : 'Выключен';
+  const statusTone = state.error ? 'red' : state.disablePending ? 'amber' : state.enabled ? 'green' : 'gray';
+  const powerText = state.disablePending ? 'Ожидается отключение'
+    : state.enabled ? 'Выключить магазин' : 'Включить магазин';
+
+  return <section className={`magazine-quick-panel tone-${statusTone}`} aria-label="Управление магазином">
+    <i className="panel-grip" aria-hidden="true" />
+    <header className="magazine-quick-header">
+      <div className="magazine-quick-summary">
+        <h2>Магазин</h2>
+        <p><Indicator active={statusTone !== 'gray'} tone={statusTone === 'gray' ? 'blue' : statusTone} />{statusText}</p>
+      </div>
+      <div className="magazine-quick-actions">
+        <button className={`magazine-quick-power ${state.enabled ? 'enabled' : state.canEnable ? 'ready' : ''}`} type="button" onClick={onToggleEnabled} disabled={powerDisabled}>
+          <Power /><span>{powerText}</span>
+        </button>
+        <button type="button" onClick={onFill} disabled={!editable}><PackagePlus /><span>Заполнить заготовками</span></button>
+        <button type="button" onClick={onClear} disabled={!editable}><Trash2 /><span>Очистить магазин</span></button>
+      </div>
+      <div className="quick-panel-header-actions">
+        <button className="extended-control" type="button" onClick={onExtended}>Расширенное управление <ArrowRight size={19} /></button>
+        <button className="quick-panel-close" type="button" onClick={onClose} title="Закрыть меню"><X /></button>
+      </div>
+    </header>
+    <div className="magazine-quick-status-grid">
+      <div><Box /><span>Заготовок</span><strong>{blanks}</strong></div>
+      <div><Settings /><span>Деталей</span><strong>{details}</strong></div>
+      <div><Grid2X2 /><span>Всего ячеек</span><strong>{total}</strong></div>
+      <div><PackagePlus /><span>Свободно</span><strong>{empty}</strong></div>
+      <div><Boxes /><span>Матрица</span><strong>{state.columns} × {state.rows}</strong></div>
+    </div>
+  </section>;
+}
+
+type MachineQuickTone = 'gray' | 'red' | 'green' | 'amber' | 'blue';
+
+function machineQuickState(machine: CellState['machines'][number]): { text: string; tone: MachineQuickTone } {
+  if (machine.mode === 'error' || machine.activeErrors.length > 0) return { text: 'Авария', tone: 'red' };
+  if (!machine.enabled || machine.mode === 'off') return { text: 'Выключен', tone: 'gray' };
+  if (machine.mode === 'processing') return { text: 'Обработка', tone: 'green' };
+  if (machine.mode === 'change') return { text: 'Замена', tone: 'amber' };
+  return { text: 'Включен', tone: 'amber' };
+}
+
+function machineProduct(machine: CellState['machines'][number]): { text: string; kind: 'empty' | 'blank' | 'detail' | 'unknown' } {
+  if (machine.partState === 'EMPTY' || !machine.partPresent) return { text: 'Пусто', kind: 'empty' };
+  if (machine.partState === 'UNKNOWN') return { text: 'Неизвестно', kind: 'unknown' };
+  if (machine.mode === 'processing') return { text: 'Заготовка', kind: 'blank' };
+  if (machine.partReady || machine.recommendedOperation === 'UNLOAD' || machine.recommendedOperation === 'CHANGE') {
+    return { text: 'Деталь', kind: 'detail' };
+  }
+  return { text: 'Заготовка', kind: 'blank' };
+}
+
+function MachinesQuickPanel({ machines, selectedIndex, onSelect, onToggleEnabled, onReset, onExtended, onClose }: {
+  machines: CellState['machines'];
+  selectedIndex: number;
+  onSelect: (index: number) => void;
+  onToggleEnabled: () => void;
+  onReset: () => void;
+  onExtended: () => void;
+  onClose: () => void;
+}) {
+  const machine = machines[selectedIndex];
+  const state = machineQuickState(machine);
+  const product = machineProduct(machine);
+  const progress = machine.cycleExpectedS > 0
+    ? Math.min(100, machine.cycleElapsedS / machine.cycleExpectedS * 100)
+    : 0;
+  const doorText = machine.doorOpen ? 'Открыта' : machine.doorClosed ? 'Закрыта' : 'Движение';
+  const chuckText = machine.chuckOpen ? 'Открыт' : machine.chuckClosed ? 'Закрыт' : 'Движение';
+  const powerText = machine.disablePending
+    ? 'Отключение запрошено'
+    : machine.enabled ? 'Выключить станок' : 'Включить станок';
+
+  return <section className={`machine-quick-panel tone-${state.tone}`} aria-label={`Управление станком ${selectedIndex + 1}`}>
+    <i className="panel-grip" aria-hidden="true" />
+    <header className="machine-quick-header">
+      <div className="machine-quick-summary">
+        <h2>Станок {selectedIndex + 1}</h2>
+        <div className="machine-quick-cycle">
+          <span className="machine-state-label"><Indicator active={state.tone !== 'gray'} tone={state.tone === 'gray' ? 'blue' : state.tone} />{state.text}</span>
+          {machine.mode === 'processing' && <><b>{Math.round(machine.cycleElapsedS)} с</b><i><em style={{ width: `${progress}%` }} /></i></>}
+        </div>
+      </div>
+      <nav className="machine-quick-tabs" aria-label="Выбор станка">
+        {machines.map((_, index) => <button className={index === selectedIndex ? 'active' : ''} type="button" key={index} onClick={() => onSelect(index)}>Станок {index + 1}</button>)}
+      </nav>
+      <div className="quick-panel-header-actions">
+        <button className="extended-control" type="button" onClick={onExtended}>Расширенное управление <ArrowRight size={19} /></button>
+        <button className="quick-panel-close" type="button" onClick={onClose} title="Закрыть меню"><X /></button>
+      </div>
+    </header>
+    <div className="machine-quick-content-row">
+      <div className="machine-quick-command-row">
+        <button className={`machine-quick-power ${machine.enabled ? 'enabled' : 'ready'}`} type="button" onClick={onToggleEnabled} disabled={machine.disablePending}>
+          <Power /><span>{powerText}</span>
+        </button>
+        <button className="machine-quick-reset" type="button" onClick={onReset} disabled={machine.mode !== 'error'}>
+          <RotateCcw /><span>Сбросить аварию</span>
+        </button>
+      </div>
+      <div className="machine-quick-status-grid">
+        <div><DoorOpen /><span>Дверь</span><p><Indicator active={machine.doorClosed || machine.doorOpen} tone={machine.doorClosed ? 'green' : 'amber'} />{doorText}</p></div>
+        <div><Disc3 /><span>Патрон</span><p><Indicator active={machine.chuckClosed || machine.chuckOpen} tone={machine.chuckClosed ? 'green' : 'amber'} />{chuckText}</p></div>
+        <div className={`machine-product ${product.kind}`}><Box /><span>Изделие</span><p><Indicator active={product.kind === 'detail' || product.kind === 'blank'} tone={product.kind === 'detail' ? 'green' : 'blue'} />{product.text}</p></div>
+        <div className="machine-current-step"><Settings /><span>Текущий шаг</span><p><Indicator active={state.tone !== 'gray'} tone={state.tone === 'gray' ? 'blue' : state.tone} />{machine.currentStep || state.text}</p></div>
+      </div>
+    </div>
+  </section>;
+}
+
+function BottomNavigation({ active, onSelect }: { active: BottomSection | null; onSelect: (section: BottomSection) => void }) {
+  const items = [
+    { key: 'cell' as const, label: 'Ячейка', icon: Grid2X2 },
+    { key: 'machines' as const, label: 'Станки', icon: Factory },
+    { key: 'robot' as const, label: 'Робот', icon: Bot },
+    { key: 'magazine' as const, label: 'Магазин', icon: Boxes },
+  ];
+  return <nav className="cell-bottom-nav" aria-label="Быстрое управление">
+    {items.map(({ key, label, icon: Icon }) => <button key={key} className={active === key ? 'active' : ''} type="button" onClick={() => onSelect(key)}><Icon /><span>{label}</span></button>)}
+  </nav>;
+}
 
 function loadLayout(): CellLayout {
   const fallback = cloneLayout();
@@ -66,40 +314,6 @@ function loadLayout(): CellLayout {
   } catch {
     return fallback;
   }
-}
-
-function Indicator({ active, tone = 'green' }: { active: boolean; tone?: 'green' | 'blue' | 'red' | 'amber' }) {
-  return <span className={`indicator ${active ? tone : 'off'}`} />;
-}
-
-function CommandButton({ label, icon: Icon, tone = 'neutral', onClick }: {
-  label: string; icon: LucideIcon; tone?: 'primary' | 'stop' | 'neutral'; onClick: () => void;
-}) {
-  return <button className={`command-button ${tone}`} onClick={onClick} type="button"><Icon size={18} /><span>{label}</span></button>;
-}
-
-function MachineCard({ index, state, step, active, onClick }: {
-  index: number; state: CellState['machines'][number]; step: string; active: boolean; onClick: () => void;
-}) {
-  const tone = !state.enabled ? 'off' : state.mode === 'error' ? 'red' : state.mode === 'processing' ? 'blue' : state.mode === 'waiting' ? 'amber' : 'green';
-  const progress = state.cycleExpectedS > 0 ? Math.min(100, state.cycleElapsedS / state.cycleExpectedS * 100) : 0;
-  const status = !state.enabled ? 'ОТКЛЮЧЁН' : state.disablePending ? 'ОТКЛЮЧЕНИЕ' : MACHINE_MODE[state.mode];
-  return (
-    <button className={`machine-card tone-${tone} ${active ? 'active' : ''}`} type="button" onClick={onClick} aria-label={`Открыть станок ${index + 1}`}>
-      <div className="machine-card-head">
-        <div className="machine-number"><Factory size={22} /><span>СТАНОК</span><strong>{index + 1}</strong></div>
-        <span className={`mode ${tone}`}><Indicator active={tone !== 'off'} tone={tone === 'off' ? 'green' : tone} />{status}</span>
-      </div>
-      <div className="machine-current-step"><span>ТЕКУЩИЙ ШАГ</span><strong>{step}</strong></div>
-      {state.mode === 'processing' ? <div className="cycle-compact"><div><span>Цикл обработки</span><b>{state.cycleElapsedS} / {state.cycleExpectedS} с</b></div><i><em style={{ width: `${progress}%` }} /></i></div> : <div className="cycle-compact operation"><span>Операция</span><b>{MACHINE_OPERATION[state.recommendedOperation]}</b></div>}
-      <div className="machine-signals">
-        <div><DoorOpen size={18} /><span>Дверь</span><b>{state.doorOpen ? 'Открыта' : state.doorClosed ? 'Закрыта' : 'Движение'}</b></div>
-        <div>{state.chuckClosed ? <LockKeyhole size={18} /> : <UnlockKeyhole size={18} />}<span>Патрон</span><b>{state.chuckOpen ? 'Открыт' : state.chuckClosed ? 'Закрыт' : 'Движение'}</b></div>
-        <div><Box size={18} /><span>Деталь</span><b>{state.partState === 'LOADED' ? 'Есть' : state.partState === 'EMPTY' ? 'Нет' : 'Неизвестно'}</b></div>
-      </div>
-      <div className="machine-card-footer"><span><Indicator active={state.canAcceptService} />{state.canAcceptService ? 'ГОТОВ ПРИНЯТЬ РОБОТА' : state.serviceRequired ? 'ТРЕБУЕТ ОБСЛУЖИВАНИЯ' : 'РОБОТ НЕ ТРЕБУЕТСЯ'}</span><ChevronRight size={20} /></div>
-    </button>
-  );
 }
 
 function MachinePanel({ index, state, onClose, onToggleEnabled, onReset, onCycleSettings }: {
@@ -122,11 +336,11 @@ function MachinePanel({ index, state, onClose, onToggleEnabled, onReset, onCycle
     {state.activeErrors.length > 0 && <div className="machine-error-banner"><AlertCircle /><div><strong>Активная авария</strong><span>{state.activeErrors[0]}</span></div></div>}
 
     <div className="machine-command-bar">
-      <button className={`machine-power ${state.enabled ? 'enabled' : ''}`} onClick={onToggleEnabled} data-plc-command={state.enabled ? `GVL_HMI.axMachineDisable[${index + 1}]` : `GVL_HMI.axMachineEnable[${index + 1}]`}><Power size={21} /><span>{state.enabled ? 'Вывести из работы' : 'Ввести в работу'}</span></button>
+      <button className={`machine-power ${state.enabled ? 'enabled' : 'ready'}`} onClick={onToggleEnabled} data-plc-command={state.enabled ? `GVL_HMI.axMachineDisable[${index + 1}]` : `GVL_HMI.axMachineEnable[${index + 1}]`}><Power size={21} /><span>{state.enabled ? 'Вывести из работы' : 'Ввести в работу'}</span></button>
       <button className="machine-reset" onClick={onReset} disabled={state.activeErrors.length === 0 && state.mode !== 'error'} data-plc-command={`GVL_HMI.axMachineReset[${index + 1}]`}><RotateCcw size={20} /><span>Сбросить аварию</span></button>
     </div>
 
-    <div className="machine-state-band"><Indicator active={state.enabled && state.mode !== 'error'} tone={state.mode === 'error' ? 'red' : state.mode === 'processing' ? 'blue' : 'green'} /><div><span>ТЕКУЩИЙ ШАГ</span><strong>{stateText}</strong></div></div>
+    <div className="machine-state-band"><Indicator active={state.mode !== 'off'} tone={state.mode === 'error' ? 'red' : state.mode === 'processing' ? 'green' : 'amber'} /><div><span>ТЕКУЩИЙ ШАГ</span><strong>{stateText || '\u00A0'}</strong></div></div>
 
     <section className="machine-cycle-section"><div className="panel-section-title"><Clock3 size={18} /><h3>Цикл обработки</h3></div>
       <div className="cycle-times"><div><span>Прошло</span><b>{state.cycleElapsedS} с</b></div><div><span>Осталось</span><b>{remaining} с</b></div><div><span>Ожидается</span><b>{state.cycleExpectedS} с</b></div></div>
@@ -155,10 +369,72 @@ function MachinePanel({ index, state, onClose, onToggleEnabled, onReset, onCycle
   </aside>;
 }
 
-function MagazineMatrix({ slots, onSlotClick }: { slots: SlotType[]; onSlotClick?: (index: number) => void }) {
-  return <div className="magazine-matrix" aria-label="Матрица магазина 10 на 7">{slots.map((slot, index) => (
-    <button key={index} type="button" title={`Слот ${index + 1}`} className={`slot ${slot}`} onClick={() => onSlotClick?.(index)} />
-  ))}</div>;
+function OperatorConfirmation({ index, machine, layout, state, onCommand, onCancel }: {
+  index: number;
+  machine: CellState['machines'][number];
+  layout: CellLayout;
+  state: CellState;
+  onCommand: (command: string) => void;
+  onCancel: () => void;
+}) {
+  const step = machine.plcState === 2 || machine.plcState === 15 ? 3
+    : machine.plcState === 3 || machine.plcState === 12 ? 2 : 1;
+  const moving = machine.plcState === 12 || machine.plcState === 15 || machine.plcState === 0;
+  const steps = ['Что установлено в станке?', 'Закрыть дверь?', 'Запустить цикл ЧПУ?'];
+  return <div className="confirmation-overlay" role="dialog" aria-modal="true" aria-label={`Подтверждение оператора для станка ${index + 1}`} onPointerDown={(event) => event.stopPropagation()}>
+    <div className="confirmation-modal">
+      <aside className="confirmation-context">
+        <div><span>ВВОД В РАБОТУ</span><h2>Станок {index + 1}</h2></div>
+        <div className="confirmation-cell-preview"><CellViewport layout={layout} state={state} selectedMachine={index} cameraPreset="iso" onMachineSelect={() => {}} /></div>
+        <p>Выбранный станок отмечен в модели ячейки.</p>
+      </aside>
+      <section className="confirmation-workflow">
+        <header><div><span>СТАНОК {index + 1}</span><h2>Подтверждение оператора</h2></div><button type="button" onClick={onCancel} title="Отменить ввод в работу"><X /></button></header>
+        <div className="confirmation-stepper">{steps.map((label, stepIndex) => <div key={label} className={stepIndex + 1 === step ? 'active' : stepIndex + 1 < step ? 'done' : ''}><i>{stepIndex + 1}</i><span>{label}</span></div>)}</div>
+        <div className="confirmation-question">
+          {moving ? <div className="confirmation-wait"><LoaderCircle /><strong>{machine.plcState === 12 ? 'Закрывается дверь' : machine.plcState === 15 ? 'Запускается обработка' : 'Включается станок'}</strong><span>Ожидание подтверждения от PLC</span></div>
+          : step === 1 ? <><div className="question-heading"><span>ШАГ 1 ИЗ 3</span><h3>Что находится в патроне станка?</h3><p>Выберите фактический тип установленного изделия.</p></div><div className="part-choice"><button className="blank" type="button" onClick={() => onCommand('machine.setBlank')}><Cylinder /><strong>Заготовка</strong><span>Необработанная заготовка</span></button><button className="detail" type="button" onClick={() => onCommand('machine.setDetail')}><Disc3 /><strong>Деталь</strong><span>Готовая обработанная деталь</span></button></div></>
+          : step === 2 ? <><div className="question-heading"><span>ШАГ 2 ИЗ 3</span><h3>Закрыть дверь станка?</h3><p>После подтверждения PLC подаст команду закрытия двери.</p></div><div className="confirmation-actions"><button className="primary" type="button" onClick={() => onCommand('machine.acceptDoor')}>Закрыть дверь</button><button type="button" onClick={() => onCommand('machine.rejectDoor')}>Не закрывать</button></div></>
+          : <><div className="question-heading"><span>ШАГ 3 ИЗ 3</span><h3>Запустить цикл обработки?</h3><p>Проверьте установку изделия и готовность станка.</p></div><div className="confirmation-actions"><button className="primary" type="button" onClick={() => onCommand('machine.acceptRun')}>Запустить обработку</button><button type="button" onClick={() => onCommand('machine.rejectRun')}>Не запускать</button></div></>}
+        </div>
+        <footer><button type="button" onClick={onCancel}>Отменить ввод в работу</button><span>Следующий этап откроется после ответа PLC</span></footer>
+      </section>
+    </div>
+  </div>;
+}
+
+function MagazineScreen({ slots, state, step, onClose, onToggleEnabled, onFill, onClear, onSlotClick, onSetting }: {
+  slots: SlotType[];
+  state: CellState['magazineState'];
+  step: string;
+  onClose: () => void;
+  onToggleEnabled: () => void;
+  onFill: () => void;
+  onClear: () => void;
+  onSlotClick: (index: number) => void;
+  onSetting: (command: string, key: keyof CellState['magazineState'], value: number) => void;
+}) {
+  const activeCount = Math.min(slots.length, Math.max(0, state.rows * state.columns));
+  const activeSlots = slots.slice(0, activeCount);
+  const blanks = activeSlots.filter((slot) => slot === 'blank').length;
+  const details = activeSlots.filter((slot) => slot === 'detail').length;
+  const empty = activeCount - blanks - details;
+  const statusText = state.error ? 'Авария магазина' : state.disablePending ? 'Отключение после завершения операции' : state.busy ? 'Выполняется операция' : state.enabled ? 'Магазин включён' : 'Магазин отключён';
+  const operationText = { NONE: 'Нет операции', TAKE: 'Выдача заготовки', PUT: 'Приём детали', CHANGE: 'Смена детали' }[state.actualOperation];
+  const editable = !state.enabled;
+  const setting = (label: string, command: string, key: keyof CellState['magazineState'], min: number, max: number, stepValue = 1) => <label className="magazine-setting"><span>{label}</span><input type="number" value={state[key] as number} min={min} max={max} step={stepValue} disabled={!editable} onChange={(event) => onSetting(command, key, Number(event.target.value))} /></label>;
+  return <section className="magazine-screen" onPointerDown={(event) => event.stopPropagation()}>
+    <header className="magazine-screen-head"><div><span>ОБОРУДОВАНИЕ</span><h2>Управление магазином</h2><p><Indicator active={state.enabled && !state.error} tone={state.error ? 'red' : state.busy || state.disablePending ? 'amber' : 'green'} />{statusText}</p></div><button type="button" onClick={onClose} title="Закрыть"><X /></button></header>
+    <div className="magazine-command-row"><button className={`magazine-power ${state.enabled ? 'enabled' : 'ready'}`} type="button" onClick={onToggleEnabled} disabled={state.disablePending || (!state.enabled && !state.canEnable)} title={!state.enabled && !state.canEnable ? 'Содержимое магазина не позволяет включение' : ''}><Power /><span>{state.enabled ? state.disablePending ? 'Ожидается отключение' : 'Выключить магазин' : 'Включить магазин'}</span></button><button type="button" onClick={onFill} disabled={!editable}><PackagePlus /><span>Заполнить заготовками</span></button><button className="clear" type="button" onClick={onClear} disabled={!editable}><Trash2 /><span>Очистить магазин</span></button></div>
+    <div className="magazine-screen-grid">
+      <section className="magazine-map-panel"><div className="magazine-section-head"><div><span>СОДЕРЖИМОЕ</span><h3>Матрица {state.columns} × {state.rows}</h3></div><small>{editable ? 'Нажатие: заготовка → деталь → пусто' : 'Редактирование доступно после отключения'}</small></div><div className="magazine-map"><MagazineMatrix slots={slots} columns={state.columns} activeCount={activeCount} onSlotClick={editable ? onSlotClick : undefined} /></div><div className="magazine-map-footer"><span><i className="slot blank" />Заготовки <b>{blanks}</b></span><span><i className="slot detail" />Детали <b>{details}</b></span><span><i className="slot empty" />Пусто <b>{empty}</b></span><strong>Всего слотов: {activeCount}</strong></div></section>
+      <aside className="magazine-side-column">
+        <section className="magazine-load-panel"><div className="magazine-section-head"><div><span>ЗАПОЛНЕНИЕ</span><h3>Состав магазина</h3></div></div><div className="ring-stats"><RingStat value={blanks} total={activeCount} tone="blue" label="Заготовки" /><RingStat value={details} total={activeCount} tone="green" label="Готовые детали" /></div></section>
+        <section className="magazine-diagnostics"><div className="magazine-section-head"><div><span>ДИАГНОСТИКА</span><h3>{step}</h3></div></div><div className="diagnostic-list"><span>Текущая операция <b>{operationText}</b></span><span>Выбранная заготовка <b>{state.selectedBlank || '—'}</b></span><span>Выбранный свободный слот <b>{state.selectedFreeSlot || '—'}</b></span><span>TAKE / PUT / CHANGE <b>{state.canTake ? 'Да' : 'Нет'} / {state.canPut ? 'Да' : 'Нет'} / {state.canChange ? 'Да' : 'Нет'}</b></span></div>{state.finished && <div className="magazine-warning"><AlertCircle /><span>Требуется обслуживание магазина оператором</span></div>}{state.activeErrors.length ? <div className="magazine-error"><AlertCircle /><span>{state.activeErrors[0]}</span></div> : <div className="magazine-ok"><CheckCircle2 /><span>Активных ошибок нет</span></div>}</section>
+        <section className="magazine-settings"><div className="magazine-section-head"><div><span>НАСТРОЙКИ</span><h3>Геометрия магазина</h3></div><Settings /></div><div className="magazine-settings-grid">{setting('Строки', 'magazine.rows', 'rows', 1, 70)}{setting('Столбцы', 'magazine.columns', 'columns', 1, 70)}{setting('Шаг по X, мм', 'magazine.pitchX', 'pitchX', 0, 5000, 0.1)}{setting('Шаг по Y, мм', 'magazine.pitchY', 'pitchY', 0, 5000, 0.1)}{setting('Безопасная высота над магазином, мм', 'magazine.safeAbove', 'safeAbove', -10000, 10000, 0.1)}{setting('Безопасная высота в магазине, мм', 'magazine.safeInside', 'safeInside', -10000, 10000, 0.1)}</div>{!editable && <p>Для изменения настроек сначала выключите магазин.</p>}</section>
+      </aside>
+    </div>
+  </section>;
 }
 
 function Toggle({ checked, label, onChange, disabled = false }: { checked: boolean; label: string; onChange: (value: boolean) => void; disabled?: boolean }) {
@@ -235,12 +511,14 @@ export function App() {
   const [layout, setLayout] = useState<CellLayout>(loadLayout);
   const [cellState, setCellState] = useState<CellState>(cloneState);
   const [page, setPage] = useState<Page>('monitoring');
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [cameraPreset, setCameraPreset] = useState<CameraPreset>('iso');
+  const [bottomSection, setBottomSection] = useState<BottomSection | null>(null);
+  const [profileOpen, setProfileOpen] = useState(false);
   const [selectedMachine, setSelectedMachine] = useState<number | null>(null);
+  const [confirmationMachine, setConfirmationMachine] = useState<number | null>(null);
+  const [confirmationEntered, setConfirmationEntered] = useState(false);
   const [manualMachine, setManualMachine] = useState(1);
-  const [running, setRunning] = useState(true);
-  const [globalError, setGlobalError] = useState(false);
+  const [running] = useState(false);
+  const [globalError] = useState(false);
   const [plcConnection, setPlcConnection] = useState<PlcConnectionInfo>(INITIAL_CONNECTION);
   const [plcRuntime, setPlcRuntime] = useState<PlcRuntimeInfo>(INITIAL_RUNTIME);
   const [commandError, setCommandError] = useState('');
@@ -249,8 +527,6 @@ export function App() {
   const plcClient = useRef<ReturnType<typeof createPlcClient> | null>(null);
   const isPlcOnline = plcConnection.status === 'connected' || plcConnection.status === 'degraded';
   const usePlcData = isPlcOnline && plcDataEnabled;
-  const counts = useMemo(() => ({ blanks: cellState.magazine.filter((s) => s === 'blank').length, details: cellState.magazine.filter((s) => s === 'detail').length, empty: cellState.magazine.filter((s) => s === 'empty').length }), [cellState.magazine]);
-  const selectMachine = (index: number) => { setSelectedMachine(index); setManualMachine(index); setPage('machines'); };
   const updateMachine = (index: number, patch: Partial<CellState['machines'][number]>) => {
     setCellState((current) => {
       const machines = [...current.machines];
@@ -258,19 +534,94 @@ export function App() {
       return { ...current, machines };
     });
   };
+  const updateMagazineState = (patch: Partial<CellState['magazineState']>) => setCellState((current) => ({ ...current, magazineState: { ...current.magazineState, ...patch } }));
+  const toggleMagazineEnabled = () => {
+    const magazine = cellState.magazineState;
+    const command = magazine.enabled ? 'magazine.disable' : 'magazine.enable';
+    if (usePlcData) {
+      plcClient.current?.send({ command });
+      if (magazine.enabled && magazine.busy) updateMagazineState({ disablePending: true });
+      return;
+    }
+    if (magazine.enabled && magazine.busy) updateMagazineState({ disablePending: true });
+    else updateMagazineState({ enabled: !magazine.enabled, ready: magazine.enabled ? false : true, disablePending: false });
+  };
+  const fillMagazine = () => {
+    if (cellState.magazineState.enabled) return;
+    if (usePlcData) plcClient.current?.send({ command: 'magazine.fillBlanks' });
+    const activeCount = Math.min(70, cellState.magazineState.rows * cellState.magazineState.columns);
+    setCellState((current) => ({ ...current, magazine: current.magazine.map((_, index) => index < activeCount ? 'blank' : 'empty') }));
+  };
+  const clearMagazine = () => {
+    if (cellState.magazineState.enabled) return;
+    if (usePlcData) plcClient.current?.send({ command: 'magazine.clear' });
+    setCellState((current) => ({ ...current, magazine: current.magazine.map(() => 'empty') }));
+  };
+  const cycleMagazineSlot = (index: number) => {
+    if (cellState.magazineState.enabled) return;
+    if (usePlcData) plcClient.current?.send({ command: 'magazine.setSlot', value: index + 1 });
+    setCellState((current) => {
+      const magazine = [...current.magazine];
+      const sequence: SlotType[] = ['empty', 'blank', 'detail'];
+      magazine[index] = sequence[(sequence.indexOf(magazine[index]) + 1) % sequence.length];
+      return { ...current, magazine };
+    });
+  };
+  const updateMagazineSetting = (command: string, key: keyof CellState['magazineState'], value: number) => {
+    if (cellState.magazineState.enabled || !Number.isFinite(value)) return;
+    const normalized = key === 'rows' || key === 'columns' ? Math.max(1, Math.round(value)) : value;
+    const rows = key === 'rows' ? normalized : cellState.magazineState.rows;
+    const columns = key === 'columns' ? normalized : cellState.magazineState.columns;
+    if (rows * columns > 70) {
+      setCommandError('Размер матрицы не может превышать 70 слотов');
+      return;
+    }
+    updateMagazineState({ [key]: normalized });
+    if (usePlcData) plcClient.current?.send({ command, value: normalized });
+  };
   const toggleMachineEnabled = (index: number) => {
     const machine = cellState.machines[index];
     if (usePlcData) {
-      plcClient.current?.send({ command: machine.enabled ? 'machine.disable' : 'machine.enable', machine: index + 1 });
+      if (machine.enabled) {
+        plcClient.current?.send({ command: 'machine.disable', machine: index + 1 });
+      } else {
+        setBottomSection(null);
+        setConfirmationMachine(index);
+        setConfirmationEntered(false);
+        plcClient.current?.send({ command: 'machine.enable', machine: index + 1 });
+      }
       return;
     }
     if (machine.enabled && machine.mode === 'processing') {
       updateMachine(index, { disablePending: true, currentStep: 'Отключение после завершения обработки' });
     } else if (machine.enabled) {
-      updateMachine(index, { enabled: false, disablePending: false, canAcceptService: false, currentStep: 'Станок отключён' });
+      updateMachine(index, { enabled: false, disablePending: false, mode: 'off', canAcceptService: false, currentStep: 'Станок выключен' });
     } else {
-      updateMachine(index, { enabled: true, disablePending: false, mode: 'idle', canAcceptService: true, currentStep: 'Готов к работе' });
+      updateMachine(index, { plcState: 1, enabled: true, disablePending: false, mode: 'enabled', canAcceptService: false, currentStep: 'Укажите тип детали в патроне' });
+      setBottomSection(null);
+      setConfirmationMachine(index);
+      setConfirmationEntered(true);
     }
+  };
+  const sendMachineConfirmation = (command: string) => {
+    if (confirmationMachine === null) return;
+    if (usePlcData) {
+      plcClient.current?.send({ command, machine: confirmationMachine + 1 });
+      return;
+    }
+    if (command === 'machine.setBlank') updateMachine(confirmationMachine, { plcState: 3, currentStep: 'Ожидается подтверждение закрытия двери' });
+    if (command === 'machine.setDetail') updateMachine(confirmationMachine, { plcState: 4, currentStep: 'Станок готов', canAcceptService: true });
+    if (command === 'machine.acceptDoor') updateMachine(confirmationMachine, { plcState: 2, doorOpen: false, doorClosed: true, currentStep: 'Ожидается подтверждение запуска обработки' });
+    if (command === 'machine.rejectDoor' || command === 'machine.rejectRun') updateMachine(confirmationMachine, { plcState: 0, enabled: false, mode: 'off', currentStep: 'Станок выключен' });
+    if (command === 'machine.acceptRun') updateMachine(confirmationMachine, { plcState: 4, mode: 'processing', currentStep: 'Обработка' });
+  };
+  const cancelMachineConfirmation = () => {
+    if (confirmationMachine !== null) {
+      if (usePlcData) plcClient.current?.send({ command: 'machine.disable', machine: confirmationMachine + 1 });
+      else updateMachine(confirmationMachine, { plcState: 0, enabled: false, mode: 'off', currentStep: 'Станок выключен' });
+    }
+    setConfirmationMachine(null);
+    setConfirmationEntered(false);
   };
   const resetMachine = (index: number) => {
     const machine = cellState.machines[index];
@@ -281,7 +632,7 @@ export function App() {
     updateMachine(index, {
       enabled: false,
       disablePending: false,
-      mode: 'idle',
+      mode: 'off',
       canAcceptService: false,
       currentStep: 'Станок отключён после сброса',
       lastErrors: machine.activeErrors.length ? machine.activeErrors : machine.lastErrors,
@@ -330,42 +681,182 @@ export function App() {
     });
   }, [layout]);
 
+  useEffect(() => {
+    if (confirmationMachine === null) return;
+    const machine = cellState.machines[confirmationMachine];
+    const confirmationState = [1, 2, 3, 12, 15].includes(machine.plcState);
+    if (confirmationState && !confirmationEntered) setConfirmationEntered(true);
+    if ((confirmationEntered && !confirmationState) || (!confirmationEntered && machine.enabled && machine.plcState === 4) || machine.plcState === 17) {
+      setConfirmationMachine(null);
+      setConfirmationEntered(false);
+    }
+  }, [cellState.machines, confirmationEntered, confirmationMachine]);
+
   const displayedRunning = usePlcData ? plcRuntime.cellRunning : running;
   const displayedGlobalError = usePlcData ? plcRuntime.globalError : globalError;
   const connectionLost = plcConnection.status === 'disconnected' || plcConnection.status === 'connecting';
   const systemText = connectionLost ? 'НЕТ СВЯЗИ' : plcConnection.status === 'degraded' ? 'ЧАСТИЧНЫЕ ДАННЫЕ' : displayedGlobalError ? 'ОШИБКА' : displayedRunning ? 'РАБОТАЕТ' : 'ОСТАНОВЛЕНА';
-  const sendCellCommand = (command: string, fallback: () => void) => {
-    setCommandError('');
-    if (!usePlcData || !plcClient.current?.send({ command })) fallback();
+  const closeMachinePanel = () => {
+    if (selectedMachine !== null) setSelectedMachine(null);
+    if (page === 'machines') setPage('monitoring');
+  };
+  const systemHeaderText = systemText.charAt(0) + systemText.slice(1).toLowerCase();
+  const modeText = usePlcData ? (plcRuntime.manualMode ? 'Ручной' : 'Автомат') : 'Ручной';
+  const displayedReadyMachines = usePlcData ? plcRuntime.readyMachines : 0;
+  const displayedRobotReady = usePlcData && plcRuntime.robotReady;
+  const displayedMagazineReady = usePlcData && plcRuntime.magazineReady;
+  const displayedReadyToStart = usePlcData && plcRuntime.readyToStart;
+  const machineAlarmIndexes = cellState.machines
+    .map((machine, index) => machine.mode === 'error' || machine.activeErrors.length > 0 ? index + 1 : 0)
+    .filter(Boolean);
+  const alarmCount = machineAlarmIndexes.length
+    + (cellState.magazineState.error || cellState.magazineState.activeErrors.length > 0 ? 1 : 0)
+    + (displayedGlobalError && machineAlarmIndexes.length === 0 && !cellState.magazineState.error ? 1 : 0);
+  const alarmSource = machineAlarmIndexes.length
+    ? `Станок ${machineAlarmIndexes[0]}`
+    : cellState.magazineState.error ? 'Магазин' : alarmCount ? 'Ячейка' : 'Нет активных';
+
+  const toggleCellCycle = () => {
+    if (!usePlcData) {
+      setCommandError('Управление ячейкой недоступно без связи с PLC');
+      return;
+    }
+    if (!displayedRunning && !displayedReadyToStart) return;
+    plcClient.current?.send({ command: displayedRunning ? 'cell.stop' : 'cell.start' });
+  };
+  const resetCell = () => {
+    if (!usePlcData) {
+      setCommandError('Сброс недоступен без связи с PLC');
+      return;
+    }
+    plcClient.current?.send({ command: 'cell.reset' });
+  };
+  const changeCellMode = (manual: boolean) => {
+    if (!usePlcData) {
+      setCommandError('Переключение режима недоступно без связи с PLC');
+      return;
+    }
+    plcClient.current?.send({ command: 'cell.manual', value: manual });
+  };
+  const sendRobotCommand = (command: string) => {
+    if (!usePlcData) {
+      setCommandError('Управление роботом недоступно без связи с PLC');
+      return;
+    }
+    if (!plcRuntime.manualMode || plcRuntime.cellRunning) {
+      setCommandError('Ручные команды робота разрешены только в ручном режиме при остановленной ячейке');
+      return;
+    }
+    plcClient.current?.send({ command });
+  };
+  const selectBottomSection = (section: BottomSection) => {
+    setBottomSection(section);
+    setPage('monitoring');
+    if (section === 'machines') {
+      const runtimeIndex = plcRuntime.selectedMachine - 1;
+      const processingIndex = cellState.machines.findIndex((machine) => machine.mode === 'processing');
+      const preferredIndex = runtimeIndex >= 0 && runtimeIndex < cellState.machines.length
+        ? runtimeIndex
+        : processingIndex >= 0 ? processingIndex : 0;
+      const nextIndex = selectedMachine ?? preferredIndex;
+      setSelectedMachine(nextIndex);
+      setManualMachine(nextIndex);
+    } else {
+      setSelectedMachine(null);
+    }
   };
 
-  return <div className="app-shell">
-    <div className="edge-trigger" onMouseEnter={() => setSidebarOpen(true)} />
-    <nav className={`sidebar ${sidebarOpen ? 'expanded' : ''}`} onMouseEnter={() => setSidebarOpen(true)} onMouseLeave={() => setSidebarOpen(false)}>
-      <button className="brand" onClick={() => setSidebarOpen((v) => !v)} title="Меню"><span className="brand-mark">R</span><strong>PORTAL ROBOT</strong><Menu size={19} /></button>
-      <div className="nav-list">{NAV_ITEMS.map(({ page: itemPage, label, icon: Icon }) => <button key={itemPage} className={page === itemPage ? 'active' : ''} onClick={() => { setPage(itemPage); if (itemPage !== 'machines') setSelectedMachine(null); }} title={label}><Icon size={20} /><span>{label}</span></button>)}</div>
-      <button className="emergency" onClick={() => sendCellCommand('cell.stop', () => { setGlobalError(true); setRunning(false); })} title="Аварийный стоп"><OctagonX size={21} /><span>АВАРИЙНЫЙ СТОП</span></button>
-    </nav>
-    <header className="topbar">
-      <div className="page-title"><ChevronLeft size={18} /><div><span>PORTAL ROBOT</span><h1>{PAGE_TITLES[page]}</h1></div></div>
-      <div className="line-step"><span>СОСТОЯНИЕ ЛИНИИ</span><strong>{displayedGlobalError ? 'АВАРИЯ ЯЧЕЙКИ' : usePlcData ? plcRuntime.cellStep : displayedRunning ? 'РУЧНОЙ РЕЖИМ МОДЕЛИ' : 'МОДЕЛЬ ОСТАНОВЛЕНА'}</strong></div>
-      <div className="top-statuses"><div title={plcConnection.message}><Indicator active={!connectionLost && !displayedGlobalError} tone={displayedGlobalError || connectionLost ? 'red' : 'green'} /><span>СИСТЕМА<b>{systemText}</b></span></div><div><Bot size={20} /><span>РОБОТ<b>{usePlcData ? plcRuntime.robotStep : 'РУЧНОЙ'}</b></span></div><div><Factory size={20} /><span>АКТИВНЫЙ СТАНОК<b>{usePlcData ? plcRuntime.selectedMachine || '—' : '—'}</b></span></div></div>
-      <div className="commands"><CommandButton label="Старт" icon={Play} tone="primary" onClick={() => sendCellCommand('cell.start', () => { if (!globalError) setRunning(true); })} /><CommandButton label="Стоп" icon={CircleStop} tone="stop" onClick={() => sendCellCommand('cell.stop', () => setRunning(false))} /><CommandButton label="Сброс" icon={RotateCcw} onClick={() => sendCellCommand('cell.reset', () => setGlobalError(false))} /></div>
+  return <div className="app-shell tesla-shell no-sidebar">
+    <header className="topbar tesla-topbar">
+      <div className="page-title"><div><span>PORTAL ROBOT</span><h1>{PAGE_TITLES[page]}</h1></div></div>
+      <div className={`system-summary ${displayedGlobalError || connectionLost ? 'alarm' : ''}`} title={plcConnection.message}><Indicator active={!connectionLost && !displayedGlobalError} tone={displayedGlobalError || connectionLost ? 'red' : 'green'} /><span>СИСТЕМА</span><b>{systemHeaderText}</b></div>
+      <div className="mode-summary"><Indicator active tone="blue" /><span>РЕЖИМ</span><b>{modeText}</b></div>
+      <div className="profile-area">
+        <button className="profile-button" type="button" onClick={() => setProfileOpen((value) => !value)}><UserRound size={21} /><span><b>Оператор</b></span><ChevronDown size={17} /></button>
+        {profileOpen && <div className="profile-popover"><span>АВТОРИЗОВАН</span><strong>Оператор</strong><p>Доступ: управление ячейкой</p><button type="button" onClick={() => setPage('settings')}><Settings size={17} />Настройки интерфейса</button></div>}
+      </div>
+      <button className="top-menu-button" type="button" onClick={() => setPage(page === 'manual' ? 'monitoring' : 'manual')} title="Ручное управление"><Menu /></button>
     </header>
-    <main className="workspace">
-      <CellViewport layout={layout} state={cellState} selectedMachine={selectedMachine} cameraPreset={cameraPreset} onMachineSelect={selectMachine} />
-      <div className="view-toolbar"><button className={cameraPreset === 'iso' ? 'active' : ''} onClick={() => setCameraPreset('iso')} title="Изометрия"><Cuboid size={18} /></button><button className={cameraPreset === 'front' ? 'active' : ''} onClick={() => setCameraPreset('front')} title="Вид спереди"><Box size={18} /></button><button className={cameraPreset === 'top' ? 'active' : ''} onClick={() => setCameraPreset('top')} title="Вид сверху"><Gauge size={18} /></button><span>{cameraPreset === 'iso' ? 'Изометрия' : cameraPreset === 'front' ? 'Спереди' : 'Сверху'}</span></div>
-      <div className="step-board"><div><span>РОБОТ</span><b>{usePlcData ? plcRuntime.robotStep : 'РУЧНОЕ УПРАВЛЕНИЕ'}</b></div><div><span>{usePlcData && plcRuntime.selectedMachine ? `СТАНОК ${plcRuntime.selectedMachine}` : 'СТАНКИ'}</span><b>{usePlcData && plcRuntime.selectedMachine ? plcRuntime.machineSteps[plcRuntime.selectedMachine - 1] : 'ЛОКАЛЬНАЯ МОДЕЛЬ'}</b></div><div><span>МАГАЗИН</span><b>{usePlcData ? plcRuntime.magazineStep : 'РУЧНОЕ УПРАВЛЕНИЕ'}</b></div></div>
+    <main className="workspace" onPointerDown={(event) => {
+      const target = event.target as HTMLElement;
+      if (target.closest('.side-panel, .equipment-status, .alarm-summary, .profile-area, .cell-bottom-shell')) return;
+      closeMachinePanel();
+      setProfileOpen(false);
+    }}>
+      <CellViewport
+        layout={layout}
+        state={cellState}
+        selectedMachine={selectedMachine}
+        cameraPreset="front"
+        onMachineSelect={() => {}}
+        onMagazineSelect={() => selectBottomSection('magazine')}
+      />
       {commandError && <div className="command-error" role="alert"><AlertCircle size={18} /><span>{commandError}</span><button onClick={() => setCommandError('')} type="button">×</button></div>}
-      <section className="dashboard">
-        <div className="dashboard-section machines-status"><div className="section-title"><span>СТАТУС СТАНКОВ</span><small>3 СТАНКА</small></div><div className="machine-cards">{cellState.machines.map((machine, index) => <MachineCard key={index} index={index} state={machine} step={machine.currentStep} active={selectedMachine === index} onClick={() => selectMachine(index)} />)}</div></div>
-        <div className="dashboard-section robot-status"><div className="section-title"><span>РОБОТ И ЗАХВАТ</span><small>Координаты, мм</small></div><div className="robot-content"><div className="coordinates">{(['x', 'y', 'z'] as const).map((axis) => <div key={axis}><span>{axis.toUpperCase()}</span><b>{cellState.robot[axis].toFixed(0)}</b></div>)}</div><div className="grippers"><div><strong>Захват 1</strong><Wrench size={28} /><span><Indicator active={cellState.robot.gripper1Closed} tone="blue" />{cellState.robot.gripper1Closed ? 'ЗАГОТОВКА' : 'ПУСТО'}</span></div><div><strong>Захват 2</strong><Wrench size={28} /><span><Indicator active={cellState.robot.gripper2Closed} tone="green" />{cellState.robot.gripper2Closed ? 'ДЕТАЛЬ' : 'ПУСТО'}</span></div></div></div></div>
-        <div className="dashboard-section magazine-status"><div className="section-title"><span>МАГАЗИН 10 × 7</span><small>{counts.blanks} заг. · {counts.details} дет. · {counts.empty} пусто</small></div><MagazineMatrix slots={cellState.magazine} /><div className="legend"><span><i className="slot empty" />Пусто</span><span><i className="slot blank" />Заготовка</span><span><i className="slot detail" />Деталь</span></div></div>
-      </section>
+      {page === 'monitoring' && bottomSection === null && confirmationMachine === null && <button className={`alarm-summary ${alarmCount ? 'active' : ''}`} type="button" onClick={() => setPage('alarms')}>
+        <TriangleAlert />
+        <span>Аварии</span>
+        <b>{alarmCount}</b>
+        <i />
+        <strong>{alarmSource}</strong>
+        <ChevronDown />
+      </button>}
       {page === 'settings' && <SettingsPanel layout={layout} setLayout={setLayout} onClose={() => setPage('monitoring')} />}
       {page === 'manual' && <ManualPanel state={cellState} layout={layout} setState={setCellState} machineIndex={manualMachine} setMachineIndex={setManualMachine} onClose={() => setPage('monitoring')} plcDataEnabled={plcDataEnabled} onPlcDataChange={changePlcDataSource} />}
-      {page === 'machines' && selectedMachine !== null && <MachinePanel index={selectedMachine} state={cellState.machines[selectedMachine]} onClose={() => { setSelectedMachine(null); setPage('monitoring'); }} onToggleEnabled={() => toggleMachineEnabled(selectedMachine)} onReset={() => resetMachine(selectedMachine)} onCycleSettings={(useHmi, seconds) => updateCycleSettings(selectedMachine, useHmi, seconds)} />}
-      {(['robot', 'magazine', 'events', 'alarms'] as Page[]).includes(page) && <aside className="side-panel info-panel"><div className="panel-heading"><div><span>РАЗДЕЛ</span><h2>{PAGE_TITLES[page]}</h2></div><button onClick={() => setPage('monitoring')} title="Закрыть"><ChevronRight /></button></div><div className="empty-state"><Activity size={42} /><strong>Экран подготовлен</strong><p>Здесь появятся рабочие команды и данные CODESYS после подключения обмена.</p></div></aside>}
+      {page === 'machines' && selectedMachine !== null && <MachinePanel index={selectedMachine} state={cellState.machines[selectedMachine]} onClose={closeMachinePanel} onToggleEnabled={() => toggleMachineEnabled(selectedMachine)} onReset={() => resetMachine(selectedMachine)} onCycleSettings={(useHmi, seconds) => updateCycleSettings(selectedMachine, useHmi, seconds)} />}
+      {page === 'magazine' && <MagazineScreen slots={cellState.magazine} state={cellState.magazineState} step={usePlcData ? plcRuntime.magazineStep : 'Локальная модель'} onClose={() => setPage('monitoring')} onToggleEnabled={toggleMagazineEnabled} onFill={fillMagazine} onClear={clearMagazine} onSlotClick={cycleMagazineSlot} onSetting={updateMagazineSetting} />}
+      {(['robot', 'events', 'alarms'] as Page[]).includes(page) && <aside className="side-panel info-panel"><div className="panel-heading"><div><span>РАЗДЕЛ</span><h2>{PAGE_TITLES[page]}</h2></div><button onClick={() => setPage('monitoring')} title="Закрыть"><ChevronRight /></button></div><div className="empty-state"><Activity size={42} /><strong>Экран подготовлен</strong><p>Здесь появятся рабочие команды и данные CODESYS после подключения обмена.</p></div></aside>}
+      {confirmationMachine !== null && <OperatorConfirmation index={confirmationMachine} machine={cellState.machines[confirmationMachine]} layout={layout} state={cellState} onCommand={sendMachineConfirmation} onCancel={cancelMachineConfirmation} />}
+      {page === 'monitoring' && confirmationMachine === null && <div className="cell-bottom-shell">
+        {bottomSection === 'cell' && <CellQuickPanel
+          running={displayedRunning}
+          online={usePlcData}
+          globalError={displayedGlobalError}
+          readyToStart={displayedReadyToStart}
+          robotReady={displayedRobotReady}
+          magazineReady={displayedMagazineReady}
+          readyMachines={displayedReadyMachines}
+          manualMode={usePlcData ? plcRuntime.manualMode : true}
+          onToggle={toggleCellCycle}
+          onReset={resetCell}
+          onModeChange={changeCellMode}
+          onExtended={() => setPage('manual')}
+          onClose={() => setBottomSection(null)}
+        />}
+        {bottomSection === 'machines' && <MachinesQuickPanel
+          machines={cellState.machines}
+          selectedIndex={selectedMachine ?? 0}
+          onSelect={(index) => { setSelectedMachine(index); setManualMachine(index); }}
+          onToggleEnabled={() => toggleMachineEnabled(selectedMachine ?? 0)}
+          onReset={() => resetMachine(selectedMachine ?? 0)}
+          onExtended={() => setPage('machines')}
+          onClose={() => setBottomSection(null)}
+        />}
+        {bottomSection === 'robot' && <RobotQuickPanel
+          robot={cellState.robot}
+          step={usePlcData ? plcRuntime.robotStep : 'Локальная модель'}
+          online={usePlcData}
+          globalError={displayedGlobalError}
+          drivesReady={usePlcData && plcRuntime.drivesReady}
+          robotReady={displayedRobotReady}
+          manualMode={usePlcData ? plcRuntime.manualMode : true}
+          cellRunning={displayedRunning}
+          onToggleDrives={() => sendRobotCommand(plcRuntime.drivesReady ? 'robot.disableDrives' : 'robot.enableDrives')}
+          onStop={() => sendRobotCommand('robot.stop')}
+          onReset={() => sendRobotCommand('robot.reset')}
+          onExtended={() => setPage('robot')}
+          onClose={() => setBottomSection(null)}
+        />}
+        {bottomSection === 'magazine' && <MagazineQuickPanel
+          slots={cellState.magazine}
+          state={cellState.magazineState}
+          onToggleEnabled={toggleMagazineEnabled}
+          onFill={fillMagazine}
+          onClear={clearMagazine}
+          onExtended={() => setPage('magazine')}
+          onClose={() => setBottomSection(null)}
+        />}
+        {bottomSection === null && <BottomNavigation active={bottomSection} onSelect={selectBottomSection} />}
+      </div>}
     </main>
   </div>;
 }
