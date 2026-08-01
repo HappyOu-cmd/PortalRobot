@@ -1,3 +1,8 @@
+import engineOutlineIcon from '@iconify-icons/mdi/engine-outline';
+import factoryIcon from '@iconify-icons/mdi/factory';
+import robotIndustrialOutlineIcon from '@iconify-icons/mdi/robot-industrial-outline';
+import viewGridOutlineIcon from '@iconify-icons/mdi/view-grid-outline';
+import { Icon } from '@iconify/react';
 import { useEffect, useRef, useState } from 'react';
 import {
   Activity, AlertCircle, ArrowRight, Bot, Box, Boxes, CheckCircle2, ChevronRight,
@@ -286,13 +291,13 @@ function MachinesQuickPanel({ machines, selectedIndex, onSelect, onToggleEnabled
 
 function BottomNavigation({ active, onSelect }: { active: BottomSection | null; onSelect: (section: BottomSection) => void }) {
   const items = [
-    { key: 'cell' as const, label: 'Ячейка', icon: Grid2X2 },
-    { key: 'machines' as const, label: 'Станки', icon: Factory },
-    { key: 'robot' as const, label: 'Робот', icon: Bot },
-    { key: 'magazine' as const, label: 'Магазин', icon: Boxes },
+    { key: 'cell' as const, label: 'Ячейка', icon: factoryIcon },
+    { key: 'machines' as const, label: 'Станки', icon: engineOutlineIcon },
+    { key: 'robot' as const, label: 'Робот', icon: robotIndustrialOutlineIcon },
+    { key: 'magazine' as const, label: 'Магазин', icon: viewGridOutlineIcon },
   ];
   return <nav className="cell-bottom-nav" aria-label="Быстрое управление">
-    {items.map(({ key, label, icon: Icon }) => <button key={key} className={active === key ? 'active' : ''} type="button" onClick={() => onSelect(key)}><Icon /><span>{label}</span></button>)}
+    {items.map(({ key, label, icon }) => <button key={key} className={active === key ? 'active' : ''} type="button" onClick={() => onSelect(key)}><Icon icon={icon} aria-hidden="true" /><span>{label}</span></button>)}
   </nav>;
 }
 
