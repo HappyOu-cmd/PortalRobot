@@ -17,7 +17,7 @@ import { CellViewport } from './components/CellViewport';
 import { MagazineMatrix } from './components/magazine/MagazineMatrix';
 import { RingStat } from './components/magazine/RingStat';
 import { Indicator } from './components/ui/Indicator';
-import portalRobotLogo from './logo/ChatGPT Image 1 авг. 2026 г., 21_24_28.png';
+import portalRobotLogo from './assets/branding/portal-robot-logo.png';
 import { DEFAULT_LAYOUT, DEFAULT_STATE } from './model/defaults';
 import { getRobotTravelLimits } from './model/travel';
 import type { CellLayout, CellState, SlotType } from './model/types';

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import machineModelUrl from '../assets/Headman.glb?url';
+import machineModelUrl from '../assets/models/Headman.glb?url';
 import { PART_GEOMETRY } from '../model/partGeometry';
 import type { CellLayout, MachineState } from '../model/types';
 import { COLORS, cylinder, damp, logicalPosition, mm } from './primitives';

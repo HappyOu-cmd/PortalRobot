@@ -29,7 +29,7 @@ npm run storybook
 - `src/model/scenarios.ts` — тестовые состояния без PLC.
 - `src/plc/client.ts` — перевод OPC UA-снимка в модель HMI.
 - `gateway/server.mjs` — чтение тегов и запись команд OPC UA.
-- `src/theme.css` — цвета, радиусы и размеры дизайн-системы.
+- `src/styles/theme.css` — цвета, радиусы и размеры дизайн-системы.
 
 ## Как добавить элемент
 

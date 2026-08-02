@@ -132,7 +132,7 @@ export function MagazineReadyBadge({ ready, busy, error }: MagazineReadyBadgePro
 
 ### Шаг 2. Добавить стили
 
-В `src/styles.css`:
+В `src/styles/global.css`:
 
 ```css
 .equipment-badge {
@@ -153,7 +153,7 @@ export function MagazineReadyBadge({ ready, busy, error }: MagazineReadyBadgePro
 .equipment-badge.error { color: var(--color-danger); }
 ```
 
-Цвета следует брать из `src/theme.css`, а не прописывать заново в каждом компоненте.
+Цвета следует брать из `src/styles/theme.css`, а не прописывать заново в каждом компоненте.
 
 ### Шаг 3. Создать истории
 

@@ -1,5 +1,7 @@
 # Portal Robot HMI
 
+Исходники интерфейса находятся в `src`, OPC UA gateway — в `gateway`, а подробные инструкции для разработки — в [docs](docs/README.md). Общая документация PLC и HMI расположена в папке `DOKS` в корне проекта.
+
 ## Запуск с PLC
 
 PLC должен публиковать `GVL_HMI` через OPC UA. Текущий локальный endpoint:
@@ -40,3 +42,12 @@ $env:GATEWAY_HOST='0.0.0.0'
 ```
 
 Состояние связи доступно по `http://127.0.0.1:3001/api/health`.
+
+## Проверка перед коммитом
+
+```powershell
+npm run build
+node --check gateway/server.mjs
+```
+
+Каталоги `node_modules`, `dist`, `storybook-static` и `artifacts` генерируются локально и не должны попадать в Git.
