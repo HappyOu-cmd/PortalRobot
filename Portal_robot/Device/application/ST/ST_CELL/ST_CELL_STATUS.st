@@ -5,6 +5,11 @@ STRUCT
 	xWaitingMachine    : BOOL; // Ожидание доступного станка
 	xWaitingMagazine   : BOOL; // Ожидание пополнения или освобождения магазина
 	xError             : BOOL; // Менеджер ячейки находится в ошибке
+	xReadyToStart      : BOOL; // Выполнены все условия запуска автоматического цикла
+	xDrivesReady       : BOOL; // Приводы и группа осей готовы к движению
+	xRobotReady        : BOOL; // Робот готов принять команду
+	xMagazineReady     : BOOL; // Магазин готов к работе с роботом
+	uiReadyMachines    : UINT; // Количество включённых станков в состоянии IDLE
 	uiSelectedMachine  : UINT; // Номер выбранного станка
 	eMagazineOperation : E_MAGAZINE_OPERATION; // Выбранная операция магазина
 END_STRUCT

@@ -8,6 +8,7 @@ STRUCT
 	dwMotionErrorPrevious : DWORD; // Ошибки SoftMotion предыдущего цикла
 	dwMotionErrorLast     : DWORD; // Последняя ненулевая маска SoftMotion
 	dwLogicalErrorLast    : DWORD; // Последняя ненулеевая логическая маска
+	dwAlarmActive         : DWORD; // Собственные аварии группы для общего журнала
 	stErrorActive         : ST_AXIS_GROUP_ERROR; // Расшифровка активных ошибок
 	stErrorLast           : ST_AXIS_GROUP_ERROR; // Расшифровка последних ошибок
 END_STRUCT

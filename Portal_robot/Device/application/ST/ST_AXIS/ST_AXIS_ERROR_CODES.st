@@ -11,6 +11,7 @@ STRUCT
     dwWarningLatched      : DWORD; // Защёлкнутые предупреждения
     dwWarning             : DWORD; // Активные предупреждения
     dwAllError            : DWORD; // Сводная маска ошибок
+    dwAlarmActive         : DWORD; // Собственные аварии оси для общего журнала
     stErrorActive         : ST_AXIS_ERROR; // Расшифровка активных ошибок
     stErrorLast           : ST_AXIS_ERROR; // Расшифровка последних ошибок
 END_STRUCT

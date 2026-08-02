@@ -22,7 +22,7 @@
                       <Single Type="System.Guid">d9b2b2cc-ea99-4c3b-aa42-1e5c49e65b84</Single>
                     </Key>
                     <Value>
-                      <Single Type="System.Guid">8c9420aa-82ce-448d-a893-a5ebc77c5dad</Single>
+                      <Single Type="System.Guid">d05607d8-555e-41e7-b31f-5e87f6a43399</Single>
                     </Value>
                   </Entry>
                 </Dictionary>
@@ -50,7 +50,6 @@ VAR_GLOBAL
 	CHANGE_MACHINE : ARRAY [0..40] OF ST_MACHINE_RECIPE // Рецепт смены детали в станке
 	:=[
 	   (eCommand := E_MACHINE_STATE.DOOR_OPEN),
-	   (eCommand := E_MACHINE_STATE.ROBOT_MOVE, stPoint := E_MACHINE_POINTS.INSIDE),
 	   (eCommand := E_MACHINE_STATE.ROBOT_ACTION, eRobotAction := E_ROBOT_ACTION.ROTATE_TO_DETAIL),
 	   (eCommand := E_MACHINE_STATE.ROBOT_ACTION, eRobotAction := E_ROBOT_ACTION.UNCLAMP_2),
 	   (eCommand := E_MACHINE_STATE.ROBOT_MOVE, stPoint := E_MACHINE_POINTS.CHUCK_APPROACH),
@@ -63,7 +62,6 @@ VAR_GLOBAL
 	   (eCommand := E_MACHINE_STATE.CHUCK_CLOSE),
 	   (eCommand := E_MACHINE_STATE.ROBOT_ACTION, eRobotAction := E_ROBOT_ACTION.UNCLAMP_1),
 	   (eCommand := E_MACHINE_STATE.ROBOT_MOVE, stPoint := E_MACHINE_POINTS.CHUCK_APPROACH),
-	   (eCommand := E_MACHINE_STATE.ROBOT_MOVE, stPoint := E_MACHINE_POINTS.INSIDE),
 	   (eCommand := E_MACHINE_STATE.ROBOT_MOVE, stPoint := E_MACHINE_POINTS.ABOVE, xRobotDone := TRUE),
 	   (eCommand := E_MACHINE_STATE.DOOR_CLOSE),
 	   (eCommand := E_MACHINE_STATE.CYCLE_START),
@@ -76,14 +74,12 @@ VAR_GLOBAL
 	LOAD_MACHINE : ARRAY [0..40] OF ST_MACHINE_RECIPE // Рецепт загрузки станка
 	:=[
 	   (eCommand := E_MACHINE_STATE.DOOR_OPEN),
-	   (eCommand := E_MACHINE_STATE.ROBOT_MOVE, stPoint := E_MACHINE_POINTS.INSIDE),
 	   (eCommand := E_MACHINE_STATE.ROBOT_ACTION, eRobotAction := E_ROBOT_ACTION.ROTATE_TO_BLANK),
 	   (eCommand := E_MACHINE_STATE.ROBOT_MOVE, stPoint := E_MACHINE_POINTS.CHUCK_APPROACH),
 	   (eCommand := E_MACHINE_STATE.ROBOT_MOVE, stPoint := E_MACHINE_POINTS.CHUCK),
 	   (eCommand := E_MACHINE_STATE.CHUCK_CLOSE),
 	   (eCommand := E_MACHINE_STATE.ROBOT_ACTION, eRobotAction := E_ROBOT_ACTION.UNCLAMP_1),
 	   (eCommand := E_MACHINE_STATE.ROBOT_MOVE, stPoint := E_MACHINE_POINTS.CHUCK_APPROACH),
-	   (eCommand := E_MACHINE_STATE.ROBOT_MOVE, stPoint := E_MACHINE_POINTS.INSIDE),
 	   (eCommand := E_MACHINE_STATE.ROBOT_MOVE, stPoint := E_MACHINE_POINTS.ABOVE, xRobotDone := TRUE),
 	   (eCommand := E_MACHINE_STATE.DOOR_CLOSE),
 	   (eCommand := E_MACHINE_STATE.CYCLE_START),
@@ -93,7 +89,6 @@ VAR_GLOBAL
 	UNLOAD_MACHINE : ARRAY [0..40] OF ST_MACHINE_RECIPE // Рецепт выгрузки станка
 	:=[
 	   (eCommand := E_MACHINE_STATE.DOOR_OPEN),
-	   (eCommand := E_MACHINE_STATE.ROBOT_MOVE, stPoint := E_MACHINE_POINTS.INSIDE),
 	   (eCommand := E_MACHINE_STATE.ROBOT_ACTION, eRobotAction := E_ROBOT_ACTION.ROTATE_TO_DETAIL),
 	   (eCommand := E_MACHINE_STATE.ROBOT_ACTION, eRobotAction := E_ROBOT_ACTION.UNCLAMP_2),
 	   (eCommand := E_MACHINE_STATE.ROBOT_MOVE, stPoint := E_MACHINE_POINTS.CHUCK_APPROACH),
@@ -101,7 +96,6 @@ VAR_GLOBAL
 	   (eCommand := E_MACHINE_STATE.ROBOT_ACTION, eRobotAction := E_ROBOT_ACTION.CLAMP_2),
 	   (eCommand := E_MACHINE_STATE.CHUCK_OPEN),
 	   (eCommand := E_MACHINE_STATE.ROBOT_MOVE, stPoint := E_MACHINE_POINTS.CHUCK_APPROACH),
-	   (eCommand := E_MACHINE_STATE.ROBOT_MOVE, stPoint := E_MACHINE_POINTS.INSIDE),
 	   (eCommand := E_MACHINE_STATE.ROBOT_MOVE, stPoint := E_MACHINE_POINTS.ABOVE, xRobotDone := TRUE),
 	   (eCommand := E_MACHINE_STATE.DOOR_CLOSE),
 	   (eCommand := E_MACHINE_STATE.DONE)
@@ -115,7 +109,7 @@ END_VAR
         <Single Name="ParameterList" Type="bool">False</Single>
         <Single Name="AddAttributeSubsequent" Type="bool">False</Single>
       </Single>
-      <Single Name="ParentSVNodeGuid" Type="System.Guid">8c9420aa-82ce-448d-a893-a5ebc77c5dad</Single>
+      <Single Name="ParentSVNodeGuid" Type="System.Guid">d05607d8-555e-41e7-b31f-5e87f6a43399</Single>
       <Array Name="Path" Type="string">
         <Single Type="string">Device</Single>
         <Single Type="string">PLC Logic</Single>

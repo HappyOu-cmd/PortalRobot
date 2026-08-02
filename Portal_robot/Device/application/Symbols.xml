@@ -25,6 +25,42 @@
               <Single Type="{d8f96a30-175d-4274-9fd9-f7db39255531}" Method="IArchivable">
                 <Single Name="VarAccess" Type="int">3</Single>
                 <Single Name="MaxVarAccess" Type="int">3</Single>
+                <Single Name="VarType" Type="string">BOOL</Single>
+                <Single Name="VarName" Type="string">xCellEnable</Single>
+              </Single>
+              <Single Type="{d8f96a30-175d-4274-9fd9-f7db39255531}" Method="IArchivable">
+                <Single Name="VarAccess" Type="int">3</Single>
+                <Single Name="MaxVarAccess" Type="int">3</Single>
+                <Single Name="VarType" Type="string">BOOL</Single>
+                <Single Name="VarName" Type="string">xCellDisable</Single>
+              </Single>
+              <Single Type="{d8f96a30-175d-4274-9fd9-f7db39255531}" Method="IArchivable">
+                <Single Name="VarAccess" Type="int">3</Single>
+                <Single Name="MaxVarAccess" Type="int">3</Single>
+                <Single Name="VarType" Type="string">BOOL</Single>
+                <Single Name="VarName" Type="string">xCellStart</Single>
+              </Single>
+              <Single Type="{d8f96a30-175d-4274-9fd9-f7db39255531}" Method="IArchivable">
+                <Single Name="VarAccess" Type="int">3</Single>
+                <Single Name="MaxVarAccess" Type="int">3</Single>
+                <Single Name="VarType" Type="string">BOOL</Single>
+                <Single Name="VarName" Type="string">xCellStop</Single>
+              </Single>
+              <Single Type="{d8f96a30-175d-4274-9fd9-f7db39255531}" Method="IArchivable">
+                <Single Name="VarAccess" Type="int">3</Single>
+                <Single Name="MaxVarAccess" Type="int">3</Single>
+                <Single Name="VarType" Type="string">BOOL</Single>
+                <Single Name="VarName" Type="string">xCellReset</Single>
+              </Single>
+              <Single Type="{d8f96a30-175d-4274-9fd9-f7db39255531}" Method="IArchivable">
+                <Single Name="VarAccess" Type="int">3</Single>
+                <Single Name="MaxVarAccess" Type="int">3</Single>
+                <Single Name="VarType" Type="string">BOOL</Single>
+                <Single Name="VarName" Type="string">xCellManual</Single>
+              </Single>
+              <Single Type="{d8f96a30-175d-4274-9fd9-f7db39255531}" Method="IArchivable">
+                <Single Name="VarAccess" Type="int">3</Single>
+                <Single Name="MaxVarAccess" Type="int">3</Single>
                 <Single Name="VarType" Type="string">LREAL</Single>
                 <Single Name="VarName" Type="string">lrOffsetX</Single>
               </Single>
@@ -92,6 +128,42 @@
                 <Single Name="VarAccess" Type="int">3</Single>
                 <Single Name="MaxVarAccess" Type="int">3</Single>
                 <Single Name="VarType" Type="string">ARRAY [1..3] OF BOOL</Single>
+                <Single Name="VarName" Type="string">axMachineSetBlank</Single>
+              </Single>
+              <Single Type="{d8f96a30-175d-4274-9fd9-f7db39255531}" Method="IArchivable">
+                <Single Name="VarAccess" Type="int">3</Single>
+                <Single Name="MaxVarAccess" Type="int">3</Single>
+                <Single Name="VarType" Type="string">ARRAY [1..3] OF BOOL</Single>
+                <Single Name="VarName" Type="string">axMachineSetDetail</Single>
+              </Single>
+              <Single Type="{d8f96a30-175d-4274-9fd9-f7db39255531}" Method="IArchivable">
+                <Single Name="VarAccess" Type="int">3</Single>
+                <Single Name="MaxVarAccess" Type="int">3</Single>
+                <Single Name="VarType" Type="string">ARRAY [1..3] OF BOOL</Single>
+                <Single Name="VarName" Type="string">axMachineAcceptDoor</Single>
+              </Single>
+              <Single Type="{d8f96a30-175d-4274-9fd9-f7db39255531}" Method="IArchivable">
+                <Single Name="VarAccess" Type="int">3</Single>
+                <Single Name="MaxVarAccess" Type="int">3</Single>
+                <Single Name="VarType" Type="string">ARRAY [1..3] OF BOOL</Single>
+                <Single Name="VarName" Type="string">axMachineRejectDoor</Single>
+              </Single>
+              <Single Type="{d8f96a30-175d-4274-9fd9-f7db39255531}" Method="IArchivable">
+                <Single Name="VarAccess" Type="int">3</Single>
+                <Single Name="MaxVarAccess" Type="int">3</Single>
+                <Single Name="VarType" Type="string">ARRAY [1..3] OF BOOL</Single>
+                <Single Name="VarName" Type="string">axMachineAcceptRun</Single>
+              </Single>
+              <Single Type="{d8f96a30-175d-4274-9fd9-f7db39255531}" Method="IArchivable">
+                <Single Name="VarAccess" Type="int">3</Single>
+                <Single Name="MaxVarAccess" Type="int">3</Single>
+                <Single Name="VarType" Type="string">ARRAY [1..3] OF BOOL</Single>
+                <Single Name="VarName" Type="string">axMachineRejectRun</Single>
+              </Single>
+              <Single Type="{d8f96a30-175d-4274-9fd9-f7db39255531}" Method="IArchivable">
+                <Single Name="VarAccess" Type="int">3</Single>
+                <Single Name="MaxVarAccess" Type="int">3</Single>
+                <Single Name="VarType" Type="string">ARRAY [1..3] OF BOOL</Single>
                 <Single Name="VarName" Type="string">axMachineUsed</Single>
               </Single>
               <Single Type="{d8f96a30-175d-4274-9fd9-f7db39255531}" Method="IArchivable">
@@ -134,13 +206,31 @@
                 <Single Name="VarAccess" Type="int">3</Single>
                 <Single Name="MaxVarAccess" Type="int">3</Single>
                 <Single Name="VarType" Type="string">LREAL</Single>
-                <Single Name="VarName" Type="string">MagazineSafeZ</Single>
+                <Single Name="VarName" Type="string">MagazineSafeZ_1</Single>
+              </Single>
+              <Single Type="{d8f96a30-175d-4274-9fd9-f7db39255531}" Method="IArchivable">
+                <Single Name="VarAccess" Type="int">3</Single>
+                <Single Name="MaxVarAccess" Type="int">3</Single>
+                <Single Name="VarType" Type="string">LREAL</Single>
+                <Single Name="VarName" Type="string">MagazineSafeZ_2</Single>
               </Single>
               <Single Type="{d8f96a30-175d-4274-9fd9-f7db39255531}" Method="IArchivable">
                 <Single Name="VarAccess" Type="int">3</Single>
                 <Single Name="MaxVarAccess" Type="int">3</Single>
                 <Single Name="VarType" Type="string">ST_ROBOT_COMMAND</Single>
                 <Single Name="VarName" Type="string">stRobotCommand</Single>
+              </Single>
+              <Single Type="{d8f96a30-175d-4274-9fd9-f7db39255531}" Method="IArchivable">
+                <Single Name="VarAccess" Type="int">3</Single>
+                <Single Name="MaxVarAccess" Type="int">3</Single>
+                <Single Name="VarType" Type="string">UDINT</Single>
+                <Single Name="VarName" Type="string">udiPlcHeartbeat</Single>
+              </Single>
+              <Single Type="{d8f96a30-175d-4274-9fd9-f7db39255531}" Method="IArchivable">
+                <Single Name="VarAccess" Type="int">3</Single>
+                <Single Name="MaxVarAccess" Type="int">3</Single>
+                <Single Name="VarType" Type="string">BOOL</Single>
+                <Single Name="VarName" Type="string">xGlobalError</Single>
               </Single>
               <Single Type="{d8f96a30-175d-4274-9fd9-f7db39255531}" Method="IArchivable">
                 <Single Name="VarAccess" Type="int">3</Single>
@@ -159,60 +249,6 @@
                 <Single Name="MaxVarAccess" Type="int">3</Single>
                 <Single Name="VarType" Type="string">LREAL</Single>
                 <Single Name="VarName" Type="string">lrActualZ</Single>
-              </Single>
-              <Single Type="{d8f96a30-175d-4274-9fd9-f7db39255531}" Method="IArchivable">
-                <Single Name="VarAccess" Type="int">3</Single>
-                <Single Name="MaxVarAccess" Type="int">3</Single>
-                <Single Name="VarType" Type="string">ST_HMI</Single>
-                <Single Name="VarName" Type="string">HMI</Single>
-              </Single>
-              <Single Type="{d8f96a30-175d-4274-9fd9-f7db39255531}" Method="IArchivable">
-                <Single Name="VarAccess" Type="int">3</Single>
-                <Single Name="MaxVarAccess" Type="int">3</Single>
-                <Single Name="VarType" Type="string">BOOL</Single>
-                <Single Name="VarName" Type="string">xCellEnable</Single>
-              </Single>
-              <Single Type="{d8f96a30-175d-4274-9fd9-f7db39255531}" Method="IArchivable">
-                <Single Name="VarAccess" Type="int">3</Single>
-                <Single Name="MaxVarAccess" Type="int">3</Single>
-                <Single Name="VarType" Type="string">BOOL</Single>
-                <Single Name="VarName" Type="string">xCellDisable</Single>
-              </Single>
-              <Single Type="{d8f96a30-175d-4274-9fd9-f7db39255531}" Method="IArchivable">
-                <Single Name="VarAccess" Type="int">3</Single>
-                <Single Name="MaxVarAccess" Type="int">3</Single>
-                <Single Name="VarType" Type="string">BOOL</Single>
-                <Single Name="VarName" Type="string">xCellStart</Single>
-              </Single>
-              <Single Type="{d8f96a30-175d-4274-9fd9-f7db39255531}" Method="IArchivable">
-                <Single Name="VarAccess" Type="int">3</Single>
-                <Single Name="MaxVarAccess" Type="int">3</Single>
-                <Single Name="VarType" Type="string">BOOL</Single>
-                <Single Name="VarName" Type="string">xCellStop</Single>
-              </Single>
-              <Single Type="{d8f96a30-175d-4274-9fd9-f7db39255531}" Method="IArchivable">
-                <Single Name="VarAccess" Type="int">3</Single>
-                <Single Name="MaxVarAccess" Type="int">3</Single>
-                <Single Name="VarType" Type="string">BOOL</Single>
-                <Single Name="VarName" Type="string">xCellReset</Single>
-              </Single>
-              <Single Type="{d8f96a30-175d-4274-9fd9-f7db39255531}" Method="IArchivable">
-                <Single Name="VarAccess" Type="int">3</Single>
-                <Single Name="MaxVarAccess" Type="int">3</Single>
-                <Single Name="VarType" Type="string">BOOL</Single>
-                <Single Name="VarName" Type="string">xCellManual</Single>
-              </Single>
-              <Single Type="{d8f96a30-175d-4274-9fd9-f7db39255531}" Method="IArchivable">
-                <Single Name="VarAccess" Type="int">3</Single>
-                <Single Name="MaxVarAccess" Type="int">3</Single>
-                <Single Name="VarType" Type="string">UDINT</Single>
-                <Single Name="VarName" Type="string">udiPlcHeartbeat</Single>
-              </Single>
-              <Single Type="{d8f96a30-175d-4274-9fd9-f7db39255531}" Method="IArchivable">
-                <Single Name="VarAccess" Type="int">3</Single>
-                <Single Name="MaxVarAccess" Type="int">3</Single>
-                <Single Name="VarType" Type="string">BOOL</Single>
-                <Single Name="VarName" Type="string">xGlobalError</Single>
               </Single>
               <Single Type="{d8f96a30-175d-4274-9fd9-f7db39255531}" Method="IArchivable">
                 <Single Name="VarAccess" Type="int">3</Single>
@@ -251,8 +287,8 @@
                 <Single Name="VarName" Type="string">stRobotError</Single>
               </Single>
               <Single Type="{d8f96a30-175d-4274-9fd9-f7db39255531}" Method="IArchivable">
-                <Single Name="VarAccess" Type="int">3</Single>
-                <Single Name="MaxVarAccess" Type="int">3</Single>
+                <Single Name="VarAccess" Type="int">1</Single>
+                <Single Name="MaxVarAccess" Type="int">1</Single>
                 <Single Name="VarType" Type="string">ARRAY [1..3] OF ST_MACHINE_PUBLIC</Single>
                 <Single Name="VarName" Type="string">astMachineStatus</Single>
               </Single>
@@ -275,8 +311,8 @@
                 <Single Name="VarName" Type="string">astMachineError</Single>
               </Single>
               <Single Type="{d8f96a30-175d-4274-9fd9-f7db39255531}" Method="IArchivable">
-                <Single Name="VarAccess" Type="int">3</Single>
-                <Single Name="MaxVarAccess" Type="int">3</Single>
+                <Single Name="VarAccess" Type="int">1</Single>
+                <Single Name="MaxVarAccess" Type="int">1</Single>
                 <Single Name="VarType" Type="string">ST_MAGAZINE_STATUS</Single>
                 <Single Name="VarName" Type="string">stMagazineStatus</Single>
               </Single>
@@ -297,6 +333,48 @@
                 <Single Name="MaxVarAccess" Type="int">3</Single>
                 <Single Name="VarType" Type="string">ARRAY [1..GVL_CELL_SETTINGS.NumberDetail] OF ST_DETAIL</Single>
                 <Single Name="VarName" Type="string">astMagazineSlot</Single>
+              </Single>
+              <Single Type="{d8f96a30-175d-4274-9fd9-f7db39255531}" Method="IArchivable">
+                <Single Name="VarAccess" Type="int">3</Single>
+                <Single Name="MaxVarAccess" Type="int">3</Single>
+                <Single Name="VarType" Type="string">ST_HMI</Single>
+                <Single Name="VarName" Type="string">HMI</Single>
+              </Single>
+              <Single Type="{d8f96a30-175d-4274-9fd9-f7db39255531}" Method="IArchivable">
+                <Single Name="VarAccess" Type="int">3</Single>
+                <Single Name="MaxVarAccess" Type="int">3</Single>
+                <Single Name="VarType" Type="string">BOOL</Single>
+                <Single Name="VarName" Type="string">xMagazineCycleSlot</Single>
+              </Single>
+              <Single Type="{d8f96a30-175d-4274-9fd9-f7db39255531}" Method="IArchivable">
+                <Single Name="VarAccess" Type="int">3</Single>
+                <Single Name="MaxVarAccess" Type="int">3</Single>
+                <Single Name="VarType" Type="string">UINT</Single>
+                <Single Name="VarName" Type="string">uiMagazineEditSlot</Single>
+              </Single>
+              <Single Type="{d8f96a30-175d-4274-9fd9-f7db39255531}" Method="IArchivable">
+                <Single Name="VarAccess" Type="int">3</Single>
+                <Single Name="MaxVarAccess" Type="int">3</Single>
+                <Single Name="VarType" Type="string">BOOL</Single>
+                <Single Name="VarName" Type="string">xRobotDrivesEnable</Single>
+              </Single>
+              <Single Type="{d8f96a30-175d-4274-9fd9-f7db39255531}" Method="IArchivable">
+                <Single Name="VarAccess" Type="int">3</Single>
+                <Single Name="MaxVarAccess" Type="int">3</Single>
+                <Single Name="VarType" Type="string">BOOL</Single>
+                <Single Name="VarName" Type="string">xRobotDrivesDisable</Single>
+              </Single>
+              <Single Type="{d8f96a30-175d-4274-9fd9-f7db39255531}" Method="IArchivable">
+                <Single Name="VarAccess" Type="int">3</Single>
+                <Single Name="MaxVarAccess" Type="int">3</Single>
+                <Single Name="VarType" Type="string">BOOL</Single>
+                <Single Name="VarName" Type="string">xRobotStop</Single>
+              </Single>
+              <Single Type="{d8f96a30-175d-4274-9fd9-f7db39255531}" Method="IArchivable">
+                <Single Name="VarAccess" Type="int">3</Single>
+                <Single Name="MaxVarAccess" Type="int">3</Single>
+                <Single Name="VarType" Type="string">BOOL</Single>
+                <Single Name="VarName" Type="string">xRobotReset</Single>
               </Single>
             </List2>
             <Single Name="SignGuid" Type="System.Guid">e0917101-535c-481c-9db2-6f4cfca7bf48</Single>

@@ -1,6 +1,7 @@
 TYPE ST_MAGAZINE_STATUS :
 STRUCT
 	xEnabled         : BOOL; // Магазин включен в работу
+	xDisablePending  : BOOL; // Запрошено отключение после завершения текущей операции
 	xReady 			 : BOOL; // Магазин готов принять команду
 	xBusy  			 : BOOL; // Выполняется операция магазина
 	xDone  			 : BOOL; // Операция магазина завершена

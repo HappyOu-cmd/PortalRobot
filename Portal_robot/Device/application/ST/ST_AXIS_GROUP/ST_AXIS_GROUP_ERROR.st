@@ -11,6 +11,7 @@ STRUCT
 	READ_POSITION_ERROR   : BOOL; // Ошибка чтения позиции группы
 	READ_STATUS_ERROR     : BOOL; // Ошибка чтения статуса группы
 	READ_GROUP_ERROR      : BOOL; // Ошибка чтения кода ошибки группы
+	GROUP_ERROR_STOP      : BOOL; // Группа SoftMotion находится в ErrorStop
 	STEP_TIMEOUT          : BOOL; // Превышено время выполнения шага
 	INVALID_STATE         : BOOL; // Неизвестное состояние автомата
 	POWER_PERMIT_READY    : BOOL; // Нет разрешения питания в готовности

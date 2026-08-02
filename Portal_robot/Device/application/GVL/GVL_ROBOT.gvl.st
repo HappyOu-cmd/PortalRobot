@@ -5,6 +5,8 @@ VAR_GLOBAL
 	Status        : ST_ROBOT_STATUS; // Рабочие статусы робота
 	Diag          : ST_ROBOT_DIAG; // Состояние автомата робота
 	Error         : ST_ROBOT_ERRORS; // Активные и последние ошибки робота
+	GripperDiag   : ST_GRIPPER_DIAG; // Диагностика внутреннего блока захвата
+	GripperError  : ST_GRIPPER_ERRORS; // Активные и последние ошибки захвата
 
 	xModbusBusy  : BOOL; // Внешний робот выполняет команду
 	xModbusDone  : BOOL; // Внешний робот завершил команду

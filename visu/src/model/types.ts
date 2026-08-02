@@ -3,6 +3,7 @@ export type SlotType = 'empty' | 'blank' | 'detail';
 export type MachineMode = 'off' | 'enabled' | 'processing' | 'change' | 'error';
 export type MachineOperation = 'NONE' | 'LOAD' | 'UNLOAD' | 'CHANGE';
 export type MachinePartState = 'EMPTY' | 'LOADED' | 'UNKNOWN';
+export type MachinePartType = 'UNKNOWN' | 'BLANK' | 'DETAIL';
 export type MagazineOperation = 'NONE' | 'TAKE' | 'PUT' | 'CHANGE';
 
 export interface Vec3Mm {
@@ -78,8 +79,10 @@ export interface MachineState {
   recommendedOperation: MachineOperation;
   actualOperation: MachineOperation;
   partState: MachinePartState;
+  partType: MachinePartType;
   cycleExpectedS: number;
   cycleElapsedS: number;
+  cycleRemainingS: number;
   measuredCycleS: number;
   useHmiCycleTime: boolean;
   cycleOvertime: boolean;

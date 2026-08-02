@@ -22,6 +22,7 @@ const endpointUrl = process.env.OPCUA_ENDPOINT ?? 'opc.tcp://127.0.0.1:4840';
 const gatewayPort = Number(process.env.GATEWAY_PORT ?? 3001);
 const gatewayHost = process.env.GATEWAY_HOST ?? '127.0.0.1';
 const reconnectDelayMs = Number(process.env.OPCUA_RECONNECT_MS ?? 3000);
+const uiRefreshIntervalMs = Number(process.env.OPCUA_UI_REFRESH_MS ?? 100);
 const plcRootName = process.env.OPCUA_GVL ?? 'GVL_HMI';
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const distDir = normalize(join(__dirname, '..', 'dist'));
@@ -34,14 +35,24 @@ const requiredSymbols = [
   'stCellStatus.xRobotReady',
   'stCellStatus.xMagazineReady',
   'stCellStatus.uiReadyMachines',
+  'stCellStatus.uiSelectedMachine',
+  'stCellDiag.eState',
   'xCellManual',
+  'stRobotDiag.eState',
+  'stRobotDiag.eActiveAction',
+  'stRobotDiag.eActivePoint',
   'stRobotStatus.xGripper1Closed',
   'xRobotDrivesEnable',
   'xRobotDrivesDisable',
   'xRobotStop',
   'xRobotReset',
   'astMachineStatus[1].xEnabled',
+  'astMachineStatus[1].xProcessing',
+  'astMachineStatus[1].ePartType',
   'astMachineStatus[1].tCycleElapsed',
+  'astMachineStatus[1].tCycleExpected',
+  'astMachineStatus[1].tRemaining',
+  'astMachineDiag[1].eState',
   'astMachineIoStatus[1].xDoorOpen',
   'axMachineSetBlank[1]',
   'axMachineSetDetail[1]',
@@ -51,11 +62,18 @@ const requiredSymbols = [
   'axMachineRejectRun[1]',
   'stMagazineStatus.xEnabled',
   'stMagazineStatus.xDisablePending',
+  'stMagazineStatus.eActualOperation',
+  'stMagazineStatus.iSelectedBlank',
+  'stMagazineStatus.iSelectedFreeSlot',
+  'stMagazineDiag.eState',
   'astMagazineSlot[1].eDetailType',
   'xMagazineCycleSlot',
   'uiMagazineEditSlot',
   'MagazineSafeZ_2',
   'astMachineStatus[1].xDisablePending',
+  'stAlarmStatus.uiActiveAlarmCount',
+  'stAlarmStatus.uiActiveWarningCount',
+  'astAlarmEvent[1].udiSequence',
 ];
 
 const commandMap = {
@@ -64,6 +82,7 @@ const commandMap = {
   'cell.start': { path: 'xCellStart', dataType: DataType.Boolean, pulse: true },
   'cell.stop': { path: 'xCellStop', dataType: DataType.Boolean, pulse: true },
   'cell.reset': { path: 'xCellReset', dataType: DataType.Boolean, pulse: true },
+  'alarms.resetWarnings': { path: 'xAlarmResetWarnings', dataType: DataType.Boolean, pulse: true },
   'cell.manual': { path: 'xCellManual', dataType: DataType.Boolean },
   'robot.enableDrives': { path: 'xRobotDrivesEnable', dataType: DataType.Boolean, pulse: true },
   'robot.disableDrives': { path: 'xRobotDrivesDisable', dataType: DataType.Boolean, pulse: true },
@@ -91,7 +110,7 @@ let connectionState = {
 const mimeTypes = {
   '.css': 'text/css; charset=utf-8', '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8',
-  '.png': 'image/png', '.svg': 'image/svg+xml', '.woff2': 'font/woff2',
+  '.png': 'image/png', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.glb': 'model/gltf-binary',
 };
 
 function jsonValue(value) {
@@ -270,8 +289,12 @@ async function connectOpcUa() {
         const path = chunk[index]?.[0];
         if (!path || !dataValue.statusCode.isGood()) return;
         latestValues[path] = jsonValue(dataValue.value.value);
-        clearTimeout(publishTimer);
-        publishTimer = setTimeout(publishSnapshot, 30);
+        if (publishTimer === null) {
+          publishTimer = setTimeout(() => {
+            publishTimer = null;
+            publishSnapshot();
+          }, uiRefreshIntervalMs);
+        }
       });
       monitored.push(group);
     }

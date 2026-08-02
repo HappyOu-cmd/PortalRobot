@@ -2,6 +2,7 @@ TYPE ST_CELL_ERRORS :
 STRUCT
 	dwErrorActive : DWORD; // Битовая маска активных ошибок
 	dwErrorLast   : DWORD; // Битовая маска последних ошибок
+	dwAlarmActive : DWORD; // Собственные аварии менеджера ячейки для общего журнала
 	stErrorActive : ST_CELL_ERROR; // Расшифровка активных ошибок
 	stErrorLast   : ST_CELL_ERROR; // Расшифровка последних ошибок
 END_STRUCT

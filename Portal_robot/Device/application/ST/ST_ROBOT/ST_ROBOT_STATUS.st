@@ -3,6 +3,7 @@ STRUCT
 	xBusy             : BOOL; // Робот выполняет команду
 	xDone             : BOOL; // Команда завершена
 	xError            : BOOL; // Робот находится в ошибке
+	xExternalError    : BOOL; // Робот остановлен ошибкой зависимого блока
 	eCurrentPoint     : E_POINT_NAME; // Последняя достигнутая точка
 	xBlankAvailable   : BOOL; // В первом захвате находится заготовка
 	xDetailAvailable  : BOOL; // Во втором захвате находится готовая деталь

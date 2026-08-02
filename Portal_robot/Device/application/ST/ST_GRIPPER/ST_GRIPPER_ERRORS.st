@@ -2,6 +2,7 @@ TYPE ST_GRIPPER_ERRORS :
 STRUCT
 	dwErrorActive : DWORD; // Битовая маска активных ошибок
 	dwErrorLast   : DWORD; // Битовая маска последних ошибок
+	dwAlarmActive : DWORD; // Собственные аварии захвата для общего журнала
 	stErrorActive : ST_GRIPPER_ERROR; // Расшифровка активных ошибок
 	stErrorLast   : ST_GRIPPER_ERROR; // Расшифровка последних ошибок
 END_STRUCT

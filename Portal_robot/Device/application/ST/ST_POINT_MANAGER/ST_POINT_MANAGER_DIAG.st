@@ -7,5 +7,6 @@ STRUCT
 	lrX_MaxLimit : LREAL; // Максимально допустимая координата X
 	lrY_MaxLimit : LREAL; // Максимально допустимая координата Y
 	lrZ_MaxLimit : LREAL; // Максимально допустимая координата Z
+	stWarning    : ST_WARNING_EVENT; // Последнее предупреждение менеджера точек
 END_STRUCT
 END_TYPE

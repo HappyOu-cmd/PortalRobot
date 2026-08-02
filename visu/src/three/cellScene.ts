@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { CellLayout, CellState } from '../model/types';
-import { createMachine, type MachineRig, updateMachineRig } from './machine';
+import { createMachine, disposeMachineRig, type MachineRig, updateMachineRig } from './machine';
 import { createMagazine, type MagazineRig, updateMagazineRig } from './magazine';
 import { createPortal, type PortalRig, updatePortalRig } from './portal';
 import { COLORS, disposeObject, logicalPosition, material, mm } from './primitives';
@@ -121,6 +121,7 @@ export class CellScene {
 
   rebuild(layout: CellLayout): void {
     this.layout = layout;
+    this.machineRigs.forEach(disposeMachineRig);
     this.scene.remove(this.cellRoot);
     disposeObject(this.cellRoot);
     this.cellRoot = new THREE.Group();
@@ -226,6 +227,7 @@ export class CellScene {
     this.resizeObserver.disconnect();
     this.renderer.domElement.removeEventListener('pointerdown', this.handlePointerDown);
     this.controls.dispose();
+    this.machineRigs.forEach(disposeMachineRig);
     disposeObject(this.cellRoot);
     this.renderer.dispose();
     this.renderer.domElement.remove();
