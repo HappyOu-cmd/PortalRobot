@@ -36,7 +36,7 @@ VAR
     rtExectue               : R_TRIG; // Фронт команды запуска
     rtEnabledMachine        : R_TRIG; // Фронт команды включения
     rtDisabledMachine       : R_TRIG; // Фронт команды отключения
-    rtResetMachine          : R_TRIG; // Фронт локального сброса ошибки станка
+	rtResetMachine          : R_TRIG; // Фронт локального или общего сброса ошибки станка
     rtCycleDone             : R_TRIG; // Фронт завершения цикла станка
     rtCycleStarted          : R_TRIG; // Фронт фактического запуска обработки
     ftCycleStopped          : F_TRIG; // Спад фактического цикла обработки
@@ -121,7 +121,7 @@ END_VAR
 
 rtEnabledMachine (CLK :=xHmiEnable);
 rtDisabledMachine (CLK :=xHmiDisable);
-rtResetMachine(CLK := xReset);
+rtResetMachine(CLK := xReset OR xResetGlobal);
 rtCycleDone(CLK := stMachineStatus.xCycleDone);
 rtCycleStarted(CLK := stMachineStatus.xCycleActive);
 ftCycleStopped(CLK := stMachineStatus.xCycleActive);
@@ -129,7 +129,7 @@ rtSetBlankLoaded(CLK := xHmiSetBlank);
 rtSetDetailLoaded(CLK := xHmiSetDetail);
 ftChuckClamped(CLK := stMachineStatus.xChuckClamped);
 
-// Локальный сброс формирует одно предупреждение с конкретной причиной отказа.
+// Любой сброс формирует одно предупреждение с конкретной причиной отказа.
 IF rtResetMachine.Q
 AND (eState = E_MACHINE_STATE.ERROR) THEN
     IF stMachineStatus.xAlarm THEN

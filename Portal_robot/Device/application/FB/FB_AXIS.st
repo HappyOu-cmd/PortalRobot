@@ -40,6 +40,12 @@ VAR CONSTANT
     // Предупреждения блока
     // ==================================================
     WRN_NO_POWER_PERMIT : DWORD := DWORD#16#00000001; // Нет разрешения подачи питания
+    WRN_RESET_GLOBAL_ERROR   : UINT := 2; // Сброс не выполнен из-за глобальной ошибки
+    WRN_RESET_MC_ERROR       : UINT := 3; // MC_Reset завершился ошибкой
+    WRN_RESET_TIMEOUT        : UINT := 4; // Превышено время сброса
+    WRN_RESET_AXIS_ACTIVE    : UINT := 5; // Физическая ошибка оси осталась активной
+    WRN_RESET_AXIS_LATCHED   : UINT := 6; // Защёлкнутая ошибка оси не была очищена
+    WRN_RESET_LOGICAL_ACTIVE : UINT := 7; // Логическая ошибка оси не была очищена
 
     MASK_LOCAL_LOGICAL_ERROR : DWORD :=
         LOG_JOG_CONFLICT OR
@@ -73,7 +79,7 @@ VAR
     fbReadStatus   : MC_ReadStatus; // Чтение состояния оси
     fbReadAxisError: MC_ReadAxisError; // Чтение кода ошибки привода
 
-    // Внутренние управляющие флаги
+    // Внутренние управляющие флаги 
     xPowerRequest    : BOOL; // Защёлкнутый запрос питания
     xResetExecute    : BOOL; // Выполняется сброс привода
     xStopExecute     : BOOL; // Выполняется остановка
@@ -98,6 +104,7 @@ VAR
     xDoResetAxis    : BOOL; // Требуется сброс ошибок привода
     xDoResetLogical : BOOL; // Требуется сброс логических ошибок
     xNeedMcReset    : BOOL; // Требуется вызов MC_Reset
+    uiResetWarningCode : UINT; // Причина неуспешного сброса текущего цикла
 
     // Актуальная ошибка оси (на основе MC-блоков)
     xAxisErrorActual : BOOL; // Текущая ошибка по выходам MC-блоков
@@ -163,6 +170,7 @@ xJogBackwardExec := FALSE;
 
 AxisData.Status.xDone := FALSE;
 xWarningPulse := FALSE;
+uiResetWarningCode := UINT#0;
 
 // ======================================================
 // 4. КОНЕЧНЫЙ АВТОМАТ (используем перечисление E_AXIS_STATE)
@@ -523,7 +531,7 @@ CASE AxisData.Diag.iStep OF
             AxisData.Diag.iLastErrorStep := TO_INT(AxisData.Diag.iStep);
             AxisData.Diag.iStep := E_AXIS_STATE.ERROR_RESET_MANAGER;
 
-        ELSIF fbMoveRelative.Done THEN
+        ELSIF fbMoveRelative.Done THEN 
             xMoveRelExecute := FALSE;
             AxisData.Status.xDone := TRUE;
             AxisData.Diag.iStep := E_AXIS_STATE.READY;
@@ -650,6 +658,8 @@ CASE AxisData.Diag.iStep OF
         xResetExecute := TRUE;
 
         IF fbReset.Error THEN
+            AxisData.Diag.sWarningText := 'MC_Reset finished with error';
+            uiResetWarningCode := WRN_RESET_MC_ERROR;
             xResetExecute := FALSE;
             AxisData.Error.dwAxisErrorLatched :=
                 AxisData.Error.dwAxisErrorLatched OR AXE_MC_RESET_ERROR;
@@ -699,17 +709,25 @@ CASE AxisData.Diag.iStep OF
 
         // Финальная проверка
         IF AxisData.Error.dwAxisErrorActual <> DWORD#0 THEN
+            AxisData.Diag.sWarningText := 'Axis error remains active after reset';
+            uiResetWarningCode := WRN_RESET_AXIS_ACTIVE;
             AxisData.Error.dwAxisErrorLatched :=
                 AxisData.Error.dwAxisErrorLatched OR AxisData.Error.dwAxisErrorActual;
             AxisData.Diag.iStep := E_AXIS_STATE.ERROR_RESET_MANAGER;
 
         ELSIF AxisData.Error.dwAxisErrorLatched <> DWORD#0 THEN
+            AxisData.Diag.sWarningText := 'Latched axis error was not reset';
+            uiResetWarningCode := WRN_RESET_AXIS_LATCHED;
             AxisData.Diag.iStep := E_AXIS_STATE.ERROR_RESET_MANAGER;
 
         ELSIF AxisData.Error.dwLogicalErrorLatched <> DWORD#0 THEN
+            AxisData.Diag.sWarningText := 'Logical axis error was not reset';
+            uiResetWarningCode := WRN_RESET_LOGICAL_ACTIVE;
             AxisData.Diag.iStep := E_AXIS_STATE.ERROR_RESET_MANAGER;
 
         ELSIF AxisData.Command.xGlobalError THEN
+            AxisData.Diag.sWarningText := 'Global error is still active';
+            uiResetWarningCode := WRN_RESET_GLOBAL_ERROR;
             AxisData.Diag.iStep := E_AXIS_STATE.ERROR_RESET_MANAGER;
 
         ELSE
@@ -746,6 +764,12 @@ tonStepTimeout(
 );
 
 IF tonStepTimeout.Q AND (AxisData.Diag.iStep <> E_AXIS_STATE.ERROR_RESET_MANAGER) THEN
+    IF (AxisData.Diag.iStep = E_AXIS_STATE.RESET_AXIS_ERROR)
+    OR (AxisData.Diag.iStep = E_AXIS_STATE.RESET_RELEASE) THEN
+        AxisData.Diag.sWarningText := 'Axis reset timeout';
+        uiResetWarningCode := WRN_RESET_TIMEOUT;
+    END_IF;
+
     AxisData.Diag.xStepTimeout := TRUE;
     AxisData.Error.dwLogicalErrorLatched := AxisData.Error.dwLogicalErrorLatched OR LOG_STEP_TIMEOUT;
     AxisData.Diag.iLastErrorStep := TO_INT(AxisData.Diag.iStep);
@@ -759,6 +783,15 @@ IF tonStepTimeout.Q AND (AxisData.Diag.iStep <> E_AXIS_STATE.ERROR_RESET_MANAGER
     xJogBackwardExec := FALSE;
 
     AxisData.Diag.iStep := E_AXIS_STATE.ERROR_RESET_MANAGER;
+END_IF;
+
+IF uiResetWarningCode <> UINT#0 THEN
+    AxisData.Diag.stWarning.uiCode := uiResetWarningCode;
+    AxisData.Diag.stWarning.udiSequence := AxisData.Diag.stWarning.udiSequence + UDINT#1;
+    IF AxisData.Diag.stWarning.udiSequence = UDINT#0 THEN
+        AxisData.Diag.stWarning.udiSequence := UDINT#1;
+    END_IF;
+    xWarningPulse := TRUE;
 END_IF;
 
 // ======================================================

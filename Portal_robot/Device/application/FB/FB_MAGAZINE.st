@@ -40,6 +40,7 @@ VAR
 	rtFillBlanks       : R_TRIG; // Фронт заполнения магазина заготовками
 	rtClear            : R_TRIG; // Фронт очистки магазина
 	rtCycleSlot        : R_TRIG; // Фронт изменения выбранного слота
+	rtReset            : R_TRIG; // Фронт команды сброса магазина
 
 	xExecuteRequest    : BOOL; // Активный запрос выполнения операции
 	xResetRequest      : BOOL; // Активный запрос сброса
@@ -72,6 +73,9 @@ VAR CONSTANT
 	ERR_GEOMETRY        : DWORD := DWORD#16#0000_0080; // Ошибка параметров матрицы магазина
 	MASK_LOCAL_ERROR    : DWORD := ERR_WRONG_OPERATION OR ERR_NO_BLANK OR ERR_NO_FREE_SLOT
 		OR ERR_INVALID_SLOT OR ERR_SLOT_CONTENT OR ERR_GEOMETRY; // Собственные первопричины магазина
+	WRN_RESET_EXECUTE_ACTIVE : UINT := 1; // Операция магазина ещё активна
+	WRN_RESET_GLOBAL_ERROR   : UINT := 2; // Глобальная ошибка ещё активна
+	WRN_RESET_ROBOT_ERROR    : UINT := 3; // Ошибка робота ещё активна
 END_VAR
 
 // --- BEGIN IMPLEMENTATION ---
@@ -207,6 +211,27 @@ ELSE
 END_IF;
 
 xResetRequest := xReset;
+rtReset(CLK := xResetRequest);
+
+IF rtReset.Q
+AND (Diag.eState = E_MAGAZINE_STATE.ERROR) THEN
+	IF xExecuteRequest THEN
+		Diag.stWarning.uiCode := WRN_RESET_EXECUTE_ACTIVE;
+	ELSIF xGlobalError THEN
+		Diag.stWarning.uiCode := WRN_RESET_GLOBAL_ERROR;
+	ELSIF stRobotStatus.xError THEN
+		Diag.stWarning.uiCode := WRN_RESET_ROBOT_ERROR;
+	ELSE
+		Diag.stWarning.uiCode := UINT#0;
+	END_IF;
+
+	IF Diag.stWarning.uiCode <> UINT#0 THEN
+		Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
+		IF Diag.stWarning.udiSequence = UDINT#0 THEN
+			Diag.stWarning.udiSequence := UDINT#1;
+		END_IF;
+	END_IF;
+END_IF;
 
 rtEnable(CLK := xHmiEnable OR (NOT xManual AND stMagazineCommand.xEnable));
 rtDisable(CLK := xHmiDisable OR (NOT xManual AND stMagazineCommand.xDisable));

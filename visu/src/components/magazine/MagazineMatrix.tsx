@@ -1,3 +1,5 @@
+import viewGridOutlineIcon from '@iconify-icons/mdi/view-grid-outline';
+import { Icon } from '@iconify/react';
 import type { SlotType } from '../../model/types';
 
 export interface MagazineMatrixProps {
@@ -5,6 +7,15 @@ export interface MagazineMatrixProps {
   onSlotClick?: (index: number) => void;
   columns?: number;
   activeCount?: number;
+}
+
+export interface MagazineMatrixCardProps {
+  id?: string;
+  slots: SlotType[];
+  columns: number;
+  rows: number;
+  onSlotClick?: (index: number) => void;
+  className?: string;
 }
 
 const SLOT_LABELS: Record<SlotType, string> = {
@@ -35,4 +46,44 @@ export function MagazineMatrix({ slots, onSlotClick, columns = 10, activeCount =
       ))}
     </div>
   );
+}
+
+export function MagazineMatrixCard({
+  id,
+  slots,
+  columns,
+  rows,
+  onSlotClick,
+  className,
+}: MagazineMatrixCardProps) {
+  const activeCount = Math.min(slots.length, Math.max(0, rows * columns));
+  const activeSlots = slots.slice(0, activeCount);
+  const blanks = activeSlots.filter((slot) => slot === 'blank').length;
+  const details = activeSlots.filter((slot) => slot === 'detail').length;
+  const empty = activeCount - blanks - details;
+
+  return <section
+    id={id}
+    className={`magazine-matrix-card ${className ?? ''}`.trim()}
+    aria-label={`Матрица магазина ${columns} на ${rows}`}
+    onPointerDown={(event) => event.stopPropagation()}
+  >
+    <header className="magazine-matrix-card-header">
+      <h2>Матрица магазина</h2>
+      <Icon icon={viewGridOutlineIcon} aria-hidden="true" />
+    </header>
+    <div className="magazine-matrix-card-stats" aria-label="Состав магазина">
+      <div className="blank"><i aria-hidden="true" /><span>Заготовка</span><strong>{blanks}</strong></div>
+      <div className="detail"><i aria-hidden="true" /><span>Деталь</span><strong>{details}</strong></div>
+      <div className="empty"><i aria-hidden="true" /><span>Пусто</span><strong>{empty}</strong></div>
+    </div>
+    <div className="magazine-matrix-card-map">
+      <MagazineMatrix
+        slots={slots}
+        columns={columns}
+        activeCount={activeCount}
+        onSlotClick={onSlotClick}
+      />
+    </div>
+  </section>;
 }

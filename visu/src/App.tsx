@@ -2,6 +2,7 @@ import conveyorBeltOutlineIcon from '@iconify-icons/material-symbols/conveyor-be
 import microwaveGenOutlineIcon from '@iconify-icons/material-symbols/microwave-gen-outline';
 import robotIndustrialOutlineIcon from '@iconify-icons/mdi/robot-industrial-outline';
 import viewGridOutlineIcon from '@iconify-icons/mdi/view-grid-outline';
+import timelineIcon from '@iconify-icons/material-symbols/timeline';
 import { Icon } from '@iconify/react';
 import {
   cloneElement, isValidElement, startTransition, useEffect, useRef, useState,
@@ -14,12 +15,15 @@ import {
   ShieldAlert, Trash2, TriangleAlert, UnlockKeyhole, UserRound, X,
 } from 'lucide-react';
 import { CellViewport } from './components/CellViewport';
-import { MagazineMatrix } from './components/magazine/MagazineMatrix';
+import { EquipmentLoadPanel } from './components/EquipmentLoadPanel';
+import { MagazineMatrix, MagazineMatrixCard } from './components/magazine/MagazineMatrix';
+import { CyclogramPanel } from './components/cyclogram/CyclogramPanel';
 import { RingStat } from './components/magazine/RingStat';
 import { Indicator } from './components/ui/Indicator';
 import portalRobotLogo from './assets/branding/portal-robot-logo.png';
 import { DEFAULT_LAYOUT, DEFAULT_STATE } from './model/defaults';
 import { getRobotTravelLimits } from './model/travel';
+import { mergeCyclogramUpdate, type CyclogramHistory } from './model/cyclogram';
 import type { CellLayout, CellState, SlotType } from './model/types';
 import {
   createPlcClient, mapPlcSnapshot, mapRuntimeInfo,
@@ -28,8 +32,20 @@ import {
 } from './plc/client';
 
 type Page = 'monitoring' | 'machines' | 'robot' | 'magazine' | 'manual' | 'events' | 'alarms' | 'settings';
-type BottomSection = 'cell' | 'machines' | 'robot' | 'magazine';
-const PLC_UI_REFRESH_MS = 100;
+type BottomSection = 'cell' | 'machines' | 'robot' | 'magazine' | 'cyclogram';
+const PLC_UI_REFRESH_MS = 50;
+const FAST_PLC_UI_SYMBOLS = new Set([
+  'xCellManual',
+  'stCellStatus.xRunning',
+  'stCellStatus.xReadyToStart',
+  'stCellStatus.xDrivesReady',
+  'stCellStatus.xRobotReady',
+  'stCellStatus.xMagazineReady',
+  'stCellStatus.uiReadyMachines',
+  'stCellStatus.uiSelectedMachine',
+  'xGlobalError',
+]);
+const QUICK_MAGAZINE_MATRIX_ID = 'quick-magazine-matrix';
 
 function AnimatedPresence({ open, children }: { open: boolean; children: ReactNode }) {
   const [mounted, setMounted] = useState(open);
@@ -75,7 +91,7 @@ function SheetGrip({ onClose }: { onClose: () => void }) {
   const onPointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
     if (event.pointerType === 'mouse' && event.button !== 0) return;
     const panel = event.currentTarget.closest<HTMLElement>(
-      '.cell-quick-panel, .machine-quick-panel, .robot-quick-panel, .magazine-quick-panel, .alarm-panel',
+      '.cell-quick-panel, .machine-quick-panel, .robot-quick-panel, .magazine-quick-panel, .cyclogram-panel, .alarm-panel',
     );
     if (!panel) return;
 
@@ -175,6 +191,12 @@ const INITIAL_RUNTIME: PlcRuntimeInfo = {
   activeAlarmCount: 0,
   activeWarningCount: 0,
   alarmEvents: [],
+  equipmentLoad: [0, 0, 0, 0],
+};
+const INITIAL_CYCLOGRAM: CyclogramHistory = {
+  serverTime: Date.now(),
+  retentionMs: 24 * 60 * 60 * 1_000,
+  intervals: [],
 };
 
 function CellQuickPanel({ running, online, globalError, readyToStart, robotReady, magazineReady,
@@ -293,9 +315,11 @@ function RobotQuickPanel({ robot, step, online, globalError, drivesReady, robotR
   </section>;
 }
 
-function MagazineQuickPanel({ slots, state, onToggleEnabled, onFill, onClear, onExtended, onClose, className }: {
+function MagazineQuickPanel({ slots, state, matrixOpen, onMatrixToggle, onToggleEnabled, onFill, onClear, onExtended, onClose, className }: {
   slots: CellState['magazine'];
   state: CellState['magazineState'];
+  matrixOpen: boolean;
+  onMatrixToggle: () => void;
   onToggleEnabled: () => void;
   onFill: () => void;
   onClear: () => void;
@@ -341,7 +365,15 @@ function MagazineQuickPanel({ slots, state, onToggleEnabled, onFill, onClear, on
       <div><Settings /><span>Деталей</span><strong>{details}</strong></div>
       <div><Grid2X2 /><span>Всего ячеек</span><strong>{total}</strong></div>
       <div><PackagePlus /><span>Свободно</span><strong>{empty}</strong></div>
-      <div><Boxes /><span>Матрица</span><strong>{state.columns} × {state.rows}</strong></div>
+      <button
+        className={`magazine-matrix-trigger ${matrixOpen ? 'active' : ''}`}
+        type="button"
+        aria-expanded={matrixOpen}
+        aria-controls={QUICK_MAGAZINE_MATRIX_ID}
+        onClick={onMatrixToggle}
+      >
+        <Boxes /><span>Матрица</span><strong>{state.columns} × {state.rows}</strong>
+      </button>
     </div>
   </section>;
 }
@@ -564,6 +596,7 @@ function BottomNavigation({ active, onSelect, alarmEvents }: {
     { key: 'machines' as const, label: 'Станки', icon: microwaveGenOutlineIcon, sources: ['machine-1', 'machine-2', 'machine-3'] as PlcAlarmSource[] },
     { key: 'robot' as const, label: 'Робот', icon: robotIndustrialOutlineIcon, sources: ['robot', 'axis-x', 'axis-y', 'axis-z', 'axis-group', 'motion-manager', 'point-manager'] as PlcAlarmSource[] },
     { key: 'magazine' as const, label: 'Магазин', icon: viewGridOutlineIcon, sources: ['magazine'] as PlcAlarmSource[] },
+    { key: 'cyclogram' as const, label: 'Циклограмма', icon: timelineIcon, sources: [] as PlcAlarmSource[] },
   ];
   return <nav className="cell-bottom-nav" aria-label="Быстрое управление">
     {items.map(({ key, label, icon, sources }) => {
@@ -836,6 +869,7 @@ export function App() {
   const [cellState, setCellState] = useState<CellState>(cloneState);
   const [page, setPage] = useState<Page>('monitoring');
   const [bottomSection, setBottomSection] = useState<BottomSection | null>(null);
+  const [matrixQuickOpen, setMatrixQuickOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [selectedMachine, setSelectedMachine] = useState<number | null>(null);
   const [confirmationMachine, setConfirmationMachine] = useState<number | null>(null);
@@ -845,6 +879,7 @@ export function App() {
   const [globalError] = useState(false);
   const [plcConnection, setPlcConnection] = useState<PlcConnectionInfo>(INITIAL_CONNECTION);
   const [plcRuntime, setPlcRuntime] = useState<PlcRuntimeInfo>(INITIAL_RUNTIME);
+  const [cyclogramHistory, setCyclogramHistory] = useState<CyclogramHistory>(INITIAL_CYCLOGRAM);
   const [commandError, setCommandError] = useState('');
   const [plcDataEnabled, setPlcDataEnabled] = useState(true);
   const plcDataEnabledRef = useRef(true);
@@ -882,7 +917,7 @@ export function App() {
     setCellState((current) => ({ ...current, magazine: current.magazine.map(() => 'empty') }));
   };
   const cycleMagazineSlot = (index: number) => {
-    if (cellState.magazineState.enabled) return;
+    if (cellState.magazineState.enabled || cellState.magazineState.disablePending) return;
     if (usePlcData) plcClient.current?.send({ command: 'magazine.setSlot', value: index + 1 });
     setCellState((current) => {
       const magazine = [...current.magazine];
@@ -981,24 +1016,37 @@ export function App() {
   useEffect(() => {
     let pendingSnapshot: Record<string, unknown> | null = null;
     let snapshotTimer = 0;
-    const applyPendingSnapshot = () => {
+    const applyPendingSnapshot = (urgent = false) => {
       snapshotTimer = 0;
       const values = pendingSnapshot;
       pendingSnapshot = null;
       if (!values || !plcDataEnabledRef.current) return;
-      startTransition(() => {
+      const apply = () => {
         setCellState((current) => mapPlcSnapshot(values, current));
         setPlcRuntime((current) => mapRuntimeInfo(values, current));
-      });
+      };
+      if (urgent) apply();
+      else startTransition(apply);
     };
 
     plcClient.current = createPlcClient({
       onConnection: setPlcConnection,
-      onSnapshot: (values) => {
+      onSnapshot: (values, changed, full) => {
         if (!plcDataEnabledRef.current) return;
         pendingSnapshot = values;
-        if (!snapshotTimer) snapshotTimer = window.setTimeout(applyPendingSnapshot, PLC_UI_REFRESH_MS);
+        const requiresFastFeedback = full
+          || Object.keys(changed).some((path) => FAST_PLC_UI_SYMBOLS.has(path));
+        if (requiresFastFeedback) {
+          window.clearTimeout(snapshotTimer);
+          applyPendingSnapshot(true);
+        } else if (!snapshotTimer) {
+          snapshotTimer = window.setTimeout(applyPendingSnapshot, PLC_UI_REFRESH_MS);
+        }
       },
+      onCyclogramHistory: (history) => startTransition(() => setCyclogramHistory(history)),
+      onCyclogramUpdate: (update) => startTransition(() => {
+        setCyclogramHistory((current) => mergeCyclogramUpdate(current, update));
+      }),
       onCommandError: setCommandError,
     });
     return () => {
@@ -1020,6 +1068,19 @@ export function App() {
       return robot.x === current.robot.x && robot.y === current.robot.y && robot.z === current.robot.z ? current : { ...current, robot };
     });
   }, [layout]);
+
+  useEffect(() => {
+    if (page !== 'monitoring' || bottomSection !== 'magazine') setMatrixQuickOpen(false);
+  }, [bottomSection, page]);
+
+  useEffect(() => {
+    if (!matrixQuickOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMatrixQuickOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [matrixQuickOpen]);
 
   useEffect(() => {
     if (confirmationMachine === null) return;
@@ -1095,6 +1156,7 @@ export function App() {
     plcClient.current?.send({ command });
   };
   const selectBottomSection = (section: BottomSection) => {
+    setMatrixQuickOpen(false);
     setBottomSection(section);
     setPage('monitoring');
     if (section === 'machines') {
@@ -1110,6 +1172,27 @@ export function App() {
       setSelectedMachine(null);
     }
   };
+  const exportCyclogram = (scope: 'all' | 'visible', fromMs?: number, toMs?: number) => {
+    const url = plcClient.current?.cyclogramExportUrl(scope, fromMs, toMs);
+    if (!url) {
+      setCommandError('Экспорт циклограммы недоступен: нет связи со шлюзом');
+      return;
+    }
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = '';
+    document.body.append(link);
+    link.click();
+    link.remove();
+  };
+  const clearCyclogram = () => {
+    if (!plcClient.current?.clearCyclogram()) {
+      setCommandError('Очистка циклограммы недоступна: нет связи со шлюзом');
+      return false;
+    }
+    setCyclogramHistory((current) => ({ ...current, serverTime: Date.now(), intervals: [] }));
+    return true;
+  };
 
   return <div className="app-shell tesla-shell no-sidebar">
     <header className="topbar tesla-topbar">
@@ -1122,8 +1205,10 @@ export function App() {
       </div>
       <button className="top-menu-button" type="button" onClick={() => setPage(page === 'manual' ? 'monitoring' : 'manual')} title="Ручное управление"><Menu /></button>
     </header>
-    <main className="workspace" onPointerDown={(event) => {
+    <main className={`workspace${page === 'monitoring' && bottomSection === 'cyclogram' ? ' cyclogram-open' : ''}`} onPointerDown={(event) => {
       const target = event.target as HTMLElement;
+      if (target.closest('.magazine-matrix-card, .magazine-matrix-trigger')) return;
+      setMatrixQuickOpen(false);
       if (target.closest('.side-panel, .equipment-status, .alarm-summary, .profile-area, .cell-bottom-shell, .alarm-panel')) return;
       closeMachinePanel();
       setProfileOpen(false);
@@ -1136,6 +1221,18 @@ export function App() {
         onMachineSelect={() => {}}
         onMagazineSelect={() => selectBottomSection('magazine')}
       />
+      <AnimatedPresence open={page === 'monitoring' && bottomSection === 'cyclogram'}>
+        <EquipmentLoadPanel values={plcRuntime.equipmentLoad} />
+      </AnimatedPresence>
+      <AnimatedPresence open={page === 'monitoring' && bottomSection === 'magazine' && matrixQuickOpen}>
+        <MagazineMatrixCard
+          id={QUICK_MAGAZINE_MATRIX_ID}
+          slots={cellState.magazine}
+          columns={cellState.magazineState.columns}
+          rows={cellState.magazineState.rows}
+          onSlotClick={!cellState.magazineState.enabled && !cellState.magazineState.disablePending ? cycleMagazineSlot : undefined}
+        />
+      </AnimatedPresence>
       {commandError && <div className="command-error" role="alert"><AlertCircle size={18} /><span>{commandError}</span><button onClick={() => setCommandError('')} type="button">×</button></div>}
       {page === 'monitoring' && bottomSection === null && confirmationMachine === null && <button className={`alarm-summary ${alarmTone}`} type="button" onClick={() => setPage('alarms')}>
         <TriangleAlert />
@@ -1195,11 +1292,20 @@ export function App() {
         <AnimatedPresence open={bottomSection === 'magazine'}><MagazineQuickPanel
           slots={cellState.magazine}
           state={cellState.magazineState}
+          matrixOpen={matrixQuickOpen}
+          onMatrixToggle={() => setMatrixQuickOpen((open) => !open)}
           onToggleEnabled={toggleMagazineEnabled}
           onFill={fillMagazine}
           onClear={clearMagazine}
-          onExtended={() => setPage('magazine')}
+          onExtended={() => { setMatrixQuickOpen(false); setPage('magazine'); }}
+          onClose={() => { setMatrixQuickOpen(false); setBottomSection(null); }}
+        /></AnimatedPresence>
+        <AnimatedPresence open={bottomSection === 'cyclogram'}><CyclogramPanel
+          history={cyclogramHistory}
           onClose={() => setBottomSection(null)}
+          onExport={exportCyclogram}
+          onClear={clearCyclogram}
+          dragHandle={<SheetGrip onClose={() => setBottomSection(null)} />}
         /></AnimatedPresence>
         <AnimatedPresence open={bottomSection === null}>
           <div className="bottom-overview-stage">

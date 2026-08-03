@@ -1,4 +1,5 @@
 import type { CellState, MachineMode, MachineOperation, MachinePartState, MachinePartType, MagazineOperation, SlotType } from '../model/types';
+import type { CyclogramHistory, CyclogramUpdate } from '../model/cyclogram';
 
 export type PlcConnectionStatus = 'connecting' | 'connected' | 'degraded' | 'disconnected';
 export type PlcAlarmSeverity = 'alarm' | 'warning';
@@ -44,19 +45,26 @@ export interface PlcRuntimeInfo {
   activeAlarmCount: number;
   activeWarningCount: number;
   alarmEvents: PlcAlarmEvent[];
+  equipmentLoad: [number, number, number, number];
 }
 
 interface GatewayMessage {
-  type: 'connection' | 'snapshot' | 'ack';
+  type: 'connection' | 'snapshot' | 'ack' | 'cyclogram-history' | 'cyclogram-update';
   status?: PlcConnectionStatus;
   endpoint?: string;
   message?: string;
   symbols?: number;
   missing?: string[];
   values?: Record<string, unknown>;
+  full?: boolean;
   requestId?: string;
   ok?: boolean;
   error?: string;
+  serverTime?: number;
+  retentionMs?: number;
+  intervals?: CyclogramHistory['intervals'];
+  closed?: CyclogramUpdate['closed'];
+  opened?: CyclogramUpdate['opened'];
 }
 
 export interface PlcCommand {
@@ -141,6 +149,14 @@ const WARNING_TEXTS: Partial<Record<PlcAlarmSource, Record<number, string>>> = {
     2: 'Общий сброс отклонён: ошибка робота всё ещё активна',
     3: 'Общий сброс отклонён: ошибка магазина всё ещё активна',
   },
+  robot: {
+    1: 'Сброс робота отклонён: команда выполнения всё ещё активна',
+    2: 'Сброс робота отклонён: команда остановки всё ещё активна',
+    3: 'Сброс робота отклонён: глобальная ошибка всё ещё активна',
+    4: 'Сброс робота отклонён: ошибка менеджера движения всё ещё активна',
+    5: 'Сброс робота отклонён: ошибка захвата всё ещё активна',
+    6: 'Сброс робота отклонён: ошибка внешнего робота или Modbus всё ещё активна',
+  },
   'machine-1': {
     1: 'Сброс станка отклонён: физическая авария всё ещё активна',
     2: 'Сброс станка отклонён: глобальная ошибка всё ещё активна',
@@ -156,14 +172,57 @@ const WARNING_TEXTS: Partial<Record<PlcAlarmSource, Record<number, string>>> = {
     2: 'Сброс станка отклонён: глобальная ошибка всё ещё активна',
     3: 'Сброс станка отклонён: выполняется операция обслуживания',
   },
-  'axis-x': { 1: 'Включение оси X отклонено: нет разрешения питания' },
-  'axis-y': { 1: 'Включение оси Y отклонено: нет разрешения питания' },
-  'axis-z': { 1: 'Включение оси Z отклонено: нет разрешения питания' },
+  magazine: {
+    1: 'Сброс магазина отклонён: операция всё ещё активна',
+    2: 'Сброс магазина отклонён: глобальная ошибка всё ещё активна',
+    3: 'Сброс магазина отклонён: ошибка робота всё ещё активна',
+  },
+  'axis-x': {
+    1: 'Включение оси X отклонено: нет разрешения питания',
+    2: 'Сброс оси X не выполнен: глобальная ошибка всё ещё активна',
+    3: 'Сброс оси X не выполнен: MC_Reset завершился ошибкой',
+    4: 'Сброс оси X не выполнен: превышено время сброса',
+    5: 'Сброс оси X не выполнен: физическая ошибка оси всё ещё активна',
+    6: 'Сброс оси X не выполнен: защёлкнутая ошибка оси не очищена',
+    7: 'Сброс оси X не выполнен: логическая ошибка оси не очищена',
+  },
+  'axis-y': {
+    1: 'Включение оси Y отклонено: нет разрешения питания',
+    2: 'Сброс оси Y не выполнен: глобальная ошибка всё ещё активна',
+    3: 'Сброс оси Y не выполнен: MC_Reset завершился ошибкой',
+    4: 'Сброс оси Y не выполнен: превышено время сброса',
+    5: 'Сброс оси Y не выполнен: физическая ошибка оси всё ещё активна',
+    6: 'Сброс оси Y не выполнен: защёлкнутая ошибка оси не очищена',
+    7: 'Сброс оси Y не выполнен: логическая ошибка оси не очищена',
+  },
+  'axis-z': {
+    1: 'Включение оси Z отклонено: нет разрешения питания',
+    2: 'Сброс оси Z не выполнен: глобальная ошибка всё ещё активна',
+    3: 'Сброс оси Z не выполнен: MC_Reset завершился ошибкой',
+    4: 'Сброс оси Z не выполнен: превышено время сброса',
+    5: 'Сброс оси Z не выполнен: физическая ошибка оси всё ещё активна',
+    6: 'Сброс оси Z не выполнен: защёлкнутая ошибка оси не очищена',
+    7: 'Сброс оси Z не выполнен: логическая ошибка оси не очищена',
+  },
   'axis-group': {
     1: 'Включение группы отклонено: нет разрешения питания',
     2: 'Одновременно запрошены MoveDirect и MoveLinear',
     3: 'Сброс группы отклонён: глобальная ошибка всё ещё активна',
     4: 'Сброс группы отклонён: ошибка SoftMotion всё ещё активна',
+    5: 'Сброс группы не подтверждён: истекло время проверки состояния SoftMotion',
+    6: 'Сброс группы не выполнен: SoftMotion всё ещё находится в ErrorStop',
+    7: 'Сброс группы не выполнен: MC_GroupReset завершился ошибкой',
+    8: 'Сброс группы не выполнен: превышено время выполнения MC_GroupReset',
+  },
+  'motion-manager': {
+    1: 'Сброс менеджера движения отклонён: глобальная ошибка всё ещё активна',
+  },
+  gripper: {
+    1: 'Сброс захвата отклонён: команда выполнения всё ещё активна',
+    2: 'Сброс захвата отклонён: общая неисправность всё ещё активна',
+    3: 'Сброс захвата отклонён: неисправность первого захвата всё ещё активна',
+    4: 'Сброс захвата отклонён: неисправность второго захвата всё ещё активна',
+    5: 'Сброс захвата отклонён: неисправность механизма поворота всё ещё активна',
   },
 };
 const OPERATIONS: MachineOperation[] = ['NONE', 'LOAD', 'UNLOAD', 'CHANGE'];
@@ -176,6 +235,8 @@ const numberValue = (values: Record<string, unknown>, path: string, fallback: nu
     : Number(raw);
   return Number.isFinite(value) ? value : fallback;
 };
+const percentValue = (values: Record<string, unknown>, path: string, fallback: number) =>
+  Math.min(100, Math.max(0, numberValue(values, path, fallback)));
 const booleanValue = (values: Record<string, unknown>, path: string, fallback: boolean) =>
   typeof values[path] === 'boolean' ? values[path] as boolean : fallback;
 const robotStepText = (state: number, action: number, point: number, fallback: string) => {
@@ -376,17 +437,26 @@ export function mapRuntimeInfo(values: Record<string, unknown>, current: PlcRunt
     activeAlarmCount: numberValue(values, 'stAlarmStatus.uiActiveAlarmCount', current.activeAlarmCount),
     activeWarningCount: numberValue(values, 'stAlarmStatus.uiActiveWarningCount', current.activeWarningCount),
     alarmEvents,
+    equipmentLoad: [
+      percentValue(values, 'rLoadCNC_1', current.equipmentLoad[0]),
+      percentValue(values, 'rLoadCNC_2', current.equipmentLoad[1]),
+      percentValue(values, 'rLoadCNC_3', current.equipmentLoad[2]),
+      percentValue(values, 'rRobot', current.equipmentLoad[3]),
+    ],
   };
 }
 
 export function createPlcClient(callbacks: {
   onConnection: (info: PlcConnectionInfo) => void;
-  onSnapshot: (values: Record<string, unknown>) => void;
+  onSnapshot: (values: Record<string, unknown>, changed: Record<string, unknown>, full: boolean) => void;
+  onCyclogramHistory?: (history: CyclogramHistory) => void;
+  onCyclogramUpdate?: (update: CyclogramUpdate) => void;
   onCommandError?: (message: string) => void;
 }) {
   let socket: WebSocket | null = null;
   let stopped = false;
   let reconnectTimer = 0;
+  let snapshotValues: Record<string, unknown> = {};
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const url = import.meta.env.VITE_GATEWAY_URL ?? `${protocol}//${location.hostname}:3001/ws`;
 
@@ -394,6 +464,7 @@ export function createPlcClient(callbacks: {
     if (stopped) return;
     callbacks.onConnection({ status: 'connecting', endpoint: '', message: 'Подключение к шлюзу', symbols: 0, missing: [] });
     socket = new WebSocket(url);
+    socket.onopen = () => { snapshotValues = {}; };
     socket.onmessage = (event) => {
       const message = JSON.parse(event.data) as GatewayMessage;
       if (message.type === 'connection') {
@@ -402,7 +473,24 @@ export function createPlcClient(callbacks: {
           message: message.message ?? '', symbols: message.symbols ?? 0, missing: message.missing ?? [],
         });
       } else if (message.type === 'snapshot' && message.values) {
-        callbacks.onSnapshot(message.values);
+        const full = message.full !== false;
+        if (full) snapshotValues = { ...message.values };
+        else Object.assign(snapshotValues, message.values);
+        callbacks.onSnapshot(snapshotValues, message.values, full);
+      } else if (message.type === 'cyclogram-history' && message.intervals
+          && typeof message.serverTime === 'number' && typeof message.retentionMs === 'number') {
+        callbacks.onCyclogramHistory?.({
+          serverTime: message.serverTime,
+          retentionMs: message.retentionMs,
+          intervals: message.intervals,
+        });
+      } else if (message.type === 'cyclogram-update' && message.closed && message.opened
+          && typeof message.serverTime === 'number') {
+        callbacks.onCyclogramUpdate?.({
+          serverTime: message.serverTime,
+          closed: message.closed,
+          opened: message.opened,
+        });
       } else if (message.type === 'ack' && !message.ok) {
         callbacks.onCommandError?.(message.error ?? 'PLC отклонил команду');
       }
@@ -424,10 +512,30 @@ export function createPlcClient(callbacks: {
       socket.send(JSON.stringify({ type: 'command', requestId: crypto.randomUUID(), ...command }));
       return true;
     },
+    clearCyclogram() {
+      if (socket?.readyState !== WebSocket.OPEN) {
+        callbacks.onCommandError?.('Нет связи со шлюзом');
+        return false;
+      }
+      socket.send(JSON.stringify({ type: 'cyclogram-clear', requestId: crypto.randomUUID() }));
+      return true;
+    },
     close() {
       stopped = true;
       window.clearTimeout(reconnectTimer);
       socket?.close();
+    },
+    cyclogramExportUrl(scope: 'all' | 'visible', fromMs?: number, toMs?: number) {
+      const endpoint = new URL(url, window.location.href);
+      endpoint.protocol = endpoint.protocol === 'wss:' ? 'https:' : 'http:';
+      endpoint.pathname = '/api/cyclogram/export';
+      endpoint.search = '';
+      endpoint.searchParams.set('scope', scope === 'all' ? 'all' : 'visible');
+      if (scope === 'visible' && Number.isFinite(fromMs) && Number.isFinite(toMs)) {
+        endpoint.searchParams.set('from', String(Math.round(fromMs as number)));
+        endpoint.searchParams.set('to', String(Math.round(toMs as number)));
+      }
+      return endpoint.toString();
     },
   };
 }

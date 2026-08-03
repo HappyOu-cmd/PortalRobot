@@ -8,3 +8,4 @@ vite.config.d.ts
 cert.pem
 private_key.pem
 *.log
+gateway/data/

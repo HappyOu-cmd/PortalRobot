@@ -1,6 +1,6 @@
 FUNCTION_BLOCK FB_AXIS_GROUP
 VAR_INPUT
-
+	
 END_VAR
 VAR_OUTPUT
 END_VAR
@@ -17,20 +17,20 @@ VAR
 	xMoveLinear  : BOOL; // Выполняется линейное перемещение
 	xStopCmd     : BOOL; // Выполняется остановка
 	xHaltCmd     : BOOL; // Выполняется плавная остановка
-
+	
 	iPrevStep : E_AXIS_GROUP_STATE; // Предыдущий шаг автомата
-
+	
 	// Для таймера шага
 	tonStepTimeout   : TON; // Таймер превышения времени шага
 	xStepTimeout     : BOOL; // Время шага превышено
 	xStepChanged     : BOOL; // Шаг изменился в текущем цикле
 	xStepTimerEnable : BOOL; // Разрешение таймера шага
 	xStepInitialized : BOOL; // Предыдущий шаг инициализирован
-
+	
 	// Для удержания предупреждений
     tpWarningHold : TP; // Удержание предупреждения для отображения
     xWarningPulse : BOOL; // Импульс нового предупреждения
-
+	
 	// ФБ группы осей
 	fbReadStatus   : MC_GroupReadStatus; // Чтение состояния группы
 	fbReadError    : MC_GroupReadError; // Чтение активной ошибки группы
@@ -40,15 +40,15 @@ VAR
 	fbGroupPower   : SMC_GroupPower; // Управление питанием группы
 	fbGroupReset   : MC_GroupReset; // Сброс ошибок группы
 
-
+	
 	fbMoveDirect : MC_MoveDirectAbsolute; // Прямое абсолютное перемещение
 	fbMoveLinear : MC_MoveLinearAbsolute; // Линейное абсолютное перемещение
-
+	
 	fbGroupHalt : MC_GroupHalt; // Плавная остановка группы
 	fbGroupStop : MC_GroupStop; // Остановка группы
-
+	
 	stPosition : SMC_POS_REF; // Текущая позиция группы
-
+	
 	// Триггеры на команды
     rtEnable        : R_TRIG; // Фронт команды включения
     rtDisable       : R_TRIG; // Фронт команды отключения
@@ -58,7 +58,7 @@ VAR
     rtMoveLinear    : R_TRIG; // Фронт линейного перемещения
 	rtStopCmd       : R_TRIG; // Фронт команды остановки
 	rtHaltCmd       : R_TRIG; // Фронт плавной остановки
-
+	
 END_VAR
 VAR_IN_OUT
 	AxisGroup : AXIS_GROUP_REF_SM3; // Ссылка на группу осей SoftMotion
@@ -74,7 +74,7 @@ VAR CONSTANT
 	LOG_POWER_PERMIT_READY       : DWORD := 4; // Нет разрешения питания в готовности
 	LOG_POWER_PERMIT_LOST_DIRECT : DWORD := 8; // Разрешение питания снято при движении
 	MASK_LOCAL_LOGICAL_ERROR      : DWORD := LOG_STEP_TIMEOUT OR LOG_INVALID_STATE; // Локальные логические первопричины
-
+	
 	// ==================================================
     // Ошибки блоков движения группы
     // ==================================================
@@ -95,6 +95,10 @@ VAR CONSTANT
 	WRN_MOVE_COMMAND_CONFLICT : UINT := 2; // Одновременно заданы два типа движения
 	WRN_GLOBAL_ERROR_ACTIVE   : UINT := 3; // Сброс отклонён из-за глобальной ошибки
 	WRN_MOTION_ERROR_ACTIVE   : UINT := 4; // Сброс отклонён из-за активной Motion-ошибки
+	WRN_RESET_VERIFY_TIMEOUT  : UINT := 5; // Не получено подтверждение сброса за допустимое время
+	WRN_GROUP_ERROR_AFTER_RESET : UINT := 6; // Группа осталась в ErrorStop после сброса
+	WRN_GROUP_RESET_ERROR     : UINT := 7; // MC_GroupReset завершился ошибкой
+	WRN_GROUP_RESET_TIMEOUT   : UINT := 8; // Превышено время выполнения MC_GroupReset
 END_VAR
 
 // --- BEGIN IMPLEMENTATION ---
@@ -570,12 +574,43 @@ CASE GroupData.Diag.iStep OF
 
         xResetMC := TRUE;
 
-        IF GroupData.Command.xGlobalError
-           OR fbGroupReset.Error THEN
+        IF GroupData.Command.xGlobalError THEN
+            GroupData.Diag.sWarningText :=
+                'Global error became active during group reset';
 
+            GroupData.Diag.stWarning.uiCode := WRN_GLOBAL_ERROR_ACTIVE;
+            GroupData.Diag.stWarning.udiSequence := GroupData.Diag.stWarning.udiSequence + UDINT#1;
+            IF GroupData.Diag.stWarning.udiSequence = UDINT#0 THEN
+                GroupData.Diag.stWarning.udiSequence := UDINT#1;
+            END_IF;
+
+            xWarningPulse := TRUE;
+            GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
+
+        ELSIF fbGroupReset.Error THEN
+            GroupData.Diag.sWarningText :=
+                'MC_GroupReset finished with error';
+
+            GroupData.Diag.stWarning.uiCode := WRN_GROUP_RESET_ERROR;
+            GroupData.Diag.stWarning.udiSequence := GroupData.Diag.stWarning.udiSequence + UDINT#1;
+            IF GroupData.Diag.stWarning.udiSequence = UDINT#0 THEN
+                GroupData.Diag.stWarning.udiSequence := UDINT#1;
+            END_IF;
+
+            xWarningPulse := TRUE;
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
 
         ELSIF xStepTimeout THEN
+            GroupData.Diag.sWarningText :=
+                'MC_GroupReset timeout';
+
+            GroupData.Diag.stWarning.uiCode := WRN_GROUP_RESET_TIMEOUT;
+            GroupData.Diag.stWarning.udiSequence := GroupData.Diag.stWarning.udiSequence + UDINT#1;
+            IF GroupData.Diag.stWarning.udiSequence = UDINT#0 THEN
+                GroupData.Diag.stWarning.udiSequence := UDINT#1;
+            END_IF;
+
+            xWarningPulse := TRUE;
             GroupData.Error.dwLogicalErrorNew :=
                 GroupData.Error.dwLogicalErrorNew
                 OR LOG_STEP_TIMEOUT;
@@ -597,9 +632,29 @@ CASE GroupData.Diag.iStep OF
         GroupData.Diag.iPowerMode := E_AXIS_GROUP_POWER_MODE.ON;
 
         IF GroupData.Command.xGlobalError THEN
+            GroupData.Diag.sWarningText :=
+                'Global error became active during reset verification';
+
+            GroupData.Diag.stWarning.uiCode := WRN_GLOBAL_ERROR_ACTIVE;
+            GroupData.Diag.stWarning.udiSequence := GroupData.Diag.stWarning.udiSequence + UDINT#1;
+            IF GroupData.Diag.stWarning.udiSequence = UDINT#0 THEN
+                GroupData.Diag.stWarning.udiSequence := UDINT#1;
+            END_IF;
+
+            xWarningPulse := TRUE;
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
 
         ELSIF xStepTimeout THEN
+            GroupData.Diag.sWarningText :=
+                'Reset verification timeout';
+
+            GroupData.Diag.stWarning.uiCode := WRN_RESET_VERIFY_TIMEOUT;
+            GroupData.Diag.stWarning.udiSequence := GroupData.Diag.stWarning.udiSequence + UDINT#1;
+            IF GroupData.Diag.stWarning.udiSequence = UDINT#0 THEN
+                GroupData.Diag.stWarning.udiSequence := UDINT#1;
+            END_IF;
+
+            xWarningPulse := TRUE;
             GroupData.Error.dwLogicalErrorNew :=
                 GroupData.Error.dwLogicalErrorNew
                 OR LOG_STEP_TIMEOUT;
@@ -612,6 +667,16 @@ CASE GroupData.Diag.iStep OF
            AND (TO_UDINT(fbReadError.GroupErrorID) <> UDINT#0) THEN
 
             // Причина ошибки осталась активной после завершения сброса.
+            GroupData.Diag.sWarningText :=
+                'Axis group error remains active after reset';
+
+            GroupData.Diag.stWarning.uiCode := WRN_GROUP_ERROR_AFTER_RESET;
+            GroupData.Diag.stWarning.udiSequence := GroupData.Diag.stWarning.udiSequence + UDINT#1;
+            IF GroupData.Diag.stWarning.udiSequence = UDINT#0 THEN
+                GroupData.Diag.stWarning.udiSequence := UDINT#1;
+            END_IF;
+
+            xWarningPulse := TRUE;
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
 
         ELSIF fbReadStatus.Valid
@@ -874,7 +939,7 @@ GroupData.Status.xGroupError :=
 GroupData.Status.xLocalError :=
     GroupData.Status.xGroupError
     OR (GroupData.Error.dwLogicalErrorLatched <> DWORD#0);
-
+	
 GroupData.Status.xMoveDirectDone := fbMoveDirect.Done;
 
 // Код ошибки самой группы не совпадает с ErrorID диагностических Motion FB.

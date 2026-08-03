@@ -9,11 +9,13 @@ VAR
 	curPoint      : ST_POINT; // Координаты выбранной точки
 	curPointName  : E_POINT_NAME; // Имя выбранной точки
 	fbPointManager: FB_POINT_MANAGER; // Проверка координат и скорости точки
+	rtReset       : R_TRIG; // Фронт команды сброса менеджера движения
 END_VAR
 VAR CONSTANT
 	ERR_POINT_INVALID : DWORD := DWORD#16#0000_0001; // Недопустимая точка
 	ERR_GROUP         : DWORD := DWORD#16#0000_0002; // Ошибка группы осей
 	ERR_GLOBAL_STOP   : DWORD := DWORD#16#0000_0004; // Глобальная ошибка ячейки
+	WRN_RESET_GLOBAL_ERROR : UINT := 1; // Глобальная ошибка ещё активна
 END_VAR
 VAR_IN_OUT
 	stMotionManager : ST_MOTION_MANAGER; // Команды, статусы и диагностика менеджера движения
@@ -33,15 +35,26 @@ fbPointManager(
 			stPointManager := stPointManager,
 			stPoint := curPoint
 		);
-
+		
 stMotionManager.Status.xBusy := FALSE;
 stMotionManager.Status.xDone := FALSE;
 stMotionManager.Status.xError := FALSE;
 stMotionManager.Status.xReady:= FALSE;
 stMotionManager.Command.xReset := xReset;
+rtReset(CLK := xReset);
+
+IF rtReset.Q
+AND (stMotionManager.Diag.eState = E_MOTION_MANAGER_STATE.ERROR)
+AND stMotionManager.Command.xGlobalError THEN
+	stMotionManager.Diag.stWarning.uiCode := WRN_RESET_GLOBAL_ERROR;
+	stMotionManager.Diag.stWarning.udiSequence := stMotionManager.Diag.stWarning.udiSequence + UDINT#1;
+	IF stMotionManager.Diag.stWarning.udiSequence = UDINT#0 THEN
+		stMotionManager.Diag.stWarning.udiSequence := UDINT#1;
+	END_IF;
+END_IF;
 
 
-CASE stMotionManager.Diag.eState OF
+CASE stMotionManager.Diag.eState OF 
 	// --------------------------------------------------
 	E_MOTION_MANAGER_STATE.IDLE:
 	// --------------------------------------------------
@@ -53,16 +66,16 @@ CASE stMotionManager.Diag.eState OF
 			stMotionManager.Error.dwErrorActive := stMotionManager.Error.dwErrorActive OR ERR_GLOBAL_STOP;
 			stMotionManager.Diag.eState := E_MOTION_MANAGER_STATE.ERROR;
 		END_IF
-
+	
 	// --------------------------------------------------
 	E_MOTION_MANAGER_STATE.VALIDATE:
 	// --------------------------------------------------
 		stMotionManager.Status.xBusy := TRUE;
 		curPoint := stPoint[stMotionManager.Command.eTargetPoint];
 		curPointName := stMotionManager.Command.eTargetPoint;
-
+		
 		stPointManager.Command.xExecute := TRUE;
-
+		
 		IF stPointManager.Status.xDone AND NOT stPointManager.Status.xInvalid THEN
 			stPointManager.Command.xExecute := FALSE;
 			IF stMotionManager.Command.xMode THEN
@@ -74,13 +87,13 @@ CASE stMotionManager.Diag.eState OF
 			stMotionManager.Error.dwErrorActive := stMotionManager.Error.dwErrorActive OR ERR_POINT_INVALID;
 			stMotionManager.Diag.eState := 	E_MOTION_MANAGER_STATE.ERROR;
 		END_IF
-
+	
 	// --------------------------------------------------
 	E_MOTION_MANAGER_STATE.MOTION_SIM:
 	// --------------------------------------------------
-
+	
 		stMotionManager.Status.xBusy := TRUE;
-
+		 
 		GroupData.MotionParam.lrX := curPoint.X;
 		GroupData.MotionParam.lrY := curPoint.Y;
 		GroupData.MotionParam.lrZ := curPoint.Z;
@@ -90,7 +103,7 @@ CASE stMotionManager.Diag.eState OF
 		IF GroupData.Diag.iStep = E_AXIS_GROUP_STATE.READY AND NOT GroupData.Command.xMoveDirect AND NOT stMotionManager.Command.xGlobalError THEN
 			GroupData.Command.xMoveDirect := TRUE;
 		END_IF;
-
+		
 		IF GroupData.Status.xMoveDirectDone AND GroupData.Command.xMoveDirect THEN
 			GroupData.Command.xMoveDirect := FALSE;
 			stMotionManager.Status.eCurrentPoint := curPointName;
@@ -104,7 +117,7 @@ CASE stMotionManager.Diag.eState OF
 			END_IF;
 			stMotionManager.Diag.eState := 	E_MOTION_MANAGER_STATE.ERROR;
 		END_IF
-
+	
 	// --------------------------------------------------
 	E_MOTION_MANAGER_STATE.ERROR:
 	// --------------------------------------------------
@@ -115,8 +128,8 @@ CASE stMotionManager.Diag.eState OF
 			stMotionManager.Status.xError := FALSE;
 			stMotionManager.Diag.eState := 	E_MOTION_MANAGER_STATE.IDLE;
 		END_IF
-
-
+	
+	
 	// --------------------------------------------------
 	E_MOTION_MANAGER_STATE.DONE:
 	// --------------------------------------------------

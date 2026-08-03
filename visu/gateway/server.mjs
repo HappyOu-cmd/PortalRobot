@@ -17,17 +17,32 @@ import {
   Variant,
 } from 'node-opcua';
 import { WebSocketServer } from 'ws';
+import {
+  CyclogramStore,
+  classifyCyclogram,
+  isTransientRobotActivity,
+  stabilizeCyclogramStates,
+  createCyclogramWorkbook,
+  cyclogramExportFilename,
+  cyclogramRequiredSymbols,
+} from './cyclogram.mjs';
 
 const endpointUrl = process.env.OPCUA_ENDPOINT ?? 'opc.tcp://127.0.0.1:4840';
 const gatewayPort = Number(process.env.GATEWAY_PORT ?? 3001);
 const gatewayHost = process.env.GATEWAY_HOST ?? '127.0.0.1';
 const reconnectDelayMs = Number(process.env.OPCUA_RECONNECT_MS ?? 3000);
-const uiRefreshIntervalMs = Number(process.env.OPCUA_UI_REFRESH_MS ?? 100);
+const publishingIntervalMs = Math.max(10, Number(process.env.OPCUA_PUBLISHING_MS ?? 50));
+const samplingIntervalMs = Math.max(10, Number(process.env.OPCUA_SAMPLING_MS ?? 50));
+const uiRefreshIntervalMs = Math.max(20, Number(process.env.OPCUA_UI_REFRESH_MS ?? 50));
+const cyclogramSettleMs = Math.max(40, Number(process.env.CYCLOGRAM_SETTLE_MS ?? 80));
 const plcRootName = process.env.OPCUA_GVL ?? 'GVL_HMI';
+const cyclogramRetentionHours = Number(process.env.CYCLOGRAM_RETENTION_HOURS ?? 24);
+const cyclogramDbPath = process.env.CYCLOGRAM_DB_PATH ?? 'gateway/data/cyclogram.sqlite';
+const cyclogramTimeZone = process.env.CYCLOGRAM_TIMEZONE ?? 'Asia/Yekaterinburg';
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const distDir = normalize(join(__dirname, '..', 'dist'));
 
-const requiredSymbols = [
+const requiredSymbols = [...new Set([
   'udiPlcHeartbeat',
   'stCellStatus.xRunning',
   'stCellStatus.xReadyToStart',
@@ -37,6 +52,10 @@ const requiredSymbols = [
   'stCellStatus.uiReadyMachines',
   'stCellStatus.uiSelectedMachine',
   'stCellDiag.eState',
+  'rLoadCNC_1',
+  'rLoadCNC_2',
+  'rLoadCNC_3',
+  'rRobot',
   'xCellManual',
   'stRobotDiag.eState',
   'stRobotDiag.eActiveAction',
@@ -74,7 +93,9 @@ const requiredSymbols = [
   'stAlarmStatus.uiActiveAlarmCount',
   'stAlarmStatus.uiActiveWarningCount',
   'astAlarmEvent[1].udiSequence',
-];
+  ...cyclogramRequiredSymbols,
+])];
+const cyclogramSymbolSet = new Set(cyclogramRequiredSymbols);
 
 const commandMap = {
   'cell.enable': { path: 'xCellEnable', dataType: DataType.Boolean, pulse: true },
@@ -103,8 +124,34 @@ const commandMap = {
 let opcua = null;
 let symbolNodes = new Map();
 let latestValues = {};
+let cyclogramConnected = false;
+let stableCyclogramStates = null;
+let transientRobotSince = null;
+let cyclogramStore = null;
+let cyclogramError = '';
+try {
+  cyclogramStore = new CyclogramStore({
+    databasePath: cyclogramDbPath,
+    retentionHours: cyclogramRetentionHours,
+  });
+} catch (error) {
+  cyclogramError = error instanceof Error ? error.message : String(error);
+  console.error(`[Cyclogram] Storage unavailable: ${cyclogramError}`);
+}
+
+function cyclogramHealth(now = Date.now()) {
+  if (!cyclogramStore) return { available: false, error: cyclogramError || 'Хранилище циклограммы недоступно' };
+  try {
+    return cyclogramStore.status(now);
+  } catch (error) {
+    cyclogramError = error instanceof Error ? error.message : String(error);
+    return { available: false, error: cyclogramError };
+  }
+}
+
 let connectionState = {
   status: 'connecting', endpoint: endpointUrl, message: 'Подключение к OPC UA', symbols: 0, missing: requiredSymbols,
+  cyclogram: cyclogramHealth(),
 };
 
 const mimeTypes = {
@@ -142,8 +189,68 @@ function publishConnection() {
   broadcast({ type: 'connection', ...connectionState });
 }
 
-function publishSnapshot() {
-  broadcast({ type: 'snapshot', timestamp: Date.now(), values: latestValues });
+function publishSnapshot(values = latestValues, full = true) {
+  broadcast({ type: 'snapshot', timestamp: Date.now(), full, values });
+}
+
+function hasCyclogramData() {
+  return cyclogramRequiredSymbols.every((path) => Object.hasOwn(latestValues, path));
+}
+
+function recordCyclogram(timestamp = Date.now()) {
+  if (!cyclogramStore || !cyclogramConnected || !hasCyclogramData()) return;
+  try {
+    const classified = classifyCyclogram(latestValues);
+    if (isTransientRobotActivity(classified.robot)) transientRobotSince ??= timestamp;
+    else transientRobotSince = null;
+    stableCyclogramStates = stabilizeCyclogramStates(
+      stableCyclogramStates,
+      classified,
+      { transientForMs: transientRobotSince === null ? 0 : timestamp - transientRobotSince },
+    );
+    const update = cyclogramStore.record(stableCyclogramStates, timestamp);
+    if (update.changed) broadcast({ type: 'cyclogram-update', serverTime: timestamp, ...update });
+  } catch (error) {
+    cyclogramError = error instanceof Error ? error.message : String(error);
+    console.error(`[Cyclogram] ${cyclogramError}`);
+  }
+}
+
+function stopCyclogram(timestamp = Date.now()) {
+  if (!cyclogramStore) return;
+  try {
+    const update = cyclogramStore.stop(timestamp);
+    stableCyclogramStates = null;
+    transientRobotSince = null;
+    if (update.changed) broadcast({ type: 'cyclogram-update', serverTime: timestamp, ...update });
+  } catch (error) {
+    cyclogramError = error instanceof Error ? error.message : String(error);
+    console.error(`[Cyclogram] ${cyclogramError}`);
+  }
+}
+
+function publishCyclogramHistory(socket = null, timestamp = Date.now()) {
+  if (!cyclogramStore) return;
+  const message = {
+    type: 'cyclogram-history',
+    serverTime: timestamp,
+    retentionMs: cyclogramStore.retentionMs,
+    intervals: cyclogramStore.intervals({ nowMs: timestamp }),
+  };
+  if (socket) send(socket, message);
+  else broadcast(message);
+}
+
+function clearCyclogram(timestamp = Date.now()) {
+  if (!cyclogramStore) throw new Error(cyclogramError || 'Хранилище циклограммы недоступно');
+  cyclogramStore.clear();
+  stableCyclogramStates = null;
+  transientRobotSince = null;
+  if (cyclogramConnected && hasCyclogramData()) {
+    stableCyclogramStates = classifyCyclogram(latestValues);
+    cyclogramStore.record(stableCyclogramStates, timestamp, { forceCheckpoint: true });
+  }
+  publishCyclogramHistory(null, timestamp);
 }
 
 async function browseChildren(session, nodeId) {
@@ -213,6 +320,10 @@ async function writeValue(path, dataType, value) {
   if (!nodeId) throw new Error(`Переменная ${plcRootName}.${path} не опубликована`);
   const status = await opcua.session.writeSingleNode(nodeId, new Variant({ dataType, value }));
   if (!status.isGood()) throw new Error(`PLC отклонил запись ${path}: ${status.toString()}`);
+  // Do not wait for the next subscription publish before reflecting a successful
+  // write in the HMI. The following OPC UA notification remains authoritative.
+  latestValues[path] = jsonValue(value);
+  publishSnapshot({ [path]: latestValues[path] }, false);
 }
 
 async function executeCommand(message) {
@@ -255,13 +366,15 @@ async function executeCommand(message) {
 }
 
 async function connectOpcUa() {
-  connectionState = { ...connectionState, status: 'connecting', message: 'Подключение к OPC UA' };
+  connectionState = { ...connectionState, status: 'connecting', message: 'Подключение к OPC UA', cyclogram: cyclogramHealth() };
   publishConnection();
   const client = OPCUAClient.create({
     applicationName: 'Portal Robot HMI Gateway', endpointMustExist: false, keepSessionAlive: true,
     securityMode: MessageSecurityMode.None, securityPolicy: SecurityPolicy.None,
     connectionStrategy: { initialDelay: 500, maxDelay: 2000, maxRetry: 2 },
   });
+  let cyclogramCheckpoint = null;
+  let cyclogramChangeTimer = null;
   try {
     await client.connect(endpointUrl);
     const session = await client.createSession();
@@ -271,28 +384,45 @@ async function connectOpcUa() {
     latestValues = {};
     await readInitialValues(session, entries);
     const subscription = ClientSubscription.create(session, {
-      requestedPublishingInterval: 100, requestedLifetimeCount: 100,
+      requestedPublishingInterval: publishingIntervalMs, requestedLifetimeCount: 100,
       requestedMaxKeepAliveCount: 20, maxNotificationsPerPublish: 1000,
       publishingEnabled: true, priority: 1,
     });
     let publishTimer = null;
+    let changedValues = {};
+    cyclogramCheckpoint = setInterval(() => {
+      // Related PLC tags arrive as separate notifications. Recording while the
+      // debounce is active would persist a half-updated state as a micro idle.
+      if (cyclogramChangeTimer === null) recordCyclogram(Date.now());
+    }, 100);
     const monitored = [];
     for (let offset = 0; offset < entries.length; offset += 50) {
       const chunk = entries.slice(offset, offset + 50);
       const group = ClientMonitoredItemGroup.create(
         subscription,
         chunk.map(([, nodeId]) => ({ nodeId, attributeId: AttributeIds.Value })),
-        { samplingInterval: 100, discardOldest: true, queueSize: 1 },
+        { samplingInterval: samplingIntervalMs, discardOldest: true, queueSize: 1 },
         TimestampsToReturn.Both,
       );
       group.on('changed', (_item, dataValue, index) => {
         const path = chunk[index]?.[0];
         if (!path || !dataValue.statusCode.isGood()) return;
-        latestValues[path] = jsonValue(dataValue.value.value);
+        const value = jsonValue(dataValue.value.value);
+        latestValues[path] = value;
+        changedValues[path] = value;
+        if (cyclogramSymbolSet.has(path)) {
+          if (cyclogramChangeTimer !== null) clearTimeout(cyclogramChangeTimer);
+          cyclogramChangeTimer = setTimeout(() => {
+            cyclogramChangeTimer = null;
+            recordCyclogram(Date.now());
+          }, cyclogramSettleMs);
+        }
         if (publishTimer === null) {
           publishTimer = setTimeout(() => {
             publishTimer = null;
-            publishSnapshot();
+            const delta = changedValues;
+            changedValues = {};
+            if (Object.keys(delta).length > 0) publishSnapshot(delta, false);
           }, uiRefreshIntervalMs);
         }
       });
@@ -303,16 +433,23 @@ async function connectOpcUa() {
     connectionState = {
       status: missing.length ? 'degraded' : 'connected', endpoint: endpointUrl,
       message: missing.length ? 'PLC подключён, но опубликован старый состав GVL_HMI' : 'PLC подключён',
-      symbols: symbolNodes.size, missing,
+      symbols: symbolNodes.size, missing, cyclogram: cyclogramHealth(),
     };
     opcua = { client, session, subscription, monitored };
+    cyclogramConnected = true;
+    recordCyclogram(Date.now());
     publishConnection();
-    publishSnapshot();
+    publishSnapshot(latestValues, true);
     await new Promise((resolve) => {
       subscription.once('terminated', resolve);
       client.once('connection_lost', resolve);
     });
   } finally {
+    if (cyclogramCheckpoint !== null) clearInterval(cyclogramCheckpoint);
+    if (cyclogramChangeTimer !== null) clearTimeout(cyclogramChangeTimer);
+    if (publishTimer !== null) clearTimeout(publishTimer);
+    cyclogramConnected = false;
+    stopCyclogram(Date.now());
     opcua = null;
     symbolNodes = new Map();
     try { await client.disconnect(); } catch { /* reconnect below */ }
@@ -327,7 +464,7 @@ async function opcUaLoop() {
       connectionState = {
         status: 'disconnected', endpoint: endpointUrl,
         message: error instanceof Error ? error.message : String(error),
-        symbols: 0, missing: requiredSymbols,
+        symbols: 0, missing: requiredSymbols, cyclogram: cyclogramHealth(),
       };
       publishConnection();
       console.error(`[OPC UA] ${connectionState.message}`);
@@ -336,13 +473,55 @@ async function opcUaLoop() {
   }
 }
 
-const httpServer = createServer((request, response) => {
-  if (request.url === '/api/health') {
+const httpServer = createServer(async (request, response) => {
+  const requestUrl = new URL(request.url ?? '/', 'http://gateway.local');
+  if (requestUrl.pathname === '/api/health') {
     response.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-    response.end(JSON.stringify(connectionState));
+    response.end(JSON.stringify({ ...connectionState, cyclogram: cyclogramHealth() }));
     return;
   }
-  const requestPath = request.url === '/' ? '/index.html' : decodeURIComponent(request.url?.split('?')[0] ?? '/index.html');
+  if (requestUrl.pathname === '/api/cyclogram/export') {
+    if (!cyclogramStore) {
+      response.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8' });
+      response.end(JSON.stringify({ error: cyclogramError || 'Хранилище циклограммы недоступно' }));
+      return;
+    }
+    const now = Date.now();
+    const scope = requestUrl.searchParams.get('scope') ?? 'all';
+    const requestedFrom = Number(requestUrl.searchParams.get('from'));
+    const requestedTo = Number(requestUrl.searchParams.get('to'));
+    const rangeFrom = scope === 'all' ? now - cyclogramStore.retentionMs : requestedFrom;
+    const rangeTo = scope === 'all' ? now : requestedTo;
+    if (!Number.isFinite(rangeFrom) || !Number.isFinite(rangeTo) || rangeFrom >= rangeTo) {
+      response.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+      response.end(JSON.stringify({ error: 'Некорректный временной диапазон циклограммы' }));
+      return;
+    }
+    try {
+      const from = Math.max(now - cyclogramStore.retentionMs, Math.round(rangeFrom));
+      const to = Math.min(now, Math.round(rangeTo));
+      if (from >= to) {
+        response.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+        response.end(JSON.stringify({ error: 'Запрошенный диапазон находится вне доступной истории циклограммы' }));
+        return;
+      }
+      const buffer = await createCyclogramWorkbook(cyclogramStore.intervals({ fromMs: from, toMs: to, nowMs: now }), {
+        fromMs: from, toMs: to, exportedAtMs: now, timeZone: cyclogramTimeZone,
+      });
+      response.writeHead(200, {
+        'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'Content-Disposition': `attachment; filename="${cyclogramExportFilename(now, cyclogramTimeZone)}"`,
+        'Content-Length': buffer.length,
+      });
+      response.end(buffer);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      response.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+      response.end(JSON.stringify({ error: message }));
+    }
+    return;
+  }
+  const requestPath = requestUrl.pathname === '/' ? '/index.html' : decodeURIComponent(requestUrl.pathname);
   const relativePath = normalize(requestPath).replace(/^([/\\])+/, '');
   let filePath = normalize(join(distDir, relativePath));
   if (!filePath.startsWith(distDir) || !existsSync(filePath) || statSync(filePath).isDirectory()) filePath = join(distDir, 'index.html');
@@ -358,11 +537,20 @@ const httpServer = createServer((request, response) => {
 const webSocketServer = new WebSocketServer({ server: httpServer, path: '/ws' });
 webSocketServer.on('connection', (socket) => {
   send(socket, { type: 'connection', ...connectionState });
-  send(socket, { type: 'snapshot', timestamp: Date.now(), values: latestValues });
+  send(socket, { type: 'snapshot', timestamp: Date.now(), full: true, values: latestValues });
+  if (cyclogramStore) {
+    publishCyclogramHistory(socket);
+  }
   socket.on('message', async (payload) => {
     let message;
     try {
       message = JSON.parse(payload.toString());
+      if (message.type === 'cyclogram-clear') {
+        const requestId = String(message.requestId ?? Date.now());
+        clearCyclogram(Date.now());
+        send(socket, { type: 'ack', requestId, ok: true });
+        return;
+      }
       if (message.type !== 'command') return;
       const requestId = await executeCommand(message);
       send(socket, { type: 'ack', requestId, ok: true });
@@ -378,3 +566,6 @@ httpServer.listen(gatewayPort, gatewayHost, () => {
 });
 
 opcUaLoop().catch(console.error);
+
+process.once('SIGINT', () => cyclogramStore?.closeDatabase());
+process.once('SIGTERM', () => cyclogramStore?.closeDatabase());

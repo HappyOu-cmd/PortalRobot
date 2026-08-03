@@ -22,16 +22,22 @@ VAR
     tonAction      : TON; // Таймер выполнения действия
     xActionFault   : BOOL; // Неисправность, относящаяся к текущему действию
 	xActionValid   : BOOL; // Получено допустимое действие захвата
-	xActionRequired: BOOL; // Для действия требуется физическое переключение
+    xActionRequired: BOOL; // Для действия требуется физическое переключение
     tActionTime    : TIME; // Нормативное время текущего действия
     xInitialized   : BOOL; // Начальные состояния установлены
+	rtReset         : R_TRIG; // Фронт команды сброса захвата
 END_VAR
-VAR CONSTANT
+VAR CONSTANT 
 	ERR_GRIPPER_1   : DWORD := DWORD#16#0000_0001; // Ошибка первого захвата
     ERR_GRIPPER_2   : DWORD := DWORD#16#0000_0002; // Ошибка второго захвата
     ERR_GRIP_ROTATE : DWORD := DWORD#16#0000_0004; // Ошибка механизма поворота
     ERR_GRIP_ACTION : DWORD := DWORD#16#0000_0008; // Недопустимое действие захвата
     ERR_GRIP_GLOBAL : DWORD := DWORD#16#0000_0010; // Общая ошибка захвата
+	WRN_RESET_EXECUTE_ACTIVE : UINT := 1; // Команда захвата ещё активна
+	WRN_RESET_GLOBAL_FAULT   : UINT := 2; // Общая неисправность ещё активна
+	WRN_RESET_GRIPPER_1_FAULT: UINT := 3; // Неисправность первого захвата ещё активна
+	WRN_RESET_GRIPPER_2_FAULT: UINT := 4; // Неисправность второго захвата ещё активна
+	WRN_RESET_ROTATION_FAULT : UINT := 5; // Неисправность поворота ещё активна
 END_VAR
 
 // --- BEGIN IMPLEMENTATION ---
@@ -47,6 +53,32 @@ IF NOT xInitialized THEN
     Status.xRotatedToDetail := FALSE;
 
     xInitialized := TRUE;
+END_IF;
+
+rtReset(CLK := Command.xReset);
+
+IF rtReset.Q
+AND (eState = E_GRIPPER_STATE.ERROR) THEN
+	IF Command.xExecute THEN
+		Diag.stWarning.uiCode := WRN_RESET_EXECUTE_ACTIVE;
+	ELSIF xSimGlobalFault THEN
+		Diag.stWarning.uiCode := WRN_RESET_GLOBAL_FAULT;
+	ELSIF xSimGripper1Fault THEN
+		Diag.stWarning.uiCode := WRN_RESET_GRIPPER_1_FAULT;
+	ELSIF xSimGripper2Fault THEN
+		Diag.stWarning.uiCode := WRN_RESET_GRIPPER_2_FAULT;
+	ELSIF xSimRotationFault THEN
+		Diag.stWarning.uiCode := WRN_RESET_ROTATION_FAULT;
+	ELSE
+		Diag.stWarning.uiCode := UINT#0;
+	END_IF;
+
+	IF Diag.stWarning.uiCode <> UINT#0 THEN
+		Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
+		IF Diag.stWarning.udiSequence = UDINT#0 THEN
+			Diag.stWarning.udiSequence := UDINT#1;
+		END_IF;
+	END_IF;
 END_IF;
 
 

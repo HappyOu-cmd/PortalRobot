@@ -41,6 +41,7 @@ VAR
     xMotionExecute  : BOOL; // Запрос выполнения перемещения
     xGripperExecute : BOOL; // Запрос выполнения действия захвата
 	xMagazineCommandActive : BOOL; // Активная команда получена от FB_MAGAZINE
+	rtReset               : R_TRIG; // Фронт команды сброса робота
 
 END_VAR
 
@@ -55,8 +56,14 @@ VAR CONSTANT
     ERR_ROBOT_MOTION       : DWORD := DWORD#16#0000_0002; // Ошибка менеджера движения
     ERR_ROBOT_GRIPPER      : DWORD := DWORD#16#0000_0004; // Ошибка захвата
     ERR_ROBOT_MODBUS_STUB  : DWORD := DWORD#16#0000_0008; // Ошибка внешнего робота или Modbus
-    ERR_ROBOT_STOP         : DWORD := DWORD#16#0000_0010; // Остановка команды робота
+	ERR_ROBOT_STOP         : DWORD := DWORD#16#0000_0010; // Остановка команды робота
 	MASK_LOCAL_ERROR         : DWORD := ERR_ROBOT_WRONG_ACTION OR ERR_ROBOT_MODBUS_STUB; // Собственные первопричины робота
+	WRN_RESET_EXECUTE_ACTIVE : UINT := 1; // Команда робота ещё активна
+	WRN_RESET_STOP_ACTIVE    : UINT := 2; // Команда остановки ещё активна
+	WRN_RESET_GLOBAL_ERROR   : UINT := 3; // Глобальная ошибка ещё активна
+	WRN_RESET_MOTION_ERROR   : UINT := 4; // Ошибка менеджера движения ещё активна
+	WRN_RESET_GRIPPER_ERROR  : UINT := 5; // Ошибка захвата ещё активна
+	WRN_RESET_MODBUS_ERROR   : UINT := 6; // Ошибка внешнего робота ещё активна
 END_VAR
 
 // --- BEGIN IMPLEMENTATION ---
@@ -106,6 +113,34 @@ ELSE
 END_IF;
 
 Command.xReset := xReset;
+
+rtReset(CLK := xReset);
+
+IF rtReset.Q
+AND (eState = E_ROBOT_STATE.ERROR) THEN
+    IF Command.xExecute THEN
+        Diag.stWarning.uiCode := WRN_RESET_EXECUTE_ACTIVE;
+    ELSIF Command.xStop THEN
+        Diag.stWarning.uiCode := WRN_RESET_STOP_ACTIVE;
+    ELSIF xGlobalError THEN
+        Diag.stWarning.uiCode := WRN_RESET_GLOBAL_ERROR;
+    ELSIF stMotionManager.Status.xError THEN
+        Diag.stWarning.uiCode := WRN_RESET_MOTION_ERROR;
+    ELSIF fbGripper.Status.xError THEN
+        Diag.stWarning.uiCode := WRN_RESET_GRIPPER_ERROR;
+    ELSIF xModbusError THEN
+        Diag.stWarning.uiCode := WRN_RESET_MODBUS_ERROR;
+    ELSE
+        Diag.stWarning.uiCode := UINT#0;
+    END_IF;
+
+    IF Diag.stWarning.uiCode <> UINT#0 THEN
+        Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
+        IF Diag.stWarning.udiSequence = UDINT#0 THEN
+            Diag.stWarning.udiSequence := UDINT#1;
+        END_IF;
+    END_IF;
+END_IF;
 
 // =====================================================
 // Автомат FB_ROBOT
