@@ -1,4 +1,4 @@
-import type { CellState, MachineMode, MachineOperation, MachinePartState, MachinePartType, MagazineOperation, SlotType } from '../model/types';
+import type { CellState, MachineMode, MachineOperation, MachinePartState, MachinePartType, MagazineOperation, SlotType, Vec3Mm } from '../model/types';
 import type { CyclogramHistory, CyclogramUpdate } from '../model/cyclogram';
 
 export type PlcConnectionStatus = 'connecting' | 'connected' | 'degraded' | 'disconnected';
@@ -25,8 +25,14 @@ export interface PlcConnectionInfo {
 
 export interface PlcRuntimeInfo {
   cellRunning: boolean;
+  cellStopPending: boolean;
   globalError: boolean;
   readyToStart: boolean;
+  cellStartAllowed: boolean;
+  cellStopAllowed: boolean;
+  cellResetAllowed: boolean;
+  manualModeAllowed: boolean;
+  automaticModeAllowed: boolean;
   drivesReady: boolean;
   robotReady: boolean;
   magazineReady: boolean;
@@ -112,7 +118,9 @@ const AXIS_ALARM_TEXTS = [
   'Ошибка MC_Home', 'Ошибка MC_MoveAbsolute', 'Ошибка MC_MoveRelative',
   'Ошибка чтения позиции оси', 'Ошибка чтения статуса оси', 'Ось находится в ErrorStop',
   'SoftMotion сообщил внутреннюю ошибку', 'Команда движения прервана',
-  'Неизвестная ошибка оси', 'Ошибка привода', '', '', '', '', '', '',
+  'Неизвестная ошибка оси', 'Ошибка привода', '', '',
+  'Снято разрешение питания оси', 'Глобальная ошибка при включении оси',
+  'Глобальная ошибка в состоянии готовности оси', 'Глобальная ошибка во время движения оси',
   'Одновременно заданы Jog+ и Jog-', 'MoveAbsolute запрещён до Home',
   'MoveRelative запрещён до Home', 'Превышено время шага оси', 'Неизвестное состояние оси',
 ];
@@ -121,8 +129,35 @@ const AXIS_GROUP_ALARM_TEXTS = [
   'Ошибка MC_GroupReset', 'Ошибка MC_MoveDirectAbsolute', 'Ошибка MC_MoveLinearAbsolute',
   'Ошибка MC_GroupHalt', 'Ошибка MC_GroupStop', 'Ошибка чтения позиции группы',
   'Ошибка чтения статуса группы', 'Ошибка чтения кода группы',
-  'Группа SoftMotion находится в ErrorStop', '', '', '', '',
+  'Группа SoftMotion находится в ErrorStop', 'Тестовая ошибка MC_MoveDirectAbsolute (SM3)', '', '', '',
   'Превышено время шага группы', 'Неизвестное состояние группы',
+  'Нет разрешения питания группы в состоянии готовности',
+  'Разрешение питания группы снято во время движения',
+];
+const MACHINE_ALARM_TEXTS = [
+  'Не удалось выбрать операцию',
+  'В рецепте неизвестная команда',
+  'Ошибка перемещения робота',
+  'Ошибка действия захвата',
+  'Не удалось открыть дверь',
+  'Не удалось закрыть дверь',
+  'Не удалось разжать патрон',
+  'Не удалось зажать патрон',
+  'Не удалось запустить цикл станка',
+  'Получена глобальная ошибка ячейки',
+  'Неизвестное состояние изделия в станке',
+  'Станок сообщил аварию',
+  'Индекс рецепта вышел за границы',
+  'Дверь закрыта при роботе внутри',
+  'Авария станка возникла в ожидании',
+  'TIMEOUT перемещения робота',
+  'TIMEOUT действия захвата',
+  'TIMEOUT освобождения интерфейса робота',
+  'TIMEOUT открытия двери',
+  'TIMEOUT закрытия двери',
+  'TIMEOUT разжима патрона',
+  'TIMEOUT зажима патрона',
+  'TIMEOUT подтверждения запуска цикла',
 ];
 export const ALARM_SOURCE_LABELS: Record<PlcAlarmSource, string> = {
   cell: 'Ячейка', robot: 'Робот', 'machine-1': 'Станок 1', 'machine-2': 'Станок 2', 'machine-3': 'Станок 3', magazine: 'Магазин',
@@ -132,14 +167,15 @@ export const ALARM_SOURCE_LABELS: Record<PlcAlarmSource, string> = {
 const ALARM_TEXTS: Partial<Record<PlcAlarmSource, string[]>> = {
   cell: ['Оба захвата заняты при запуске', 'Ошибка робота во время автоматического цикла', 'Ошибка магазина во время операции', 'Ошибка станка во время обслуживания', 'Получена глобальная ошибка ячейки'],
   robot: ['Неизвестная команда робота', 'Ошибка менеджера движения', 'Ошибка механизма захвата', 'Ошибка обмена с внешним роботом', 'Движение остановлено командой или глобальной ошибкой'],
-  'machine-1': ['Не удалось выбрать операцию', 'В рецепте неизвестная команда', 'Ошибка перемещения робота', 'Ошибка действия захвата', 'Не удалось открыть дверь', 'Не удалось закрыть дверь', 'Не удалось разжать патрон', 'Не удалось зажать патрон', 'Не удалось запустить цикл станка', 'Получена глобальная ошибка ячейки', 'Неизвестное состояние изделия в станке', 'Станок сообщил аварию', 'Индекс рецепта вышел за границы', 'Дверь закрыта при роботе внутри', 'Авария станка возникла в ожидании'],
-  'machine-2': ['Не удалось выбрать операцию', 'В рецепте неизвестная команда', 'Ошибка перемещения робота', 'Ошибка действия захвата', 'Не удалось открыть дверь', 'Не удалось закрыть дверь', 'Не удалось разжать патрон', 'Не удалось зажать патрон', 'Не удалось запустить цикл станка', 'Получена глобальная ошибка ячейки', 'Неизвестное состояние изделия в станке', 'Станок сообщил аварию', 'Индекс рецепта вышел за границы', 'Дверь закрыта при роботе внутри', 'Авария станка возникла в ожидании'],
-  'machine-3': ['Не удалось выбрать операцию', 'В рецепте неизвестная команда', 'Ошибка перемещения робота', 'Ошибка действия захвата', 'Не удалось открыть дверь', 'Не удалось закрыть дверь', 'Не удалось разжать патрон', 'Не удалось зажать патрон', 'Не удалось запустить цикл станка', 'Получена глобальная ошибка ячейки', 'Неизвестное состояние изделия в станке', 'Станок сообщил аварию', 'Индекс рецепта вышел за границы', 'Дверь закрыта при роботе внутри', 'Авария станка возникла в ожидании'],
+  'machine-1': MACHINE_ALARM_TEXTS,
+  'machine-2': MACHINE_ALARM_TEXTS,
+  'machine-3': MACHINE_ALARM_TEXTS,
   magazine: ['Операция не может быть выбрана', 'Нет доступной заготовки', 'Нет свободного слота', 'Номер слота вне матрицы', 'Содержимое слота не соответствует операции', 'Робот завершил команду с ошибкой', 'Получена глобальная ошибка ячейки', 'Неверно задана геометрия магазина'],
   'axis-x': AXIS_ALARM_TEXTS,
   'axis-y': AXIS_ALARM_TEXTS,
   'axis-z': AXIS_ALARM_TEXTS,
   'axis-group': AXIS_GROUP_ALARM_TEXTS,
+  'motion-manager': ['Недопустимая целевая точка', 'Ошибка группы осей', 'Менеджер движения остановлен глобальной ошибкой'],
   'point-manager': ['Координата X вне допустимых границ', 'Координата Y вне допустимых границ', 'Координата Z вне допустимых границ', 'Недопустимый коэффициент скорости'],
   gripper: ['Ошибка захвата 1', 'Ошибка захвата 2', 'Ошибка механизма поворота', 'Недопустимое действие захвата', 'Общая ошибка захвата'],
 };
@@ -148,6 +184,10 @@ const WARNING_TEXTS: Partial<Record<PlcAlarmSource, Record<number, string>>> = {
     1: 'Общий сброс отклонён: глобальная ошибка всё ещё активна',
     2: 'Общий сброс отклонён: ошибка робота всё ещё активна',
     3: 'Общий сброс отклонён: ошибка магазина всё ещё активна',
+    4: 'Запуск ячейки отклонён: условия запуска не выполнены',
+    5: 'Остановка ячейки отклонена: автоматический цикл не выполняется',
+    6: 'Общий сброс отклонён: активных ошибок нет',
+    7: 'Общий сброс отклонён: ячейка или оборудование ещё не остановлены',
   },
   robot: {
     1: 'Сброс робота отклонён: команда выполнения всё ещё активна',
@@ -156,26 +196,51 @@ const WARNING_TEXTS: Partial<Record<PlcAlarmSource, Record<number, string>>> = {
     4: 'Сброс робота отклонён: ошибка менеджера движения всё ещё активна',
     5: 'Сброс робота отклонён: ошибка захвата всё ещё активна',
     6: 'Сброс робота отклонён: ошибка внешнего робота или Modbus всё ещё активна',
+    7: 'Команда робота отклонена: включите ручной режим и остановите ячейку',
+    8: 'Команда приводов отклонена: сначала устраните активную ошибку',
+    9: 'Остановка робота отклонена: приводы не готовы',
+    10: 'Сброс робота отклонён: активных ошибок робота или приводов нет',
   },
   'machine-1': {
     1: 'Сброс станка отклонён: физическая авария всё ещё активна',
     2: 'Сброс станка отклонён: глобальная ошибка всё ещё активна',
     3: 'Сброс станка отклонён: выполняется операция обслуживания',
+    4: 'Включение станка отклонено: активна физическая авария',
+    5: 'Включение станка отклонено: обработка ещё не завершена',
+    6: 'Сброс станка отклонён: активной ошибки нет',
+    7: 'Включение станка отклонено: состояние изделия в патроне не определено',
+    8: 'Сброс станка отклонён: каскадная ошибка робота ещё не готова к сбросу',
   },
   'machine-2': {
     1: 'Сброс станка отклонён: физическая авария всё ещё активна',
     2: 'Сброс станка отклонён: глобальная ошибка всё ещё активна',
     3: 'Сброс станка отклонён: выполняется операция обслуживания',
+    4: 'Включение станка отклонено: активна физическая авария',
+    5: 'Включение станка отклонено: обработка ещё не завершена',
+    6: 'Сброс станка отклонён: активной ошибки нет',
+    7: 'Включение станка отклонено: состояние изделия в патроне не определено',
+    8: 'Сброс станка отклонён: каскадная ошибка робота ещё не готова к сбросу',
   },
   'machine-3': {
     1: 'Сброс станка отклонён: физическая авария всё ещё активна',
     2: 'Сброс станка отклонён: глобальная ошибка всё ещё активна',
     3: 'Сброс станка отклонён: выполняется операция обслуживания',
+    4: 'Включение станка отклонено: активна физическая авария',
+    5: 'Включение станка отклонено: обработка ещё не завершена',
+    6: 'Сброс станка отклонён: активной ошибки нет',
+    7: 'Включение станка отклонено: состояние изделия в патроне не определено',
+    8: 'Сброс станка отклонён: каскадная ошибка робота ещё не готова к сбросу',
   },
   magazine: {
     1: 'Сброс магазина отклонён: операция всё ещё активна',
     2: 'Сброс магазина отклонён: глобальная ошибка всё ещё активна',
     3: 'Сброс магазина отклонён: ошибка робота всё ещё активна',
+    4: 'Включение магазина отклонено: глобальная ошибка всё ещё активна',
+    5: 'Включение магазина отклонено: содержимое магазина не позволяет продолжить работу',
+    6: 'Отключение магазина уже запрошено',
+    7: 'Заполнение магазина отклонено: сначала отключите магазин',
+    8: 'Заполнение магазина отклонено: неверно задан размер матрицы',
+    9: 'Очистка магазина отклонена: сначала отключите магазин',
   },
   'axis-x': {
     1: 'Включение оси X отклонено: нет разрешения питания',
@@ -295,6 +360,17 @@ const mapAlarmEvents = (values: Record<string, unknown>, current: PlcAlarmEvent[
   return events.sort((left, right) => right.id - left.id);
 };
 
+export function mapRobotCoordinates(
+  values: Record<string, unknown>,
+  current: Vec3Mm,
+): Vec3Mm {
+  return {
+    x: numberValue(values, 'lrActualX', current.x),
+    y: numberValue(values, 'lrActualY', current.y),
+    z: numberValue(values, 'lrActualZ', current.z),
+  };
+}
+
 export function mapPlcSnapshot(
   values: Record<string, unknown>,
   current: CellState,
@@ -306,7 +382,8 @@ export function mapPlcSnapshot(
     const diag = `astMachineDiag[${number}]`;
     const enabled = booleanValue(values, `${status}.xEnabled`, machine.enabled);
     const processing = booleanValue(values, `${status}.xProcessing`, machine.mode === 'processing');
-    const hasError = booleanValue(values, `${status}.xError`, machine.mode === 'error');
+    const alarm = booleanValue(values, `${status}.xAlarm`, machine.alarm);
+    const hasError = alarm || booleanValue(values, `${status}.xError`, machine.mode === 'error');
     const serviceRequired = booleanValue(values, `${status}.xServiceRequired`, machine.serviceRequired);
     const actualOperationValue = numberValue(values, `${diag}.eActualOperation`, OPERATIONS.indexOf(machine.actualOperation));
     const plcState = numberValue(values, `${diag}.eState`, machine.plcState);
@@ -319,7 +396,10 @@ export function mapPlcSnapshot(
       ...machine,
       plcState,
       enabled,
+      alarm,
       disablePending: booleanValue(values, `${status}.xDisablePending`, machine.disablePending),
+      powerAllowed: booleanValue(values, `${status}.xPowerAllowed`, machine.powerAllowed),
+      resetAllowed: booleanValue(values, `${status}.xResetAllowed`, machine.resetAllowed),
       doorOpen: booleanValue(values, `${io}.xDoorOpen`, machine.doorOpen),
       doorClosed: booleanValue(values, `${io}.xDoorClosed`, machine.doorClosed),
       chuckOpen: booleanValue(values, `${io}.xChuckUnclamped`, machine.chuckOpen),
@@ -366,6 +446,9 @@ export function mapPlcSnapshot(
     canPut: booleanValue(values, `${magazineStatus}.xCanPut`, current.magazineState.canPut),
     canChange: booleanValue(values, `${magazineStatus}.xCanChange`, current.magazineState.canChange),
     canEnable: booleanValue(values, `${magazineStatus}.xCanEnable`, current.magazineState.canEnable),
+    powerAllowed: booleanValue(values, `${magazineStatus}.xPowerAllowed`, current.magazineState.powerAllowed),
+    fillAllowed: booleanValue(values, `${magazineStatus}.xFillAllowed`, current.magazineState.fillAllowed),
+    clearAllowed: booleanValue(values, `${magazineStatus}.xClearAllowed`, current.magazineState.clearAllowed),
     currentBlank: numberValue(values, `${magazineStatus}.iCurrentBlank`, current.magazineState.currentBlank),
     currentFreeSlot: numberValue(values, `${magazineStatus}.iCurrentFreeSlot`, current.magazineState.currentFreeSlot),
     selectedBlank: numberValue(values, `${magazineStatus}.iSelectedBlank`, current.magazineState.selectedBlank),
@@ -383,12 +466,13 @@ export function mapPlcSnapshot(
 
   return {
     robot: {
-      x: numberValue(values, 'lrActualX', current.robot.x),
-      y: numberValue(values, 'lrActualY', current.robot.y),
-      z: numberValue(values, 'lrActualZ', current.robot.z),
+      ...mapRobotCoordinates(values, current.robot),
       busy: booleanValue(values, 'stRobotStatus.xBusy', current.robot.busy),
       done: booleanValue(values, 'stRobotStatus.xDone', current.robot.done),
       error: booleanValue(values, 'stRobotStatus.xError', current.robot.error),
+      powerAllowed: booleanValue(values, 'stRobotStatus.xPowerAllowed', current.robot.powerAllowed),
+      stopAllowed: booleanValue(values, 'stRobotStatus.xStopAllowed', current.robot.stopAllowed),
+      resetAllowed: booleanValue(values, 'stRobotStatus.xResetAllowed', current.robot.resetAllowed),
       blankAvailable: booleanValue(values, 'stRobotStatus.xBlankAvailable', current.robot.blankAvailable),
       detailAvailable: booleanValue(values, 'stRobotStatus.xDetailAvailable', current.robot.detailAvailable),
       gripper1Open: booleanValue(values, 'stRobotStatus.xGripper1Open', current.robot.gripper1Open),
@@ -414,8 +498,14 @@ export function mapRuntimeInfo(values: Record<string, unknown>, current: PlcRunt
   const alarmEvents = mapAlarmEvents(values, current.alarmEvents);
   return {
     cellRunning: booleanValue(values, 'stCellStatus.xRunning', current.cellRunning),
+    cellStopPending: booleanValue(values, 'stCellStatus.xStopPending', current.cellStopPending),
     globalError: booleanValue(values, 'xGlobalError', current.globalError),
     readyToStart: booleanValue(values, 'stCellStatus.xReadyToStart', current.readyToStart),
+    cellStartAllowed: booleanValue(values, 'stCellStatus.xStartAllowed', current.cellStartAllowed),
+    cellStopAllowed: booleanValue(values, 'stCellStatus.xStopAllowed', current.cellStopAllowed),
+    cellResetAllowed: booleanValue(values, 'stCellStatus.xResetAllowed', current.cellResetAllowed),
+    manualModeAllowed: booleanValue(values, 'stCellStatus.xManualAllowed', current.manualModeAllowed),
+    automaticModeAllowed: booleanValue(values, 'stCellStatus.xAutomaticAllowed', current.automaticModeAllowed),
     drivesReady: booleanValue(values, 'stCellStatus.xDrivesReady', current.drivesReady),
     robotReady: booleanValue(values, 'stCellStatus.xRobotReady', current.robotReady),
     magazineReady: booleanValue(values, 'stCellStatus.xMagazineReady', current.magazineReady),

@@ -14,6 +14,18 @@ VAR_INPUT
 	xModbusBusy         : BOOL; // Внешний робот выполняет команду
 	xModbusDone         : BOOL; // Внешний робот завершил команду
 	xModbusError        : BOOL; // Ошибка обмена или внешнего робота
+	xHmiDrivesEnable    : BOOL; // Исходный запрос HMI на включение приводов
+	xHmiDrivesDisable   : BOOL; // Исходный запрос HMI на отключение приводов
+	xHmiStop            : BOOL; // Исходный запрос HMI на остановку
+	xHmiPermit          : BOOL; // Ручные команды HMI разрешены режимом ячейки
+	xDrivesReady        : BOOL; // Все приводы готовы к движению
+	xDriveError         : BOOL; // Активна ошибка оси или группы осей
+	FaultRequest        : ST_ROBOT_FAULT_REQUEST; // Единый контракт диагностической инъекции
+	tGripper1OpenTime   : TIME := T#500MS; // Время открытия первого захвата в модели
+	tGripper1CloseTime  : TIME := T#500MS; // Время закрытия первого захвата в модели
+	tGripper2OpenTime   : TIME := T#500MS; // Время открытия второго захвата в модели
+	tGripper2CloseTime  : TIME := T#500MS; // Время закрытия второго захвата в модели
+	tGripperChangeTime  : TIME := T#700MS; // Время смены рабочего захвата в модели
 
     stPoint : ARRAY [0..GVL_POINT.iPointNumber] OF ST_POINT; // Глобальная таблица точек робота
 
@@ -28,6 +40,7 @@ VAR_OUTPUT
 	Error         : ST_ROBOT_ERRORS; // Активные и последние ошибки
 	GripperDiag   : ST_GRIPPER_DIAG; // Диагностика внутреннего блока захвата
 	GripperError  : ST_GRIPPER_ERRORS; // Активные и последние ошибки захвата
+	FaultStatus : ST_ROBOT_FAULT_STATUS; // Сводное состояние инжекторов робота
 END_VAR
 VAR
 	fbMotionManager  : FB_MOTION_MANAGER; // Менеджер перемещения по точкам
@@ -42,6 +55,15 @@ VAR
     xGripperExecute : BOOL; // Запрос выполнения действия захвата
 	xMagazineCommandActive : BOOL; // Активная команда получена от FB_MAGAZINE
 	rtReset               : R_TRIG; // Фронт команды сброса робота
+	rtHmiDrivesEnable     : R_TRIG; // Фронт запроса включения приводов с HMI
+	rtHmiDrivesDisable    : R_TRIG; // Фронт запроса отключения приводов с HMI
+	rtHmiStop             : R_TRIG; // Фронт запроса остановки с HMI
+	xPowerAllowed         : BOOL; // Визуальная доступность кнопки питания приводов
+	xStopAllowed          : BOOL; // Визуальная доступность кнопки остановки
+	xResetAllowed         : BOOL; // Визуальная доступность кнопки сброса
+	xResetAccepted        : BOOL; // Общий сброс принят владельцем робота
+	fbRobotFaultInjector  : FB_ROBOT_FAULT_INJECTOR; // Безопасная недопустимая команда робота
+	xRobotFaultAllowed    : BOOL; // Владелец готов проверить тестовую команду
 
 END_VAR
 
@@ -57,16 +79,56 @@ VAR CONSTANT
     ERR_ROBOT_GRIPPER      : DWORD := DWORD#16#0000_0004; // Ошибка захвата
     ERR_ROBOT_MODBUS_STUB  : DWORD := DWORD#16#0000_0008; // Ошибка внешнего робота или Modbus
 	ERR_ROBOT_STOP         : DWORD := DWORD#16#0000_0010; // Остановка команды робота
-	MASK_LOCAL_ERROR         : DWORD := ERR_ROBOT_WRONG_ACTION OR ERR_ROBOT_MODBUS_STUB; // Собственные первопричины робота
 	WRN_RESET_EXECUTE_ACTIVE : UINT := 1; // Команда робота ещё активна
 	WRN_RESET_STOP_ACTIVE    : UINT := 2; // Команда остановки ещё активна
 	WRN_RESET_GLOBAL_ERROR   : UINT := 3; // Глобальная ошибка ещё активна
 	WRN_RESET_MOTION_ERROR   : UINT := 4; // Ошибка менеджера движения ещё активна
 	WRN_RESET_GRIPPER_ERROR  : UINT := 5; // Ошибка захвата ещё активна
 	WRN_RESET_MODBUS_ERROR   : UINT := 6; // Ошибка внешнего робота ещё активна
+	WRN_HMI_MANUAL_REQUIRED  : UINT := 7; // Ручная команда запрещена режимом ячейки
+	WRN_DRIVES_ENABLE_ERROR  : UINT := 8; // Включение приводов запрещено активной ошибкой
+	WRN_STOP_DRIVES_NOT_READY: UINT := 9; // Остановка недоступна при неготовых приводах
+	WRN_SIM_ERROR_NOT_ALLOWED: UINT := 11; // Тестовая команда запрещена текущим состоянием
 END_VAR
 
 // --- BEGIN IMPLEMENTATION ---
+
+rtHmiDrivesEnable(CLK := xHmiDrivesEnable);
+rtHmiDrivesDisable(CLK := xHmiDrivesDisable);
+rtHmiStop(CLK := xHmiStop);
+
+xPowerAllowed := xHmiPermit
+	AND (xDrivesReady
+		OR (NOT xGlobalError
+			AND (eState <> E_ROBOT_STATE.ERROR)
+			AND NOT xDriveError));
+xStopAllowed := xHmiPermit AND xDrivesReady;
+
+IF (rtHmiDrivesEnable.Q OR rtHmiDrivesDisable.Q)
+AND NOT xPowerAllowed THEN
+	IF NOT xHmiPermit THEN
+		Diag.stWarning.uiCode := WRN_HMI_MANUAL_REQUIRED;
+	ELSE
+		Diag.stWarning.uiCode := WRN_DRIVES_ENABLE_ERROR;
+	END_IF;
+	Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
+	IF Diag.stWarning.udiSequence = UDINT#0 THEN
+		Diag.stWarning.udiSequence := UDINT#1;
+	END_IF;
+END_IF;
+
+IF rtHmiStop.Q
+AND NOT xStopAllowed THEN
+	IF NOT xHmiPermit THEN
+		Diag.stWarning.uiCode := WRN_HMI_MANUAL_REQUIRED;
+	ELSE
+		Diag.stWarning.uiCode := WRN_STOP_DRIVES_NOT_READY;
+	END_IF;
+	Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
+	IF Diag.stWarning.udiSequence = UDINT#0 THEN
+		Diag.stWarning.udiSequence := UDINT#1;
+	END_IF;
+END_IF;
 
 // Команды по умолчанию
 xMotionExecute := FALSE;
@@ -83,7 +145,7 @@ Command.iPutSlot := 0;
 
 ModbusCommand.xExecute := FALSE;
 ModbusCommand.xStop := FALSE;
-ModbusCommand.xReset := xReset;
+ModbusCommand.xReset := FALSE;
 ModbusCommand.eAction := E_ROBOT_ACTION.NONE;
 ModbusCommand.eSetPoint := E_POINT_NAME.NONE;
 ModbusCommand.iTakeSlot := 0;
@@ -112,19 +174,75 @@ ELSE
 	END_IF
 END_IF;
 
-Command.xReset := xReset;
+// Готовность сброса рассчитывается после выбора актуального владельца команды.
+// Ошибки вложенных FB считаются сбрасываемыми только после снятия удерживаемого
+// источника и публикации их собственного xResetAllowed.
+xResetAllowed := xHmiPermit
+	AND NOT xGlobalError
+	AND (xDriveError
+		OR ((eState = E_ROBOT_STATE.ERROR)
+			AND NOT Command.xExecute
+			AND NOT Command.xStop
+			AND NOT xModbusError
+			AND (NOT stMotionManager.Status.xError
+				OR FaultStatus.stPoint.xResetAllowed)
+			AND (NOT fbGripper.Status.xError
+				OR FaultStatus.stGripper.xResetAllowed)));
+xResetAccepted := xReset AND xResetAllowed;
+ModbusCommand.xReset := xResetAccepted;
+
+// Недопустимое действие проверяется в IDLE до запуска Motion или захвата.
+xRobotFaultAllowed := (eState = E_ROBOT_STATE.IDLE)
+	AND NOT Command.xExecute
+	AND NOT Command.xStop
+	AND NOT xMode
+	AND NOT xGlobalError
+	AND NOT xDriveError
+	AND (Error.dwErrorActive = DWORD#0)
+	AND NOT stMotionManager.Status.xError
+	AND NOT fbGripper.Status.xError;
+
+fbRobotFaultInjector(
+	Request := FaultRequest,
+	xOwnerAllowed := xRobotFaultAllowed
+);
+FaultStatus.stRobot := fbRobotFaultInjector.Status;
+
+IF fbRobotFaultInjector.Status.xRejected THEN
+	Diag.stWarning.uiCode := WRN_SIM_ERROR_NOT_ALLOWED;
+	Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
+	IF Diag.stWarning.udiSequence = UDINT#0 THEN
+		Diag.stWarning.udiSequence := UDINT#1;
+	END_IF;
+END_IF;
+
+IF fbRobotFaultInjector.xWrongAction THEN
+	Command.xExecute := TRUE;
+	Command.xStop := FALSE;
+	Command.eAction := E_ROBOT_ACTION.NONE;
+	Command.eSetPoint := E_POINT_NAME.NONE;
+END_IF;
+
+Command.xReset := xResetAccepted;
 
 rtReset(CLK := xReset);
 
 IF rtReset.Q
-AND (eState = E_ROBOT_STATE.ERROR) THEN
-    IF Command.xExecute THEN
+AND ((eState = E_ROBOT_STATE.ERROR) OR xDriveError)
+AND NOT xResetAccepted THEN
+	IF NOT xHmiPermit THEN
+		Diag.stWarning.uiCode := WRN_HMI_MANUAL_REQUIRED;
+	ELSIF eState <> E_ROBOT_STATE.ERROR THEN
+		// Ошибку Motion-слоя сбрасывают оси и группа тем же общим импульсом.
+		Diag.stWarning.uiCode := UINT#0;
+    ELSIF Command.xExecute THEN
         Diag.stWarning.uiCode := WRN_RESET_EXECUTE_ACTIVE;
     ELSIF Command.xStop THEN
         Diag.stWarning.uiCode := WRN_RESET_STOP_ACTIVE;
     ELSIF xGlobalError THEN
         Diag.stWarning.uiCode := WRN_RESET_GLOBAL_ERROR;
-    ELSIF stMotionManager.Status.xError THEN
+    ELSIF stMotionManager.Status.xError
+	OR (NOT xMode AND xDriveError) THEN
         Diag.stWarning.uiCode := WRN_RESET_MOTION_ERROR;
     ELSIF fbGripper.Status.xError THEN
         Diag.stWarning.uiCode := WRN_RESET_GRIPPER_ERROR;
@@ -145,6 +263,13 @@ END_IF;
 // =====================================================
 // Автомат FB_ROBOT
 // =====================================================
+
+// Ошибка оси или группы является первопричиной в Motion-слое и отдельной
+// каскадной ошибкой робота для его публичного статуса и журнала.
+IF NOT xMode AND xDriveError THEN
+	Error.dwErrorActive := Error.dwErrorActive OR ERR_ROBOT_MOTION;
+	eState := E_ROBOT_STATE.ERROR;
+END_IF;
 
 CASE eState OF
 
@@ -275,11 +400,12 @@ CASE eState OF
         Status.xDone := FALSE;
         Status.xError := TRUE;
 
-        IF xReset
+        IF xResetAccepted
         AND NOT Command.xExecute
         AND NOT Command.xStop
         AND NOT xGlobalError
         AND NOT stMotionManager.Status.xError
+		AND (xMode OR NOT xDriveError)
 		AND NOT fbGripper.Status.xError
 		AND NOT xModbusError THEN
 
@@ -298,7 +424,7 @@ END_CASE;
 
 stMotionManager.Command.xExecute := xMotionExecute;
 stMotionManager.Command.eTargetPoint := eActivePoint;
-stMotionManager.Command.xReset := xReset;
+stMotionManager.Command.xReset := xResetAccepted;
 
 // В ST_MOTION_MANAGER_COMMAND нет отдельного xStop.
 // Поэтому Stop передаётся как ошибка верхнего уровня.
@@ -312,11 +438,13 @@ stMotionManager.Command.xGlobalError :=
 
 fbMotionManager(
     stPoint := stPoint,
-    xReset := xReset,
+    xReset := xResetAccepted,
+	FaultRequest := FaultRequest.stPoint,
     stMotionManager := stMotionManager,
     GroupData := GroupData,
     stPointManager := stPointManager
 );
+FaultStatus.stPoint := fbMotionManager.FaultStatus;
 
 
 // =====================================================
@@ -324,14 +452,21 @@ fbMotionManager(
 // =====================================================
 
 stGripperCommand.xExecute := xGripperExecute;
-stGripperCommand.xReset := xReset;
+stGripperCommand.xReset := xResetAccepted;
 stGripperCommand.eAction := eActiveAction;
 
 fbGripper(
 	Command := stGripperCommand,
+	FaultRequest := FaultRequest.stGripper,
+	tGripper1OpenTime := tGripper1OpenTime,
+	tGripper1CloseTime := tGripper1CloseTime,
+	tGripper2OpenTime := tGripper2OpenTime,
+	tGripper2CloseTime := tGripper2CloseTime,
+	tRotateTime := tGripperChangeTime,
 	Diag => GripperDiag,
 	Error => GripperError
 );
+FaultStatus.stGripper := fbGripper.FaultStatus;
 
 
 // =====================================================
@@ -359,11 +494,14 @@ Status.xRotatedToDetail :=
 
 Status.xBlankAvailable := Status.xGripper1Closed;
 Status.xDetailAvailable := Status.xGripper2Closed;
+Status.xPowerAllowed := xPowerAllowed;
+Status.xStopAllowed := xStopAllowed;
+Status.xResetAllowed := xResetAllowed;
 
 Diag.eState := eState;
 Diag.eActiveAction := eActiveAction;
 Diag.eActivePoint := eActivePoint;
-Error.dwAlarmActive := Error.dwErrorActive AND MASK_LOCAL_ERROR;
+Error.dwAlarmActive := Error.dwErrorActive;
 Status.xExternalError := (Error.dwErrorActive AND (ERR_ROBOT_MOTION OR ERR_ROBOT_GRIPPER)) <> DWORD#0;
 
 IF Error.dwErrorActive <> DWORD#0 THEN
@@ -372,3 +510,5 @@ END_IF;
 
 Error.stErrorActive := UpdateErrorView(dwError := Error.dwErrorActive);
 Error.stErrorLast := UpdateErrorView(dwError := Error.dwErrorLast);
+FaultStatus.stRobot.xResetAllowed := Status.xResetAllowed
+	AND NOT FaultStatus.stRobot.xBusy;

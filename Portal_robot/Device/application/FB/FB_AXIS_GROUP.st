@@ -1,8 +1,10 @@
 FUNCTION_BLOCK FB_AXIS_GROUP
 VAR_INPUT
-	
+	FaultRequest : ST_AXIS_GROUP_FAULT_REQUEST; // Единый контракт диагностической инъекции
+	xResetPermit : BOOL; // Общий сброс разрешён ручным режимом и остановленной ячейкой
 END_VAR
 VAR_OUTPUT
+	FaultStatus : ST_FAULT_INJECTION_STATUS; // Состояние инжектора для HMI
 END_VAR
 VAR
 	// Внутренние исполняемые булевые переменные
@@ -17,6 +19,7 @@ VAR
 	xMoveLinear  : BOOL; // Выполняется линейное перемещение
 	xStopCmd     : BOOL; // Выполняется остановка
 	xHaltCmd     : BOOL; // Выполняется плавная остановка
+	xFaultAllowed : BOOL; // Безопасные условия тестового запуска
 	
 	iPrevStep : E_AXIS_GROUP_STATE; // Предыдущий шаг автомата
 	
@@ -43,6 +46,7 @@ VAR
 	
 	fbMoveDirect : MC_MoveDirectAbsolute; // Прямое абсолютное перемещение
 	fbMoveLinear : MC_MoveLinearAbsolute; // Линейное абсолютное перемещение
+	fbFaultInjector : FB_AXIS_GROUP_FAULT_INJECTOR; // Изолированная инъекция библиотечной ошибки
 	
 	fbGroupHalt : MC_GroupHalt; // Плавная остановка группы
 	fbGroupStop : MC_GroupStop; // Остановка группы
@@ -73,8 +77,6 @@ VAR CONSTANT
 	LOG_INVALID_STATE            : DWORD := 2; // Неизвестный шаг автомата
 	LOG_POWER_PERMIT_READY       : DWORD := 4; // Нет разрешения питания в готовности
 	LOG_POWER_PERMIT_LOST_DIRECT : DWORD := 8; // Разрешение питания снято при движении
-	MASK_LOCAL_LOGICAL_ERROR      : DWORD := LOG_STEP_TIMEOUT OR LOG_INVALID_STATE; // Локальные логические первопричины
-	
 	// ==================================================
     // Ошибки блоков движения группы
     // ==================================================
@@ -90,6 +92,7 @@ VAR CONSTANT
 	MOTION_ERR_READ_STATUS   : DWORD := 512; // Ошибка чтения статуса
 	MOTION_ERR_READ_GROUP_ERROR : DWORD := 1024; // Ошибка чтения кода ошибки группы
 	MOTION_ERR_GROUP_ERROR_STOP : DWORD := 2048; // Группа SoftMotion находится в ErrorStop
+	MOTION_ERR_SIMULATED        : DWORD := 4096; // Тестовая ошибка MC_MoveDirectAbsolute
 
 	WRN_NO_POWER_PERMIT       : UINT := 1; // Нет разрешения питания
 	WRN_MOVE_COMMAND_CONFLICT : UINT := 2; // Одновременно заданы два типа движения
@@ -99,6 +102,7 @@ VAR CONSTANT
 	WRN_GROUP_ERROR_AFTER_RESET : UINT := 6; // Группа осталась в ErrorStop после сброса
 	WRN_GROUP_RESET_ERROR     : UINT := 7; // MC_GroupReset завершился ошибкой
 	WRN_GROUP_RESET_TIMEOUT   : UINT := 8; // Превышено время выполнения MC_GroupReset
+	WRN_SIM_ERROR_NOT_ALLOWED : UINT := 9; // Тестовая ошибка запрещена текущим состоянием группы
 END_VAR
 
 // --- BEGIN IMPLEMENTATION ---
@@ -151,6 +155,7 @@ fbReadPosition(
 );
 
 IF fbReadPosition.Valid THEN
+	stPosition := fbReadPosition.Position;
     GroupData.Status.ActualX := fbReadPosition.Position.c.X;
     GroupData.Status.ActualY := fbReadPosition.Position.c.Y;
     GroupData.Status.ActualZ := fbReadPosition.Position.c.Z;
@@ -168,6 +173,34 @@ GroupData.Status.xGroupError :=
 GroupData.Status.xLocalError :=
     GroupData.Status.xGroupError
     OR (GroupData.Error.dwLogicalErrorLatched <> DWORD#0);
+
+// Тестовый Motion-FB запускается только в неподвижной готовой группе.
+xFaultAllowed := fbReadStatus.Valid
+	AND fbReadStatus.GroupStandby
+	AND (GroupData.Diag.iStep = E_AXIS_GROUP_STATE.READY)
+	AND NOT GroupData.Status.xLocalError
+	AND NOT GroupData.Command.xGlobalError
+	AND NOT GroupData.Command.xMoveDirect
+	AND NOT GroupData.Command.xMoveLinear;
+
+fbFaultInjector(
+	Request := FaultRequest,
+	xOwnerAllowed := xFaultAllowed,
+	xReset := GroupData.Command.xReset,
+	Position := stPosition,
+	AxisGroup := AxisGroup
+);
+FaultStatus := fbFaultInjector.Status;
+
+IF fbFaultInjector.Status.xRejected THEN
+	GroupData.Diag.sWarningText := 'Simulated SM3 error is not allowed';
+	GroupData.Diag.stWarning.uiCode := WRN_SIM_ERROR_NOT_ALLOWED;
+	GroupData.Diag.stWarning.udiSequence := GroupData.Diag.stWarning.udiSequence + UDINT#1;
+	IF GroupData.Diag.stWarning.udiSequence = UDINT#0 THEN
+		GroupData.Diag.stWarning.udiSequence := UDINT#1;
+	END_IF;
+	xWarningPulse := TRUE;
+END_IF;
 
 
 // =============================================================================
@@ -507,7 +540,7 @@ CASE GroupData.Diag.iStep OF
 
         GroupData.Diag.iPowerMode := E_AXIS_GROUP_POWER_MODE.OFF_REQUEST;
 
-        IF rtResetAllError.Q THEN
+		IF rtResetAllError.Q AND xResetPermit THEN
 
             IF GroupData.Command.xGlobalError THEN
                 GroupData.Diag.sWarningText :=
@@ -867,6 +900,12 @@ IF fbReadStatus.GroupErrorStop THEN
         OR MOTION_ERR_GROUP_ERROR_STOP;
 END_IF;
 
+IF fbFaultInjector.xError THEN
+	GroupData.Error.dwMotionErrorActive :=
+		GroupData.Error.dwMotionErrorActive
+		OR MOTION_ERR_SIMULATED;
+END_IF;
+
 
 // Только ошибки, которых не было в предыдущем цикле.
 GroupData.Error.dwMotionErrorNew :=
@@ -890,7 +929,7 @@ GroupData.Error.dwMotionErrorPrevious :=
 
 GroupData.Error.dwAlarmActive :=
     GroupData.Error.dwMotionErrorLatched
-    OR SHL(GroupData.Error.dwLogicalErrorLatched AND MASK_LOCAL_LOGICAL_ERROR, 16);
+    OR SHL(GroupData.Error.dwLogicalErrorLatched, 16);
 
 
 // =============================================================================
@@ -939,6 +978,8 @@ GroupData.Status.xGroupError :=
 GroupData.Status.xLocalError :=
     GroupData.Status.xGroupError
     OR (GroupData.Error.dwLogicalErrorLatched <> DWORD#0);
+
+GroupData.Status.xSimErrorAllowed := FaultStatus.xAllowed;
 	
 GroupData.Status.xMoveDirectDone := fbMoveDirect.Done;
 
@@ -947,6 +988,9 @@ IF fbReadError.Valid
    AND (TO_UDINT(fbReadError.GroupErrorID) <> UDINT#0) THEN
     GroupData.Diag.udiActualErrorID := TO_UDINT(fbReadError.GroupErrorID);
     GroupData.Diag.sErrorText := 'Axis group error';
+ELSIF (GroupData.Error.dwMotionErrorLatched AND MOTION_ERR_SIMULATED) <> DWORD#0 THEN
+	GroupData.Diag.udiActualErrorID := fbFaultInjector.udiErrorID;
+	GroupData.Diag.sErrorText := 'Simulated MC_MoveDirectAbsolute error';
 ELSIF fbGroupReset.Error THEN
     GroupData.Diag.udiActualErrorID := TO_UDINT(fbGroupReset.ErrorID);
     GroupData.Diag.sErrorText := 'MC_GroupReset error';
@@ -974,3 +1018,12 @@ GroupData.Error.stErrorLast := UpdateErrorView(
 	dwMotionError := GroupData.Error.dwMotionErrorLast,
 	dwLogicalError := GroupData.Error.dwLogicalErrorLast
 );
+
+// Для общей кнопки публикуется готовность владельца группы, а не только
+// состояние диагностического инжектора.
+FaultStatus.xResetAllowed := (GroupData.Diag.iStep = E_AXIS_GROUP_STATE.ERROR)
+	AND xResetPermit
+	AND NOT GroupData.Command.xGlobalError
+	AND (GroupData.Status.xLocalError
+		OR GroupData.Status.xLogicalError
+		OR GroupData.Status.xGroupError);

@@ -1,4 +1,11 @@
 FUNCTION_BLOCK FB_Axis
+VAR_INPUT
+	FaultRequest : ST_AXIS_FAULT_REQUEST; // Единый контракт диагностической инъекции
+	xResetPermit : BOOL; // Общий сброс разрешён ручным режимом и остановленной ячейкой
+END_VAR
+VAR_OUTPUT
+	FaultStatus : ST_FAULT_INJECTION_STATUS; // Состояние инжектора для HMI
+END_VAR
 VAR_IN_OUT
     Axis     : AXIS_REF_SM3;   // ссылка на ось SoftMotion
     AxisData : ST_AXIS;        // все данные оси (команды, параметры, статусы)
@@ -46,13 +53,8 @@ VAR CONSTANT
     WRN_RESET_AXIS_ACTIVE    : UINT := 5; // Физическая ошибка оси осталась активной
     WRN_RESET_AXIS_LATCHED   : UINT := 6; // Защёлкнутая ошибка оси не была очищена
     WRN_RESET_LOGICAL_ACTIVE : UINT := 7; // Логическая ошибка оси не была очищена
+	WRN_SIM_ERROR_NOT_ALLOWED : UINT := 8; // Тестовый конфликт Jog запрещён состоянием оси
 
-    MASK_LOCAL_LOGICAL_ERROR : DWORD :=
-        LOG_JOG_CONFLICT OR
-        LOG_MOVE_ABS_NOT_HOMED OR
-        LOG_MOVE_REL_NOT_HOMED OR
-        LOG_STEP_TIMEOUT OR
-        LOG_UNKNOWN_STEP; // Логические первопричины, принадлежащие оси
 END_VAR
 
 VAR
@@ -108,6 +110,8 @@ VAR
 
     // Актуальная ошибка оси (на основе MC-блоков)
     xAxisErrorActual : BOOL; // Текущая ошибка по выходам MC-блоков
+	fbFaultInjector : FB_AXIS_FAULT_INJECTOR; // Безопасный источник логической ошибки Jog
+	xFaultAllowed   : BOOL; // Условия теста, рассчитанные владельцем оси
 END_VAR
 
 // --- BEGIN IMPLEMENTATION ---
@@ -171,6 +175,33 @@ xJogBackwardExec := FALSE;
 AxisData.Status.xDone := FALSE;
 xWarningPulse := FALSE;
 uiResetWarningCode := UINT#0;
+
+// Конфликт Jog проверяется автоматом до вызова MC_Jog, поэтому тест не создаёт движения.
+xFaultAllowed := (AxisData.Diag.iStep = E_AXIS_STATE.READY)
+	AND NOT AxisData.Command.xGlobalError
+	AND NOT AxisData.Status.xError
+	AND NOT AxisData.Status.xMotionBusy
+	AND NOT AxisData.Command.xJogPositive
+	AND NOT AxisData.Command.xJogNegative
+	AND NOT AxisData.Command.xHome
+	AND NOT AxisData.Command.xMoveAbsolute
+	AND NOT AxisData.Command.xMoveRelative;
+
+fbFaultInjector(
+	Request := FaultRequest,
+	xOwnerAllowed := xFaultAllowed
+);
+FaultStatus := fbFaultInjector.Status;
+
+IF fbFaultInjector.Status.xRejected THEN
+	AxisData.Diag.sWarningText := 'Simulated Jog conflict is not allowed';
+	AxisData.Diag.stWarning.uiCode := WRN_SIM_ERROR_NOT_ALLOWED;
+	AxisData.Diag.stWarning.udiSequence := AxisData.Diag.stWarning.udiSequence + UDINT#1;
+	IF AxisData.Diag.stWarning.udiSequence = UDINT#0 THEN
+		AxisData.Diag.stWarning.udiSequence := UDINT#1;
+	END_IF;
+	xWarningPulse := TRUE;
+END_IF;
 
 // ======================================================
 // 4. КОНЕЧНЫЙ АВТОМАТ (используем перечисление E_AXIS_STATE)
@@ -278,7 +309,8 @@ CASE AxisData.Diag.iStep OF
             AxisData.Diag.iLastErrorStep := TO_INT(AxisData.Diag.iStep);
             AxisData.Diag.iStep := E_AXIS_STATE.ERROR_RESET_MANAGER;
 
-        ELSIF AxisData.Command.xJogPositive AND AxisData.Command.xJogNegative THEN
+        ELSIF fbFaultInjector.xJogConflict
+		OR (AxisData.Command.xJogPositive AND AxisData.Command.xJogNegative) THEN
             AxisData.Error.dwLogicalErrorLatched :=
                 AxisData.Error.dwLogicalErrorLatched OR LOG_JOG_CONFLICT;
             AxisData.Diag.iLastErrorStep := TO_INT(AxisData.Diag.iStep);
@@ -622,7 +654,7 @@ CASE AxisData.Diag.iStep OF
                 AxisData.Diag.sWaitReason := 'Waiting reset';
             END_IF;
 
-            IF rtResetAllError.Q THEN
+            IF rtResetAllError.Q AND xResetPermit THEN
                 xDoResetAxis := TRUE;
                 xDoResetLogical := TRUE;
                 IF xNeedMcReset THEN
@@ -933,7 +965,7 @@ AxisData.Error.dwAxisError := AxisData.Error.dwAxisErrorActual OR AxisData.Error
 AxisData.Error.dwLogicalError := AxisData.Error.dwLogicalErrorLatched;
 AxisData.Error.dwAllError := AxisData.Error.dwAxisError OR AxisData.Error.dwLogicalError;
 AxisData.Error.dwAlarmActive := AxisData.Error.dwAxisError
-    OR SHL(AxisData.Error.dwLogicalError AND MASK_LOCAL_LOGICAL_ERROR, 16);
+    OR SHL(AxisData.Error.dwLogicalError, 16);
 AxisData.Error.dwDriveAxisErrorID := fbReadAxisError.AxisErrorID;
 
 AxisData.Status.xAxisError := (AxisData.Error.dwAxisError <> DWORD#0);
@@ -1078,6 +1110,11 @@ AxisData.Error.stErrorActive := UpdateErrorView(
 	dwLogicalError := AxisData.Error.dwLogicalError
 );
 AxisData.Error.stErrorLast := UpdateErrorView(
-	dwAxisError := AxisData.Error.dwAxisErrorLast,
-	dwLogicalError := AxisData.Error.dwLogicalErrorLast
+    dwAxisError := AxisData.Error.dwAxisErrorLast,
+    dwLogicalError := AxisData.Error.dwLogicalErrorLast
 );
+
+FaultStatus.xResetAllowed := AxisData.Status.xError
+	AND xResetPermit
+	AND NOT AxisData.Command.xGlobalError
+	AND NOT FaultStatus.xBusy;

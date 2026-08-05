@@ -19,12 +19,14 @@ VAR_INPUT
 	lrPitchY          : LREAL; // Шаг между слотами по оси Y
 	lrSafeZ_1           : LREAL; // Безопасная координата по оси Z
 	lrSafeZ_2     : LREAL; // Безопасная координата по оси Z (при смене детали на заготовку)
+	FaultRequest  : ST_MAGAZINE_FAULT_REQUEST; // Единый контракт диагностической инъекции
 END_VAR
 VAR_OUTPUT
 	Command : ST_ROBOT_COMMAND; // Текущая пошаговая команда роботу
 	Status  : ST_MAGAZINE_STATUS; // Рабочие статусы магазина
 	Diag    : ST_MAGAZINE_DIAG; // Состояние автомата магазина
 	Error   : ST_MAGAZINE_ERRORS; // Активные и последние ошибки
+	FaultStatus : ST_FAULT_INJECTION_STATUS; // Состояние инжектора для HMI
 END_VAR
 VAR_IN_OUT
 	stDetail : ARRAY [1..GVL_CELL_SETTINGS.NumberDetail] OF ST_DETAIL; // Содержимое слотов магазина
@@ -47,6 +49,8 @@ VAR
 	xStopRequest       : BOOL; // Активный запрос остановки
 	xManualCommand     : BOOL; // Команда получена из ручного интерфейса
 	xDisableRequest    : BOOL; // Сохранённый запрос отключения после текущей операции
+	xRobotInMagazineContext : BOOL; // Робот находится в рабочей зоне магазина
+	xRobotResetDependencyReady : BOOL; // Каскадная ошибка робота может быть сброшена тем же импульсом
 
 	iActiveSlotCount   : SINT; // Число активных слотов выбранной матрицы
 	iInventoryIndex    : SINT; // Индекс изменения содержимого магазина
@@ -61,6 +65,8 @@ VAR
 	stPutPoint           : ST_POINT; // Рассчитанная рабочая точка укладки
 	stActiveRobotCommand : ST_ROBOT_COMMAND; // Команда роботу текущего шага
 	xFinishedCondition   : BOOL; // Текущее содержимое не позволяет продолжить цикл
+	fbFaultInjector      : FB_MAGAZINE_FAULT_INJECTOR; // Безопасный сценарий ошибки до движения
+	xFaultAllowed        : BOOL; // Владелец разрешает синтетическую проверку
 END_VAR
 VAR CONSTANT
 	ERR_WRONG_OPERATION : DWORD := DWORD#16#0000_0001; // Недопустимая операция магазина
@@ -71,11 +77,16 @@ VAR CONSTANT
 	ERR_ROBOT           : DWORD := DWORD#16#0000_0020; // Ошибка робота при операции магазина
 	ERR_GLOBAL_STOP     : DWORD := DWORD#16#0000_0040; // Остановка по глобальной ошибке
 	ERR_GEOMETRY        : DWORD := DWORD#16#0000_0080; // Ошибка параметров матрицы магазина
-	MASK_LOCAL_ERROR    : DWORD := ERR_WRONG_OPERATION OR ERR_NO_BLANK OR ERR_NO_FREE_SLOT
-		OR ERR_INVALID_SLOT OR ERR_SLOT_CONTENT OR ERR_GEOMETRY; // Собственные первопричины магазина
 	WRN_RESET_EXECUTE_ACTIVE : UINT := 1; // Операция магазина ещё активна
 	WRN_RESET_GLOBAL_ERROR   : UINT := 2; // Глобальная ошибка ещё активна
 	WRN_RESET_ROBOT_ERROR    : UINT := 3; // Ошибка робота ещё активна
+	WRN_ENABLE_GLOBAL_ERROR  : UINT := 4; // Включение запрещено глобальной ошибкой
+	WRN_ENABLE_CONTENT       : UINT := 5; // Содержимое магазина не позволяет включение
+	WRN_DISABLE_PENDING      : UINT := 6; // Отключение магазина уже запрошено
+	WRN_FILL_ENABLED         : UINT := 7; // Заполнение запрещено для включённого магазина
+	WRN_FILL_GEOMETRY        : UINT := 8; // Активная матрица магазина задана неверно
+	WRN_CLEAR_ENABLED        : UINT := 9; // Очистка запрещена для включённого магазина
+	WRN_SIM_ERROR_NOT_ALLOWED: UINT := 10; // Тестовая ошибка запрещена текущим состоянием
 END_VAR
 
 // --- BEGIN IMPLEMENTATION ---
@@ -210,8 +221,20 @@ ELSE
 	xStopRequest := stMagazineCommand.xStop;
 END_IF;
 
+xRobotInMagazineContext := (Diag.eState = E_MAGAZINE_STATE.ROBOT_COMMAND)
+	OR (Diag.eState = E_MAGAZINE_STATE.RELEASE_ROBOT_COMMAND)
+	OR (stRobotStatus.eCurrentPoint = E_POINT_NAME.MAGAZINE_DETAIL)
+	OR (stRobotStatus.eCurrentPoint = E_POINT_NAME.MAGAZINE_TAKE_DETAIL)
+	OR (stRobotStatus.eCurrentPoint = E_POINT_NAME.MAGAZINE_PUT_DETAIL)
+	OR (stRobotStatus.eCurrentPoint = E_POINT_NAME.MAGAZINE_CHANGE_DETAIL);
+
 xResetRequest := xReset;
 rtReset(CLK := xResetRequest);
+
+xRobotResetDependencyReady := (((Error.dwErrorActive AND ERR_ROBOT) = DWORD#0)
+		AND NOT xRobotInMagazineContext)
+	OR NOT stRobotStatus.xError
+	OR stRobotStatus.xResetAllowed;
 
 IF rtReset.Q
 AND (Diag.eState = E_MAGAZINE_STATE.ERROR) THEN
@@ -219,7 +242,8 @@ AND (Diag.eState = E_MAGAZINE_STATE.ERROR) THEN
 		Diag.stWarning.uiCode := WRN_RESET_EXECUTE_ACTIVE;
 	ELSIF xGlobalError THEN
 		Diag.stWarning.uiCode := WRN_RESET_GLOBAL_ERROR;
-	ELSIF stRobotStatus.xError THEN
+	ELSIF stRobotStatus.xError
+	AND NOT stRobotStatus.xResetAllowed THEN
 		Diag.stWarning.uiCode := WRN_RESET_ROBOT_ERROR;
 	ELSE
 		Diag.stWarning.uiCode := UINT#0;
@@ -236,11 +260,79 @@ END_IF;
 rtEnable(CLK := xHmiEnable OR (NOT xManual AND stMagazineCommand.xEnable));
 rtDisable(CLK := xHmiDisable OR (NOT xManual AND stMagazineCommand.xDisable));
 
+IF rtEnable.Q
+AND (Diag.eState = E_MAGAZINE_STATE.DISABLED)
+AND (xGlobalError OR NOT Status.xCanEnable) THEN
+	IF xGlobalError THEN
+		Diag.stWarning.uiCode := WRN_ENABLE_GLOBAL_ERROR;
+	ELSE
+		Diag.stWarning.uiCode := WRN_ENABLE_CONTENT;
+	END_IF;
+	Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
+	IF Diag.stWarning.udiSequence = UDINT#0 THEN
+		Diag.stWarning.udiSequence := UDINT#1;
+	END_IF;
+ELSIF rtDisable.Q
+AND xHmiDisable
+AND xDisableRequest THEN
+	Diag.stWarning.uiCode := WRN_DISABLE_PENDING;
+	Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
+	IF Diag.stWarning.udiSequence = UDINT#0 THEN
+		Diag.stWarning.udiSequence := UDINT#1;
+	END_IF;
+ELSIF rtFillBlanks.Q
+AND (Diag.eState <> E_MAGAZINE_STATE.DISABLED) THEN
+	Diag.stWarning.uiCode := WRN_FILL_ENABLED;
+	Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
+	IF Diag.stWarning.udiSequence = UDINT#0 THEN
+		Diag.stWarning.udiSequence := UDINT#1;
+	END_IF;
+ELSIF rtFillBlanks.Q
+AND (iActiveSlotCount = 0) THEN
+	Diag.stWarning.uiCode := WRN_FILL_GEOMETRY;
+	Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
+	IF Diag.stWarning.udiSequence = UDINT#0 THEN
+		Diag.stWarning.udiSequence := UDINT#1;
+	END_IF;
+ELSIF rtClear.Q
+AND (Diag.eState <> E_MAGAZINE_STATE.DISABLED) THEN
+	Diag.stWarning.uiCode := WRN_CLEAR_ENABLED;
+	Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
+	IF Diag.stWarning.udiSequence = UDINT#0 THEN
+		Diag.stWarning.udiSequence := UDINT#1;
+	END_IF;
+END_IF;
+
 IF rtDisable.Q THEN
 	xDisableRequest := TRUE;
 END_IF;
 
 rtExecute(CLK := xExecuteRequest);
+
+// Синтетический сценарий входит только в проверочный шаг CHOOSE и не выдаёт
+// команду движения роботу до формирования выбранной штатной ошибки.
+xFaultAllowed := ((Diag.eState = E_MAGAZINE_STATE.DISABLED)
+	OR (Diag.eState = E_MAGAZINE_STATE.IDLE))
+	AND NOT xExecuteRequest
+	AND NOT xGlobalError
+	AND NOT stRobotStatus.xBusy
+	AND NOT stRobotStatus.xError
+	AND (Error.dwErrorActive = DWORD#0);
+
+fbFaultInjector(
+	Request := FaultRequest,
+	xOwnerAllowed := xFaultAllowed,
+	xComplete := Diag.eState = E_MAGAZINE_STATE.ERROR
+);
+FaultStatus := fbFaultInjector.Status;
+
+IF fbFaultInjector.Status.xRejected THEN
+	Diag.stWarning.uiCode := WRN_SIM_ERROR_NOT_ALLOWED;
+	Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
+	IF Diag.stWarning.udiSequence = UDINT#0 THEN
+		Diag.stWarning.udiSequence := UDINT#1;
+	END_IF;
+END_IF;
 
 // Значения команды роботу по умолчанию.
 Command.xExecute := FALSE;
@@ -250,6 +342,14 @@ Command.eAction := E_ROBOT_ACTION.NONE;
 Command.eSetPoint := E_POINT_NAME.NONE;
 Command.iTakeSlot := 0;
 Command.iPutSlot := 0;
+
+// Ошибка робота в рабочей зоне принадлежит одновременно роботу и магазину.
+IF xRobotInMagazineContext
+AND stRobotStatus.xError
+AND (Diag.eState <> E_MAGAZINE_STATE.ERROR) THEN
+	Error.dwErrorActive := Error.dwErrorActive OR ERR_ROBOT;
+	Diag.eState := E_MAGAZINE_STATE.ERROR;
+END_IF;
 
 IF xGlobalError
 AND (Diag.eState <> E_MAGAZINE_STATE.DISABLED)
@@ -262,7 +362,18 @@ END_IF;
 CASE Diag.eState OF
 	E_MAGAZINE_STATE.DISABLED:
 		xDisableRequest := FALSE;
-		IF rtEnable.Q
+		IF fbFaultInjector.Status.xBusy THEN
+			iTakeSlot := 1;
+			iPutSlot := 1;
+			IF fbFaultInjector.xWrongOperation THEN
+				eActualOperation := E_MAGAZINE_OPERATION.NONE;
+			ELSIF fbFaultInjector.xNoFreeSlot THEN
+				eActualOperation := E_MAGAZINE_OPERATION.PUT;
+			ELSE
+				eActualOperation := E_MAGAZINE_OPERATION.TAKE;
+			END_IF;
+			Diag.eState := E_MAGAZINE_STATE.CHOOSE;
+		ELSIF rtEnable.Q
 		AND Status.xCanEnable
 		AND NOT xGlobalError THEN
 			Diag.eState := E_MAGAZINE_STATE.IDLE;
@@ -272,7 +383,18 @@ CASE Diag.eState OF
 		uiStep := 0;
 		eActualOperation := E_MAGAZINE_OPERATION.NONE;
 
-		IF xFinishedCondition THEN
+		IF fbFaultInjector.Status.xBusy THEN
+			iTakeSlot := 1;
+			iPutSlot := 1;
+			IF fbFaultInjector.xWrongOperation THEN
+				eActualOperation := E_MAGAZINE_OPERATION.NONE;
+			ELSIF fbFaultInjector.xNoFreeSlot THEN
+				eActualOperation := E_MAGAZINE_OPERATION.PUT;
+			ELSE
+				eActualOperation := E_MAGAZINE_OPERATION.TAKE;
+			END_IF;
+			Diag.eState := E_MAGAZINE_STATE.CHOOSE;
+		ELSIF xFinishedCondition THEN
 			Diag.eState := E_MAGAZINE_STATE.DISABLED;
 		ELSIF xDisableRequest THEN
 			Diag.eState := E_MAGAZINE_STATE.DISABLED;
@@ -303,7 +425,8 @@ CASE Diag.eState OF
 		END_IF;
 
 	E_MAGAZINE_STATE.CHOOSE:
-		IF (iActiveSlotCount = 0)
+		IF fbFaultInjector.xGeometry
+		OR (iActiveSlotCount = 0)
 		OR (NOT xMode AND (
 			((uiColumns > 1) AND (lrPitchX = 0.0))
 			OR ((uiRows > 1) AND (lrPitchY = 0.0))
@@ -314,8 +437,25 @@ CASE Diag.eState OF
 			Error.dwErrorActive := Error.dwErrorActive OR ERR_GEOMETRY;
 			Diag.eState := E_MAGAZINE_STATE.ERROR;
 
-		ELSIF eActualOperation = E_MAGAZINE_OPERATION.NONE THEN
+		ELSIF fbFaultInjector.xWrongOperation
+		OR (eActualOperation = E_MAGAZINE_OPERATION.NONE) THEN
 			Error.dwErrorActive := Error.dwErrorActive OR ERR_WRONG_OPERATION;
+			Diag.eState := E_MAGAZINE_STATE.ERROR;
+
+		ELSIF fbFaultInjector.xNoBlank THEN
+			Error.dwErrorActive := Error.dwErrorActive OR ERR_NO_BLANK;
+			Diag.eState := E_MAGAZINE_STATE.ERROR;
+
+		ELSIF fbFaultInjector.xNoFreeSlot THEN
+			Error.dwErrorActive := Error.dwErrorActive OR ERR_NO_FREE_SLOT;
+			Diag.eState := E_MAGAZINE_STATE.ERROR;
+
+		ELSIF fbFaultInjector.xInvalidSlot THEN
+			Error.dwErrorActive := Error.dwErrorActive OR ERR_INVALID_SLOT;
+			Diag.eState := E_MAGAZINE_STATE.ERROR;
+
+		ELSIF fbFaultInjector.xSlotContent THEN
+			Error.dwErrorActive := Error.dwErrorActive OR ERR_SLOT_CONTENT;
 			Diag.eState := E_MAGAZINE_STATE.ERROR;
 
 		ELSIF ((eActualOperation = E_MAGAZINE_OPERATION.TAKE)
@@ -588,7 +728,7 @@ CASE Diag.eState OF
 		IF xResetRequest
 		AND NOT xExecuteRequest
 		AND NOT xGlobalError
-		AND NOT stRobotStatus.xError THEN
+		AND xRobotResetDependencyReady THEN
 			Error.dwErrorLast := Error.dwErrorActive;
 			Error.dwErrorActive := DWORD#0;
 			eActualOperation := E_MAGAZINE_OPERATION.NONE;
@@ -598,6 +738,13 @@ END_CASE;
 
 Status.xEnabled := Diag.eState <> E_MAGAZINE_STATE.DISABLED;
 Status.xDisablePending := xDisableRequest AND Status.xEnabled;
+Status.xPowerAllowed := (Status.xEnabled AND NOT xDisableRequest)
+	OR ((Diag.eState = E_MAGAZINE_STATE.DISABLED)
+		AND Status.xCanEnable
+		AND NOT xGlobalError);
+Status.xFillAllowed := (Diag.eState = E_MAGAZINE_STATE.DISABLED)
+	AND (iActiveSlotCount > 0);
+Status.xClearAllowed := Diag.eState = E_MAGAZINE_STATE.DISABLED;
 Status.xReady := Diag.eState = E_MAGAZINE_STATE.IDLE;
 Status.xBusy := (Diag.eState <> E_MAGAZINE_STATE.DISABLED)
 	AND (Diag.eState <> E_MAGAZINE_STATE.IDLE)
@@ -610,7 +757,7 @@ Status.eActualOperation := eActualOperation;
 Status.iSelectedBlank := iTakeSlot;
 Status.iSelectedFreeSlot := iPutSlot;
 Status.xFinished := xFinishedCondition AND NOT Status.xBusy;
-Error.dwAlarmActive := Error.dwErrorActive AND MASK_LOCAL_ERROR;
+Error.dwAlarmActive := Error.dwErrorActive;
 
 IF Error.dwErrorActive <> DWORD#0 THEN
 	Error.dwErrorLast := Error.dwErrorActive;
@@ -618,3 +765,8 @@ END_IF;
 
 Error.stErrorActive := UpdateErrorView(dwError := Error.dwErrorActive);
 Error.stErrorLast := UpdateErrorView(dwError := Error.dwErrorLast);
+FaultStatus.xResetAllowed := Status.xError
+	AND NOT FaultStatus.xBusy
+	AND NOT xExecuteRequest
+	AND NOT xGlobalError
+	AND xRobotResetDependencyReady;
