@@ -4,6 +4,7 @@ STRUCT
 	xLogicalError   : BOOL; // Активна логическая ошибка группы
 	xGroupError     : BOOL; // Активна ошибка SoftMotion группы
 	xMoveDirectDone : BOOL; // Прямое перемещение завершено
+	xSimErrorAllowed: BOOL; // Разрешена безопасная тестовая инъекция ошибки SM3
 	ActualX         : LREAL; // Текущая координата X
 	ActualY         : LREAL; // Текущая координата Y
 	ActualZ         : LREAL; // Текущая координата Z

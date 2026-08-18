@@ -15,7 +15,8 @@ const snapshot = (overrides = {}) => ({
   'stRobotStatus.eCurrentPoint': 0,
   'stRobotDiag.eActiveAction': 0,
   'stRobotDiag.eActivePoint': 0,
-  'stMagazineStatus.xBusy': false,
+  'astMagazineStatus[1].xBusy': false,
+  'astMagazineStatus[2].xBusy': false,
   'astMachineStatus[1].xBusy': false,
   'astMachineStatus[1].xRobotReleased': false,
   'astMachineStatus[1].xProcessing': false,
@@ -72,7 +73,7 @@ test('keeps all magazine sub-actions in one continuous robot interval', () => {
   const atMagazine = classifyCyclogram(snapshot({
     'stRobotStatus.xBusy': true,
     'stRobotStatus.eCurrentPoint': 13,
-    'stMagazineStatus.xBusy': true,
+    'astMagazineStatus[1].xBusy': true,
   }));
   const transientReset = classifyCyclogram(snapshot({
     'stRobotStatus.xBusy': true,
@@ -82,7 +83,7 @@ test('keeps all magazine sub-actions in one continuous robot interval', () => {
   const nextMagazineAction = classifyCyclogram(snapshot({
     'stRobotStatus.xBusy': true,
     'stRobotStatus.eCurrentPoint': 15,
-    'stMagazineStatus.xBusy': true,
+    'astMagazineStatus[1].xBusy': true,
   }));
 
   let stable = stabilizeCyclogramStates(null, atMagazine);

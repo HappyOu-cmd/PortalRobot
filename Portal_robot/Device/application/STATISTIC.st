@@ -6,10 +6,11 @@ END_VAR
 // --- BEGIN IMPLEMENTATION ---
 
 fb_Statistic(
-	xStart          := GVL_HMI.xCellStart,
+	xStart          := GVL_CELL_MANAGER.Status.xRunning,
+	uiSimulationTimeFactor := GVL_CELL_SETTINGS.uiSimulationTimeFactorApplied,
 	eActiveAction 	:= GVL_ROBOT.Diag.eActiveAction,
 	eActivePoint  	:= GVL_ROBOT.Diag.eActivePoint,
-	xBusyMagazine 	:= GVL_MAGAZINE.Status.xBusy,
+	xBusyMagazine 	:= GVL_MAGAZINE.astStatus[1].xBusy OR GVL_MAGAZINE.astStatus[2].xBusy,
 	xBusyMachine_1 	:= GVL_MACHINE.Status[1].xBusy,
 	xBusyMachine_2 	:= GVL_MACHINE.Status[2].xBusy,
 	xBusyMachine_3 	:= GVL_MACHINE.Status[3].xBusy,

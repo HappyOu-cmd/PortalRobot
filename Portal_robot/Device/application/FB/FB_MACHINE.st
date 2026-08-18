@@ -1,5 +1,8 @@
 FUNCTION_BLOCK FB_MACHINE
 VAR_INPUT
+	xTestInitialize : BOOL;
+	uiTestInitialState : UINT;
+	uiTestProductType : UINT;
 	xExecute          : BOOL; // Запуск разрешённой операции обслуживания
     xReset            : BOOL; // Сброс ошибки конкретного станка
 	xResetGlobal      : BOOL; // Общий сброс ошибок ячейки
@@ -69,6 +72,7 @@ VAR
 	xServiceDoorOpenDemand  : BOOL; // Внутренний запрос открытия двери
 	xAutoDoorOpenLatched    : BOOL; // Защёлка автоматического открытия двери
 	xRobotActionDone        : BOOL; // Запрошенное действие захвата уже выполнено
+	xRobotCommandStarted    : BOOL; // Текущий шаг рецепта действительно принят FB_ROBOT
 	xDisableRequest         : BOOL; // Сохранённый запрос отключения после операции или обработки
 	eGrantedOperation       : E_MACHINE_OPERATION; // Разрешённая операция обслуживания
 	eActualOperation        : E_MACHINE_OPERATION; // Выполняемая операция обслуживания
@@ -308,6 +312,41 @@ Command.stRobot.eAction := E_ROBOT_ACTION.NONE;
 xServiceDoorOpenDemand := FALSE;
 xServiceDoorCloseDemand := FALSE;
 
+IF xTestInitialize THEN
+	Error.dwErrorActive := DWORD#0;
+	Error.dwAlarmActive := DWORD#0;
+	uiIndex := UINT#0;
+	xDisableRequest := FALSE;
+	xOperatorRunningCNC := FALSE;
+	xOperatorClosingDoor := FALSE;
+	xAutoCycleCommanded := FALSE;
+	xCycleMeasureActive := FALSE;
+	xCycleMeasureValid := FALSE;
+	xRetreatStarted := FALSE;
+	xRobotInsideMachine := FALSE;
+	xRobotDone := FALSE;
+	xServiceDoorCloseDemand := FALSE;
+	xServiceDoorOpenDemand := FALSE;
+	xAutoDoorOpenLatched := FALSE;
+	xRobotActionDone := FALSE;
+	xRobotCommandStarted := FALSE;
+	eGrantedOperation := E_MACHINE_OPERATION.NONE;
+	eActualOperation := E_MACHINE_OPERATION.NONE;
+	IF uiTestInitialState = UINT#0 THEN
+		eState := E_MACHINE_STATE.DISABLED;
+		ePartType := E_PART_TYPE.UNKNOWN;
+	ELSE
+		eState := E_MACHINE_STATE.IDLE;
+		IF uiTestInitialState = UINT#3 THEN
+			ePartType := E_PART_TYPE.DETAIL;
+		ELSIF uiTestInitialState = UINT#2 THEN
+			ePartType := E_PART_TYPE.PART;
+		ELSE
+			ePartType := E_PART_TYPE.UNKNOWN;
+		END_IF;
+	END_IF;
+END_IF;
+
 IF stMachineStatus.xChuckClamped AND NOT stMachineStatus.xAlarm THEN
 	ePartState := E_PART_STATE.LOADED;
 ELSIF stMachineStatus.xChuckUnclamped AND NOT stMachineStatus.xAlarm THEN
@@ -446,8 +485,9 @@ CASE eState OF
 		END_IF;
 		
 	E_MACHINE_STATE.OPERATOR_CHOICE_DOOR:
-		IF stMachineStatus.xDoorClosed
-    	AND NOT stMachineStatus.xAlarm THEN
+		IF (eState = E_MACHINE_STATE.DOOR_CLOSE)
+		AND stMachineStatus.xDoorClosed
+		AND NOT stMachineStatus.xAlarm THEN
 			eState := E_MACHINE_STATE.OPERATOR_CHOICE_RUN;
 		ELSIF NOT stMachineStatus.xDoorClosed 
 		AND xHmiAcceptDoor
@@ -458,7 +498,8 @@ CASE eState OF
 		AND xHmiRejectDoor
 		AND NOT stMachineStatus.xAlarm THEN  
 			eState := E_MACHINE_STATE.DISABLED;
-		ELSIF stMachineStatus.xAlarm THEN
+		ELSIF (eState = E_MACHINE_STATE.DOOR_CLOSE)
+		AND stMachineStatus.xAlarm THEN
 			Error.dwErrorActive := Error.dwErrorActive OR ERR_MACHINE_ALARM;
     		eState := E_MACHINE_STATE.ERROR;
 		END_IF;
@@ -512,9 +553,11 @@ CASE eState OF
 	E_MACHINE_STATE.READ:
 		CASE stRecipe[uiIndex].eCommand OF
 			E_MACHINE_STATE.ROBOT_MOVE:
+				xRobotCommandStarted := FALSE;
 				eState := E_MACHINE_STATE.ROBOT_MOVE;
 				
 			E_MACHINE_STATE.ROBOT_ACTION:
+				xRobotCommandStarted := FALSE;
 				eState := E_MACHINE_STATE.ROBOT_ACTION;
 				
 			E_MACHINE_STATE.DOOR_OPEN:
@@ -562,6 +605,9 @@ CASE eState OF
 		ELSIF stRecipe[uiIndex].stPoint = E_MACHINE_POINTS.INSIDE THEN
 			Command.stRobot.eSetPoint := stPoints.eInside;
 		END_IF
+		IF stRobotStatus.xBusy THEN
+			xRobotCommandStarted := TRUE;
+		END_IF;
 
 		IF stRobotStatus.xError THEN
 			Error.dwErrorActive := Error.dwErrorActive OR ERR_ROBOT_MOTION;
@@ -572,7 +618,7 @@ CASE eState OF
 			Error.dwErrorActive := Error.dwErrorActive OR ERR_MACHINE_ALARM;
 			eState := E_MACHINE_STATE.ERROR ;
 			
-		ELSIF stRobotStatus.xDone THEN
+		ELSIF xRobotCommandStarted AND stRobotStatus.xDone THEN
         	eState := E_MACHINE_STATE.RELEASE_ROBOT_ACTION;
 
 		ELSIF tonRobotMoveTimeout.Q THEN
@@ -599,12 +645,14 @@ CASE eState OF
 			E_ROBOT_ACTION.ROTATE_TO_DETAIL:
 				xRobotActionDone := stRobotStatus.xRotatedToDetail;
 		END_CASE;
-
 		IF xRobotActionDone THEN
 			eState := E_MACHINE_STATE.NEXT;
 		ELSE
 			Command.stRobot.xExecute := TRUE;
 			Command.stRobot.eAction := stRecipe[uiIndex].eRobotAction;
+		END_IF;
+		IF stRobotStatus.xBusy THEN
+			xRobotCommandStarted := TRUE;
 		END_IF;
 		
 		IF (eState = E_MACHINE_STATE.ROBOT_ACTION)
@@ -625,6 +673,7 @@ CASE eState OF
 			eState := E_MACHINE_STATE.ERROR;
 			
 		ELSIF (eState = E_MACHINE_STATE.ROBOT_ACTION)
+		AND xRobotCommandStarted
 		AND stRobotStatus.xDone THEN
         	eState := E_MACHINE_STATE.RELEASE_ROBOT_ACTION;
     	END_IF;
@@ -667,7 +716,17 @@ CASE eState OF
     	END_IF;
 	
 	E_MACHINE_STATE.DOOR_CLOSE: 
-		xServiceDoorCloseDemand := TRUE;
+		// После сервисной операции безопасность подтверждает защёлка xRobotDone:
+		// рецепт уже довёл робот до ABOVE и освободил его для следующего маршрута.
+		// Общий xBusy больше не блокирует дверь: робот может двигаться к другому узлу.
+		IF xRobotInsideMachine
+		OR (NOT xOperatorClosingDoor AND NOT xRobotDone) THEN
+			Command.stRobot.xStop := xRobotInsideMachine AND stRobotStatus.xBusy;
+			Error.dwErrorActive := Error.dwErrorActive OR ERR_DOOR_ROBOT;
+			eState := E_MACHINE_STATE.ERROR;
+		ELSE
+			xServiceDoorCloseDemand := TRUE;
+		END_IF;
 
     	IF stMachineStatus.xDoorClosed
 		AND NOT stMachineStatus.xAlarm THEN
@@ -681,7 +740,8 @@ CASE eState OF
 		ELSIF stMachineStatus.xAlarm THEN
 			Error.dwErrorActive := Error.dwErrorActive OR ERR_DOOR_CLOSE;
 			eState := E_MACHINE_STATE.ERROR;
-		ELSIF tonDoorCloseTimeout.Q THEN
+		ELSIF (eState = E_MACHINE_STATE.DOOR_CLOSE)
+		AND tonDoorCloseTimeout.Q THEN
 			xServiceDoorCloseDemand := FALSE;
 			Error.dwErrorActive := Error.dwErrorActive OR ERR_TIMEOUT_DOOR_CLOSE;
 			eState := E_MACHINE_STATE.ERROR;
@@ -789,6 +849,8 @@ IF (eState <> E_MACHINE_STATE.ERROR)
 AND NOT xGlobalError THEN
     IF xServiceDoorCloseDemand 
 	AND NOT (xAutoDoorOpenLatched OR xServiceDoorOpenDemand)
+	AND NOT xRobotInsideMachine
+	AND (xOperatorClosingDoor OR xRobotDone)
 	AND NOT stMachineStatus.xAlarm THEN
         Command.stIo.xCloseDoor := TRUE;
 

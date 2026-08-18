@@ -1,12 +1,14 @@
 import viewGridOutlineIcon from '@iconify-icons/mdi/view-grid-outline';
 import { Icon } from '@iconify/react';
-import type { SlotType } from '../../model/types';
+import type { ProductType, SlotType } from '../../model/types';
 
 export interface MagazineMatrixProps {
   slots: SlotType[];
   onSlotClick?: (index: number) => void;
   columns?: number;
   activeCount?: number;
+  productTypes?: ProductType[];
+  editMode?: 'content' | 'product-type';
 }
 
 export interface MagazineMatrixCardProps {
@@ -16,6 +18,10 @@ export interface MagazineMatrixCardProps {
   rows: number;
   onSlotClick?: (index: number) => void;
   className?: string;
+  productTypes?: ProductType[];
+  magazineNumber?: number;
+  zone?: 1 | 2;
+  onZoneChange?: (zone: 1 | 2) => void;
 }
 
 const SLOT_LABELS: Record<SlotType, string> = {
@@ -24,26 +30,28 @@ const SLOT_LABELS: Record<SlotType, string> = {
   detail: 'деталь',
 };
 
-export function MagazineMatrix({ slots, onSlotClick, columns = 10, activeCount = slots.length }: MagazineMatrixProps) {
+export function MagazineMatrix({ slots, onSlotClick, columns = 10, activeCount = slots.length, productTypes, editMode = 'content' }: MagazineMatrixProps) {
   return (
     <div
-      className={`magazine-matrix ${onSlotClick ? 'editable' : ''}`}
+      className={`magazine-matrix ${onSlotClick ? 'editable' : ''} ${productTypes ? 'product-types' : ''}`.trim()}
       style={{ gridTemplateColumns: `repeat(${Math.max(1, columns)}, 1fr)` }}
       aria-label={`Матрица магазина на ${activeCount} слотов`}
     >
-      {slots.slice(0, activeCount).map((slot, index) => (
+      {slots.slice(0, activeCount).map((slot, index) => {
+        const productType = productTypes?.[index] ?? 1;
+        return (
         <button
           key={index}
           type="button"
           disabled={!onSlotClick}
-          title={`Слот ${index + 1}: ${SLOT_LABELS[slot]}`}
-          aria-label={`Слот ${index + 1}: ${SLOT_LABELS[slot]}`}
-          className={`slot ${slot}`}
+          title={`Слот ${index + 1}: ${SLOT_LABELS[slot]}, тип ${productType}${editMode === 'product-type' ? ' — изменить тип' : ''}`}
+          aria-label={`Слот ${index + 1}: ${SLOT_LABELS[slot]}, тип ${productType}`}
+          className={`slot ${slot} product-type-${productType}`}
           onClick={() => onSlotClick?.(index)}
         >
           <span>{index + 1}</span>
         </button>
-      ))}
+      );})}
     </div>
   );
 }
@@ -55,6 +63,10 @@ export function MagazineMatrixCard({
   rows,
   onSlotClick,
   className,
+  productTypes,
+  magazineNumber,
+  zone = 1,
+  onZoneChange,
 }: MagazineMatrixCardProps) {
   const activeCount = Math.min(slots.length, Math.max(0, rows * columns));
   const activeSlots = slots.slice(0, activeCount);
@@ -69,7 +81,7 @@ export function MagazineMatrixCard({
     onPointerDown={(event) => event.stopPropagation()}
   >
     <header className="magazine-matrix-card-header">
-      <h2>Матрица магазина</h2>
+      <div><h2>Магазин {magazineNumber ?? ''}</h2>{onZoneChange && <nav className="magazine-matrix-card-tabs" aria-label="Зона магазина"><button className={zone === 1 ? 'active' : ''} type="button" onClick={() => onZoneChange(1)}>Zone 1</button><button className={zone === 2 ? 'active' : ''} type="button" onClick={() => onZoneChange(2)}>Zone 2</button></nav>}</div>
       <Icon icon={viewGridOutlineIcon} aria-hidden="true" />
     </header>
     <div className="magazine-matrix-card-stats" aria-label="Состав магазина">
@@ -83,6 +95,7 @@ export function MagazineMatrixCard({
         columns={columns}
         activeCount={activeCount}
         onSlotClick={onSlotClick}
+        productTypes={productTypes}
       />
     </div>
   </section>;

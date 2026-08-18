@@ -1,9 +1,13 @@
-import type { CellLayout, CellState, MachineState, SlotType } from './types';
+import type { CellLayout, CellState, MachineState, MagazineData, ProductType, SlotType } from './types';
 
 const emptyMachine = (): MachineState => ({
+  productType: 1,
   plcState: 4,
   enabled: true,
+  alarm: false,
   disablePending: false,
+  powerAllowed: true,
+  resetAllowed: false,
   doorOpen: false,
   doorClosed: true,
   chuckOpen: false,
@@ -28,11 +32,59 @@ const emptyMachine = (): MachineState => ({
   lastErrors: [],
 });
 
-const initialMagazine = (): SlotType[] =>
-  Array.from({ length: 70 }, (_, index) => {
-    if (index === 69) return 'empty';
-    return index % 4 === 0 ? 'detail' : 'blank';
-  });
+const initialZone = (length: number, filled = false): SlotType[] =>
+  Array.from({ length }, (_, index) => filled ? (index % 4 === 0 ? 'detail' : 'blank') : 'empty');
+
+const initialZoneProductTypes = (length: number): ProductType[] =>
+  Array.from({ length }, (_, index) => (index % 3) + 1 as ProductType);
+
+const initialMagazine = (id: 1 | 2): MagazineData => ({
+  zones: [initialZone(120, id === 1), initialZone(120), initialZone(60)],
+  zoneProductTypes: [initialZoneProductTypes(120), initialZoneProductTypes(120), initialZoneProductTypes(60)],
+  state: {
+    enabled: false,
+    disablePending: false,
+    ready: false,
+    busy: false,
+    done: false,
+    error: false,
+    finished: false,
+    canTake: true,
+    canPut: true,
+    canChange: true,
+    canEnable: true,
+    powerAllowed: true,
+    enableSequenceAllowed: true,
+    fillAllowed: true,
+    clearAllowed: true,
+    currentBlank: 1,
+    currentFreeSlot: 1,
+    selectedBlank: 0,
+    selectedFreeSlot: 0,
+    actualOperation: 'NONE',
+    rows: 12,
+    columns: 10,
+    pitchX: 60,
+    pitchY: 60,
+    safeAbove: 0,
+    safeInside: 1400,
+    powered: false,
+    homed: false,
+    positionValid: true,
+    recoveryRequired: false,
+    indexAllowed: false,
+    zone1EditAllowed: true,
+    indexing: false,
+    indexDone: false,
+    axisError: false,
+    axisBusy: false,
+    axisDone: false,
+    axisPosition: 0,
+    axisStep: 'Привод выключен',
+    activeErrors: [],
+    lastErrors: [],
+  },
+});
 
 export const DEFAULT_LAYOUT: CellLayout = {
   coordinate: {
@@ -67,15 +119,41 @@ export const DEFAULT_LAYOUT: CellLayout = {
     zBaseLength: 520,
     zColumnWidth: 120,
   },
-  magazine: {
-    position: { x: 8500, y: 50, z: 720 },
-    sizeX: 846,
-    sizeY: 1350,
-    sizeZ: 90,
+  indexedConveyors: [{
+    position: { x: 8500, y: 80, z: 0 },
     columnsX: 10,
-    rowsY: 7,
-    slotDiameter: 58,
-  },
+    zoneRowsY: [12, 12, 6],
+    pitchX: 60,
+    pitchY: 60,
+    slotDiameter: 42,
+    slatWidthX: 650,
+    slatThickness: 18,
+    rollerRadius: 95.5,
+    workingHeight: 820,
+    lowerBeltWidthX: 580,
+    lowerBeltHeight: 530,
+    lowerBeltSpeed: 550,
+    binWidthX: 800,
+    binLengthY: 650,
+    binHeight: 420,
+  }, {
+    position: { x: 10500, y: 80, z: 0 },
+    columnsX: 10,
+    zoneRowsY: [12, 12, 6],
+    pitchX: 60,
+    pitchY: 60,
+    slotDiameter: 42,
+    slatWidthX: 650,
+    slatThickness: 18,
+    rollerRadius: 95.5,
+    workingHeight: 820,
+    lowerBeltWidthX: 580,
+    lowerBeltHeight: 530,
+    lowerBeltSpeed: 550,
+    binWidthX: 800,
+    binLengthY: 650,
+    binHeight: 420,
+  }],
   animation: {
     motionResponse: 7,
     mechanismResponse: 6,
@@ -83,13 +161,18 @@ export const DEFAULT_LAYOUT: CellLayout = {
 };
 
 export const DEFAULT_STATE: CellState = {
-  robot: {
+	robot: {
     x: 6200,
     y: 675,
     z: 180,
     busy: false,
     done: false,
     error: false,
+    powerAllowed: true,
+    stopAllowed: true,
+    resetAllowed: false,
+    blankProductType: 1,
+    detailProductType: 0,
     blankAvailable: true,
     detailAvailable: false,
     gripper1Open: false,
@@ -100,9 +183,10 @@ export const DEFAULT_STATE: CellState = {
     rotatedToDetail: false,
   },
   machines: [
-    emptyMachine(),
+    { ...emptyMachine(), productType: 1 },
     {
       ...emptyMachine(),
+      productType: 2,
       doorOpen: false,
       doorClosed: true,
       mode: 'processing',
@@ -120,6 +204,7 @@ export const DEFAULT_STATE: CellState = {
     },
     {
       ...emptyMachine(),
+      productType: 3,
       mode: 'change',
       partPresent: true,
       partReady: true,
@@ -129,31 +214,5 @@ export const DEFAULT_STATE: CellState = {
       recommendedOperation: 'CHANGE',
     },
   ],
-  magazine: initialMagazine(),
-  magazineState: {
-    enabled: false,
-    disablePending: false,
-    ready: false,
-    busy: false,
-    done: false,
-    error: false,
-    finished: false,
-    canTake: true,
-    canPut: true,
-    canChange: true,
-    canEnable: true,
-    currentBlank: 1,
-    currentFreeSlot: 70,
-    selectedBlank: 0,
-    selectedFreeSlot: 0,
-    actualOperation: 'NONE',
-    rows: 7,
-    columns: 10,
-    pitchX: 80,
-    pitchY: 190,
-    safeAbove: 0,
-    safeInside: 1400,
-    activeErrors: [],
-    lastErrors: [],
-  },
+  magazines: [initialMagazine(1), initialMagazine(2)],
 };

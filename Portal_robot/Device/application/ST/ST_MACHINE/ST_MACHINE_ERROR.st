@@ -15,5 +15,13 @@ STRUCT
 	INDEX_ERROR     : BOOL; // Индекс рецепта вышел за границы
 	DOOR_ROBOT      : BOOL; // Дверь закрыта при нахождении робота внутри
 	MACHINE_IDLE    : BOOL; // Авария станка возникла в ожидании
+	TIMEOUT_ROBOT_MOVE    : BOOL; // Превышено время перемещения робота
+	TIMEOUT_ROBOT_ACTION  : BOOL; // Превышено время действия захвата
+	TIMEOUT_ROBOT_RELEASE : BOOL; // Робот не освободил интерфейс команды вовремя
+	TIMEOUT_DOOR_OPEN     : BOOL; // Превышено время открытия двери
+	TIMEOUT_DOOR_CLOSE    : BOOL; // Превышено время закрытия двери
+	TIMEOUT_CHUCK_OPEN    : BOOL; // Превышено время разжима патрона
+	TIMEOUT_CHUCK_CLOSE   : BOOL; // Превышено время зажима патрона
+	TIMEOUT_CYCLE_START   : BOOL; // Превышено время подтверждения запуска цикла
 END_STRUCT
 END_TYPE

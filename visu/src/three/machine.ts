@@ -3,7 +3,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import machineModelUrl from '../assets/models/Headman.glb?url';
 import { PART_GEOMETRY } from '../model/partGeometry';
 import type { CellLayout, MachineState } from '../model/types';
-import { COLORS, cylinder, damp, logicalPosition, mm } from './primitives';
+import { COLORS, cylinder, damp, logicalPosition, mm, PRODUCT_PART_COLORS } from './primitives';
 import { OilMistEffect } from './OilMistEffect';
 
 const MODEL_DOOR_TRAVEL = 1.01;
@@ -205,6 +205,14 @@ function setLamp(materialValue: THREE.MeshStandardMaterial, color: number, activ
   materialValue.emissiveIntensity = active ? 1.6 : 0;
 }
 
+function setObjectColor(object: THREE.Object3D, color: number): void {
+  object.traverse((child) => {
+    if (!(child instanceof THREE.Mesh)) return;
+    const meshMaterial = child.material;
+    if (meshMaterial instanceof THREE.MeshStandardMaterial) meshMaterial.color.setHex(color);
+  });
+}
+
 export function updateMachineRig(rig: MachineRig, state: MachineState, dt: number, response: number): void {
   let doorTarget = rig.doorValue;
   if (state.doorOpen && !state.doorClosed) doorTarget = 1;
@@ -219,6 +227,9 @@ export function updateMachineRig(rig: MachineRig, state: MachineState, dt: numbe
   rig.blankPart.visible = state.partType === 'BLANK';
   rig.detailPart.visible = state.partType === 'DETAIL';
   rig.unknownPart.visible = state.partType === 'UNKNOWN';
+  const colors = PRODUCT_PART_COLORS[state.productType] ?? PRODUCT_PART_COLORS[1];
+  setObjectColor(rig.blankPart, colors.blank);
+  setObjectColor(rig.detailPart, colors.detail);
 
   const error = state.mode === 'error';
   const activeColor = state.mode === 'processing' ? COLORS.green : state.mode === 'change' ? COLORS.amber : COLORS.amber;

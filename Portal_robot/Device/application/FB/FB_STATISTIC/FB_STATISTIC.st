@@ -3,6 +3,7 @@ VAR_INPUT
 	eActiveAction 			: E_ROBOT_ACTION;
 	eActivePoint  			: E_POINT_NAME;
 	xStart                  : BOOL;
+	uiSimulationTimeFactor  : UINT := 1;
 	xBusyMagazine       	: BOOL;
 	xBusyMachine_1  		: BOOL;
 	xBusyMachine_2  		: BOOL;
@@ -17,6 +18,8 @@ VAR_OUTPUT
 END_VAR
 VAR
 	xInit                   : BOOL;
+	xResetStatistics        : BOOL;
+	rtSessionStart          : R_TRIG;
 	tTotalPLC				: TIME;
 	tSessionTime            : TIME;
 	tSessionTimeStart       : TIME;
@@ -35,7 +38,10 @@ END_VAR
 
 // --- BEGIN IMPLEMENTATION ---
 
-IF NOT xInit OR xStart THEN
+rtSessionStart(CLK := xStart);
+xResetStatistics := NOT xInit OR rtSessionStart.Q;
+
+IF xResetStatistics THEN
 	tSessionTimeStart := TIME();
 	xInit := TRUE;
 END_IF
@@ -45,60 +51,82 @@ tSessionTime := tTotalPlc - tSessionTimeStart;
 
 fbFactorMachine_1 (
 	tTotalPLC := tSessionTime,
+	uiSimulationTimeFactor := uiSimulationTimeFactor,
 	xMeasure  := xCycleActiveMachine_1,
-	xMode := FALSE
+	xMode := FALSE,
+	xReset := xResetStatistics
 );
 
 fbFactorMachine_2 (
 	tTotalPLC := tSessionTime,
+	uiSimulationTimeFactor := uiSimulationTimeFactor,
 	xMeasure  := xCycleActiveMachine_2,
-	xMode := FALSE
+	xMode := FALSE,
+	xReset := xResetStatistics
 );
 fbFactorMachine_3 (
 	tTotalPLC := tSessionTime,
+	uiSimulationTimeFactor := uiSimulationTimeFactor,
 	xMeasure  := xCycleActiveMachine_3,
-	xMode := FALSE
+	xMode := FALSE,
+	xReset := xResetStatistics
 );
 
 fbFactorRobot (
 	tTotalPLC := tSessionTime,
+	uiSimulationTimeFactor := uiSimulationTimeFactor,
 	xMeasure  := xBusyRobot,
-	xMode := FALSE
+	xMode := FALSE,
+	xReset := xResetStatistics
 );
 
 fbAverageMachine_1(
+	uiSimulationTimeFactor := uiSimulationTimeFactor,
 	xMeasure  := xBusyMachine_1,
-	xMode := TRUE
+	xMode := TRUE,
+	xReset := xResetStatistics
 );
 
 fbAverageMachine_2(
+	uiSimulationTimeFactor := uiSimulationTimeFactor,
 	xMeasure  := xBusyMachine_2,
-	xMode := TRUE
+	xMode := TRUE,
+	xReset := xResetStatistics
 );
 
 fbAverageMachine_3(
+	uiSimulationTimeFactor := uiSimulationTimeFactor,
 	xMeasure  := xBusyMachine_3,
-	xMode := TRUE
+	xMode := TRUE,
+	xReset := xResetStatistics
 );
 
 fbAverageMoveMachine_1(
+	uiSimulationTimeFactor := uiSimulationTimeFactor,
 	xMeasure  := eActiveAction = E_ROBOT_ACTION.MOVE_TO_POINT AND eActivePoint = E_POINT_NAME.MACHINE_1_ABOVE AND xBusyRobot,
-	xMode := TRUE
+	xMode := TRUE,
+	xReset := xResetStatistics
 );
 
 fbAverageMoveMachine_2(
+	uiSimulationTimeFactor := uiSimulationTimeFactor,
 	xMeasure  := eActiveAction = E_ROBOT_ACTION.MOVE_TO_POINT AND eActivePoint = E_POINT_NAME.MACHINE_2_ABOVE AND xBusyRobot,
-	xMode := TRUE
+	xMode := TRUE,
+	xReset := xResetStatistics
 );
 
 fbAverageMoveMachine_3(
+	uiSimulationTimeFactor := uiSimulationTimeFactor,
 	xMeasure  := eActiveAction = E_ROBOT_ACTION.MOVE_TO_POINT AND eActivePoint = E_POINT_NAME.MACHINE_3_ABOVE AND xBusyRobot,
-	xMode := TRUE
+	xMode := TRUE,
+	xReset := xResetStatistics
 );
 
 fbAverageMagazine(
+	uiSimulationTimeFactor := uiSimulationTimeFactor,
 	xMeasure  := xBusyMagazine,
-	xMode := TRUE
+	xMode := TRUE,
+	xReset := xResetStatistics
 );
 
 

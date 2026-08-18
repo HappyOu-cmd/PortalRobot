@@ -97,7 +97,7 @@ export function FaultInjectionPanel({ values, online, send, onClose, className }
       <h3>Робот и ячейка</h3>
       <div className="fault-button-grid">
         <InjectionButton status={robot} online={online} onClick={() => pulse(send, pulseDefinitions.robotWrongAction)}>Недопустимое действие робота</InjectionButton>
-        <InjectionButton status={cell} online={online} onClick={() => pulse(send, pulseDefinitions.cellBothGrippers)}>Оба захвата заняты</InjectionButton>
+        <InjectionButton status={cell} online={online} onClick={() => pulse(send, pulseDefinitions.cellBothGrippers)}>Ошибка согласованности захватов</InjectionButton>
       </div>
     </section>
 

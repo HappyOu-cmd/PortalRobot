@@ -1,5 +1,11 @@
-import { useEffect, useRef } from 'react';
-import type { CellLayout, CellState } from '../model/types';
+import { useEffect, useRef, type RefObject } from 'react';
+import type {
+  CellLayout,
+  CellState,
+  IndexedConveyorTestCommand,
+  IndexedConveyorTestStatus,
+  RobotCoordinateFrame,
+} from '../model/types';
 import { CellScene, type CameraPreset, type EquipmentAnchors } from '../three/cellScene';
 
 export interface EquipmentStatus {
@@ -11,34 +17,69 @@ export interface EquipmentStatus {
 interface CellViewportProps {
   layout: CellLayout;
   state: CellState;
+  robotCoordinatesRef?: RefObject<RobotCoordinateFrame>;
   selectedMachine: number | null;
   cameraPreset: CameraPreset;
   onMachineSelect: (index: number) => void;
-  onMagazineSelect?: () => void;
+  onMagazineSelect?: (magazineId: 1 | 2) => void;
+  indexedConveyorTest?: IndexedConveyorTestCommand;
+  onIndexedConveyorTestStatus?: (magazineId: 1 | 2, status: IndexedConveyorTestStatus) => void;
+  syncMagazineInventory?: boolean;
   equipmentStatuses?: {
     machines: EquipmentStatus[];
-    magazine: EquipmentStatus;
+    magazines: [EquipmentStatus, EquipmentStatus];
   };
 }
 
 export function CellViewport({
   layout,
   state,
+  robotCoordinatesRef,
   selectedMachine,
   cameraPreset,
   onMachineSelect,
   onMagazineSelect,
+  indexedConveyorTest,
+  onIndexedConveyorTestStatus,
+  syncMagazineInventory = true,
   equipmentStatuses,
 }: CellViewportProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<CellScene>();
+  const fallbackRobotCoordinatesRef = useRef<RobotCoordinateFrame>({
+    sequence: 0,
+    timestampMs: Date.now(),
+    sourceTimestampMs: Date.now(),
+    coordinates: { x: state.robot.x, y: state.robot.y, z: state.robot.z },
+  });
   const selectRef = useRef(onMachineSelect);
+  const magazineSelectRef = useRef(onMagazineSelect);
+  const conveyorStatusRef = useRef(onIndexedConveyorTestStatus);
   const machineStatusRefs = useRef<Array<HTMLButtonElement | null>>([]);
-  const magazineStatusRef = useRef<HTMLButtonElement>(null);
+  const magazineStatusRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
   useEffect(() => {
     selectRef.current = onMachineSelect;
   }, [onMachineSelect]);
+
+  useEffect(() => {
+    magazineSelectRef.current = onMagazineSelect;
+  }, [onMagazineSelect]);
+
+  useEffect(() => {
+    conveyorStatusRef.current = onIndexedConveyorTestStatus;
+  }, [onIndexedConveyorTestStatus]);
+
+  useEffect(() => {
+    if (!robotCoordinatesRef) {
+      fallbackRobotCoordinatesRef.current = {
+        sequence: fallbackRobotCoordinatesRef.current.sequence + 1,
+        timestampMs: Date.now(),
+        sourceTimestampMs: Date.now(),
+        coordinates: { x: state.robot.x, y: state.robot.y, z: state.robot.z },
+      };
+    }
+  }, [robotCoordinatesRef, state.robot.x, state.robot.y, state.robot.z]);
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -49,14 +90,26 @@ export function CellViewport({
         element.style.transform = `translate3d(${anchor.x}px, ${anchor.y}px, 0) translate(-50%, 12px)`;
         element.style.visibility = anchor.visible ? 'visible' : 'hidden';
       });
-      const magazine = magazineStatusRef.current;
-      if (magazine) {
-        magazine.style.transform = `translate3d(${anchors.magazine.x}px, ${anchors.magazine.y}px, 0) translate(-50%, 12px)`;
-        magazine.style.visibility = anchors.magazine.visible ? 'visible' : 'hidden';
-      }
+      anchors.magazines.forEach((anchor, index) => {
+        const magazine = magazineStatusRefs.current[index];
+        if (!magazine) return;
+        magazine.style.transform = `translate3d(${anchor.x}px, ${anchor.y}px, 0) translate(-50%, 12px)`;
+        magazine.style.visibility = anchor.visible ? 'visible' : 'hidden';
+      });
     };
-    const scene = new CellScene(hostRef.current, layout, state, (index) => selectRef.current(index), updateAnchors);
+    const coordinatesRef = robotCoordinatesRef ?? fallbackRobotCoordinatesRef;
+    const scene = new CellScene(
+      hostRef.current,
+      layout,
+      state,
+      () => coordinatesRef.current ?? fallbackRobotCoordinatesRef.current,
+      (index) => selectRef.current(index),
+      (magazineId) => magazineSelectRef.current?.(magazineId),
+      updateAnchors,
+      (magazineId, status) => conveyorStatusRef.current?.(magazineId, status),
+    );
     sceneRef.current = scene;
+    scene.setMagazineInventorySync(syncMagazineInventory);
     return () => {
       scene.dispose();
       sceneRef.current = undefined;
@@ -64,6 +117,10 @@ export function CellViewport({
   }, []);
 
   useEffect(() => sceneRef.current?.setState(state), [state]);
+  useEffect(() => sceneRef.current?.setMagazineInventorySync(syncMagazineInventory), [syncMagazineInventory]);
+  useEffect(() => {
+    if (indexedConveyorTest) sceneRef.current?.setIndexedConveyorTest(indexedConveyorTest);
+  }, [indexedConveyorTest]);
   useEffect(() => sceneRef.current?.rebuild(layout), [layout]);
   useEffect(() => sceneRef.current?.setSelectedMachine(selectedMachine), [selectedMachine]);
   useEffect(() => sceneRef.current?.setCamera(cameraPreset), [cameraPreset]);
@@ -80,10 +137,16 @@ export function CellViewport({
         <strong><i />{status.title}</strong>
         {status.lines.map((line, lineIndex) => <span key={`${line}-${lineIndex}`}>{line}</span>)}
       </button>)}
-      <button ref={magazineStatusRef} className={`equipment-status ${equipmentStatuses.magazine.tone}`} type="button" onClick={onMagazineSelect}>
-        <strong><i />{equipmentStatuses.magazine.title}</strong>
-        {equipmentStatuses.magazine.lines.map((line, lineIndex) => <span key={`${line}-${lineIndex}`}>{line}</span>)}
-      </button>
+      {equipmentStatuses.magazines.map((status, index) => <button
+        key={status.title}
+        ref={(element) => { magazineStatusRefs.current[index] = element; }}
+        className={`equipment-status ${status.tone}`}
+        type="button"
+        onClick={() => onMagazineSelect?.((index + 1) as 1 | 2)}
+      >
+        <strong><i />{status.title}</strong>
+        {status.lines.map((line, lineIndex) => <span key={`${line}-${lineIndex}`}>{line}</span>)}
+      </button>)}
     </div>}
   </div>;
 }

@@ -25,7 +25,9 @@ export function EquipmentLoadPanel({ values, className }: EquipmentLoadPanelProp
           <div className="equipment-load-ring" role="progressbar" aria-label={`${item.label}: ${rounded}%`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={rounded}>
             <svg viewBox="0 0 64 64" aria-hidden="true">
               <circle className="track" cx="32" cy="32" r={RING_RADIUS} />
-              <circle className="value" cx="32" cy="32" r={RING_RADIUS} strokeDasharray={RING_LENGTH} strokeDashoffset={RING_LENGTH * (1 - value / 100)} />
+              <circle className="value" cx="32" cy="32" r={RING_RADIUS}
+                strokeDasharray={RING_LENGTH}
+                strokeDashoffset={RING_LENGTH * (1 - value / 100)} />
             </svg>
             <strong>{rounded}%</strong>
           </div>

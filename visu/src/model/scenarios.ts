@@ -20,13 +20,13 @@ export const HMI_SCENARIOS = {
   },
   emptyMagazine(): CellState {
     const state = cloneState();
-    state.magazine = state.magazine.map(() => 'empty');
-    state.magazineState = { ...state.magazineState, enabled: false, finished: true, canTake: false, canChange: false };
+    state.magazines[0].zones = state.magazines[0].zones.map((zone) => zone.map(() => 'empty')) as CellState['magazines'][number]['zones'];
+    state.magazines[0].state = { ...state.magazines[0].state, enabled: false, finished: true, canTake: false, canChange: false };
     return state;
   },
   magazineBusy(): CellState {
     const state = cloneState();
-    state.magazineState = { ...state.magazineState, enabled: true, ready: true, busy: true, actualOperation: 'CHANGE' };
+    state.magazines[0].state = { ...state.magazines[0].state, enabled: true, ready: true, busy: true, actualOperation: 'CHANGE' };
     return state;
   },
 };

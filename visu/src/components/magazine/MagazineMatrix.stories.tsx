@@ -16,17 +16,17 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Заполненный: Story = {
-  args: { slots: HMI_SCENARIOS.normal().magazine, columns: 10 },
+  args: { slots: HMI_SCENARIOS.normal().magazines[0].zones[0], columns: 10 },
 };
 
 export const Пустой: Story = {
-  args: { slots: HMI_SCENARIOS.emptyMagazine().magazine, columns: 10 },
+  args: { slots: HMI_SCENARIOS.emptyMagazine().magazines[0].zones[0], columns: 10 },
 };
 
 export const Редактирование: Story = {
-  args: { slots: HMI_SCENARIOS.normal().magazine, columns: 10 },
+  args: { slots: HMI_SCENARIOS.normal().magazines[0].zones[0], columns: 10 },
   render: () => {
-    const [slots, setSlots] = useState<SlotType[]>(HMI_SCENARIOS.normal().magazine);
+    const [slots, setSlots] = useState<SlotType[]>(HMI_SCENARIOS.normal().magazines[0].zones[0]);
     const cycleSlot = (index: number) => setSlots((current) => {
       const next = [...current];
       const sequence: SlotType[] = ['empty', 'blank', 'detail'];

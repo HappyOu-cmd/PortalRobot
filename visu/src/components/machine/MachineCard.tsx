@@ -29,6 +29,8 @@ export function MachineCard({ index, state, step, active, onClick }: MachineCard
       : state.recommendedOperation === 'CHANGE' ? Wrench
         : state.recommendedOperation === 'UNLOAD' ? PackageOpen : PackagePlus;
   const robotStatus = state.canAcceptService ? 'ГОТОВ К ПРИЁМУ' : state.serviceRequired ? 'ТРЕБУЕТСЯ' : 'НЕ ТРЕБУЕТСЯ';
+  const productText = state.partState !== 'LOADED' ? state.partState === 'EMPTY' ? 'Пусто' : 'Неизвестно'
+    : state.partType === 'BLANK' ? 'Заготовка' : state.partType === 'DETAIL' ? 'Деталь' : 'Неизвестно';
 
   return (
     <button className={`machine-card tone-${tone} ${active ? 'active' : ''}`} type="button" onClick={onClick} aria-label={`Открыть станок ${index + 1}`}>
@@ -51,7 +53,7 @@ export function MachineCard({ index, state, step, active, onClick }: MachineCard
       <div className="machine-signals">
         <div><i><DoorOpen /></i><span>ДВЕРЬ</span><b>{state.doorOpen ? 'Открыта' : state.doorClosed ? 'Закрыта' : 'Движение'}</b></div>
         <div><i>{state.chuckClosed ? <LockKeyhole /> : <UnlockKeyhole />}</i><span>ПАТРОН</span><b>{state.chuckOpen ? 'Открыт' : state.chuckClosed ? 'Закрыт' : 'Движение'}</b></div>
-        <div><i><Box /></i><span>ИЗДЕЛИЕ</span><b>{state.partState !== 'LOADED' ? state.partState === 'EMPTY' ? 'Пусто' : 'Неизвестно' : state.partType === 'BLANK' ? 'Заготовка' : state.partType === 'DETAIL' ? 'Деталь' : 'Неизвестно'}</b></div>
+        <div><i><Box /></i><span>ИЗДЕЛИЕ</span><b>{productText} · тип {state.productType}</b></div>
       </div>
       <div className="machine-card-footer">
         <Bot /><span>РОБОТ:</span><Indicator active={state.canAcceptService || state.serviceRequired} /><b>{robotStatus}</b>
