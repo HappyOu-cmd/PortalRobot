@@ -8,6 +8,6 @@ STRUCT
 	tMoveCNC_3 		: TIME; // Среднее время перемещения от магазина к станку 3
 	tMagazine       : TIME; // Среднее время работы в магазине
 
-	rRobot          : REAL; // Коэффициент загрузки робота
+	rRobot          : REAL; // Процент загрузки робота
 END_STRUCT
 END_TYPE

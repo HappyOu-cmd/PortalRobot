@@ -2,6 +2,8 @@ FUNCTION_BLOCK FB_AXIS_GROUP
 VAR_INPUT
 	FaultRequest : ST_AXIS_GROUP_FAULT_REQUEST; // Единый контракт диагностической инъекции
 	xResetPermit : BOOL; // Общий сброс разрешён ручным режимом и остановленной ячейкой
+	xAxesPowered : BOOL; // Питанием физических осей владеют FB_AXIS; группа только наблюдает готовность
+	lrVelocityOverride : LREAL; // Общий коэффициент только группового MOVE_DIRECT, 0.001..1.0
 END_VAR
 VAR_OUTPUT
 	FaultStatus : ST_FAULT_INJECTION_STATUS; // Состояние инжектора для HMI
@@ -9,16 +11,14 @@ END_VAR
 VAR
 	// Внутренние исполняемые булевые переменные
 	xEnable      : BOOL; // Импульс включения группы
-	xRegulatorOn : BOOL; // Запрос включения регуляторов
-	xDriveStart  : BOOL; // Запрос разрешения приводов
 	xDisable     : BOOL; // Импульс отключения группы
-	xPowerEnable : BOOL; // Защёлкнутый запрос питания
 	xReset       : BOOL; // Импульс сброса ошибок
 	xResetMC     : BOOL; // Выполняется сброс SoftMotion
 	xMoveDirect  : BOOL; // Выполняется прямое перемещение
 	xMoveLinear  : BOOL; // Выполняется линейное перемещение
 	xStopCmd     : BOOL; // Выполняется остановка
 	xHaltCmd     : BOOL; // Выполняется плавная остановка
+	lrAppliedVelocityOverride : LREAL; // Коэффициент после защитного ограничения PLC
 	xFaultAllowed : BOOL; // Безопасные условия тестового запуска
 	
 	iPrevStep : E_AXIS_GROUP_STATE; // Предыдущий шаг автомата
@@ -40,7 +40,6 @@ VAR
 	fbReadPosition : MC_GroupReadActualPosition; // Чтение текущей позиции группы
 	fbGroupEnable  : MC_GroupEnable; // Включение группы
 	fbGroupDisable : MC_GroupDisable; // Отключение группы
-	fbGroupPower   : SMC_GroupPower; // Управление питанием группы
 	fbGroupReset   : MC_GroupReset; // Сброс ошибок группы
 
 	
@@ -81,7 +80,6 @@ VAR CONSTANT
     // Ошибки блоков движения группы
     // ==================================================
 	MOTION_ERR_ENABLE        : DWORD := 1; // Ошибка включения группы
-	MOTION_ERR_POWER         : DWORD := 2; // Ошибка питания группы
 	MOTION_ERR_DISABLE       : DWORD := 4; // Ошибка отключения группы
 	MOTION_ERR_RESET         : DWORD := 8; // Ошибка сброса группы
 	MOTION_ERR_MOVE_DIRECT   : DWORD := 16; // Ошибка прямого перемещения
@@ -106,6 +104,9 @@ VAR CONSTANT
 END_VAR
 
 // --- BEGIN IMPLEMENTATION ---
+
+// Коэффициент симуляции не изменяет динамику группы осей робота.
+lrAppliedVelocityOverride := MAX(0.001, MIN(1.0, lrVelocityOverride));
 
 // =============================================================================
 // 1. Добить предупреждения и ошибки
@@ -170,9 +171,12 @@ GroupData.Status.xGroupError :=
     OR fbReadStatus.GroupErrorStop
     OR (GroupData.Error.dwMotionErrorLatched <> DWORD#0);
 
+GroupData.Status.xLogicalError :=
+    GroupData.Error.dwLogicalErrorLatched <> DWORD#0;
+
 GroupData.Status.xLocalError :=
     GroupData.Status.xGroupError
-    OR (GroupData.Error.dwLogicalErrorLatched <> DWORD#0);
+    OR GroupData.Status.xLogicalError;
 
 // Тестовый Motion-FB запускается только в неподвижной готовой группе.
 xFaultAllowed := fbReadStatus.Valid
@@ -241,6 +245,16 @@ CASE GroupData.Diag.iStep OF
             END_IF;
             xWarningPulse := TRUE;
 
+		ELSIF fbReadStatus.Valid AND fbReadStatus.GroupStandby THEN
+			// MC_GroupReset всегда возвращает группу в GroupStandby. Если питание
+			// запрошено, используем это состояние без повторного MC_GroupEnable;
+			// иначе сначала синхронизируем группу с программным шагом DISABLED.
+			IF rtEnablePower.Q THEN
+				GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ENABLING_POWER;
+			ELSE
+				GroupData.Diag.iStep := E_AXIS_GROUP_STATE.DISABLING_GROUP;
+			END_IF;
+
         ELSIF rtEnablePower.Q THEN
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ENABLING_POWER;
         END_IF;
@@ -253,8 +267,7 @@ CASE GroupData.Diag.iStep OF
         GroupData.Diag.tStepPreset := GroupData.Timeouts.tPowerTimeout;
         GroupData.Diag.iPowerMode := E_AXIS_GROUP_POWER_MODE.ON;
 
-        IF fbReadStatus.GroupErrorStop
-           OR fbGroupPower.Error THEN
+        IF fbReadStatus.GroupErrorStop THEN
 
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
 
@@ -270,9 +283,13 @@ CASE GroupData.Diag.iStep OF
 
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.DISABLING_POWER;
 
-        ELSIF fbGroupPower.Status THEN
-            GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ENABLING_GROUP;
-        END_IF;
+		ELSIF xAxesPowered AND fbReadStatus.Valid THEN
+			IF fbReadStatus.GroupStandby THEN
+				GroupData.Diag.iStep := E_AXIS_GROUP_STATE.READY;
+			ELSIF fbReadStatus.GroupDisabled THEN
+				GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ENABLING_GROUP;
+			END_IF;
+		END_IF;
 
 
     // -------------------------------------------------------------------------
@@ -282,12 +299,22 @@ CASE GroupData.Diag.iStep OF
         GroupData.Diag.tStepPreset := GroupData.Timeouts.tGroupTimeout;
         GroupData.Diag.iPowerMode := E_AXIS_GROUP_POWER_MODE.ON;
 
-        xEnable := TRUE;
+		// MC_GroupEnable допустим только из GroupDisabled. Execute формируется
+		// исключительно на этом шаге: после перехода в GroupStandby он снимается,
+		// чтобы новый фронт не вызвал MC_GroupEnable повторно после MC_GroupReset.
+		xEnable := fbReadStatus.Valid AND fbReadStatus.GroupDisabled;
 
-        IF fbReadStatus.GroupErrorStop
-           OR fbGroupEnable.Error THEN
+		IF fbReadStatus.GroupErrorStop THEN
 
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
+
+		ELSIF fbReadStatus.Valid AND fbReadStatus.GroupStandby THEN
+
+			GroupData.Diag.iStep := E_AXIS_GROUP_STATE.READY;
+
+		ELSIF xEnable AND fbGroupEnable.Error THEN
+
+			GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
 
         ELSIF NOT GroupData.Command.xPowerPermit
            OR GroupData.Command.xGlobalError THEN
@@ -301,11 +328,7 @@ CASE GroupData.Diag.iStep OF
 
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.DISABLING_GROUP;
 
-        ELSIF fbGroupEnable.Done
-           AND fbReadStatus.GroupStandby THEN
-
-            GroupData.Diag.iStep := E_AXIS_GROUP_STATE.READY;
-        END_IF;
+		END_IF;
 
 
     // -------------------------------------------------------------------------
@@ -315,9 +338,7 @@ CASE GroupData.Diag.iStep OF
         GroupData.Diag.tStepPreset := T#0S;
         GroupData.Diag.iPowerMode := E_AXIS_GROUP_POWER_MODE.ON;
 
-        xEnable := TRUE;
-
-        IF fbReadStatus.GroupErrorStop THEN
+		IF fbReadStatus.GroupErrorStop THEN
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
 
         ELSIF NOT GroupData.Command.xPowerPermit
@@ -354,8 +375,7 @@ CASE GroupData.Diag.iStep OF
         GroupData.Diag.tStepPreset := GroupData.Timeouts.tMoveTimeout;
         GroupData.Diag.iPowerMode := E_AXIS_GROUP_POWER_MODE.ON;
 
-        xEnable := TRUE;
-        xMoveDirect := TRUE;
+		xMoveDirect := TRUE;
 
         IF fbReadStatus.GroupErrorStop THEN
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
@@ -397,8 +417,7 @@ CASE GroupData.Diag.iStep OF
         GroupData.Diag.tStepPreset := GroupData.Timeouts.tHaltTimeout;
         GroupData.Diag.iPowerMode := E_AXIS_GROUP_POWER_MODE.ON;
 
-        xEnable := TRUE;
-        xHaltCmd := TRUE;
+		xHaltCmd := TRUE;
 
         IF fbReadStatus.GroupErrorStop THEN
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
@@ -432,8 +451,7 @@ CASE GroupData.Diag.iStep OF
         GroupData.Diag.tStepPreset := GroupData.Timeouts.tStopTimeout;
         GroupData.Diag.iPowerMode := E_AXIS_GROUP_POWER_MODE.ON;
 
-        xEnable := TRUE;
-        xStopCmd := TRUE;
+		xStopCmd := TRUE;
 
         IF fbReadStatus.GroupErrorStop
            OR fbGroupStop.Error THEN
@@ -459,9 +477,7 @@ CASE GroupData.Diag.iStep OF
         GroupData.Diag.tStepPreset := GroupData.Timeouts.tStopTimeout;
         GroupData.Diag.iPowerMode := E_AXIS_GROUP_POWER_MODE.ON;
 
-        xEnable := TRUE;
-
-        IF fbReadStatus.GroupErrorStop THEN
+		IF fbReadStatus.GroupErrorStop THEN
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
 
         ELSIF xStepTimeout THEN
@@ -471,9 +487,18 @@ CASE GroupData.Diag.iStep OF
 
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
 
-        ELSIF fbReadStatus.GroupStandby THEN
-            GroupData.Diag.iStep := E_AXIS_GROUP_STATE.DISABLING_GROUP;
-        END_IF;
+		ELSIF fbReadStatus.GroupStandby THEN
+			// Операторский Stop завершает только движение и сохраняет GroupStandby.
+			// Отключение группы выполняется лишь по отдельному запросу питания/ошибке.
+			IF GroupData.Command.xPowerPermit
+			AND NOT GroupData.Command.xDisable
+			AND NOT GroupData.Command.xGlobalError
+			AND NOT GroupData.Status.xLocalError THEN
+				GroupData.Diag.iStep := E_AXIS_GROUP_STATE.READY;
+			ELSE
+				GroupData.Diag.iStep := E_AXIS_GROUP_STATE.DISABLING_GROUP;
+			END_IF;
+		END_IF;
 
 
     // -------------------------------------------------------------------------
@@ -483,12 +508,20 @@ CASE GroupData.Diag.iStep OF
         GroupData.Diag.tStepPreset := GroupData.Timeouts.tGroupTimeout;
         GroupData.Diag.iPowerMode := E_AXIS_GROUP_POWER_MODE.ON;
 
-        xDisable := TRUE;
+		// MC_GroupDisable допустим только из GroupStandby.
+		xDisable := fbReadStatus.Valid AND fbReadStatus.GroupStandby;
 
-        IF fbReadStatus.GroupErrorStop
-           OR fbGroupDisable.Error THEN
+		IF fbReadStatus.GroupErrorStop THEN
 
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
+
+		ELSIF fbReadStatus.Valid AND fbReadStatus.GroupDisabled THEN
+
+			GroupData.Diag.iStep := E_AXIS_GROUP_STATE.DISABLING_POWER;
+
+		ELSIF xDisable AND fbGroupDisable.Error THEN
+
+			GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
 
         ELSIF xStepTimeout THEN
             GroupData.Error.dwLogicalErrorNew :=
@@ -497,7 +530,7 @@ CASE GroupData.Diag.iStep OF
 
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
 
-        ELSIF fbGroupDisable.Done
+		ELSIF xDisable AND fbGroupDisable.Done
            AND fbReadStatus.GroupDisabled THEN
 
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.DISABLING_POWER;
@@ -519,7 +552,7 @@ CASE GroupData.Diag.iStep OF
 
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
 
-        ELSIF NOT fbGroupPower.Status THEN
+        ELSIF NOT xAxesPowered THEN
 
             IF GroupData.Command.xGlobalError
                OR GroupData.Status.xLocalError
@@ -578,17 +611,21 @@ CASE GroupData.Diag.iStep OF
                 GroupData.Error.dwMotionErrorLatched := DWORD#0;
                 GroupData.Error.dwMotionErrorPrevious := DWORD#0;
 
-                IF NOT fbGroupPower.Status THEN
-                    GroupData.Diag.iStep :=
-                        E_AXIS_GROUP_STATE.DISABLED;
+				IF fbReadStatus.GroupStandby AND NOT xAxesPowered THEN
+					GroupData.Diag.iStep :=
+						E_AXIS_GROUP_STATE.DISABLING_GROUP;
 
-                ELSIF fbReadStatus.GroupDisabled THEN
-                    GroupData.Diag.iStep :=
-                        E_AXIS_GROUP_STATE.DISABLING_POWER;
+				ELSIF fbReadStatus.GroupDisabled AND NOT xAxesPowered THEN
+					GroupData.Diag.iStep :=
+						E_AXIS_GROUP_STATE.DISABLED;
+
+				ELSIF fbReadStatus.GroupDisabled THEN
+					GroupData.Diag.iStep :=
+						E_AXIS_GROUP_STATE.ENABLING_GROUP;
 
                 ELSIF fbReadStatus.GroupStandby THEN
                     GroupData.Diag.iStep :=
-                        E_AXIS_GROUP_STATE.DISABLING_GROUP;
+                        E_AXIS_GROUP_STATE.READY;
 
                 ELSE
                     GroupData.Diag.iStep :=
@@ -605,9 +642,18 @@ CASE GroupData.Diag.iStep OF
         GroupData.Diag.tStepPreset := GroupData.Timeouts.tGroupTimeout;
         GroupData.Diag.iPowerMode := E_AXIS_GROUP_POWER_MODE.ON;
 
-        xResetMC := TRUE;
+		// Ошибка оси могла исчезнуть между принятием общей команды и этим циклом.
+		// В таком случае MC_GroupReset не вызывается, иначе он вернёт 78
+		// (no error to be resetted); остаётся только очистить внутренние защёлки.
+		IF fbReadStatus.Valid AND NOT fbReadStatus.GroupErrorStop THEN
+			xResetMC := FALSE;
+			GroupData.Diag.iStep := E_AXIS_GROUP_STATE.RESET_VERIFY;
 
-        IF GroupData.Command.xGlobalError THEN
+		ELSE
+			xResetMC := TRUE;
+		END_IF;
+
+		IF GroupData.Command.xGlobalError THEN
             GroupData.Diag.sWarningText :=
                 'Global error became active during group reset';
 
@@ -620,7 +666,7 @@ CASE GroupData.Diag.iStep OF
             xWarningPulse := TRUE;
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
 
-        ELSIF fbGroupReset.Error THEN
+		ELSIF xResetMC AND fbGroupReset.Error THEN
             GroupData.Diag.sWarningText :=
                 'MC_GroupReset finished with error';
 
@@ -633,7 +679,7 @@ CASE GroupData.Diag.iStep OF
             xWarningPulse := TRUE;
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
 
-        ELSIF xStepTimeout THEN
+		ELSIF xResetMC AND xStepTimeout THEN
             GroupData.Diag.sWarningText :=
                 'MC_GroupReset timeout';
 
@@ -650,7 +696,7 @@ CASE GroupData.Diag.iStep OF
 
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ERROR;
 
-        ELSIF fbGroupReset.Done THEN
+		ELSIF xResetMC AND fbGroupReset.Done THEN
             // Статус группы был прочитан до вызова MC_GroupReset.
             // Проверяем результат сброса только со следующего цикла.
             GroupData.Diag.iStep := E_AXIS_GROUP_STATE.RESET_VERIFY;
@@ -719,14 +765,17 @@ CASE GroupData.Diag.iStep OF
             GroupData.Error.dwMotionErrorLatched := DWORD#0;
             GroupData.Error.dwMotionErrorPrevious := DWORD#0;
 
-            IF NOT fbGroupPower.Status THEN
-                GroupData.Diag.iStep := E_AXIS_GROUP_STATE.DISABLED;
+			IF fbReadStatus.GroupStandby AND NOT xAxesPowered THEN
+				GroupData.Diag.iStep := E_AXIS_GROUP_STATE.DISABLING_GROUP;
 
-            ELSIF fbReadStatus.GroupDisabled THEN
-                GroupData.Diag.iStep := E_AXIS_GROUP_STATE.DISABLING_POWER;
+			ELSIF fbReadStatus.GroupDisabled AND NOT xAxesPowered THEN
+				GroupData.Diag.iStep := E_AXIS_GROUP_STATE.DISABLED;
+
+			ELSIF fbReadStatus.GroupDisabled THEN
+				GroupData.Diag.iStep := E_AXIS_GROUP_STATE.ENABLING_GROUP;
 
             ELSIF fbReadStatus.GroupStandby THEN
-                GroupData.Diag.iStep := E_AXIS_GROUP_STATE.DISABLING_GROUP;
+                GroupData.Diag.iStep := E_AXIS_GROUP_STATE.READY;
 
             ELSE
                 GroupData.Diag.iStep := E_AXIS_GROUP_STATE.DISABLING_POWER;
@@ -755,20 +804,7 @@ GroupData.MotionParam.stTargetPos.c.Z := GroupData.MotionParam.lrZ;
 
 
 // =============================================================================
-// 8. Режим питания
-// =============================================================================
-xPowerEnable :=
-    GroupData.Diag.iPowerMode <> E_AXIS_GROUP_POWER_MODE.OFF;
-
-xRegulatorOn :=
-    GroupData.Diag.iPowerMode = E_AXIS_GROUP_POWER_MODE.ON;
-
-xDriveStart :=
-    GroupData.Diag.iPowerMode = E_AXIS_GROUP_POWER_MODE.ON;
-
-
-// =============================================================================
-// 9. Вызовы Motion FB
+// 8. Вызовы Motion FB
 // =============================================================================
 fbGroupEnable(
     AxisGroup := AxisGroup,
@@ -778,13 +814,6 @@ fbGroupEnable(
 fbGroupDisable(
     AxisGroup := AxisGroup,
     Execute   := xDisable
-);
-
-fbGroupPower(
-    AxisGroup    := AxisGroup,
-    Enable       := xPowerEnable,
-    bRegulatorOn := xRegulatorOn,
-    bDriveStart  := xDriveStart
 );
 
 fbGroupReset(
@@ -798,7 +827,9 @@ fbMoveDirect(
     Position    := GroupData.MotionParam.stTargetPos,
     CoordSystem := SMC_COORD_SYSTEM.MCS,
     BufferMode  := MC_BUFFER_MODE.Aborting,
-    VelFactor   := GroupData.MotionParam.VelFactor,
+	// MOVE_DIRECT принадлежит группе: общий коэффициент умножается на коэффициент точки.
+	VelFactor   := MAX(0.001, MIN(1.0,
+		GroupData.MotionParam.VelFactor * lrAppliedVelocityOverride)),
     AccFactor   := GroupData.MotionParam.AccFactor,
     JerkFactor  := GroupData.MotionParam.JerkFactor
 );
@@ -809,22 +840,22 @@ fbMoveLinear(
 );
 
 fbGroupHalt(
-    AxisGroup    := AxisGroup,
-    Execute      := xHaltCmd,
-    Deceleration := GroupData.MotionParam.HaltDeceleration,
-    Jerk         := GroupData.MotionParam.HaltJerk
+	AxisGroup    := AxisGroup,
+	Execute      := xHaltCmd,
+	Deceleration := GroupData.MotionParam.HaltDeceleration,
+	Jerk         := GroupData.MotionParam.HaltJerk
 );
 
 fbGroupStop(
-    AxisGroup    := AxisGroup,
-    Execute      := xStopCmd,
-    Deceleration := GroupData.MotionParam.HaltDeceleration * 2,
-    Jerk         := GroupData.MotionParam.HaltJerk * 2
+	AxisGroup    := AxisGroup,
+	Execute      := xStopCmd,
+	Deceleration := GroupData.MotionParam.HaltDeceleration * 2,
+	Jerk         := GroupData.MotionParam.HaltJerk * 2
 );
 
 
 // =============================================================================
-// 10. Маска Motion-ошибок
+// 9. Маска Motion-ошибок
 // =============================================================================
 GroupData.Error.dwMotionErrorActive := DWORD#0;
 
@@ -832,12 +863,6 @@ IF fbGroupEnable.Error THEN
     GroupData.Error.dwMotionErrorActive :=
         GroupData.Error.dwMotionErrorActive
         OR MOTION_ERR_ENABLE;
-END_IF;
-
-IF fbGroupPower.Error THEN
-    GroupData.Error.dwMotionErrorActive :=
-        GroupData.Error.dwMotionErrorActive
-        OR MOTION_ERR_POWER;
 END_IF;
 
 IF fbGroupDisable.Error THEN
@@ -905,7 +930,6 @@ IF fbFaultInjector.xError THEN
 		GroupData.Error.dwMotionErrorActive
 		OR MOTION_ERR_SIMULATED;
 END_IF;
-
 
 // Только ошибки, которых не было в предыдущем цикле.
 GroupData.Error.dwMotionErrorNew :=
@@ -975,9 +999,12 @@ GroupData.Status.xGroupError :=
     OR fbReadStatus.GroupErrorStop
     OR (GroupData.Error.dwMotionErrorLatched <> DWORD#0);
 
+GroupData.Status.xLogicalError :=
+    GroupData.Error.dwLogicalErrorLatched <> DWORD#0;
+
 GroupData.Status.xLocalError :=
     GroupData.Status.xGroupError
-    OR (GroupData.Error.dwLogicalErrorLatched <> DWORD#0);
+    OR GroupData.Status.xLogicalError;
 
 GroupData.Status.xSimErrorAllowed := FaultStatus.xAllowed;
 	
@@ -991,9 +1018,27 @@ IF fbReadError.Valid
 ELSIF (GroupData.Error.dwMotionErrorLatched AND MOTION_ERR_SIMULATED) <> DWORD#0 THEN
 	GroupData.Diag.udiActualErrorID := fbFaultInjector.udiErrorID;
 	GroupData.Diag.sErrorText := 'Simulated MC_MoveDirectAbsolute error';
+ELSIF fbGroupEnable.Error THEN
+	GroupData.Diag.udiActualErrorID := TO_UDINT(fbGroupEnable.ErrorID);
+	GroupData.Diag.sErrorText := 'MC_GroupEnable error';
+ELSIF fbGroupDisable.Error THEN
+	GroupData.Diag.udiActualErrorID := TO_UDINT(fbGroupDisable.ErrorID);
+	GroupData.Diag.sErrorText := 'MC_GroupDisable error';
 ELSIF fbGroupReset.Error THEN
     GroupData.Diag.udiActualErrorID := TO_UDINT(fbGroupReset.ErrorID);
     GroupData.Diag.sErrorText := 'MC_GroupReset error';
+ELSIF fbMoveDirect.Error THEN
+	GroupData.Diag.udiActualErrorID := TO_UDINT(fbMoveDirect.ErrorID);
+	GroupData.Diag.sErrorText := 'MC_MoveDirectAbsolute error';
+ELSIF fbMoveLinear.Error THEN
+	GroupData.Diag.udiActualErrorID := TO_UDINT(fbMoveLinear.ErrorID);
+	GroupData.Diag.sErrorText := 'MC_MoveLinearAbsolute error';
+ELSIF fbGroupHalt.Error THEN
+	GroupData.Diag.udiActualErrorID := TO_UDINT(fbGroupHalt.ErrorID);
+	GroupData.Diag.sErrorText := 'MC_GroupHalt error';
+ELSIF fbGroupStop.Error THEN
+	GroupData.Diag.udiActualErrorID := TO_UDINT(fbGroupStop.ErrorID);
+	GroupData.Diag.sErrorText := 'MC_GroupStop error';
 ELSE
     GroupData.Diag.udiActualErrorID := UDINT#0;
     GroupData.Diag.sErrorText := '';

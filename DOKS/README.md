@@ -1,33 +1,31 @@
-# Руководства проекта Portal Robot
+# Документация Portal Robot
 
-Эта папка содержит рабочие инструкции для развития PLC-логики и HMI. Они описывают текущую архитектуру проекта, а не абстрактный пример.
+В проекте оставлена одна папка документации: `DOKS` в корне
+`C:\Users\KOKSHAROV IR\Desktop\Project\Portal robot`. Предыдущая подпапка
+документации внутри `visu` объединена с ней и больше не используется.
 
-| Руководство | Когда использовать |
+| Файл | Когда читать |
 | --- | --- |
-| [01-errors-warnings.md](01-errors-warnings.md) | Нужно добавить аварию или предупреждение от CODESYS до журнала HMI |
-| [02-visual-elements.md](02-visual-elements.md) | Нужно создать экран, карточку, кнопку, 3D-объект или другой элемент интерфейса |
-| [03-ui-logic-opcua.md](03-ui-logic-opcua.md) | Нужно связать действие оператора или новый статус с PLC через OPC UA |
-| [04-run-and-ip.md](04-run-and-ip.md) | Нужно запустить PLC, gateway и HMI либо изменить адрес оборудования |
-| [05-project-structure.md](05-project-structure.md) | Нужно понять структуру репозитория, назначение папок и правила хранения файлов |
+| [01-visual-elements.md](01-visual-elements.md) | Новый элемент, карточка, область экрана или 3D-объект |
+| [02-opc-ua.md](02-opc-ua.md) | Новый тег из PLC или привязка статуса/команды к HMI |
+| [03-alarms-warnings.md](03-alarms-warnings.md) | Новая авария или предупреждение в журнале и интерфейсе |
+| [04-run-and-ip.md](04-run-and-ip.md) | Запуск HMI/gateway и изменение IP PLC или веб-интерфейса |
+| [05-architecture.md](05-architecture.md) | Состав ячейки, связи CODESYS, поток данных и структура visu |
+| [06-token-efficient-workflow.md](06-token-efficient-workflow.md) | Короткие задачи, выбор модели и экономия токенов |
+| [07-error-simulation-opc-ua-web.md](07-error-simulation-opc-ua-web.md) | Теги эмуляции ошибок для OPC UA, gateway и web |
+| [08-sc500-modbus-register-map.md](08-sc500-modbus-register-map.md) | Контракт PLC ↔ SC-500, handshake и справочная карта Huacheng |
+| [09-python-robot-modbus-simulator.md](09-python-robot-modbus-simulator.md) | Установка и проверка Python-симулятора SC-500 по Modbus TCP |
+| [10-cell-event-log.md](10-cell-event-log.md) | Постоянный журнал работы ячейки, источники и SQLite-хранилище |
+| [11-automated-cell-testing.md](11-automated-cell-testing.md) | Быстрый запуск теста, сценарии PLC Runtime и стенд SC-500 |
+| [12-sc500-controller-commissioning.md](12-sc500-controller-commissioning.md) | Поэтапная реализация и проверка программы реального SC-500 |
+| [13-indexed-conveyor-plan.md](13-indexed-conveyor-plan.md) | Зафиксированные майлстоуны по второму магазину и индексному конвейеру |
 
-## Короткая карта проекта
+## Карта правил
 
-- PLC-исходники: `Portal_robot/Device/application`.
-- Точка соединения PLC и HMI: `GVL_HMI`.
-- OPC UA gateway: `visu/gateway/server.mjs`.
-- Преобразование OPC UA-снимка в данные React: `visu/src/plc/client.ts`.
-- Экраны и локальное состояние HMI: `visu/src/App.tsx`.
-- Three.js: `visu/src/three` и `visu/src/components/CellViewport.tsx`.
-- Базовые UI-компоненты: `visu/src/components/ui`.
+- Общие правила: [корневой AGENTS.md](../AGENTS.md).
+- PLC: [Portal_robot/Device/application/AGENTS.md](../Portal_robot/Device/application/AGENTS.md).
+- HMI: [visu/AGENTS.md](../visu/AGENTS.md).
 
-Перед изменением PLC прочитать связанные DUT, GVL и вызывающие FB. Перед изменением UI выполнить `npm run build`, проверить интерфейс при масштабе браузера `100%` и убедиться, что 3D-сцена не сместилась.
-
-## Порядок чтения для нового разработчика
-
-1. Начать с [05-project-structure.md](05-project-structure.md), чтобы понять границы PLC, gateway, React и Three.js.
-2. Для первого запуска выполнить [04-run-and-ip.md](04-run-and-ip.md).
-3. Для изменения интерфейса использовать [02-visual-elements.md](02-visual-elements.md).
-4. Для нового тега или команды продолжить по [03-ui-logic-opcua.md](03-ui-logic-opcua.md).
-5. Для аварий и предупреждений использовать отдельный маршрут [01-errors-warnings.md](01-errors-warnings.md).
-
-Этого набора достаточно, чтобы самостоятельно запустить проект, найти владельца данных, добавить UI-элемент, провести статус или команду через OPC UA и проверить результат. Подробные примеры Storybook и React находятся дополнительно в `visu/docs`.
+Для сквозной задачи сначала прочитать архитектуру, затем только руководство,
+соответствующее текущему результату. Подробные исходники проекта находятся в
+`Portal_robot/Device/application` и `visu`; документация не дублирует код.

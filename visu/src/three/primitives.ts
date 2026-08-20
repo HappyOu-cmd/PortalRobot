@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { ProductType } from '../model/types';
 
 export const COLORS = {
   background: 0xfdfdfe,
@@ -18,6 +19,12 @@ export const COLORS = {
   blank: 0x2f78d0,
   detail: 0x2ca568,
   empty: 0x6f8291,
+};
+
+export const PRODUCT_PART_COLORS: Record<ProductType, { blank: number; detail: number }> = {
+  1: { blank: 0x9fc3df, detail: 0x24689a },
+  2: { blank: 0xc0acd8, detail: 0x70489b },
+  3: { blank: 0x91cdc3, detail: 0x217a70 },
 };
 
 export function mm(value: number): number {

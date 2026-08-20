@@ -18,7 +18,14 @@ TYPE E_POINT_NAME :
 	MAGAZINE_DETAIL,
 	MAGAZINE_TAKE_DETAIL,
 	MAGAZINE_PUT_DETAIL,
-	MAGAZINE_CHANGE_DETAIL
+	MAGAZINE_CHANGE_DETAIL,
+	HOME_SAFETY,
+	MAGAZINE_RETURN_BLANK, // Legacy: сохранено только ради прежнего числового значения
+	MAGAZINE_SAFE, // Безопасная точка над активным слотом
+	MAGAZINE_IN_SLOT, // Рабочая точка внутри активного слота
+	MAGAZINE_CHANGE, // Безопасная точка переворота над активным слотом
+	MAGAZINE_1_DETAIL, // Базовая точка рабочей зоны первого магазина
+	MAGAZINE_2_DETAIL // Базовая точка рабочей зоны второго магазина
 
 );
 END_TYPE

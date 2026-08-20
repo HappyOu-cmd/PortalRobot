@@ -57,7 +57,8 @@ export const cyclogramRequiredSymbols = Object.freeze([
   'stRobotStatus.eCurrentPoint',
   'stRobotDiag.eActiveAction',
   'stRobotDiag.eActivePoint',
-  'stMagazineStatus.xBusy',
+  'astMagazineStatus[1].xBusy',
+  'astMagazineStatus[2].xBusy',
   ...[1, 2, 3].flatMap((machine) => [
     `astMachineStatus[${machine}].xBusy`,
     `astMachineStatus[${machine}].xRobotReleased`,
@@ -94,7 +95,8 @@ export function classifyCyclogram(values) {
   ]));
 
   const robotBusy = booleanValue(values, 'stRobotStatus.xBusy');
-  const magazineBusy = booleanValue(values, 'stMagazineStatus.xBusy');
+  const magazineBusy = booleanValue(values, 'astMagazineStatus[1].xBusy')
+    || booleanValue(values, 'astMagazineStatus[2].xBusy');
   const action = numberValue(values, 'stRobotDiag.eActiveAction');
   const activePoint = numberValue(values, 'stRobotDiag.eActivePoint');
   const currentPoint = numberValue(values, 'stRobotStatus.eCurrentPoint');

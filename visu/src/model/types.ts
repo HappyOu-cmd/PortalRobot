@@ -1,15 +1,38 @@
 export type Direction = 1 | -1;
 export type SlotType = 'empty' | 'blank' | 'detail';
+export type ProductType = 1 | 2 | 3;
+export type PayloadProductType = 0 | ProductType;
 export type MachineMode = 'off' | 'enabled' | 'processing' | 'change' | 'error';
 export type MachineOperation = 'NONE' | 'LOAD' | 'UNLOAD' | 'CHANGE';
 export type MachinePartState = 'EMPTY' | 'LOADED' | 'UNKNOWN';
 export type MachinePartType = 'UNKNOWN' | 'BLANK' | 'DETAIL';
-export type MagazineOperation = 'NONE' | 'TAKE' | 'PUT' | 'CHANGE';
+export type MagazineOperation = 'NONE' | 'PUT' | 'TAKE' | 'CHANGE' | 'RETURN_BLANK';
+export type IndexedConveyorTestCommandType = 'none' | 'fill' | 'move' | 'clear' | 'reset';
+
+export interface IndexedConveyorTestCommand {
+  id: number;
+  type: IndexedConveyorTestCommandType;
+  magazineId: 1 | 2;
+}
+
+export interface IndexedConveyorTestStatus {
+  moving: boolean;
+  positionRows: number;
+  loadedSlots: number;
+  homed: boolean;
+}
 
 export interface Vec3Mm {
   x: number;
   y: number;
   z: number;
+}
+
+export interface RobotCoordinateFrame {
+  sequence: number;
+  timestampMs: number;
+  sourceTimestampMs: number;
+  coordinates: Vec3Mm;
 }
 
 export interface CoordinateConfig {
@@ -19,6 +42,25 @@ export interface CoordinateConfig {
 
 export interface MachineLayout {
   position: Vec3Mm;
+}
+
+export interface IndexedConveyorLayout {
+  position: Vec3Mm;
+  columnsX: number;
+  zoneRowsY: [number, number, number];
+  pitchX: number;
+  pitchY: number;
+  slotDiameter: number;
+  slatWidthX: number;
+  slatThickness: number;
+  rollerRadius: number;
+  workingHeight: number;
+  lowerBeltWidthX: number;
+  lowerBeltHeight: number;
+  lowerBeltSpeed: number;
+  binWidthX: number;
+  binLengthY: number;
+  binHeight: number;
 }
 
 export interface CellLayout {
@@ -47,15 +89,7 @@ export interface CellLayout {
     zBaseLength: number;
     zColumnWidth: number;
   };
-  magazine: {
-    position: Vec3Mm;
-    sizeX: number;
-    sizeY: number;
-    sizeZ: number;
-    columnsX: number;
-    rowsY: number;
-    slotDiameter: number;
-  };
+  indexedConveyors: [IndexedConveyorLayout, IndexedConveyorLayout];
   animation: {
     motionResponse: number;
     mechanismResponse: number;
@@ -63,9 +97,13 @@ export interface CellLayout {
 }
 
 export interface MachineState {
+  productType: ProductType;
   plcState: number;
   enabled: boolean;
+  alarm: boolean;
   disablePending: boolean;
+  powerAllowed: boolean;
+  resetAllowed: boolean;
   doorOpen: boolean;
   doorClosed: boolean;
   chuckOpen: boolean;
@@ -97,6 +135,11 @@ export interface RobotState {
   busy: boolean;
   done: boolean;
   error: boolean;
+  powerAllowed: boolean;
+  stopAllowed: boolean;
+  resetAllowed: boolean;
+  blankProductType: PayloadProductType;
+  detailProductType: PayloadProductType;
   blankAvailable: boolean;
   detailAvailable: boolean;
   gripper1Open: boolean;
@@ -119,6 +162,10 @@ export interface MagazineState {
   canPut: boolean;
   canChange: boolean;
   canEnable: boolean;
+  powerAllowed: boolean;
+  enableSequenceAllowed: boolean;
+  fillAllowed: boolean;
+  clearAllowed: boolean;
   currentBlank: number;
   currentFreeSlot: number;
   selectedBlank: number;
@@ -130,13 +177,31 @@ export interface MagazineState {
   pitchY: number;
   safeAbove: number;
   safeInside: number;
+  powered: boolean;
+  homed: boolean;
+  positionValid: boolean;
+  recoveryRequired: boolean;
+  indexAllowed: boolean;
+  zone1EditAllowed: boolean;
+  indexing: boolean;
+  indexDone: boolean;
+  axisError: boolean;
+  axisBusy: boolean;
+  axisDone: boolean;
+  axisPosition: number;
+  axisStep: string;
   activeErrors: string[];
   lastErrors: string[];
 }
 
+export interface MagazineData {
+  zones: [SlotType[], SlotType[], SlotType[]];
+  zoneProductTypes: [ProductType[], ProductType[], ProductType[]];
+  state: MagazineState;
+}
+
 export interface CellState {
-  robot: RobotState;
+	robot: RobotState;
   machines: MachineState[];
-  magazine: SlotType[];
-  magazineState: MagazineState;
+  magazines: [MagazineData, MagazineData];
 }

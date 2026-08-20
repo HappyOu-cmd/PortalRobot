@@ -1,6 +1,9 @@
 TYPE ST_AXIS_STATUS :
 STRUCT
     xPowered            : BOOL; // На привод подано питание
+	xPowerStageOn        : BOOL; // Фактическое подтверждение включения силовой части
+	xDriveStartOn        : BOOL; // Фактическое подтверждение снятого QuickStop
+	xPowerOff            : BOOL; // Силовая часть отключена и QuickStop активен
     xBusy               : BOOL; // Ось выполняет команду
     xDone               : BOOL; // Последняя команда завершена
     xError              : BOOL; // Активна любая ошибка оси

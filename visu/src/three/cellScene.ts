@@ -1,8 +1,14 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import type { CellLayout, CellState } from '../model/types';
+import type {
+  CellLayout,
+  CellState,
+  IndexedConveyorTestCommand,
+  IndexedConveyorTestStatus,
+  RobotCoordinateFrame,
+} from '../model/types';
 import { createMachine, disposeMachineRig, type MachineRig, updateMachineRig } from './machine';
-import { createMagazine, type MagazineRig, updateMagazineRig } from './magazine';
+import { createIndexedConveyor, type IndexedConveyorRig, updateIndexedConveyorRig } from './indexedConveyor';
 import { createPortal, type PortalRig, updatePortalRig } from './portal';
 import { COLORS, disposeObject, logicalPosition, material, mm } from './primitives';
 
@@ -16,7 +22,7 @@ export interface ScreenAnchor {
 
 export interface EquipmentAnchors {
   machines: ScreenAnchor[];
-  magazine: ScreenAnchor;
+  magazines: ScreenAnchor[];
 }
 
 export class CellScene {
@@ -30,19 +36,25 @@ export class CellScene {
   private cellRoot = new THREE.Group();
   private machineRigs: MachineRig[] = [];
   private portalRig?: PortalRig;
-  private magazineRig?: MagazineRig;
+  private indexedConveyorRigs: IndexedConveyorRig[] = [];
+  private indexedConveyorTest: IndexedConveyorTestCommand = { id: 0, type: 'none', magazineId: 1 };
+  private indexedConveyorStatusKeys = ['', ''];
   private state: CellState;
   private layout: CellLayout;
   private animationFrame = 0;
   private resizeObserver: ResizeObserver;
   private selectedMachine: number | null = null;
+  private syncMagazineInventory = true;
 
   constructor(
     private readonly host: HTMLElement,
     layout: CellLayout,
     state: CellState,
+    private readonly getRobotCoordinates: () => RobotCoordinateFrame,
     private readonly onMachineSelect: (index: number) => void,
+    private readonly onMagazineSelect?: (magazineId: 1 | 2) => void,
     private readonly onAnchorsUpdate?: (anchors: EquipmentAnchors) => void,
+    private readonly onIndexedConveyorTestStatus?: (magazineId: 1 | 2, status: IndexedConveyorTestStatus) => void,
   ) {
     this.layout = layout;
     this.state = state;
@@ -131,14 +143,26 @@ export class CellScene {
     this.machineRigs.forEach((rig) => this.cellRoot.add(rig.root));
     this.portalRig = createPortal(layout);
     this.cellRoot.add(this.portalRig.root);
-    this.magazineRig = createMagazine(layout);
-    this.cellRoot.add(this.magazineRig.root);
+    this.indexedConveyorRigs = layout.indexedConveyors.map((config, index) => {
+      const rig = createIndexedConveyor(config, (index + 1) as 1 | 2);
+      rig.lastCommandId = this.indexedConveyorTest.id;
+      this.cellRoot.add(rig.root);
+      return rig;
+    });
     this.scene.add(this.cellRoot);
     this.setSelectedMachine(this.selectedMachine);
   }
 
   setState(state: CellState): void {
     this.state = state;
+  }
+
+  setMagazineInventorySync(enabled: boolean): void {
+    this.syncMagazineInventory = enabled;
+  }
+
+  setIndexedConveyorTest(command: IndexedConveyorTestCommand): void {
+    this.indexedConveyorTest = command;
   }
 
   setSelectedMachine(index: number | null): void {
@@ -175,11 +199,21 @@ export class CellScene {
     this.pointer.x = ((event.clientX - bounds.left) / bounds.width) * 2 - 1;
     this.pointer.y = -((event.clientY - bounds.top) / bounds.height) * 2 + 1;
     this.raycaster.setFromCamera(this.pointer, this.camera);
-    const hit = this.raycaster.intersectObjects(this.machineRigs.map((rig) => rig.root), true)
-      .find((item) => Number.isInteger(item.object.userData.machineIndex));
-    if (hit) {
+    const roots = [
+      ...this.machineRigs.map((rig) => rig.root),
+      ...this.indexedConveyorRigs.map((rig) => rig.root),
+    ];
+    const hit = this.raycaster.intersectObjects(roots, true)[0];
+    let selected: THREE.Object3D | null = hit?.object ?? null;
+    while (selected && !Number.isInteger(selected.userData.machineIndex) && !Number.isInteger(selected.userData.magazineId)) {
+      selected = selected.parent;
+    }
+    if (selected && Number.isInteger(selected.userData.machineIndex)) {
       event.stopPropagation();
-      this.onMachineSelect(hit.object.userData.machineIndex as number);
+      this.onMachineSelect(selected.userData.machineIndex as number);
+    } else if (selected && Number.isInteger(selected.userData.magazineId)) {
+      event.stopPropagation();
+      this.onMagazineSelect?.(selected.userData.magazineId as 1 | 2);
     }
   };
 
@@ -195,28 +229,54 @@ export class CellScene {
   }
 
   private updateEquipmentAnchors(): void {
-    if (!this.onAnchorsUpdate || !this.magazineRig) return;
+    if (!this.onAnchorsUpdate || this.indexedConveyorRigs.length === 0) return;
     const machineWidth = mm(this.layout.machine.sizeX);
     const machines = this.machineRigs.map((rig) => this.projectAnchor(
       rig.root.localToWorld(new THREE.Vector3(machineWidth / 2, 0.03, 0.58)),
     ));
-    const magazine = this.projectAnchor(this.magazineRig.root.localToWorld(new THREE.Vector3(
-      mm(this.layout.magazine.sizeX) / 2,
-      -mm(this.layout.magazine.position.z) + 0.025,
-      0.42,
-    )));
-    this.onAnchorsUpdate({ machines, magazine });
+    const magazines = this.indexedConveyorRigs.map((rig, index) => {
+      const config = this.layout.indexedConveyors[index];
+      const conveyorRows = config.zoneRowsY.reduce((sum, rows) => sum + rows, 0);
+      return this.projectAnchor(rig.root.localToWorld(new THREE.Vector3(
+        0,
+        mm(config.workingHeight) + 0.14,
+        -mm(conveyorRows * config.pitchY) / 2,
+      )));
+    });
+    this.onAnchorsUpdate({ machines, magazines });
   }
 
   private readonly animate = (): void => {
     this.animationFrame = requestAnimationFrame(this.animate);
     const dt = Math.min(this.clock.getDelta(), 0.05);
-    if (this.portalRig) updatePortalRig(this.portalRig, this.state.robot, this.layout, dt);
+    if (this.portalRig) updatePortalRig(
+      this.portalRig,
+      this.state.robot,
+      this.getRobotCoordinates(),
+      this.layout,
+      dt,
+    );
     this.machineRigs.forEach((rig, index) => {
       const state = this.state.machines[index];
       if (state) updateMachineRig(rig, state, dt, this.layout.animation.mechanismResponse);
     });
-    if (this.magazineRig) updateMagazineRig(this.magazineRig, this.state.magazine);
+    this.indexedConveyorRigs.forEach((rig, index) => {
+      const magazineId = (index + 1) as 1 | 2;
+      const command = this.indexedConveyorTest.magazineId === magazineId
+        ? this.indexedConveyorTest
+        : { ...this.indexedConveyorTest, type: 'none' as const };
+      const status = updateIndexedConveyorRig(
+        rig,
+        command,
+        dt,
+        this.syncMagazineInventory ? this.state.magazines[index] : undefined,
+      );
+      const statusKey = `${status.moving}:${status.positionRows}:${status.loadedSlots}:${status.homed}`;
+      if (statusKey !== this.indexedConveyorStatusKeys[index]) {
+        this.indexedConveyorStatusKeys[index] = statusKey;
+        this.onIndexedConveyorTestStatus?.(magazineId, status);
+      }
+    });
     this.controls.update();
     this.renderer.render(this.scene, this.camera);
     this.updateEquipmentAnchors();

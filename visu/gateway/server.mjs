@@ -1,5 +1,7 @@
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
+import { randomUUID } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -26,6 +28,9 @@ import {
   cyclogramExportFilename,
   cyclogramRequiredSymbols,
 } from './cyclogram.mjs';
+import { CellEventClassifier, CellEventStore, describeOperatorCommand } from './cell-events.mjs';
+import { TestStore } from './test-store.mjs';
+import { isHmiCommandAllowedDuringTest } from './test-session.mjs';
 
 const endpointUrl = process.env.OPCUA_ENDPOINT ?? 'opc.tcp://127.0.0.1:4840';
 const gatewayPort = Number(process.env.GATEWAY_PORT ?? 3001);
@@ -39,34 +44,227 @@ const plcRootName = process.env.OPCUA_GVL ?? 'GVL_HMI';
 const cyclogramRetentionHours = Number(process.env.CYCLOGRAM_RETENTION_HOURS ?? 24);
 const cyclogramDbPath = process.env.CYCLOGRAM_DB_PATH ?? 'gateway/data/cyclogram.sqlite';
 const cyclogramTimeZone = process.env.CYCLOGRAM_TIMEZONE ?? 'Asia/Yekaterinburg';
+const cellEventsDbPath = process.env.CELL_EVENTS_DB_PATH ?? 'gateway/data/cell-events.sqlite';
+const cellEventsRetentionDays = Number(process.env.CELL_EVENTS_RETENTION_DAYS ?? 90);
+const testDbPath = process.env.TEST_DB_PATH ?? 'gateway/data/tests.sqlite';
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const distDir = normalize(join(__dirname, '..', 'dist'));
+const bundledTestPython = normalize(join(
+  __dirname, '..', '..', 'robot_simulator', '.venv',
+  process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python',
+));
+const testRunnerPython = process.env.TEST_RUNNER_PYTHON
+  ?? (existsSync(bundledTestPython) ? bundledTestPython : 'python');
+const robotSimulatorControlUrl = process.env.ROBOT_SIM_CONTROL_URL ?? 'http://127.0.0.1:8765';
+
+const faultStatusLeaves = ['xAllowed', 'xActive', 'xBusy', 'xResetAllowed', 'xRejected', 'udiRejectSequence'];
+const faultStatusSymbols = (root) => faultStatusLeaves.map((leaf) => `${root}.${leaf}`);
+const faultRequiredSymbols = [
+  'xErrorSimulationEnable', 'xErrorSimulationEnabled', 'xSimAxisGroupErrorAllowed',
+  'xSimulationAccelerationEnable', 'xSimulationAccelerationActive',
+  'xSimulationAccelerationChangeAllowed', 'uiSimulationTimeFactor',
+  'uiSimulationTimeFactorApplied', 'xSimulationAccelerationError',
+  'xCellSettingsChangeAllowed',
+  'lrSafetyHomeX', 'lrSafetyHomeY', 'lrSafetyHomeZ', 'lrSafetyHomeSpeedFactor',
+  'lrSafetyHomeToleranceX', 'lrSafetyHomeToleranceY', 'lrSafetyHomeToleranceZ',
+  'stCellMachineTimeouts.tRobotMove', 'stCellMachineTimeouts.tRobotAction',
+  'stCellMachineTimeouts.tRobotRelease', 'stCellMachineTimeouts.tDoorOpen',
+  'stCellMachineTimeouts.tDoorClose', 'stCellMachineTimeouts.tChuckOpen',
+  'stCellMachineTimeouts.tChuckClose', 'stCellMachineTimeouts.tCycleStart',
+  'xSimAxisGroupError', 'xSimRobotWrongAction', 'xSimCellBothGrippers',
+  'xSimGripper1Fault', 'xSimGripper2Fault', 'xSimGripperRotationFault', 'xSimGripperGlobalFault',
+  'xSimPointXOutOfLimit', 'xSimPointYOutOfLimit', 'xSimPointZOutOfLimit', 'xSimPointInvalidVelocity',
+  'xSimMagazineWrongOperation', 'xSimMagazineNoBlank', 'xSimMagazineNoFreeSlot',
+  'xSimMagazineInvalidSlot', 'xSimMagazineSlotContent', 'xSimMagazineGeometry',
+  'tMachineDoorOpenTime', 'tMachineDoorCloseTime', 'tMachineChuckOpenTime', 'tMachineChuckCloseTime',
+  'tGripper1OpenTime', 'tGripper1CloseTime', 'tGripper2OpenTime', 'tGripper2CloseTime', 'tGripperChangeTime',
+  ...[1, 2, 3].flatMap((index) => [
+    `axSimAxisJogConflict[${index}]`, `axMachineSimReset[${index}]`,
+    `axMachineSimAlarm[${index}]`, `axMachineSimDoorFault[${index}]`, `axMachineSimChuckFault[${index}]`,
+    `axMachineTimeoutRobotMove[${index}]`, `axMachineTimeoutRobotAction[${index}]`, `axMachineTimeoutRobotRelease[${index}]`,
+    `axMachineTimeoutDoorOpen[${index}]`, `axMachineTimeoutDoorClose[${index}]`,
+    `axMachineTimeoutChuckOpen[${index}]`, `axMachineTimeoutChuckClose[${index}]`, `axMachineTimeoutCycleStart[${index}]`,
+    `tMachineCycleTime[${index}]`,
+    ...faultStatusSymbols(`astAxisFaultStatus[${index}]`),
+    ...faultStatusSymbols(`astMachineFaultStatus[${index}]`),
+  ]),
+  ...faultStatusSymbols('stAxisGroupFaultStatus'),
+  ...faultStatusSymbols('stRobotFaultStatus'),
+  ...faultStatusSymbols('stCellFaultStatus'),
+  ...faultStatusSymbols('stGripperFaultStatus'),
+  ...faultStatusSymbols('stPointFaultStatus'),
+  ...faultStatusSymbols('stMagazineFaultStatus'),
+];
 
 const requiredSymbols = [...new Set([
   'udiPlcHeartbeat',
+  'xGlobalError',
   'stCellStatus.xRunning',
+  'stCellStatus.xError',
+  'stCellStatus.xStopPending',
   'stCellStatus.xReadyToStart',
+  'stCellStatus.xStartAllowed',
+  'stCellStatus.xStopAllowed',
+  'stCellStatus.xResetAllowed',
+  'stCellStatus.xManualAllowed',
+  'stCellStatus.xAutomaticAllowed',
   'stCellStatus.xDrivesReady',
   'stCellStatus.xRobotReady',
   'stCellStatus.xMagazineReady',
+  'stCellStatus.xSafetyHomeRequired',
+  'stCellStatus.xRobotAtSafetyHome',
+  'stCellStatus.xStartCheckCellIdle',
+  'stCellStatus.xStartCheckAutomaticMode',
+  'stCellStatus.xStartCheckNoBlockingError',
+  'stCellStatus.xStartCheckRobotInterfaceReady',
+  'stCellStatus.xStartCheckConfigurationValid',
+  'stCellStatus.xStartCheckDrivesReady',
+  'stCellStatus.xStartCheckRobotReady',
+  'stCellStatus.xStartCheckMagazineReady',
+  'stCellStatus.xStartCheckTaskAvailable',
+  'stCellStatus.xStartCheckSafetyHome',
+  'stCellStatus.uiStartConditionsMet',
+  'stCellStatus.uiStartConditionsTotal',
   'stCellStatus.uiReadyMachines',
   'stCellStatus.uiSelectedMachine',
+  'stCellStatus.xOperatorPromptActive',
+  'stCellStatus.xOperatorChoiceAllowed',
+  'stCellStatus.xOperatorCancelAllowed',
+  'stCellStatus.uiOperatorPrompt',
+  'stCellStatus.uiOperatorTypeMask',
+  'stCellStatus.uiOperatorMachineMask',
   'stCellDiag.eState',
   'rLoadCNC_1',
   'rLoadCNC_2',
   'rLoadCNC_3',
   'rRobot',
   'xCellManual',
+  'xModbusMode',
+  'uiRobotControlModeRequest',
+  'xRobotModeChangeAllowed',
+  'xModbusSettingsChangeAllowed',
+  'uiRobotModeRejectReason',
+  'uiModbusSettingsRejectReason',
+  'uiModbusIpOctet1',
+  'uiModbusIpOctet2',
+  'uiModbusIpOctet3',
+  'uiModbusIpOctet4',
+  'uiModbusPort',
+  'uiModbusUnitId',
+  'udiModbusResponseTimeoutMs',
+  'udiModbusPollIntervalMs',
+  'udiModbusHeartbeatTimeoutMs',
+  'stRobotModbusStatus.xConfigValid',
+  'stRobotModbusStatus.xConnected',
+  'stRobotModbusStatus.xCommunicationAlive',
+  'stRobotModbusStatus.xStatusFresh',
+  'stRobotModbusStatus.xControllerOn',
+  'stRobotModbusStatus.xAutomaticMode',
+  'stRobotModbusStatus.xRemoteEnabled',
+  'stRobotModbusStatus.xDrivesEnabled',
+  'stRobotModbusStatus.xHomed',
+  'stRobotModbusStatus.xEmergencyStop',
+  'stRobotModbusStatus.xRobotAlarm',
+  'stRobotModbusStatus.xPositionValid',
+  'stRobotModbusStatus.xSimulatorActive',
+  'stRobotModbusStatus.xReady',
+  'stRobotModbusStatus.xBusy',
+  'stRobotModbusStatus.xDone',
+  'stRobotModbusStatus.xError',
+  'stRobotModbusStatus.xCommandTimeout',
+  'stRobotModbusStatus.uiAckSeq',
+  'stRobotModbusStatus.uiExecutionState',
+  'stRobotModbusStatus.uiAlarmCode',
+  'stRobotModbusStatus.uiResultCode',
+  'stRobotModbusStatus.uiActiveCommand',
+  'stRobotModbusStatus.uiCurrentPoint',
+  'stRobotModbusStatus.uiGripperStatus',
+  'stRobotModbusStatus.uiRobotHeartbeat',
+  'stRobotModbusStatus.uiStatusWord',
+  'stRobotModbusStatus.uiOperationPhase',
+  'stRobotModbusStatus.uiProtocolVersion',
+  'stRobotModbusStatus.lrActualX',
+  'stRobotModbusStatus.lrActualY',
+  'stRobotModbusStatus.lrActualZ',
+  'stRobotModbusStatus.udiClientError',
+  'stRobotModbusStatus.udiReadError',
+  'stRobotModbusStatus.udiWriteError',
+  ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((index) => `auiRobotModbusWriteRegisters[${index}]`),
+  ...[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+    .map((index) => `auiRobotModbusReadRegisters[${index}]`),
   'stRobotDiag.eState',
   'stRobotDiag.eActiveAction',
   'stRobotDiag.eActivePoint',
   'stRobotStatus.xGripper1Closed',
+  'stRobotStatus.uiBlankPayloadType',
+  'stRobotStatus.uiDetailPayloadType',
+  'stRobotStatus.xPowerAllowed',
+  'stRobotStatus.xStopAllowed',
+  'stRobotStatus.xResetAllowed',
   'xRobotDrivesEnable',
   'xRobotDrivesDisable',
   'xRobotStop',
   'xRobotReset',
+  'udiHmiHeartbeat',
+  'xHmiConnectionAlive',
+  'xManualRecoveryActive',
+  'xRobotContinuousMode',
+  'uiRobotManualSlot',
+  'rRobotManualSpeedPercent',
+  'lrRobotManualStep',
+  'xRobotManualExecute',
+  'stRobotHmiStatus.xDrivesPowered',
+  'stRobotHmiStatus.xDrivesOff',
+  'stRobotHmiStatus.xPowerTransitionActive',
+  'stRobotHmiStatus.xDrivesEnableAllowed',
+  'stRobotHmiStatus.xDrivesDisableAllowed',
+  'stRobotHmiStatus.xResetAllowed',
+  'stRobotHmiStatus.xStopAllowed',
+  'stRobotHmiStatus.xPointsAllowed',
+  'stRobotHmiStatus.xGripperAllowed',
+  'stRobotHmiStatus.xGripper1OpenAllowed',
+  'stRobotHmiStatus.xGripper1CloseAllowed',
+  'stRobotHmiStatus.xGripper2OpenAllowed',
+  'stRobotHmiStatus.xGripper2CloseAllowed',
+  'stRobotHmiStatus.xRotateToBlankAllowed',
+  'stRobotHmiStatus.xRotateToDetailAllowed',
+  'stRobotHmiStatus.xCommandBusy',
+  'stRobotHmiStatus.uiActiveAction',
+  'stRobotHmiStatus.uiActivePoint',
+  'stRobotHmiStatus.eRejectReason',
+  ...[1, 2, 3].flatMap((index) => [
+    `astAxisHmiCommand[${index}].xJogPositive`,
+    `astAxisHmiCommand[${index}].xJogNegative`,
+    `astAxisHmiCommand[${index}].xHome`,
+    `astAxisHmiCommand[${index}].xMoveAbsolute`,
+    `astAxisHmiCommand[${index}].xMoveRelative`,
+    `astAxisHmiCommand[${index}].lrTargetPosition`,
+    `astAxisHmiCommand[${index}].lrRelativeDistance`,
+    `astAxisHmiStatus[${index}].xJogPositiveAllowed`,
+    `astAxisHmiStatus[${index}].xJogNegativeAllowed`,
+    `astAxisHmiStatus[${index}].xHomeAllowed`,
+    `astAxisHmiStatus[${index}].xMoveAbsoluteAllowed`,
+    `astAxisHmiStatus[${index}].xMoveRelativePositiveAllowed`,
+    `astAxisHmiStatus[${index}].xMoveRelativeNegativeAllowed`,
+    `astAxisHmiStatus[${index}].xDriveReady`,
+    `astAxisHmiStatus[${index}].xBusy`,
+    `astAxisHmiStatus[${index}].xError`,
+    `astAxisHmiStatus[${index}].xHomed`,
+    `astAxisHmiStatus[${index}].lrActualPosition`,
+    `astAxisHmiStatus[${index}].lrTargetPosition`,
+    `astAxisHmiStatus[${index}].lrDeviation`,
+    `astAxisHmiStatus[${index}].lrMinPosition`,
+    `astAxisHmiStatus[${index}].lrMaxPosition`,
+    `astAxisHmiStatus[${index}].lrCommandVelocity`,
+    `astAxisHmiStatus[${index}].lrMaxVelocity`,
+    `astAxisHmiStatus[${index}].eRejectReason`,
+    `astAxisHmiStatus[${index}].eState`,
+  ]),
   'astMachineStatus[1].xEnabled',
   'astMachineStatus[1].xProcessing',
+  'astMachineStatus[1].xAlarm',
+  'astMachineStatus[1].xPowerAllowed',
+  'astMachineStatus[1].xResetAllowed',
   'astMachineStatus[1].ePartType',
   'astMachineStatus[1].tCycleElapsed',
   'astMachineStatus[1].tCycleExpected',
@@ -79,21 +277,83 @@ const requiredSymbols = [...new Set([
   'axMachineRejectDoor[1]',
   'axMachineAcceptRun[1]',
   'axMachineRejectRun[1]',
-  'stMagazineStatus.xEnabled',
-  'stMagazineStatus.xDisablePending',
-  'stMagazineStatus.eActualOperation',
-  'stMagazineStatus.iSelectedBlank',
-  'stMagazineStatus.iSelectedFreeSlot',
-  'stMagazineDiag.eState',
-  'astMagazineSlot[1].eDetailType',
-  'xMagazineCycleSlot',
-  'uiMagazineEditSlot',
-  'MagazineSafeZ_2',
+  'stCellStatus.uiActiveMagazine',
+  'uiRobotManualMagazine',
+  'MagazineRows', 'MagazineColumns', 'MagazinePitchX', 'MagazinePitchY',
+  ...[1, 2].flatMap((index) => [
+    `astMagazineStatus[${index}].xEnabled`, `astMagazineStatus[${index}].xDisablePending`,
+    `astMagazineStatus[${index}].xPowerAllowed`, `astMagazineStatus[${index}].xEnableSequenceAllowed`,
+    `astMagazineStatus[${index}].xFillAllowed`,
+    `astMagazineStatus[${index}].xClearAllowed`, `astMagazineStatus[${index}].xReady`,
+    `astMagazineStatus[${index}].xBusy`, `astMagazineStatus[${index}].xDone`,
+    `astMagazineStatus[${index}].xError`, `astMagazineStatus[${index}].xFinished`,
+    `astMagazineStatus[${index}].xCanTake`, `astMagazineStatus[${index}].xCanPut`,
+    `astMagazineStatus[${index}].xCanChange`, `astMagazineStatus[${index}].xCanEnable`,
+    `astMagazineStatus[${index}].xHomed`, `astMagazineStatus[${index}].xPositionValid`,
+    `astMagazineStatus[${index}].xRecoveryRequired`, `astMagazineStatus[${index}].xIndexAllowed`,
+    `astMagazineStatus[${index}].xZone1EditAllowed`, `astMagazineStatus[${index}].xIndexing`,
+    `astMagazineStatus[${index}].xIndexDone`, `astMagazineStatus[${index}].xAxisError`,
+    `astMagazineStatus[${index}].iCurrentBlank`, `astMagazineStatus[${index}].iCurrentFreeSlot`,
+    `astMagazineStatus[${index}].iSelectedBlank`, `astMagazineStatus[${index}].iSelectedFreeSlot`,
+    `astMagazineStatus[${index}].eActualOperation`, `astMagazineDiag[${index}].eState`,
+    `astMagazineError[${index}].dwErrorActive`, `astMagazineError[${index}].dwErrorLast`,
+    `astMagazineAxisStatus[${index}].xPowered`, `astMagazineAxisStatus[${index}].xBusy`,
+    `astMagazineAxisStatus[${index}].xDone`, `astMagazineAxisStatus[${index}].xError`,
+    `astMagazineAxisStatus[${index}].lrActualPosition`, `astMagazineAxisDiag[${index}].sStepName`,
+    `astMagazineCommand[${index}].xEnable`, `astMagazineCommand[${index}].xDisable`,
+    `astMagazineCommand[${index}].xPowerOn`, `astMagazineCommand[${index}].xPowerOff`,
+    `astMagazineCommand[${index}].xHome`, `astMagazineCommand[${index}].xIndex`,
+    `astMagazineCommand[${index}].xStop`, `astMagazineCommand[${index}].xReset`,
+    `astMagazineCommand[${index}].xFillZone1`, `astMagazineCommand[${index}].xClearZone1`,
+    `astMagazineCommand[${index}].xCycleZone1Slot`, `astMagazineCommand[${index}].xApplyZone1Slot`,
+    `astMagazineCommand[${index}].uiEditSlot`, `astMagazineCommand[${index}].uiEditDetailType`,
+    `astMagazineCommand[${index}].uiEditProductType`,
+    `alrMagazineSafeZ_1[${index}]`, `alrMagazineSafeZ_2[${index}]`,
+    ...[1, 2, 3].flatMap((zone) => Array.from({ length: zone === 3 ? 60 : 120 }, (_, slot) => [
+      `astMagazineInventory[${index}].aZone${zone}[${slot + 1}].xInPosition`,
+      `astMagazineInventory[${index}].aZone${zone}[${slot + 1}].eDetailType`,
+      `astMagazineInventory[${index}].aZone${zone}[${slot + 1}].uiProductType`,
+    ]).flat()),
+  ]),
+  'stMultiType.Config.uiTypeCount',
+  'stMultiType.ConfigStatus.xMagazineConfigAllowed',
+  'stMultiType.ConfigStatus.xTypeCountAllowed',
+  'stMultiType.ConfigStatus.xConfigurationValid',
+  'stMultiType.CycleStatus.uiSelectedType',
+  'stMultiType.CycleStatus.xReturningBlank',
+  ...[1, 2, 3].flatMap((index) => [
+    `stMultiType.Config.auiMachineType[${index}]`,
+    `stMultiType.ConfigStatus.axMachineTypeAllowed[${index}]`,
+    `astMachineStatus[${index}].xEnabled`, `astMachineStatus[${index}].xProcessing`,
+    `astMachineStatus[${index}].ePartType`,
+  ]),
+  ...Array.from({ length: 120 }, (_, index) => `stMultiType.Config.auiSlotType[${index + 1}]`),
+  'stRobotStatus.xGripper1Closed', 'stRobotStatus.xGripper2Closed',
+  'stRobotStatus.xGripper1Open', 'stRobotStatus.xGripper2Open',
+  'stRobotStatus.xRotatedToBlank', 'stRobotStatus.xRotatedToDetail',
+  'stRobotStatus.xBusy', 'stRobotStatus.xError', 'stRobotStatus.eCurrentPoint',
   'astMachineStatus[1].xDisablePending',
   'stAlarmStatus.uiActiveAlarmCount',
   'stAlarmStatus.uiActiveWarningCount',
   'astAlarmEvent[1].udiSequence',
+  ...faultRequiredSymbols,
   ...cyclogramRequiredSymbols,
+  'uiTestEnvironmentRequest', 'xTestEnvironmentApply', 'uiTestSpeedProfileRequest', 'xTestSpeedProfileApply',
+  'xTestSessionActive', 'xTestScenarioApply', 'uiTestEnvironmentApplied', 'uiTestSpeedProfileApplied',
+  'xTestEnvironmentChangeAllowed', 'xTestScenarioApplyAllowed', 'xSc500BenchKeyActive', 'xSc500BenchKeyLost',
+  'uiTestRejectReason', 'udiTestScenarioAckSeq', 'uiTestScenarioResult', 'stTestScenario.udiLoadSeq',
+  'stTestScenario.uiTypeCount', 'stTestScenario.xMagazineEnabled', 'stTestScenario.uiOrientation',
+  'stTestScenario.dwCellFaultMask', 'stTestScenario.dwRobotFaultMask', 'stTestScenario.dwMagazineFaultMask',
+  ...[1, 2, 3].map((index) => `stTestScenario.adwMachineFaultMask[${index}]`),
+  ...[1, 2, 3].flatMap((index) => [`stTestScenario.auiMachineState[${index}]`, `stTestScenario.auiMachineType[${index}]`]),
+  ...[1, 2].flatMap((index) => [`stTestScenario.auiGripperContent[${index}]`, `stTestScenario.auiGripperType[${index}]`]),
+  ...Array.from({ length: 120 }, (_, index) => [`stTestScenario.auiSlotContent[${index + 1}]`, `stTestScenario.auiSlotType[${index + 1}]`]).flat(),
+  'stTestObservability.udiAppliedScenarioSeq', 'stTestObservability.uiCellState',
+  'stTestObservability.uiRobotState', 'stTestObservability.uiRobotAction', 'stTestObservability.uiRobotPoint',
+  'stTestObservability.uiMagazineState', 'stTestObservability.uiMagazineOperation',
+  'stTestObservability.uiTakeSlot', 'stTestObservability.uiPutSlot', 'stTestObservability.uiSelectedMachine',
+  'stTestObservability.uiSelectedType', 'stTestObservability.uiErrorSource', 'stTestObservability.dwErrorCode',
+  ...[1, 2, 3].flatMap((index) => [`stTestObservability.auiMachineState[${index}]`, `stTestObservability.auiMachineOperation[${index}]`]),
 ])];
 const cyclogramSymbolSet = new Set(cyclogramRequiredSymbols);
 
@@ -103,16 +363,81 @@ const commandMap = {
   'cell.start': { path: 'xCellStart', dataType: DataType.Boolean, pulse: true },
   'cell.stop': { path: 'xCellStop', dataType: DataType.Boolean, pulse: true },
   'cell.reset': { path: 'xCellReset', dataType: DataType.Boolean, pulse: true },
+  'cell.operatorCancel': { path: 'xCellOperatorCancel', dataType: DataType.Boolean, pulse: true },
   'alarms.resetWarnings': { path: 'xAlarmResetWarnings', dataType: DataType.Boolean, pulse: true },
   'cell.manual': { path: 'xCellManual', dataType: DataType.Boolean },
+  'test.session': { path: 'xTestSessionActive', dataType: DataType.Boolean },
+  'robot.modbus.ip1': { path: 'uiModbusIpOctet1', dataType: DataType.UInt16, transform: (v) => Math.max(0, Math.min(255, Math.round(Number(v)))) },
+  'robot.modbus.ip2': { path: 'uiModbusIpOctet2', dataType: DataType.UInt16, transform: (v) => Math.max(0, Math.min(255, Math.round(Number(v)))) },
+  'robot.modbus.ip3': { path: 'uiModbusIpOctet3', dataType: DataType.UInt16, transform: (v) => Math.max(0, Math.min(255, Math.round(Number(v)))) },
+  'robot.modbus.ip4': { path: 'uiModbusIpOctet4', dataType: DataType.UInt16, transform: (v) => Math.max(0, Math.min(255, Math.round(Number(v)))) },
+  'robot.modbus.port': { path: 'uiModbusPort', dataType: DataType.UInt16, transform: (v) => Math.max(1, Math.min(65535, Math.round(Number(v)))) },
+  'robot.modbus.unitId': { path: 'uiModbusUnitId', dataType: DataType.UInt16, transform: (v) => Math.max(0, Math.min(255, Math.round(Number(v)))) },
+  'robot.modbus.responseTimeout': { path: 'udiModbusResponseTimeoutMs', dataType: DataType.UInt32, transform: (v) => Math.max(50, Math.min(10000, Math.round(Number(v)))) },
+  'robot.modbus.pollInterval': { path: 'udiModbusPollIntervalMs', dataType: DataType.UInt32, transform: (v) => Math.max(10, Math.min(5000, Math.round(Number(v)))) },
+  'robot.modbus.heartbeatTimeout': { path: 'udiModbusHeartbeatTimeoutMs', dataType: DataType.UInt32, transform: (v) => Math.max(500, Math.min(30000, Math.round(Number(v)))) },
+  'robot.modbus.apply': { path: 'xModbusSettingsApply', dataType: DataType.Boolean, pulse: true },
+  'cell.settings.safetyHomeX': { path: 'lrSafetyHomeX', dataType: DataType.Double, transform: (v) => Number(v) },
+  'cell.settings.safetyHomeY': { path: 'lrSafetyHomeY', dataType: DataType.Double, transform: (v) => Number(v) },
+  'cell.settings.safetyHomeZ': { path: 'lrSafetyHomeZ', dataType: DataType.Double, transform: (v) => Number(v) },
+  'cell.settings.safetyHomeSpeed': { path: 'lrSafetyHomeSpeedFactor', dataType: DataType.Double, transform: (v) => Math.max(0.11, Math.min(1, Number(v))) },
+  'cell.settings.safetyHomeToleranceX': { path: 'lrSafetyHomeToleranceX', dataType: DataType.Double, transform: (v) => Math.max(0.1, Math.min(1000, Number(v))) },
+  'cell.settings.safetyHomeToleranceY': { path: 'lrSafetyHomeToleranceY', dataType: DataType.Double, transform: (v) => Math.max(0.1, Math.min(1000, Number(v))) },
+  'cell.settings.safetyHomeToleranceZ': { path: 'lrSafetyHomeToleranceZ', dataType: DataType.Double, transform: (v) => Math.max(0.1, Math.min(1000, Number(v))) },
+  'cell.settings.timeoutRobotMove': { path: 'stCellMachineTimeouts.tRobotMove', dataType: DataType.Int64, transform: (v) => Math.max(1000, Math.min(600000, Math.round(Number(v) * 1000))) },
+  'cell.settings.timeoutRobotAction': { path: 'stCellMachineTimeouts.tRobotAction', dataType: DataType.Int64, transform: (v) => Math.max(1000, Math.min(600000, Math.round(Number(v) * 1000))) },
+  'cell.settings.timeoutRobotRelease': { path: 'stCellMachineTimeouts.tRobotRelease', dataType: DataType.Int64, transform: (v) => Math.max(1000, Math.min(600000, Math.round(Number(v) * 1000))) },
+  'cell.settings.timeoutDoorOpen': { path: 'stCellMachineTimeouts.tDoorOpen', dataType: DataType.Int64, transform: (v) => Math.max(1000, Math.min(600000, Math.round(Number(v) * 1000))) },
+  'cell.settings.timeoutDoorClose': { path: 'stCellMachineTimeouts.tDoorClose', dataType: DataType.Int64, transform: (v) => Math.max(1000, Math.min(600000, Math.round(Number(v) * 1000))) },
+  'cell.settings.timeoutChuckOpen': { path: 'stCellMachineTimeouts.tChuckOpen', dataType: DataType.Int64, transform: (v) => Math.max(1000, Math.min(600000, Math.round(Number(v) * 1000))) },
+  'cell.settings.timeoutChuckClose': { path: 'stCellMachineTimeouts.tChuckClose', dataType: DataType.Int64, transform: (v) => Math.max(1000, Math.min(600000, Math.round(Number(v) * 1000))) },
+  'cell.settings.timeoutCycleStart': { path: 'stCellMachineTimeouts.tCycleStart', dataType: DataType.Int64, transform: (v) => Math.max(1000, Math.min(600000, Math.round(Number(v) * 1000))) },
+  'multi.autoDistribute': { path: 'stMultiType.Command.xAutoDistribute', dataType: DataType.Boolean, pulse: true },
+  'fault.enable': { path: 'xErrorSimulationEnable', dataType: DataType.Boolean },
+  'simulation.accelerationEnable': { path: 'xSimulationAccelerationEnable', dataType: DataType.Boolean },
+  'simulation.accelerationFactor': { path: 'uiSimulationTimeFactor', dataType: DataType.UInt16, transform: (v) => Math.max(1, Math.min(100, Math.round(Number(v)))) },
+  'fault.axisGroup': { path: 'xSimAxisGroupError', dataType: DataType.Boolean, pulse: true },
+  'fault.robotWrongAction': { path: 'xSimRobotWrongAction', dataType: DataType.Boolean, pulse: true },
+  'fault.cellBothGrippers': { path: 'xSimCellBothGrippers', dataType: DataType.Boolean, pulse: true },
+  'fault.gripper1': { path: 'xSimGripper1Fault', dataType: DataType.Boolean },
+  'fault.gripper2': { path: 'xSimGripper2Fault', dataType: DataType.Boolean },
+  'fault.gripperRotation': { path: 'xSimGripperRotationFault', dataType: DataType.Boolean },
+  'fault.gripperGlobal': { path: 'xSimGripperGlobalFault', dataType: DataType.Boolean },
+  'fault.pointXOutOfLimit': { path: 'xSimPointXOutOfLimit', dataType: DataType.Boolean, pulse: true },
+  'fault.pointYOutOfLimit': { path: 'xSimPointYOutOfLimit', dataType: DataType.Boolean, pulse: true },
+  'fault.pointZOutOfLimit': { path: 'xSimPointZOutOfLimit', dataType: DataType.Boolean, pulse: true },
+  'fault.pointInvalidVelocity': { path: 'xSimPointInvalidVelocity', dataType: DataType.Boolean, pulse: true },
+  'fault.magazineWrongOperation': { path: 'xSimMagazineWrongOperation', dataType: DataType.Boolean, pulse: true },
+  'fault.magazineNoBlank': { path: 'xSimMagazineNoBlank', dataType: DataType.Boolean, pulse: true },
+  'fault.magazineNoFreeSlot': { path: 'xSimMagazineNoFreeSlot', dataType: DataType.Boolean, pulse: true },
+  'fault.magazineInvalidSlot': { path: 'xSimMagazineInvalidSlot', dataType: DataType.Boolean, pulse: true },
+  'fault.magazineSlotContent': { path: 'xSimMagazineSlotContent', dataType: DataType.Boolean, pulse: true },
+  'fault.magazineGeometry': { path: 'xSimMagazineGeometry', dataType: DataType.Boolean, pulse: true },
+  'simulation.machineDoorOpen': { path: 'tMachineDoorOpenTime', dataType: DataType.Int64, transform: (v) => Math.max(50, Math.min(120000, Math.round(Number(v) * 1000))) },
+  'simulation.machineDoorClose': { path: 'tMachineDoorCloseTime', dataType: DataType.Int64, transform: (v) => Math.max(50, Math.min(120000, Math.round(Number(v) * 1000))) },
+  'simulation.machineChuckOpen': { path: 'tMachineChuckOpenTime', dataType: DataType.Int64, transform: (v) => Math.max(50, Math.min(120000, Math.round(Number(v) * 1000))) },
+  'simulation.machineChuckClose': { path: 'tMachineChuckCloseTime', dataType: DataType.Int64, transform: (v) => Math.max(50, Math.min(120000, Math.round(Number(v) * 1000))) },
+  'simulation.gripper1Open': { path: 'tGripper1OpenTime', dataType: DataType.Int64, transform: (v) => Math.max(50, Math.min(120000, Math.round(Number(v) * 1000))) },
+  'simulation.gripper1Close': { path: 'tGripper1CloseTime', dataType: DataType.Int64, transform: (v) => Math.max(50, Math.min(120000, Math.round(Number(v) * 1000))) },
+  'simulation.gripper2Open': { path: 'tGripper2OpenTime', dataType: DataType.Int64, transform: (v) => Math.max(50, Math.min(120000, Math.round(Number(v) * 1000))) },
+  'simulation.gripper2Close': { path: 'tGripper2CloseTime', dataType: DataType.Int64, transform: (v) => Math.max(50, Math.min(120000, Math.round(Number(v) * 1000))) },
+  'simulation.gripperChange': { path: 'tGripperChangeTime', dataType: DataType.Int64, transform: (v) => Math.max(50, Math.min(120000, Math.round(Number(v) * 1000))) },
   'robot.enableDrives': { path: 'xRobotDrivesEnable', dataType: DataType.Boolean, pulse: true },
   'robot.disableDrives': { path: 'xRobotDrivesDisable', dataType: DataType.Boolean, pulse: true },
   'robot.stop': { path: 'xRobotStop', dataType: DataType.Boolean, pulse: true },
   'robot.reset': { path: 'xRobotReset', dataType: DataType.Boolean, pulse: true },
-  'magazine.enable': { path: 'xMagazineEnable', dataType: DataType.Boolean, pulse: true },
-  'magazine.disable': { path: 'xMagazineDisable', dataType: DataType.Boolean, pulse: true },
-  'magazine.fillBlanks': { path: 'xMagazineFillBlanks', dataType: DataType.Boolean, pulse: true },
-  'magazine.clear': { path: 'xMagazineClear', dataType: DataType.Boolean, pulse: true },
+  'hmi.heartbeat': { path: 'udiHmiHeartbeat', dataType: DataType.UInt32, transform: (v) => Math.max(0, Math.round(Number(v))) },
+  'robot.continuousMode': { path: 'xRobotContinuousMode', dataType: DataType.Boolean },
+  'robot.speedOverride': {
+    path: 'rRobotManualSpeedPercent',
+    dataType: DataType.Float,
+    transform: (value) => {
+      const numeric = Number(value);
+      const bounded = Math.max(0.1, Math.min(100, Number.isFinite(numeric) ? numeric : 0.1));
+      return Math.round(bounded * 10) / 10;
+    },
+  },
+  'robot.manualStep': { path: 'lrRobotManualStep', dataType: DataType.Double, transform: (v) => [0.1, 1, 10, 100].includes(Number(v)) ? Number(v) : 1 },
   'magazine.rows': { path: 'MagazineRows', dataType: DataType.UInt16, transform: (v) => Math.max(1, Math.min(70, Math.round(Number(v)))) },
   'magazine.columns': { path: 'MagazineColumns', dataType: DataType.UInt16, transform: (v) => Math.max(1, Math.min(70, Math.round(Number(v)))) },
   'magazine.pitchX': { path: 'MagazinePitchX', dataType: DataType.Double, transform: (v) => Number(v) },
@@ -124,6 +449,52 @@ const commandMap = {
 let opcua = null;
 let symbolNodes = new Map();
 let latestValues = {};
+const robotCoordinatePaths = ['lrActualX', 'lrActualY', 'lrActualZ'];
+const robotCoordinatePathSet = new Set(robotCoordinatePaths);
+const robotCoordinateSourceTimestamps = new Map();
+let robotCoordinateSequence = 0;
+let latestRobotCoordinateFrame = null;
+let robotSourceClockOffsetMs = null;
+let lastRobotSourceTimestampMs = null;
+
+function dataValueTimestampMs(dataValue) {
+  const timestamp = dataValue.sourceTimestamp ?? dataValue.serverTimestamp;
+  const timestampMs = timestamp instanceof Date ? timestamp.getTime() : Number.NaN;
+  return Number.isFinite(timestampMs) && timestampMs > 0 ? timestampMs : null;
+}
+
+function normalizeRobotSourceTimestamp(sourceTimestampMs, receivedTimestampMs) {
+  if (!Number.isFinite(sourceTimestampMs)) return receivedTimestampMs;
+  const candidateOffsetMs = receivedTimestampMs - sourceTimestampMs;
+  const clockDiscontinuity = lastRobotSourceTimestampMs !== null
+    && sourceTimestampMs < lastRobotSourceTimestampMs;
+  const offsetDiscontinuity = robotSourceClockOffsetMs !== null
+    && Math.abs(candidateOffsetMs - robotSourceClockOffsetMs) > 1_000;
+  if (robotSourceClockOffsetMs === null || clockDiscontinuity || offsetDiscontinuity) {
+    robotSourceClockOffsetMs = candidateOffsetMs;
+  }
+  lastRobotSourceTimestampMs = sourceTimestampMs;
+  return sourceTimestampMs + robotSourceClockOffsetMs;
+}
+
+function captureRobotCoordinateFrame(receivedTimestampMs = Date.now(), sourceTimestampMs = null) {
+  const coordinates = {
+    x: Number(latestValues.lrActualX),
+    y: Number(latestValues.lrActualY),
+    z: Number(latestValues.lrActualZ),
+  };
+  if (!Object.values(coordinates).every(Number.isFinite)) return latestRobotCoordinateFrame;
+  robotCoordinateSequence = (robotCoordinateSequence + 1) >>> 0;
+  if (robotCoordinateSequence === 0) robotCoordinateSequence = 1;
+  const normalizedTimestampMs = normalizeRobotSourceTimestamp(sourceTimestampMs, receivedTimestampMs);
+  latestRobotCoordinateFrame = {
+    sequence: robotCoordinateSequence,
+    timestampMs: normalizedTimestampMs,
+    sourceTimestampMs: Number.isFinite(sourceTimestampMs) ? sourceTimestampMs : receivedTimestampMs,
+    coordinates,
+  };
+  return latestRobotCoordinateFrame;
+}
 let cyclogramConnected = false;
 let stableCyclogramStates = null;
 let transientRobotSince = null;
@@ -139,6 +510,69 @@ try {
   console.error(`[Cyclogram] Storage unavailable: ${cyclogramError}`);
 }
 
+let cellEventStore = null;
+let cellEventError = '';
+let testStore = null;
+let testStoreError = '';
+let activeTestRun = null;
+const cellEventClassifier = new CellEventClassifier();
+let lastSystemEventKey = '';
+try {
+  cellEventStore = new CellEventStore({
+    databasePath: cellEventsDbPath,
+    retentionDays: cellEventsRetentionDays,
+  });
+} catch (error) {
+  cellEventError = error instanceof Error ? error.message : String(error);
+  console.error(`[Cell events] Storage unavailable: ${cellEventError}`);
+}
+
+try {
+  testStore = new TestStore(testDbPath);
+  const recoveredTestRuns = testStore.recoverInterruptedRuns();
+  if (recoveredTestRuns > 0) console.warn(`[Tests] Marked ${recoveredTestRuns} interrupted run(s) as ERROR`);
+} catch (error) {
+  testStoreError = error instanceof Error ? error.message : String(error);
+  console.error(`[Tests] Storage unavailable: ${testStoreError}`);
+}
+
+function testHealth() {
+  return { available: Boolean(testStore), activeRunId: activeTestRun?.id ?? null, error: testStoreError || null };
+}
+
+async function simulatorControlHealth() {
+  try {
+    const response = await fetch(`${robotSimulatorControlUrl}/api/health`, {
+      signal: AbortSignal.timeout(700),
+      headers: { Accept: 'application/json' },
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const value = await response.json();
+    if (value.service !== 'portal-robot-simulator-control') throw new Error('неизвестный сервис');
+    return {
+      available: true,
+      modbusRunning: Boolean(value.modbus?.running),
+      sessionActive: Boolean(value.session?.active),
+      apiVersion: Number(value.apiVersion ?? 0),
+      error: value.modbus?.error || null,
+    };
+  } catch (error) {
+    return {
+      available: false, modbusRunning: false, sessionActive: false, apiVersion: 0,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function cellEventHealth() {
+  if (!cellEventStore) return { available: false, error: cellEventError || 'Хранилище журнала недоступно' };
+  try { return cellEventStore.status(); }
+  catch (error) {
+    cellEventError = error instanceof Error ? error.message : String(error);
+    return { available: false, error: cellEventError };
+  }
+}
+
 function cyclogramHealth(now = Date.now()) {
   if (!cyclogramStore) return { available: false, error: cyclogramError || 'Хранилище циклограммы недоступно' };
   try {
@@ -151,7 +585,7 @@ function cyclogramHealth(now = Date.now()) {
 
 let connectionState = {
   status: 'connecting', endpoint: endpointUrl, message: 'Подключение к OPC UA', symbols: 0, missing: requiredSymbols,
-  cyclogram: cyclogramHealth(),
+  cyclogram: cyclogramHealth(), cellEvents: cellEventHealth(),
 };
 
 const mimeTypes = {
@@ -190,7 +624,45 @@ function publishConnection() {
 }
 
 function publishSnapshot(values = latestValues, full = true) {
-  broadcast({ type: 'snapshot', timestamp: Date.now(), full, values });
+  const timestamp = Date.now();
+  const hasRobotCoordinates = full || robotCoordinatePaths.some((path) => Object.hasOwn(values, path));
+  const coordinateSourceTimestamps = robotCoordinatePaths
+    .filter((path) => full || Object.hasOwn(values, path))
+    .map((path) => robotCoordinateSourceTimestamps.get(path))
+    .filter(Number.isFinite);
+  const sourceTimestampMs = coordinateSourceTimestamps.length > 0
+    ? Math.max(...coordinateSourceTimestamps)
+    : null;
+  const robotFrame = hasRobotCoordinates
+    ? captureRobotCoordinateFrame(timestamp, sourceTimestampMs)
+    : undefined;
+  broadcast({ type: 'snapshot', timestamp, full, values, ...(robotFrame ? { robotFrame } : {}) });
+}
+
+function recordCellEvent(event, { broadcastEvent = true } = {}) {
+  if (!cellEventStore) return null;
+  try {
+    const saved = cellEventStore.record(event);
+    if (broadcastEvent) broadcast({ type: 'cell-event', event: saved, serverTime: Date.now() });
+    return saved;
+  } catch (error) {
+    cellEventError = error instanceof Error ? error.message : String(error);
+    console.error(`[Cell events] ${cellEventError}`);
+    return null;
+  }
+}
+
+function recordCellSnapshot(timestamp = Date.now()) {
+  for (const event of cellEventClassifier.process(latestValues, timestamp)) recordCellEvent(event);
+}
+
+function recordSystemEvent(status, message, details) {
+  const key = `${status}:${message}`;
+  if (key === lastSystemEventKey) return null;
+  lastSystemEventKey = key;
+  return recordCellEvent({
+    timestampMs: Date.now(), sourceId: 8, eventType: 'connection', status, message, details,
+  });
 }
 
 function hasCyclogramData() {
@@ -309,7 +781,13 @@ async function readInitialValues(session, entries) {
     const requests = chunk.map(([, nodeId]) => ({ nodeId, attributeId: AttributeIds.Value }));
     const values = await session.read(requests);
     chunk.forEach(([path], index) => {
-      if (values[index]?.statusCode?.isGood()) latestValues[path] = jsonValue(values[index].value.value);
+      const dataValue = values[index];
+      if (!dataValue?.statusCode?.isGood()) return;
+      latestValues[path] = jsonValue(dataValue.value.value);
+      if (robotCoordinatePathSet.has(path)) {
+        const timestampMs = dataValueTimestampMs(dataValue);
+        if (timestampMs !== null) robotCoordinateSourceTimestamps.set(path, timestampMs);
+      }
     });
   }
 }
@@ -326,17 +804,236 @@ async function writeValue(path, dataType, value) {
   publishSnapshot({ [path]: latestValues[path] }, false);
 }
 
+async function pulseValue(path) {
+  await writeValue(path, DataType.Boolean, true);
+  setTimeout(() => writeValue(path, DataType.Boolean, false).catch(console.error), 150);
+}
+
 async function executeCommand(message) {
   const requestId = String(message.requestId ?? Date.now());
-  if (message.command === 'magazine.setSlot') {
-    const slot = Math.round(Number(message.value));
-    if (!Number.isInteger(slot) || slot < 1 || slot > 70) throw new Error('Неверный номер слота магазина');
-    await writeValue('uiMagazineEditSlot', DataType.UInt16, slot);
-    await writeValue('xMagazineCycleSlot', DataType.Boolean, true);
-    setTimeout(() => writeValue('xMagazineCycleSlot', DataType.Boolean, false).catch(console.error), 150);
+  if (message.command === 'test.environment.set') {
+    const environment = Math.round(Number(message.value));
+    if (![0, 1, 2].includes(environment)) throw new Error('Недопустимая тестовая среда');
+    await writeValue('uiTestEnvironmentRequest', DataType.UInt16, environment);
+    await writeValue('xTestEnvironmentApply', DataType.Boolean, true);
+    setTimeout(() => writeValue('xTestEnvironmentApply', DataType.Boolean, false).catch(console.error), 150);
+    return requestId;
+  }
+  if (message.command === 'test.speed.set') {
+    const profile = Math.round(Number(message.value));
+    if (![0, 1].includes(profile)) throw new Error('Недопустимый профиль скорости теста');
+    await writeValue('uiTestSpeedProfileRequest', DataType.UInt16, profile);
+    await writeValue('xTestSpeedProfileApply', DataType.Boolean, true);
+    setTimeout(() => writeValue('xTestSpeedProfileApply', DataType.Boolean, false).catch(console.error), 150);
+    return requestId;
+  }
+  if (message.command === 'test.faults.clear') {
+    const paths = [
+      'xErrorSimulationEnable', 'xSimCellBothGrippers', 'xSimRobotWrongAction',
+      'xSimGripper1Fault', 'xSimGripper2Fault', 'xSimGripperRotationFault', 'xSimGripperGlobalFault',
+      'xSimPointXOutOfLimit', 'xSimPointYOutOfLimit', 'xSimPointZOutOfLimit', 'xSimPointInvalidVelocity',
+      'xSimMagazineWrongOperation', 'xSimMagazineNoBlank', 'xSimMagazineNoFreeSlot',
+      'xSimMagazineInvalidSlot', 'xSimMagazineSlotContent', 'xSimMagazineGeometry',
+      ...[1, 2, 3].flatMap((index) => [
+        `axMachineSimAlarm[${index}]`, `axMachineSimDoorFault[${index}]`, `axMachineSimChuckFault[${index}]`,
+        `axMachineTimeoutRobotMove[${index}]`, `axMachineTimeoutRobotAction[${index}]`,
+        `axMachineTimeoutRobotRelease[${index}]`, `axMachineTimeoutDoorOpen[${index}]`,
+        `axMachineTimeoutDoorClose[${index}]`, `axMachineTimeoutChuckOpen[${index}]`,
+        `axMachineTimeoutChuckClose[${index}]`, `axMachineTimeoutCycleStart[${index}]`,
+      ]),
+    ];
+    for (const path of paths) await writeValue(path, DataType.Boolean, false);
+    return requestId;
+  }
+  if (message.command === 'test.scenario.apply') {
+    const scenario = message.scenario;
+    if (!scenario || !Array.isArray(scenario.slots) || scenario.slots.length !== 120) throw new Error('Сценарий должен содержать ровно 120 слотов');
+    const machines = Array.isArray(scenario.machines) ? scenario.machines : [];
+    const grippers = Array.isArray(scenario.grippers) ? scenario.grippers : [];
+    await writeValue('stTestScenario.uiTypeCount', DataType.UInt16, Number(scenario.typeCount ?? 1));
+    await writeValue('stTestScenario.xMagazineEnabled', DataType.Boolean, Boolean(scenario.magazineEnabled));
+    for (let index = 1; index <= 3; index += 1) {
+      await writeValue(`stTestScenario.auiMachineState[${index}]`, DataType.UInt16, Number(machines[index - 1]?.state ?? 0));
+      await writeValue(`stTestScenario.auiMachineType[${index}]`, DataType.UInt16, Number(machines[index - 1]?.productType ?? 0));
+    }
+    for (let index = 1; index <= 120; index += 1) {
+      await writeValue(`stTestScenario.auiSlotContent[${index}]`, DataType.UInt16, Number(scenario.slots[index - 1]?.content ?? 0));
+      await writeValue(`stTestScenario.auiSlotType[${index}]`, DataType.UInt16, Number(scenario.slots[index - 1]?.productType ?? 0));
+    }
+    for (let index = 1; index <= 2; index += 1) {
+      await writeValue(`stTestScenario.auiGripperContent[${index}]`, DataType.UInt16, Number(grippers[index - 1]?.content ?? 0));
+      await writeValue(`stTestScenario.auiGripperType[${index}]`, DataType.UInt16, Number(grippers[index - 1]?.productType ?? 0));
+    }
+    await writeValue('stTestScenario.uiOrientation', DataType.UInt16, Number(scenario.orientation ?? 0));
+    const faultMasks = scenario.faultMasks ?? {};
+    await writeValue('stTestScenario.dwCellFaultMask', DataType.UInt32, Number(faultMasks.cell ?? 0) >>> 0);
+    await writeValue('stTestScenario.dwRobotFaultMask', DataType.UInt32, Number(faultMasks.robot ?? 0) >>> 0);
+    await writeValue('stTestScenario.dwMagazineFaultMask', DataType.UInt32, Number(faultMasks.magazine ?? 0) >>> 0);
+    for (let index = 1; index <= 3; index += 1) {
+      await writeValue(`stTestScenario.adwMachineFaultMask[${index}]`, DataType.UInt32, Number(faultMasks.machines?.[index - 1] ?? 0) >>> 0);
+    }
+    let loadSeq = Date.now() >>> 0;
+    if (!loadSeq) loadSeq = 1;
+    await writeValue('stTestScenario.udiLoadSeq', DataType.UInt32, loadSeq);
+    await writeValue('xTestScenarioApply', DataType.Boolean, true);
+    setTimeout(() => writeValue('xTestScenarioApply', DataType.Boolean, false).catch(console.error), 150);
+    return requestId;
+  }
+  if (message.command === 'robot.axis.jog') {
+    const axis = Math.round(Number(message.machine));
+    const direction = message.direction === 'negative' ? 'xJogNegative' : message.direction === 'positive' ? 'xJogPositive' : '';
+    if (!Number.isInteger(axis) || axis < 1 || axis > 3 || !direction) throw new Error('Неверный запрос Jog оси');
+    await writeValue(`astAxisHmiCommand[${axis}].${direction}`, DataType.Boolean, Boolean(message.value));
+    return requestId;
+  }
+  if (message.command === 'robot.axis.target') {
+    const axis = Math.round(Number(message.machine));
+    const target = Number(message.value);
+    if (!Number.isInteger(axis) || axis < 1 || axis > 3 || !Number.isFinite(target)) throw new Error('Неверная целевая координата оси');
+    await writeValue(`astAxisHmiCommand[${axis}].lrTargetPosition`, DataType.Double, target);
+    return requestId;
+  }
+  if (message.command === 'robot.axis.home') {
+    const axis = Math.round(Number(message.machine));
+    if (!Number.isInteger(axis) || axis < 1 || axis > 3) throw new Error('Неверная команда Home оси');
+    await writeValue(`astAxisHmiCommand[${axis}].xHome`, DataType.Boolean, true);
+    setTimeout(() => writeValue(`astAxisHmiCommand[${axis}].xHome`, DataType.Boolean, false).catch(console.error), 150);
+    return requestId;
+  }
+  if (message.command === 'robot.axis.moveRelative' || message.command === 'robot.axis.moveAbsolute') {
+    const axis = Math.round(Number(message.machine));
+    const value = Number(message.value);
+    const suffix = message.command.endsWith('moveRelative') ? 'lrRelativeDistance' : 'lrTargetPosition';
+    const executeLeaf = message.command.endsWith('moveRelative') ? 'xMoveRelative' : 'xMoveAbsolute';
+    if (!Number.isInteger(axis) || axis < 1 || axis > 3 || !Number.isFinite(value)) throw new Error('Неверная команда перемещения оси');
+    if (message.command.endsWith('moveRelative') && Math.abs(value) > 100) throw new Error('Шаг ручного перемещения должен быть не более 100 мм');
+    await writeValue(`astAxisHmiCommand[${axis}].${suffix}`, DataType.Double, value);
+    await writeValue(`astAxisHmiCommand[${axis}].${executeLeaf}`, DataType.Boolean, true);
+    setTimeout(() => writeValue(`astAxisHmiCommand[${axis}].${executeLeaf}`, DataType.Boolean, false).catch(console.error), 150);
+    return requestId;
+  }
+  if (message.command === 'robot.action') {
+    const action = Math.round(Number(message.action));
+    const point = Math.round(Number(message.point ?? 0));
+    const slot = Math.round(Number(message.slot ?? 0));
+    if (!Number.isInteger(action) || action < 1 || action > 7) throw new Error('Неверное ручное действие робота');
+    if (action === 1 && (!Number.isInteger(point) || point < 1 || point > 16)) throw new Error('Для перехода укажите точку робота');
+    const magazine = Math.round(Number(message.magazine ?? 1));
+    if (action === 1 && point >= 14 && (!Number.isInteger(slot) || slot < 1 || slot > 120)) throw new Error('Для магазинной точки укажите слот');
+    if (action === 1 && point >= 14 && ![1, 2].includes(magazine)) throw new Error('Для магазинной точки укажите магазин');
+    await writeValue('uiRobotManualAction', DataType.UInt16, action);
+    await writeValue('uiRobotManualPoint', DataType.UInt16, point);
+    await writeValue('uiRobotManualSlot', DataType.UInt16, slot);
+    await writeValue('uiRobotManualMagazine', DataType.UInt16, magazine);
+    await writeValue('xRobotManualExecute', DataType.Boolean, true);
+    setTimeout(() => writeValue('xRobotManualExecute', DataType.Boolean, false).catch(console.error), 150);
+    return requestId;
+  }
+  if (message.command === 'multi.typeCount') {
+    const typeCount = Math.round(Number(message.value));
+    if (!Number.isInteger(typeCount) || typeCount < 1 || typeCount > 3) throw new Error('Количество типов должно быть от 1 до 3');
+    await writeValue('stMultiType.Command.uiRequestedTypeCount', DataType.UInt16, typeCount);
+    await writeValue('stMultiType.Command.xSetTypeCount', DataType.Boolean, true);
+    setTimeout(() => writeValue('stMultiType.Command.xSetTypeCount', DataType.Boolean, false).catch(console.error), 150);
+    return requestId;
+  }
+  if (message.command === 'cell.operatorChoice') {
+    const choice = Math.round(Number(message.value));
+    if (!Number.isInteger(choice) || choice < 1 || choice > 3) throw new Error('Недопустимый ответ предпускового опроса');
+    await writeValue('uiCellOperatorChoice', DataType.UInt16, choice);
+    await writeValue('xCellOperatorChoice', DataType.Boolean, true);
+    setTimeout(() => writeValue('xCellOperatorChoice', DataType.Boolean, false).catch(console.error), 150);
+    return requestId;
+  }
+  if (message.command === 'multi.machineType') {
+    const machine = Math.round(Number(message.machine));
+    const productType = Math.round(Number(message.value));
+    if (!Number.isInteger(machine) || machine < 1 || machine > 3) throw new Error('Неверный номер станка');
+    if (!Number.isInteger(productType) || productType < 1 || productType > 3) throw new Error('Неверный тип заготовки');
+    await writeValue('stMultiType.Command.uiRequestedMachine', DataType.UInt16, machine);
+    await writeValue('stMultiType.Command.uiRequestedMachineType', DataType.UInt16, productType);
+    await writeValue('stMultiType.Command.xSetMachineType', DataType.Boolean, true);
+    setTimeout(() => writeValue('stMultiType.Command.xSetMachineType', DataType.Boolean, false).catch(console.error), 150);
+    return requestId;
+  }
+  if (message.command === 'robot.controlMode.set') {
+    const mode = Math.round(Number(message.value));
+    if (mode !== 0 && mode !== 1) throw new Error('Неверный режим управления роботом');
+    await writeValue('uiRobotControlModeRequest', DataType.UInt16, mode);
+    await writeValue('xRobotControlModeApply', DataType.Boolean, true);
+    setTimeout(() => writeValue('xRobotControlModeApply', DataType.Boolean, false).catch(console.error), 150);
+    return requestId;
+  }
+  if (message.command === 'multi.slotType') {
+    const slot = Math.round(Number(message.slot));
+    const productType = Math.round(Number(message.value));
+    if (!Number.isInteger(slot) || slot < 1 || slot > 120) throw new Error('Неверный номер слота магазина');
+    if (!Number.isInteger(productType) || productType < 1 || productType > 3) throw new Error('Неверный тип заготовки');
+    await writeValue('stMultiType.Command.uiRequestedSlot', DataType.UInt16, slot);
+    await writeValue('stMultiType.Command.uiRequestedSlotType', DataType.UInt16, productType);
+    await writeValue('stMultiType.Command.xSetSlotType', DataType.Boolean, true);
+    setTimeout(() => writeValue('stMultiType.Command.xSetSlotType', DataType.Boolean, false).catch(console.error), 150);
+    return requestId;
+  }
+  if (message.command?.startsWith('magazine.') && !['magazine.rows', 'magazine.columns', 'magazine.pitchX', 'magazine.pitchY'].includes(message.command)) {
+    const magazine = Math.round(Number(message.magazine));
+    if (![1, 2].includes(magazine)) throw new Error('Неверный номер магазина');
+    const action = message.command.slice('magazine.'.length);
+    const pulseLeaves = {
+      enable: 'xEnable', disable: 'xDisable', powerOn: 'xPowerOn', powerOff: 'xPowerOff',
+      home: 'xHome', index: 'xIndex', stop: 'xStop', reset: 'xReset',
+      fillZone1: 'xFillZone1', clearZone1: 'xClearZone1',
+    };
+    if (action === 'setZone1Slot') {
+      const slot = Math.round(Number(message.slot ?? message.value));
+      const content = Math.round(Number(message.content));
+      const productType = content === 0 ? 0 : Math.round(Number(message.productType));
+      if (!Number.isInteger(slot) || slot < 1 || slot > 120) throw new Error('Неверный номер слота Zone 1');
+      if (![0, 1, 2].includes(content)) throw new Error('Состояние слота должно быть NONE, BLANK или DETAIL');
+      if (content !== 0 && (!Number.isInteger(productType) || productType < 1 || productType > 3)) throw new Error('Неверный тип изделия');
+      await writeValue(`astMagazineCommand[${magazine}].uiEditSlot`, DataType.UInt16, slot);
+      await writeValue(`astMagazineCommand[${magazine}].uiEditDetailType`, DataType.UInt16, content);
+      await writeValue(`astMagazineCommand[${magazine}].uiEditProductType`, DataType.UInt16, productType);
+      await pulseValue(`astMagazineCommand[${magazine}].xApplyZone1Slot`);
+      return requestId;
+    }
+    if (action === 'safeAbove' || action === 'safeInside') {
+      const value = Number(message.value);
+      if (!Number.isFinite(value)) throw new Error('Неверная координата магазина');
+      await writeValue(`${action === 'safeAbove' ? 'alrMagazineSafeZ_1' : 'alrMagazineSafeZ_2'}[${magazine}]`, DataType.Double, value);
+      return requestId;
+    }
+    const leaf = pulseLeaves[action];
+    if (!leaf) throw new Error(`Команда магазина ${action} не разрешена`);
+    await pulseValue(`astMagazineCommand[${magazine}].${leaf}`);
     return requestId;
   }
   let definition = commandMap[message.command];
+  if (message.command === 'fault.axisJogConflict') {
+    const index = Number(message.machine);
+    if (!Number.isInteger(index) || index < 1 || index > 3) throw new Error('Неверный номер оси');
+    definition = { path: `axSimAxisJogConflict[${index}]`, dataType: DataType.Boolean, pulse: true };
+  }
+  if (message.command?.startsWith('fault.machine.')) {
+    const index = Number(message.machine);
+    if (!Number.isInteger(index) || index < 1 || index > 3) throw new Error('Неверный номер станка');
+    const action = message.command.slice('fault.machine.'.length);
+    const machineFaultCommands = {
+      simReset: { path: `axMachineSimReset[${index}]`, dataType: DataType.Boolean, pulse: true },
+      machineAlarm: { path: `axMachineSimAlarm[${index}]`, dataType: DataType.Boolean },
+      doorFault: { path: `axMachineSimDoorFault[${index}]`, dataType: DataType.Boolean },
+      chuckFault: { path: `axMachineSimChuckFault[${index}]`, dataType: DataType.Boolean },
+      timeoutRobotMove: { path: `axMachineTimeoutRobotMove[${index}]`, dataType: DataType.Boolean },
+      timeoutRobotAction: { path: `axMachineTimeoutRobotAction[${index}]`, dataType: DataType.Boolean },
+      timeoutRobotRelease: { path: `axMachineTimeoutRobotRelease[${index}]`, dataType: DataType.Boolean },
+      timeoutDoorOpen: { path: `axMachineTimeoutDoorOpen[${index}]`, dataType: DataType.Boolean },
+      timeoutDoorClose: { path: `axMachineTimeoutDoorClose[${index}]`, dataType: DataType.Boolean },
+      timeoutChuckOpen: { path: `axMachineTimeoutChuckOpen[${index}]`, dataType: DataType.Boolean },
+      timeoutChuckClose: { path: `axMachineTimeoutChuckClose[${index}]`, dataType: DataType.Boolean },
+      timeoutCycleStart: { path: `axMachineTimeoutCycleStart[${index}]`, dataType: DataType.Boolean },
+    };
+    definition = machineFaultCommands[action];
+  }
   if (message.command?.startsWith('machine.')) {
     const index = Number(message.machine);
     if (!Number.isInteger(index) || index < 1 || index > 3) throw new Error('Неверный номер станка');
@@ -353,7 +1050,7 @@ async function executeCommand(message) {
       rejectRun: { path: `axMachineRejectRun[${index}]`, dataType: DataType.Boolean, pulse: true },
       used: { path: `axMachineUsed[${index}]`, dataType: DataType.Boolean },
       cycleMode: { path: `xUseHmiCycleTime[${index}]`, dataType: DataType.Boolean },
-      cycleTime: { path: `tMachineCycleTime[${index}]`, dataType: DataType.UInt32, transform: (v) => Math.max(1000, Math.round(Number(v) * 1000)) },
+      cycleTime: { path: `tMachineCycleTime[${index}]`, dataType: DataType.Int64, transform: (v) => Math.max(1000, Math.round(Number(v) * 1000)) },
     };
     definition = machineCommands[action];
   }
@@ -366,7 +1063,7 @@ async function executeCommand(message) {
 }
 
 async function connectOpcUa() {
-  connectionState = { ...connectionState, status: 'connecting', message: 'Подключение к OPC UA', cyclogram: cyclogramHealth() };
+  connectionState = { ...connectionState, status: 'connecting', message: 'Подключение к OPC UA', cyclogram: cyclogramHealth(), cellEvents: cellEventHealth() };
   publishConnection();
   const client = OPCUAClient.create({
     applicationName: 'Portal Robot HMI Gateway', endpointMustExist: false, keepSessionAlive: true,
@@ -375,6 +1072,8 @@ async function connectOpcUa() {
   });
   let cyclogramCheckpoint = null;
   let cyclogramChangeTimer = null;
+  let publishTimer = null;
+  let cellEventTimer = null;
   try {
     await client.connect(endpointUrl);
     const session = await client.createSession();
@@ -382,13 +1081,16 @@ async function connectOpcUa() {
     symbolNodes = await collectLeafVariables(session, gvlNodeId);
     const entries = [...symbolNodes.entries()];
     latestValues = {};
+    robotCoordinateSourceTimestamps.clear();
+    robotSourceClockOffsetMs = null;
+    lastRobotSourceTimestampMs = null;
+    latestRobotCoordinateFrame = null;
     await readInitialValues(session, entries);
     const subscription = ClientSubscription.create(session, {
       requestedPublishingInterval: publishingIntervalMs, requestedLifetimeCount: 100,
       requestedMaxKeepAliveCount: 20, maxNotificationsPerPublish: 1000,
       publishingEnabled: true, priority: 1,
     });
-    let publishTimer = null;
     let changedValues = {};
     cyclogramCheckpoint = setInterval(() => {
       // Related PLC tags arrive as separate notifications. Recording while the
@@ -410,6 +1112,15 @@ async function connectOpcUa() {
         const value = jsonValue(dataValue.value.value);
         latestValues[path] = value;
         changedValues[path] = value;
+        if (robotCoordinatePathSet.has(path)) {
+          const timestampMs = dataValueTimestampMs(dataValue);
+          if (timestampMs !== null) robotCoordinateSourceTimestamps.set(path, timestampMs);
+        }
+        if (cellEventTimer !== null) clearTimeout(cellEventTimer);
+        cellEventTimer = setTimeout(() => {
+          cellEventTimer = null;
+          recordCellSnapshot(Date.now());
+        }, cyclogramSettleMs);
         if (cyclogramSymbolSet.has(path)) {
           if (cyclogramChangeTimer !== null) clearTimeout(cyclogramChangeTimer);
           cyclogramChangeTimer = setTimeout(() => {
@@ -433,11 +1144,15 @@ async function connectOpcUa() {
     connectionState = {
       status: missing.length ? 'degraded' : 'connected', endpoint: endpointUrl,
       message: missing.length ? 'PLC подключён, но опубликован старый состав GVL_HMI' : 'PLC подключён',
-      symbols: symbolNodes.size, missing, cyclogram: cyclogramHealth(),
+      symbols: symbolNodes.size, missing, cyclogram: cyclogramHealth(), cellEvents: cellEventHealth(),
     };
     opcua = { client, session, subscription, monitored };
     cyclogramConnected = true;
     recordCyclogram(Date.now());
+    recordCellSnapshot(Date.now());
+    recordSystemEvent(missing.length ? 'warning' : 'restored', missing.length
+      ? `OPC UA подключён частично: отсутствует ${missing.length} тегов`
+      : 'Связь gateway с PLC по OPC UA установлена', { endpoint: endpointUrl, missing });
     publishConnection();
     publishSnapshot(latestValues, true);
     await new Promise((resolve) => {
@@ -448,8 +1163,13 @@ async function connectOpcUa() {
     if (cyclogramCheckpoint !== null) clearInterval(cyclogramCheckpoint);
     if (cyclogramChangeTimer !== null) clearTimeout(cyclogramChangeTimer);
     if (publishTimer !== null) clearTimeout(publishTimer);
+    if (cellEventTimer !== null) {
+      clearTimeout(cellEventTimer);
+      recordCellSnapshot(Date.now());
+    }
     cyclogramConnected = false;
     stopCyclogram(Date.now());
+    if (opcua !== null) recordSystemEvent('lost', 'Связь gateway с PLC по OPC UA потеряна', { endpoint: endpointUrl });
     opcua = null;
     symbolNodes = new Map();
     try { await client.disconnect(); } catch { /* reconnect below */ }
@@ -464,8 +1184,9 @@ async function opcUaLoop() {
       connectionState = {
         status: 'disconnected', endpoint: endpointUrl,
         message: error instanceof Error ? error.message : String(error),
-        symbols: 0, missing: requiredSymbols, cyclogram: cyclogramHealth(),
+        symbols: 0, missing: requiredSymbols, cyclogram: cyclogramHealth(), cellEvents: cellEventHealth(),
       };
+      recordSystemEvent('error', `Ошибка подключения OPC UA: ${connectionState.message}`, { endpoint: endpointUrl });
       publishConnection();
       console.error(`[OPC UA] ${connectionState.message}`);
     }
@@ -473,11 +1194,240 @@ async function opcUaLoop() {
   }
 }
 
+const jsonResponse = (response, status, value) => {
+  response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
+  response.end(JSON.stringify(value));
+};
+
+const cellEventListParameter = (searchParams, name, { numeric = false } = {}) => {
+  const value = searchParams.get(name);
+  if (!value) return [];
+  const items = value.split(',').map((item) => item.trim()).filter(Boolean).slice(0, 32);
+  return numeric ? items.map(Number).filter(Number.isFinite) : items.filter((item) => /^[a-z0-9-]+$/i.test(item));
+};
+
+const decodeCellEventCursor = (value) => {
+  if (!value) return null;
+  let parsed;
+  try { parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8')); }
+  catch { throw new Error('Некорректный курсор журнала'); }
+  if (!Number.isFinite(parsed?.timestampMs) || !Number.isInteger(Number(parsed?.id))) {
+    throw new Error('Некорректный курсор журнала');
+  }
+  return { timestampMs: Math.round(parsed.timestampMs), id: Number(parsed.id) };
+};
+
+const encodeCellEventCursor = (cursor) => cursor
+  ? Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url')
+  : null;
+
+async function requestJson(request) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > 2_000_000) throw new Error('Тело запроса слишком большое');
+    chunks.push(chunk);
+  }
+  if (!chunks.length) return {};
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+}
+
+function currentScenario() {
+  const typeCount = Math.max(1, Math.min(3, Number(latestValues['stMultiType.Config.uiTypeCount'] ?? 1)));
+  const configuredType = (value) => Math.max(1, Math.min(typeCount, Number(value ?? 1)));
+  const machines = [1, 2, 3].map((index) => {
+    const enabled = Boolean(latestValues[`astMachineStatus[${index}].xEnabled`]);
+    const processing = Boolean(latestValues[`astMachineStatus[${index}].xProcessing`]);
+    const partType = Number(latestValues[`astMachineStatus[${index}].ePartType`] ?? 0);
+    return {
+      state: !enabled ? 0 : processing ? 2 : partType === 1 ? 3 : 1,
+      productType: configuredType(latestValues[`stMultiType.Config.auiMachineType[${index}]`]),
+    };
+  });
+  const slots = Array.from({ length: 120 }, (_, offset) => {
+    const index = offset + 1;
+    const root = `astMagazineInventory[1].aZone2[${index}]`;
+    const present = Boolean(latestValues[`${root}.xInPosition`]);
+    return {
+      content: present ? Number(latestValues[`${root}.eDetailType`] ?? 0) : 0,
+      productType: configuredType(present
+        ? latestValues[`${root}.uiProductType`]
+        : latestValues[`stMultiType.Config.auiSlotType[${index}]`]),
+    };
+  });
+  return {
+    typeCount, magazineEnabled: Boolean(latestValues['astMagazineStatus[1].xEnabled']), machines, slots,
+    grippers: [
+      { content: Boolean(latestValues['stRobotStatus.xGripper1Closed']) ? 1 : 0, productType: Boolean(latestValues['stRobotStatus.xGripper1Closed']) ? configuredType(latestValues['stRobotStatus.uiBlankPayloadType']) : 0 },
+      { content: Boolean(latestValues['stRobotStatus.xGripper2Closed']) ? 2 : 0, productType: Boolean(latestValues['stRobotStatus.xGripper2Closed']) ? configuredType(latestValues['stRobotStatus.uiDetailPayloadType']) : 0 },
+    ],
+    orientation: Boolean(latestValues['stRobotStatus.xRotatedToDetail']) ? 1 : 0,
+    faultMasks: { cell: 0, robot: 0, magazine: 0, machines: [0, 0, 0] },
+  };
+}
+
+async function fallbackTestCleanup() {
+  try {
+    if (Boolean(latestValues['stCellStatus.xRunning']) && !Boolean(latestValues['stCellStatus.xStopPending'])) {
+      await executeCommand({ requestId: `cleanup-${Date.now()}-stop`, command: 'cell.stop' });
+    }
+    await executeCommand({ requestId: `cleanup-${Date.now()}-faults`, command: 'test.faults.clear' });
+    const stableDeadline = Date.now() + 15_000;
+    while (!Boolean(latestValues.xTestEnvironmentChangeAllowed) && Date.now() < stableDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    await executeCommand({ requestId: `cleanup-${Date.now()}-speed`, command: 'test.speed.set', value: 0 });
+    await executeCommand({ requestId: `cleanup-${Date.now()}-environment`, command: 'test.environment.set', value: 0 });
+  } catch (error) {
+    console.error(`[Tests] Fallback PLC cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    try {
+      await executeCommand({ requestId: `cleanup-${Date.now()}-session`, command: 'test.session', value: false });
+    } catch (error) {
+      console.error(`[Tests] Could not release PLC test session: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+}
+
+function launchTestRun(config) {
+  if (!testStore) throw new Error(testStoreError || 'Хранилище тестов недоступно');
+  if (activeTestRun) throw new Error(`Уже выполняется прогон ${activeTestRun.id}`);
+  const environment = String(config.environment ?? 'simulation').toLowerCase();
+  const robotInterface = String(config.robotInterface ?? 'softmotion').toLowerCase();
+  const speedProfile = String(config.speedProfile ?? 'realtime').toLowerCase();
+  if (environment === 'sc500_bench' && robotInterface !== 'sc500-modbus') {
+    throw new Error('Для стенда SC-500 разрешён только интерфейс SC500 Modbus');
+  }
+  if (environment !== 'sc500_bench' && robotInterface === 'sc500-modbus') {
+    throw new Error('Интерфейс SC500 Modbus разрешён только в стендовой среде');
+  }
+  if (environment === 'sc500_bench' && speedProfile === 'fast') {
+    throw new Error('FAST запрещён на стенде SC-500');
+  }
+  const selectedScenarios = Array.isArray(config.scenarioIds)
+    ? config.scenarioIds.map((id) => testStore.getScenario(id)).filter(Boolean)
+      .map((item) => ({ name: item.name, description: item.description, initialState: item.initialState, expectations: item.expectations }))
+    : [];
+  const runConfig = { ...config, scenarios: selectedScenarios };
+  const run = testStore.createRun(runConfig);
+  const token = randomUUID();
+  const robotDir = normalize(join(__dirname, '..', '..', 'robot_simulator'));
+  const processHandle = spawn(testRunnerPython, ['-m', 'robot_simulator.test_runner'], {
+    cwd: robotDir,
+    windowsHide: true,
+    env: {
+      ...process.env,
+      PORTAL_TEST_RUN_ID: String(run.id), PORTAL_TEST_RUN_TOKEN: token,
+      PORTAL_TEST_WS: `ws://127.0.0.1:${gatewayPort}/ws`,
+      PORTAL_ROBOT_SIM_CONTROL_URL: robotSimulatorControlUrl,
+    },
+  });
+  activeTestRun = { id: run.id, token, config: runConfig, process: processHandle, socket: null, stderr: '' };
+  processHandle.stderr.on('data', (chunk) => {
+    const text = chunk.toString();
+    if (activeTestRun?.id === run.id) activeTestRun.stderr = `${activeTestRun.stderr}${text}`.slice(-4000);
+    console.error(`[Test runner ${run.id}] ${text.trim()}`);
+  });
+  processHandle.on('exit', async (code) => {
+    if (activeTestRun?.id !== run.id) return;
+    const stored = testStore.getRun(run.id);
+    if (!stored?.finishedAt) {
+      await fallbackTestCleanup();
+      if (stored?.abortRequested) testStore.finishRun(run.id, 'ABORTED', 'Прогон остановлен оператором');
+      else {
+        const runnerError = activeTestRun.stderr.trim().split(/\r?\n/).filter(Boolean).at(-1);
+        testStore.finishRun(
+          run.id,
+          code === 0 ? null : 'ERROR',
+          code === 0 ? null : runnerError || `Python runner завершился с кодом ${code}`,
+        );
+      }
+    }
+    activeTestRun = null;
+    broadcast({ type: 'test-run-update', run: testStore.getRun(run.id) });
+  });
+  return run;
+}
+
 const httpServer = createServer(async (request, response) => {
   const requestUrl = new URL(request.url ?? '/', 'http://gateway.local');
+  const scenarioMatch = requestUrl.pathname.match(/^\/api\/test-scenarios\/(\d+)$/);
+  const runMatch = requestUrl.pathname.match(/^\/api\/test-runs\/(\d+)(\/abort)?$/);
+  try {
+    if (requestUrl.pathname === '/api/cell-events' && request.method === 'GET') {
+      if (!cellEventStore) { jsonResponse(response, 503, { error: cellEventError || 'Хранилище журнала недоступно' }); return; }
+      const numberParameter = (name) => {
+        const raw = requestUrl.searchParams.get(name);
+        if (raw === null || raw === '') return undefined;
+        const value = Number(raw);
+        if (!Number.isFinite(value)) throw new Error(`Некорректный параметр журнала: ${name}`);
+        return value;
+      };
+      const level = requestUrl.searchParams.get('level') ?? 'all';
+      const order = requestUrl.searchParams.get('order') ?? 'desc';
+      if (!['all', 'info', 'warning', 'error'].includes(level)) throw new Error('Некорректный уровень событий');
+      if (!['asc', 'desc'].includes(order)) throw new Error('Некорректный порядок событий');
+      const result = cellEventStore.query({
+        fromMs: numberParameter('from'), toMs: numberParameter('to'),
+        sourceIds: cellEventListParameter(requestUrl.searchParams, 'sources', { numeric: true }),
+        statuses: cellEventListParameter(requestUrl.searchParams, 'statuses'),
+        eventTypes: cellEventListParameter(requestUrl.searchParams, 'eventTypes'),
+        level, text: requestUrl.searchParams.get('text') ?? '',
+        operationId: requestUrl.searchParams.get('operationId') ?? '',
+        commandSeq: requestUrl.searchParams.get('commandSeq') ?? '',
+        code: requestUrl.searchParams.get('code') ?? '', order,
+        cursor: decodeCellEventCursor(requestUrl.searchParams.get('cursor')),
+        limit: numberParameter('limit') ?? 100,
+      });
+      jsonResponse(response, 200, {
+        serverTime: Date.now(), retentionMs: cellEventStore.retentionMs,
+        total: result.count, events: result.events,
+        nextCursor: encodeCellEventCursor(result.nextCursor), hasMore: result.hasMore,
+      });
+      return;
+    }
+    if (requestUrl.pathname === '/api/test-system/status') {
+      jsonResponse(response, 200, { ...testHealth(), simulatorControl: await simulatorControlHealth(), plc: {
+        connected: connectionState.status === 'connected', requestedEnvironment: Number(latestValues.uiTestEnvironmentRequest ?? 0),
+        appliedEnvironment: Number(latestValues.uiTestEnvironmentApplied ?? 0), speedProfile: Number(latestValues.uiTestSpeedProfileApplied ?? 0),
+        environmentChangeAllowed: Boolean(latestValues.xTestEnvironmentChangeAllowed), scenarioApplyAllowed: Boolean(latestValues.xTestScenarioApplyAllowed),
+        robotReady: Boolean(latestValues['stCellStatus.xRobotReady']),
+        simulatorActive: Boolean(latestValues['stRobotModbusStatus.xSimulatorActive']), benchKey: Boolean(latestValues.xSc500BenchKeyActive),
+        benchKeyLost: Boolean(latestValues.xSc500BenchKeyLost), rejectReason: Number(latestValues.uiTestRejectReason ?? 0),
+      } });
+      return;
+    }
+    if (requestUrl.pathname === '/api/test-scenarios' && request.method === 'GET') { jsonResponse(response, 200, testStore?.listScenarios() ?? []); return; }
+    if (requestUrl.pathname === '/api/test-scenarios' && request.method === 'POST') { jsonResponse(response, 201, testStore.saveScenario(await requestJson(request))); return; }
+    if (requestUrl.pathname === '/api/test-scenarios/capture-current' && request.method === 'POST') {
+      const body = await requestJson(request);
+      jsonResponse(response, 201, testStore.saveScenario({ name: body.name ?? `Снимок ${new Date().toLocaleString('ru-RU')}`, description: body.description ?? 'Создано из текущего состояния PLC', schemaVersion: 1, initialState: currentScenario(), expectations: {} }));
+      return;
+    }
+    if (scenarioMatch && request.method === 'PUT') { jsonResponse(response, 200, testStore.saveScenario(await requestJson(request), scenarioMatch[1])); return; }
+    if (scenarioMatch && request.method === 'DELETE') { jsonResponse(response, testStore.deleteScenario(scenarioMatch[1]) ? 200 : 404, { ok: true }); return; }
+    if (requestUrl.pathname === '/api/test-runs' && request.method === 'GET') { jsonResponse(response, 200, testStore?.listRuns(Number(requestUrl.searchParams.get('limit') ?? 50)) ?? []); return; }
+    if (requestUrl.pathname === '/api/test-runs' && request.method === 'POST') { jsonResponse(response, 202, launchTestRun(await requestJson(request))); return; }
+    if (runMatch && !runMatch[2] && request.method === 'GET') { const run = testStore?.getRun(runMatch[1]); jsonResponse(response, run ? 200 : 404, run ?? { error: 'Прогон не найден' }); return; }
+    if (runMatch?.[2] && request.method === 'POST') {
+      const run = testStore?.requestAbort(runMatch[1]);
+      if (activeTestRun?.id === Number(runMatch[1])) {
+        if (activeTestRun.socket) send(activeTestRun.socket, { type: 'test-abort-requested' });
+        const abortRunId = activeTestRun.id;
+        setTimeout(() => {
+          if (activeTestRun?.id === abortRunId) activeTestRun.process.kill();
+        }, 45_000).unref();
+      }
+      jsonResponse(response, run ? 202 : 404, run ?? { error: 'Прогон не найден' }); return;
+    }
+  } catch (error) {
+    jsonResponse(response, 400, { error: error instanceof Error ? error.message : String(error) });
+    return;
+  }
   if (requestUrl.pathname === '/api/health') {
     response.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-    response.end(JSON.stringify({ ...connectionState, cyclogram: cyclogramHealth() }));
+    response.end(JSON.stringify({ ...connectionState, cyclogram: cyclogramHealth(), cellEvents: cellEventHealth() }));
     return;
   }
   if (requestUrl.pathname === '/api/cyclogram/export') {
@@ -535,9 +1485,55 @@ const httpServer = createServer(async (request, response) => {
 });
 
 const webSocketServer = new WebSocketServer({ server: httpServer, path: '/ws' });
-webSocketServer.on('connection', (socket) => {
+webSocketServer.on('connection', (socket, request) => {
+  const socketUrl = new URL(request.url ?? '/ws', 'http://gateway.local');
+  if (socketUrl.searchParams.get('role') === 'test-runner') {
+    const runId = Number(socketUrl.searchParams.get('runId'));
+    const token = socketUrl.searchParams.get('token');
+    if (!activeTestRun || activeTestRun.id !== runId || activeTestRun.token !== token) {
+      socket.close(4003, 'invalid test session');
+      return;
+    }
+    activeTestRun.socket = socket;
+    testStore.progress(runId, { status: 'RUNNING', stage: 'connected', caseIndex: 0, caseCount: 0 });
+    send(socket, { type: 'test-run-config', config: activeTestRun.config });
+    send(socket, { type: 'snapshot', timestamp: Date.now(), full: true, values: latestValues });
+    if (testStore.getRun(runId)?.abortRequested) send(socket, { type: 'test-abort-requested' });
+    socket.on('message', async (payload) => {
+      let message;
+      try {
+        message = JSON.parse(payload.toString());
+        if (message.type === 'test-heartbeat') {
+          await executeCommand({ command: 'hmi.heartbeat', value: message.value });
+        } else if (message.type === 'test-command') {
+          const requestId = await executeCommand(message);
+          send(socket, { type: 'ack', requestId, ok: true });
+        } else if (message.type === 'test-progress') {
+          const run = testStore.progress(runId, { ...message, status: 'RUNNING' });
+          broadcast({ type: 'test-run-update', run });
+        } else if (message.type === 'test-case-result') {
+          const run = testStore.addCase(runId, message);
+          broadcast({ type: 'test-run-update', run });
+        } else if (message.type === 'test-run-finished') {
+          const stored = testStore.getRun(runId);
+          const run = stored?.abortRequested
+            ? testStore.finishRun(runId, 'ABORTED', 'Прогон остановлен оператором после безопасной очистки')
+            : testStore.finishRun(runId);
+          broadcast({ type: 'test-run-update', run });
+        }
+      } catch (error) {
+        send(socket, { type: 'ack', requestId: String(message?.requestId ?? ''), ok: false, error: error instanceof Error ? error.message : String(error) });
+      }
+    });
+    return;
+  }
   send(socket, { type: 'connection', ...connectionState });
-  send(socket, { type: 'snapshot', timestamp: Date.now(), full: true, values: latestValues });
+  const timestamp = Date.now();
+  const robotFrame = latestRobotCoordinateFrame ?? captureRobotCoordinateFrame(timestamp);
+  send(socket, {
+    type: 'snapshot', timestamp, full: true, values: latestValues,
+    ...(robotFrame ? { robotFrame } : {}),
+  });
   if (cyclogramStore) {
     publishCyclogramHistory(socket);
   }
@@ -552,10 +1548,32 @@ webSocketServer.on('connection', (socket) => {
         return;
       }
       if (message.type !== 'command') return;
-      const requestId = await executeCommand(message);
-      send(socket, { type: 'ack', requestId, ok: true });
+      if (!isHmiCommandAllowedDuringTest(message.command, Boolean(activeTestRun))) {
+        throw new Error(`Команда заблокирована эксклюзивным тестовым прогоном ${activeTestRun.id}`);
+      }
+      const requestId = String(message.requestId ?? Date.now());
+      const description = describeOperatorCommand(message);
+      if (message.command !== 'hmi.heartbeat') recordCellEvent({
+        timestampMs: Date.now(), sourceId: 6, eventType: 'operator-command', status: 'requested',
+        message: description.label, requestId, details: description.details,
+      });
+      const acceptedRequestId = await executeCommand(message);
+      if (message.command !== 'hmi.heartbeat') recordCellEvent({
+        timestampMs: Date.now(), sourceId: 6, eventType: 'operator-command', status: 'accepted',
+        message: `${description.label}: передано в PLC`, requestId, details: description.details,
+      });
+      send(socket, { type: 'ack', requestId: acceptedRequestId, ok: true });
     } catch (error) {
-      send(socket, { type: 'ack', requestId: String(message?.requestId ?? ''), ok: false, error: error instanceof Error ? error.message : String(error) });
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (message?.type === 'command' && message.command !== 'hmi.heartbeat') {
+        const description = describeOperatorCommand(message);
+        recordCellEvent({
+          timestampMs: Date.now(), sourceId: 6, eventType: 'operator-command', status: 'rejected',
+          message: `${description.label}: отклонено — ${errorMessage}`,
+          requestId: String(message?.requestId ?? ''), details: description.details,
+        });
+      }
+      send(socket, { type: 'ack', requestId: String(message?.requestId ?? ''), ok: false, error: errorMessage });
     }
   });
 });
@@ -563,9 +1581,20 @@ webSocketServer.on('connection', (socket) => {
 httpServer.listen(gatewayPort, gatewayHost, () => {
   console.log(`[Gateway] http://${gatewayHost}:${gatewayPort}`);
   console.log(`[OPC UA] ${endpointUrl}`);
+  recordSystemEvent('started', 'Gateway визуализации запущен', { gateway: `http://${gatewayHost}:${gatewayPort}`, opcUa: endpointUrl });
 });
 
 opcUaLoop().catch(console.error);
 
-process.once('SIGINT', () => cyclogramStore?.closeDatabase());
-process.once('SIGTERM', () => cyclogramStore?.closeDatabase());
+const closeStores = () => {
+  recordSystemEvent('stopped', 'Gateway визуализации остановлен');
+  cyclogramStore?.closeDatabase();
+  cellEventStore?.close();
+  testStore?.close();
+};
+const shutdown = () => {
+  closeStores();
+  process.exit(0);
+};
+process.once('SIGINT', shutdown);
+process.once('SIGTERM', shutdown);

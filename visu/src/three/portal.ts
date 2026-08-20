@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { PART_GEOMETRY } from '../model/partGeometry';
 import { getRobotTravelLimits } from '../model/travel';
-import type { CellLayout, RobotState } from '../model/types';
-import { box, COLORS, cylinder, damp, logicalPosition, mm } from './primitives';
+import type { CellLayout, RobotCoordinateFrame, RobotState, Vec3Mm } from '../model/types';
+import { box, COLORS, cylinder, damp, logicalPosition, mm, PRODUCT_PART_COLORS } from './primitives';
 
 interface GripperRig {
   pivot: THREE.Group;
@@ -30,6 +30,98 @@ export interface PortalRig {
   gripper: GripperRig;
   xTravelOrigin: number;
   current: { x: number; y: number; z: number };
+  telemetry: {
+    samples: RobotCoordinateFrame[];
+    lastSequence: number;
+    velocity: Vec3Mm;
+    initialized: boolean;
+  };
+}
+
+const TELEMETRY_BUFFER_MS = 250;
+const TELEMETRY_LONG_GAP_MS = 1_000;
+const TELEMETRY_MAX_SAMPLES = 64;
+const TELEMETRY_SMOOTH_TIME_S = 0.09;
+
+function criticallyDampedAxis(
+  current: number,
+  target: number,
+  velocity: number,
+  dt: number,
+): { value: number; velocity: number } {
+  const deltaTime = Math.max(0, Math.min(dt, 0.05));
+  if (deltaTime === 0) return { value: current, velocity };
+  const omega = 2 / TELEMETRY_SMOOTH_TIME_S;
+  const scaledTime = omega * deltaTime;
+  const decay = 1 / (1 + scaledTime + 0.48 * scaledTime ** 2 + 0.235 * scaledTime ** 3);
+  const difference = current - target;
+  const temporary = (velocity + omega * difference) * deltaTime;
+  let nextVelocity = (velocity - omega * temporary) * decay;
+  let value = target + (difference + temporary) * decay;
+
+  // При смене направления или остановке цель нельзя пересекать: это исключает
+  // визуальный перелёт за последнюю восстановленную координату.
+  if ((target - current > 0) === (value > target)) {
+    value = target;
+    nextVelocity = 0;
+  }
+  return { value, velocity: nextVelocity };
+}
+
+function smoothTelemetryTarget(rig: PortalRig, target: Vec3Mm, dt: number): Vec3Mm {
+  const x = criticallyDampedAxis(rig.current.x, target.x, rig.telemetry.velocity.x, dt);
+  const y = criticallyDampedAxis(rig.current.y, target.y, rig.telemetry.velocity.y, dt);
+  const z = criticallyDampedAxis(rig.current.z, target.z, rig.telemetry.velocity.z, dt);
+  rig.telemetry.velocity = { x: x.velocity, y: y.velocity, z: z.velocity };
+  return { x: x.value, y: y.value, z: z.value };
+}
+
+function interpolateTelemetry(rig: PortalRig, frame: RobotCoordinateFrame): Vec3Mm {
+  const now = Date.now();
+  const telemetry = rig.telemetry;
+  if (!telemetry.initialized) {
+    telemetry.initialized = true;
+    telemetry.lastSequence = frame.sequence;
+    telemetry.samples = [{ ...frame, coordinates: { ...frame.coordinates } }];
+    telemetry.velocity = { x: 0, y: 0, z: 0 };
+    return frame.coordinates;
+  }
+
+  if (frame.sequence !== telemetry.lastSequence) {
+    const latest = telemetry.samples.at(-1);
+    const timestampMs = latest
+      ? Math.max(latest.timestampMs + 1, frame.timestampMs)
+      : frame.timestampMs;
+    // Не растягиваем первое движение на весь период, пока робот стоял.
+    if (latest && timestampMs - latest.timestampMs > TELEMETRY_LONG_GAP_MS) {
+      telemetry.samples.push({
+        sequence: latest.sequence,
+        timestampMs: timestampMs - TELEMETRY_BUFFER_MS,
+        sourceTimestampMs: frame.sourceTimestampMs - TELEMETRY_BUFFER_MS,
+        coordinates: { x: rig.current.x, y: rig.current.y, z: rig.current.z },
+      });
+    }
+    telemetry.lastSequence = frame.sequence;
+    telemetry.samples.push({ ...frame, timestampMs, coordinates: { ...frame.coordinates } });
+    while (telemetry.samples.length > TELEMETRY_MAX_SAMPLES) telemetry.samples.shift();
+  }
+
+  const playbackAt = now - TELEMETRY_BUFFER_MS;
+  const samples = telemetry.samples;
+  while (samples.length > 2 && samples[1].timestampMs <= playbackAt) samples.shift();
+  if (samples.length === 1 || playbackAt <= samples[0].timestampMs) return samples[0].coordinates;
+
+  const previous = samples[0];
+  const next = samples[1];
+  if (playbackAt >= next.timestampMs) return next.coordinates;
+
+  const span = Math.max(1, next.timestampMs - previous.timestampMs);
+  const alpha = THREE.MathUtils.clamp((playbackAt - previous.timestampMs) / span, 0, 1);
+  return {
+    x: THREE.MathUtils.lerp(previous.coordinates.x, next.coordinates.x, alpha),
+    y: THREE.MathUtils.lerp(previous.coordinates.y, next.coordinates.y, alpha),
+    z: THREE.MathUtils.lerp(previous.coordinates.z, next.coordinates.z, alpha),
+  };
 }
 
 function makeGripperHead(name: string, color: number): {
@@ -70,6 +162,14 @@ function createDetailPayload(): THREE.Group {
   shoulder.rotation.z = Math.PI / 2;
   root.add(body, shoulder);
   return root;
+}
+
+function setObjectColor(object: THREE.Object3D, color: number): void {
+  object.traverse((child) => {
+    if (!(child instanceof THREE.Mesh)) return;
+    const meshMaterial = child.material;
+    if (meshMaterial instanceof THREE.MeshStandardMaterial) meshMaterial.color.setHex(color);
+  });
 }
 
 function createDualGripper(): GripperRig {
@@ -179,6 +279,12 @@ export function createPortal(layout: CellLayout): PortalRig {
     gripper,
     xTravelOrigin,
     current: { x: 0, y: 0, z: 0 },
+    telemetry: {
+      samples: [],
+      lastSequence: 0,
+      velocity: { x: 0, y: 0, z: 0 },
+      initialized: false,
+    },
   };
 }
 
@@ -191,13 +297,15 @@ function updateFingerPair(fingers: [THREE.Mesh, THREE.Mesh], value: number, clos
 export function updatePortalRig(
   rig: PortalRig,
   state: RobotState,
+  coordinateFrame: RobotCoordinateFrame,
   layout: CellLayout,
   dt: number,
 ): void {
-  const response = layout.animation.motionResponse;
-  rig.current.x = damp(rig.current.x, state.x, response, dt);
-  rig.current.y = damp(rig.current.y, state.y, response, dt);
-  rig.current.z = damp(rig.current.z, state.z, response, dt);
+  const interpolated = interpolateTelemetry(rig, coordinateFrame);
+  const smoothed = smoothTelemetryTarget(rig, interpolated, dt);
+  rig.current.x = smoothed.x;
+  rig.current.y = smoothed.y;
+  rig.current.z = smoothed.z;
 
   const coordinate = layout.coordinate;
   const travelLimits = getRobotTravelLimits(layout);
@@ -230,4 +338,12 @@ export function updatePortalRig(
   updateFingerPair(rig.gripper.fingers2, rig.gripper.grip2Value, PART_GEOMETRY.detail.bodyRadius / GRIPPER_SCALE + fingerHalfWidth);
   rig.gripper.blank.visible = state.gripper1Closed;
   rig.gripper.detail.visible = state.gripper2Closed;
+  const blankColor = state.blankProductType === 1 || state.blankProductType === 2 || state.blankProductType === 3
+    ? PRODUCT_PART_COLORS[state.blankProductType].blank
+    : COLORS.steel;
+  const detailColor = state.detailProductType === 1 || state.detailProductType === 2 || state.detailProductType === 3
+    ? PRODUCT_PART_COLORS[state.detailProductType].detail
+    : COLORS.steel;
+  setObjectColor(rig.gripper.blank, blankColor);
+  setObjectColor(rig.gripper.detail, detailColor);
 }

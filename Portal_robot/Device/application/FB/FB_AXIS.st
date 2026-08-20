@@ -58,6 +58,10 @@ VAR CONSTANT
 END_VAR
 
 VAR
+	lrEffectiveVelocity : LREAL;
+	lrEffectiveAcceleration : LREAL;
+	lrEffectiveDeceleration : LREAL;
+	lrEffectiveJerk : LREAL;
     // Триггеры на команды
     rtEnable            : R_TRIG; // Фронт команды включения
     rtDisable           : R_TRIG; // Фронт команды отключения
@@ -116,6 +120,13 @@ END_VAR
 
 // --- BEGIN IMPLEMENTATION ---
 
+// Коэффициент симуляции не изменяет динамику осей робота.
+// Скорость, ускорение, замедление и jerk задаются пользователем в настройках осей.
+lrEffectiveVelocity := AxisData.MotionParam.lrVelocity;
+lrEffectiveAcceleration := AxisData.MotionParam.lrAcceleration;
+lrEffectiveDeceleration := AxisData.MotionParam.lrDeceleration;
+lrEffectiveJerk := AxisData.MotionParam.lrJerk;
+
 // ======================================================
 // 1. ФРОНТЫ (триггеры на команды из структуры)
 // ======================================================
@@ -132,7 +143,13 @@ rtMoveRelative(CLK := AxisData.Command.xMoveRelative);
 // ======================================================
 // 2. СТАТУСЫ ОТ MC-БЛОКОВ (запись в структуру)
 // ======================================================
-AxisData.Status.xPowered := fbPower.Status;
+AxisData.Status.xPowerStageOn := fbPower.bRegulatorRealState;
+AxisData.Status.xDriveStartOn := fbPower.bDriveStartRealState;
+AxisData.Status.xPowered := fbPower.Status
+	AND AxisData.Status.xPowerStageOn
+	AND AxisData.Status.xDriveStartOn;
+AxisData.Status.xPowerOff := NOT AxisData.Status.xPowerStageOn
+	AND NOT AxisData.Status.xDriveStartOn;
 
 AxisData.Status.xLocalError :=
     fbPower.Error OR
@@ -224,7 +241,7 @@ CASE AxisData.Diag.iStep OF
         ELSIF rtEnable.Q AND NOT AxisData.Command.xPowerPermit THEN
             AxisData.Error.dwWarningLatched :=
                 AxisData.Error.dwWarningLatched OR WRN_NO_POWER_PERMIT;
-            AxisData.Diag.sWarningText := 'Нет разрешения на запуск двигателя';
+            AxisData.Diag.sWarningText := 'Power permit is not active';
             AxisData.Diag.stWarning.uiCode := UINT#1;
             AxisData.Diag.stWarning.udiSequence := AxisData.Diag.stWarning.udiSequence + UDINT#1;
             IF AxisData.Diag.stWarning.udiSequence = UDINT#0 THEN
@@ -277,6 +294,26 @@ CASE AxisData.Diag.iStep OF
 
         ELSIF rtDisable.Q THEN
             xPowerRequest := FALSE;
+            AxisData.Diag.iStep := E_AXIS_STATE.POWERING_DOWN;
+        END_IF;
+
+    // --------------------------------------------------
+    E_AXIS_STATE.POWERING_DOWN:
+    // --------------------------------------------------
+        AxisData.Diag.sStepName := 'POWERING_DOWN';
+        AxisData.Diag.sWaitReason := 'Waiting drive power feedback off';
+        AxisData.Diag.tStepPreset := AxisData.Timeouts.tPowerTimeout;
+
+        xPowerRequest := FALSE;
+
+        IF fbPower.Error THEN
+            AxisData.Error.dwAxisErrorLatched :=
+                AxisData.Error.dwAxisErrorLatched OR AXE_MC_POWER_ERROR;
+            AxisData.Diag.udiLastErrorID := TO_UDINT(fbPower.ErrorID);
+            AxisData.Diag.iLastErrorStep := TO_INT(AxisData.Diag.iStep);
+            AxisData.Diag.iStep := E_AXIS_STATE.ERROR_RESET_MANAGER;
+
+        ELSIF AxisData.Status.xPowerOff THEN
             AxisData.Diag.iStep := E_AXIS_STATE.DISABLED;
         END_IF;
 
@@ -291,11 +328,11 @@ CASE AxisData.Diag.iStep OF
 
         IF NOT AxisData.Command.xPowerPermit THEN
             xPowerRequest := FALSE;
-            AxisData.Diag.iStep := E_AXIS_STATE.DISABLED;
+            AxisData.Diag.iStep := E_AXIS_STATE.POWERING_DOWN;
 
         ELSIF rtDisable.Q THEN
             xPowerRequest := FALSE;
-            AxisData.Diag.iStep := E_AXIS_STATE.DISABLED;
+            AxisData.Diag.iStep := E_AXIS_STATE.POWERING_DOWN;
 
         ELSIF AxisData.Command.xGlobalError THEN
             AxisData.Error.dwLogicalErrorLatched :=
@@ -376,7 +413,9 @@ CASE AxisData.Diag.iStep OF
             AxisData.Error.dwAxisErrorLatched :=
                 AxisData.Error.dwAxisErrorLatched OR AxisData.Error.dwAxisErrorActual;
             AxisData.Diag.iLastErrorStep := TO_INT(AxisData.Diag.iStep);
-            AxisData.Diag.iStep := E_AXIS_STATE.STOPPING;
+            // SoftMotion уже перевёл ось в ErrorStop и выполнил error ramp.
+            // MC_Stop в этом состоянии создаёт вторичную ошибку "axis is in errorstop".
+            AxisData.Diag.iStep := E_AXIS_STATE.ERROR_RESET_MANAGER;
 
         ELSIF rtStop.Q THEN
             xJogForwardExec := FALSE;
@@ -394,6 +433,52 @@ CASE AxisData.Diag.iStep OF
         ELSIF NOT AxisData.Command.xJogPositive AND NOT AxisData.Command.xJogNegative THEN
             xJogForwardExec := FALSE;
             xJogBackwardExec := FALSE;
+            AxisData.Diag.iStep := E_AXIS_STATE.JOG_DECELERATING;
+        END_IF;
+
+    // --------------------------------------------------
+    E_AXIS_STATE.JOG_DECELERATING:
+    // --------------------------------------------------
+        AxisData.Diag.sStepName := 'JOG_DECELERATING';
+        AxisData.Diag.sWaitReason := 'Waiting MC_Jog controlled deceleration';
+        AxisData.Diag.tStepPreset := T#0S;
+
+        xPowerRequest := TRUE;
+        xJogForwardExec := FALSE;
+        xJogBackwardExec := FALSE;
+
+        IF NOT AxisData.Command.xPowerPermit THEN
+            AxisData.Error.dwLogicalErrorLatched :=
+                AxisData.Error.dwLogicalErrorLatched OR LOG_POWER_PERMIT_LOST;
+            AxisData.Diag.iLastErrorStep := TO_INT(AxisData.Diag.iStep);
+            AxisData.Diag.iStep := E_AXIS_STATE.STOPPING;
+
+        ELSIF AxisData.Command.xGlobalError THEN
+            AxisData.Error.dwLogicalErrorLatched :=
+                AxisData.Error.dwLogicalErrorLatched OR LOG_GLOBAL_DURING_MOTION;
+            AxisData.Diag.iLastErrorStep := TO_INT(AxisData.Diag.iStep);
+            AxisData.Diag.iStep := E_AXIS_STATE.STOPPING;
+
+        ELSIF xAxisErrorActual THEN
+            AxisData.Error.dwAxisErrorLatched :=
+                AxisData.Error.dwAxisErrorLatched OR AxisData.Error.dwAxisErrorActual;
+            AxisData.Diag.iLastErrorStep := TO_INT(AxisData.Diag.iStep);
+            AxisData.Diag.iStep := E_AXIS_STATE.ERROR_RESET_MANAGER;
+
+        ELSIF rtStop.Q THEN
+            AxisData.Diag.iStep := E_AXIS_STATE.STOPPING;
+
+        ELSIF AxisData.Command.xJogPositive AND AxisData.Command.xJogNegative THEN
+            AxisData.Error.dwLogicalErrorLatched :=
+                AxisData.Error.dwLogicalErrorLatched OR LOG_JOG_CONFLICT;
+            AxisData.Diag.iLastErrorStep := TO_INT(AxisData.Diag.iStep);
+            AxisData.Diag.iStep := E_AXIS_STATE.STOPPING;
+
+        ELSIF AxisData.Command.xJogPositive OR AxisData.Command.xJogNegative THEN
+            AxisData.Diag.iStep := E_AXIS_STATE.JOGGING;
+
+        ELSIF NOT fbJog.Busy THEN
+            AxisData.Status.xDone := TRUE;
             AxisData.Diag.iStep := E_AXIS_STATE.READY;
         END_IF;
 
@@ -842,7 +927,9 @@ AxisData.Status.xWarning := (AxisData.Error.dwWarning <> DWORD#0);
 // ======================================================
 fbPower(
     Axis := Axis,
-    Enable := xPowerRequest,
+    // Enable активирует обработку MC_Power и не является командой питания.
+    // Для штатного выключения FB продолжает выполняться, а силовые входы снимаются.
+    Enable := TRUE,
     bRegulatorOn := xPowerRequest,
     bDriveStart := xPowerRequest
 );
@@ -855,18 +942,18 @@ fbReset(
 fbStop(
     Axis := Axis,
     Execute := xStopExecute,
-    Deceleration := AxisData.MotionParam.lrDeceleration,
-    Jerk := AxisData.MotionParam.lrJerk
+    Deceleration := lrEffectiveDeceleration,
+    Jerk := lrEffectiveJerk
 );
 
 fbJog(
     Axis := Axis,
     JogForward := xJogForwardExec,
     JogBackward := xJogBackwardExec,
-    Velocity := AxisData.MotionParam.lrVelocity,
-    Acceleration := AxisData.MotionParam.lrAcceleration,
-    Deceleration := AxisData.MotionParam.lrDeceleration,
-    Jerk := AxisData.MotionParam.lrJerk
+    Velocity := lrEffectiveVelocity,
+    Acceleration := lrEffectiveAcceleration,
+    Deceleration := lrEffectiveDeceleration,
+    Jerk := lrEffectiveJerk
 );
 
 fbHome(
@@ -879,10 +966,10 @@ fbMoveAbsolute(
     Axis := Axis,
     Execute := xMoveAbsExecute,
     Position := AxisData.MotionParam.lrTargetPosition,
-    Velocity := AxisData.MotionParam.lrVelocity,
-    Acceleration := AxisData.MotionParam.lrAcceleration,
-    Deceleration := AxisData.MotionParam.lrDeceleration,
-    Jerk := AxisData.MotionParam.lrJerk,
+    Velocity := lrEffectiveVelocity,
+    Acceleration := lrEffectiveAcceleration,
+    Deceleration := lrEffectiveDeceleration,
+    Jerk := lrEffectiveJerk,
     Direction := MC_DIRECTION.shortest,
     BufferMode := MC_BUFFER_MODE.Aborting
 );
@@ -891,10 +978,10 @@ fbMoveRelative(
     Axis := Axis,
     Execute := xMoveRelExecute,
     Distance := AxisData.MotionParam.lrDistance,
-    Velocity := AxisData.MotionParam.lrVelocity,
-    Acceleration := AxisData.MotionParam.lrAcceleration,
-    Deceleration := AxisData.MotionParam.lrDeceleration,
-    Jerk := AxisData.MotionParam.lrJerk,
+    Velocity := lrEffectiveVelocity,
+    Acceleration := lrEffectiveAcceleration,
+    Deceleration := lrEffectiveDeceleration,
+    Jerk := lrEffectiveJerk,
     BufferMode := MC_BUFFER_MODE.Aborting
 );
 
@@ -987,6 +1074,7 @@ AxisData.Status.xBusy :=
 AxisData.Status.xCanStartMotion :=
     (AxisData.Diag.iStep = E_AXIS_STATE.READY) AND
     AxisData.Status.xPowered AND
+    NOT AxisData.Status.xMotionBusy AND
     NOT AxisData.Status.xAxisError AND
     NOT AxisData.Status.xLogicalError AND
     NOT AxisData.Command.xGlobalError;

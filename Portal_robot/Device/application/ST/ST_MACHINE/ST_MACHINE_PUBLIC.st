@@ -1,7 +1,9 @@
 TYPE ST_MACHINE_PUBLIC :
 STRUCT
 	xEnabled             : BOOL; // Станок включен в работу
-	xDisablePending      : BOOL; // Запрошено отключение после завершения текущей операции или обработки
+	xDisablePending      : BOOL; // Запрошено отключение после выхода автомата в разрешённый шаг
+	xPowerAllowed        : BOOL; // Кнопка включения, отключения или отмены отключения доступна
+	xResetAllowed        : BOOL; // Кнопка сброса ошибки станка доступна
 	xProcessing          : BOOL; // Станок выполняет цикл обработки
     xPartReady           : BOOL; // Обработка детали завершена
     xServiceRequired     : BOOL; // Станку требуется обслуживание роботом
@@ -13,6 +15,7 @@ STRUCT
 	xCriticalError       : BOOL; // Активна критическая ошибка
 	xAlarmError          : BOOL; // Активна некритическая ошибка станка
 	xExternalError       : BOOL; // Активна внешняя ошибка
+	xServiceRejected     : BOOL; // Обслуживание безопасно отклонено до входа робота в станок
     xDoorOpen            : BOOL; // Дверь станка открыта
     xAlarm               : BOOL; // Активна авария станка
 	stIo    			 : ST_MACHINE_IO_STATUS; // Статусы исполнительных механизмов станка

@@ -14,6 +14,9 @@ VAR CONSTANT
 	Y_OUT_OF_LIMIT : DWORD := 2; // Координата Y вне допустимых границ
 	Z_OUT_OF_LIMIT : DWORD := 4; // Координата Z вне допустимых границ
 	INVALID_VEL    : DWORD := 8; // Недопустимый коэффициент скорости
+	X_LIMIT_CONFIG_INVALID : DWORD := 16; // Software limits оси X недоступны или некорректны
+	Y_LIMIT_CONFIG_INVALID : DWORD := 32; // Software limits оси Y недоступны или некорректны
+	Z_LIMIT_CONFIG_INVALID : DWORD := 64; // Software limits оси Z недоступны или некорректны
 END_VAR
 
 // --- BEGIN IMPLEMENTATION ---
@@ -40,16 +43,35 @@ CASE stPointManager.Diag.eState OF
 	// --------------------------------------------------
 		stPointManager.Status.xBusy := TRUE;
 
-		IF NOT ((stPointManager.Diag.lrX_MinLimit <= stPoint.X) AND (stPoint.X <= stPointManager.Diag.lrX_MaxLimit)) THEN
-			stPointManager.Error.dwErrorActive := stPointManager.Error.dwErrorActive OR X_OUT_OF_LIMIT;
-		END_IF
+		IF NOT stPointManager.Diag.xXLimitValid
+		OR NOT stPointManager.Diag.xYLimitValid
+		OR NOT stPointManager.Diag.xZLimitValid THEN
+			// Без достоверных активных SoftMotion limits движение к точке запрещается.
+			// Статический резервный диапазон здесь намеренно не применяется.
+			IF NOT stPointManager.Diag.xXLimitValid THEN
+				stPointManager.Error.dwErrorActive :=
+					stPointManager.Error.dwErrorActive OR X_LIMIT_CONFIG_INVALID;
+			END_IF
+			IF NOT stPointManager.Diag.xYLimitValid THEN
+				stPointManager.Error.dwErrorActive :=
+					stPointManager.Error.dwErrorActive OR Y_LIMIT_CONFIG_INVALID;
+			END_IF
+			IF NOT stPointManager.Diag.xZLimitValid THEN
+				stPointManager.Error.dwErrorActive :=
+					stPointManager.Error.dwErrorActive OR Z_LIMIT_CONFIG_INVALID;
+			END_IF
+		ELSE
+			IF NOT ((stPointManager.Diag.lrX_MinLimit <= stPoint.X) AND (stPoint.X <= stPointManager.Diag.lrX_MaxLimit)) THEN
+				stPointManager.Error.dwErrorActive := stPointManager.Error.dwErrorActive OR X_OUT_OF_LIMIT;
+			END_IF
 
-		IF NOT ((stPointManager.Diag.lrY_MinLimit <= stPoint.Y) AND (stPoint.Y <= stPointManager.Diag.lrY_MaxLimit)) THEN
-			stPointManager.Error.dwErrorActive := stPointManager.Error.dwErrorActive OR Y_OUT_OF_LIMIT;
-		END_IF
+			IF NOT ((stPointManager.Diag.lrY_MinLimit <= stPoint.Y) AND (stPoint.Y <= stPointManager.Diag.lrY_MaxLimit)) THEN
+				stPointManager.Error.dwErrorActive := stPointManager.Error.dwErrorActive OR Y_OUT_OF_LIMIT;
+			END_IF
 
-		IF NOT ((stPointManager.Diag.lrZ_MinLimit <= stPoint.Z) AND (stPoint.Z <= stPointManager.Diag.lrZ_MaxLimit)) THEN
-			stPointManager.Error.dwErrorActive := stPointManager.Error.dwErrorActive OR Z_OUT_OF_LIMIT;
+			IF NOT ((stPointManager.Diag.lrZ_MinLimit <= stPoint.Z) AND (stPoint.Z <= stPointManager.Diag.lrZ_MaxLimit)) THEN
+				stPointManager.Error.dwErrorActive := stPointManager.Error.dwErrorActive OR Z_OUT_OF_LIMIT;
+			END_IF
 		END_IF
 
 		stPointManager.Diag.eState := E_POINT_MANAGER_STATE.CHECK_VEL_FACTOR;

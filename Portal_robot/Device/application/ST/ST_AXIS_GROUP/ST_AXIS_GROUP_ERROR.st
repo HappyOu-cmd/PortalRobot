@@ -1,7 +1,7 @@
 TYPE ST_AXIS_GROUP_ERROR :
 STRUCT
 	ENABLE_ERROR          : BOOL; // Ошибка MC_GroupEnable
-	POWER_ERROR           : BOOL; // Ошибка SMC_GroupPower
+	POWER_ERROR           : BOOL; // Зарезервировано; питание осей контролируют FB_AXIS
 	DISABLE_ERROR         : BOOL; // Ошибка MC_GroupDisable
 	RESET_ERROR           : BOOL; // Ошибка MC_GroupReset
 	MOVE_DIRECT_ERROR     : BOOL; // Ошибка MC_MoveDirectAbsolute
@@ -12,6 +12,8 @@ STRUCT
 	READ_STATUS_ERROR     : BOOL; // Ошибка чтения статуса группы
 	READ_GROUP_ERROR      : BOOL; // Ошибка чтения кода ошибки группы
 	GROUP_ERROR_STOP      : BOOL; // Группа SoftMotion находится в ErrorStop
+	SIMULATED_ERROR       : BOOL; // Тестовая ошибка Motion-FB, сформированная эмулятором
+	OVERRIDE_ERROR        : BOOL; // Ошибка MC_GroupSetOverride
 	STEP_TIMEOUT          : BOOL; // Превышено время выполнения шага
 	INVALID_STATE         : BOOL; // Неизвестное состояние автомата
 	POWER_PERMIT_READY    : BOOL; // Нет разрешения питания в готовности

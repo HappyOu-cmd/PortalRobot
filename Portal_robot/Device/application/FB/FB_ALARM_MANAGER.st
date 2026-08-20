@@ -1,10 +1,9 @@
 FUNCTION_BLOCK FB_ALARM_MANAGER
 VAR_INPUT
-	xResetAll      : BOOL; // Общий сброс ошибок ячейки
 	xResetWarnings : BOOL; // Сброс накопленных предупреждений
 END_VAR
 VAR_IN_OUT
-	Sources : ARRAY [1..13] OF ST_ALARM_SOURCE_DATA; // Унифицированные данные функциональных блоков
+	Sources : ARRAY [1..16] OF ST_ALARM_SOURCE_DATA; // Унифицированные данные функциональных блоков
 END_VAR
 VAR_OUTPUT
 	Status : ST_ALARM_STATUS; // Сводный статус журнала
@@ -13,15 +12,16 @@ END_VAR
 VAR
 	uiWriteIndex : UINT := 1; // Следующая ячейка кольцевого журнала
 	udiSequence  : UDINT; // Общий порядковый номер события
-	adwPreviousAlarm : ARRAY [1..13] OF DWORD; // Опубликованные аварии прошлого цикла
-	audiPreviousWarning : ARRAY [1..13] OF UDINT; // Номера предупреждений прошлого цикла
+	adwPreviousAlarm : ARRAY [1..16] OF DWORD; // Опубликованные аварии прошлого цикла
+	audiPreviousWarning : ARRAY [1..16] OF UDINT; // Номера предупреждений прошлого цикла
 	uiIndex : UINT; // Индекс источника или события
 END_VAR
 
 // --- BEGIN IMPLEMENTATION ---
 
-// Предупреждения подтверждаются отдельно или вместе с общим сбросом.
-IF xResetWarnings OR xResetAll THEN
+// Предупреждения подтверждаются только отдельной командой HMI.
+// Общий сброс ошибок ячейки не изменяет журнал предупреждений.
+IF xResetWarnings THEN
 	FOR uiIndex := 1 TO 100 DO
 		IF Events[uiIndex].xActive
 		AND (Events[uiIndex].eSeverity = E_ALARM_SEVERITY.WARNING) THEN
@@ -31,7 +31,7 @@ IF xResetWarnings OR xResetAll THEN
 END_IF;
 
 // Менеджер не определяет причины: он регистрирует подготовленные данные владельцев блоков.
-FOR uiIndex := 1 TO 13 DO
+FOR uiIndex := 1 TO 16 DO
 	UpdateSource(
 		eSource := Sources[uiIndex].eSource,
 		dwCurrent := Sources[uiIndex].dwAlarmActive,
