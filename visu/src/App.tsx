@@ -72,6 +72,7 @@ import {
 type Page = 'monitoring' | 'machines' | 'robot' | 'magazine' | 'manual' | 'injections' | 'events' | 'alarms' | 'tests' | 'settings' | 'cell-settings' | 'injection-settings' | 'simulation-settings' | 'users' | 'statistics' | 'statistics-settings';
 type BottomSection = 'cell' | 'machines' | 'robot' | 'magazine' | 'cyclogram';
 type TopMenuSection = 'root' | 'settings' | 'manual';
+type FontPreset = 'apple' | 'tesla' | 'manrope' | 'plex';
 const PLC_UI_REFRESH_MS = 50;
 const MANUAL_MODE_SPEED_PERCENT = 10;
 const WORKSPACE_CLICK_MOVE_TOLERANCE_PX = 6;
@@ -294,6 +295,13 @@ const distributeProductTypes = (activeCount: number, machineTypes: ProductType[]
   return result;
 };
 const LAYOUT_STORAGE_KEY = 'portal-robot.visualization-layout.v1';
+const FONT_PRESET_STORAGE_KEY = 'portal-robot.font-preset.v1';
+const FONT_PRESET_OPTIONS: { value: FontPreset; label: string; description: string }[] = [
+  { value: 'apple', label: 'Apple', description: 'SF Pro-подобный системный стек' },
+  { value: 'tesla', label: 'Tesla', description: 'Montserrat · геометричный и строгий' },
+  { value: 'manrope', label: 'Manrope', description: 'Чистый современный интерфейс' },
+  { value: 'plex', label: 'IBM Plex Sans', description: 'Технический и промышленный' },
+];
 const INITIAL_CONNECTION: PlcConnectionInfo = { status: 'connecting', endpoint: '', message: 'Подключение к шлюзу', symbols: 0, missing: [] };
 const INITIAL_RUNTIME: PlcRuntimeInfo = {
   cellRunning: false, cellStopPending: false, globalError: false, readyToStart: false, drivesReady: false,
@@ -1087,6 +1095,15 @@ function loadDriftSettings(): DriftSettings {
   }
 }
 
+function loadFontPreset(): FontPreset {
+  try {
+    const value = localStorage.getItem(FONT_PRESET_STORAGE_KEY);
+    return FONT_PRESET_OPTIONS.some((option) => option.value === value) ? value as FontPreset : 'apple';
+  } catch {
+    return 'apple';
+  }
+}
+
 function MachinePanel({ index, state, multiTypeCount, productTypeChangeAllowed, onClose, onToggleEnabled, onCycleSettings, onProductType, className }: {
   index: number;
   state: CellState['machines'][number];
@@ -1411,9 +1428,11 @@ function PartMaterialField({ label, value, onChange }: {
   </div>;
 }
 
-function SettingsPanel({ layout, setLayout, easterEggMode, driftSettings, onDriftSettings, onEasterEggMode, onNextEasterEgg, onClose, className }: {
+function SettingsPanel({ layout, setLayout, fontPreset, onFontPreset, easterEggMode, driftSettings, onDriftSettings, onEasterEggMode, onNextEasterEgg, onClose, className }: {
   layout: CellLayout;
   setLayout: (layout: CellLayout) => void;
+  fontPreset: FontPreset;
+  onFontPreset: (preset: FontPreset) => void;
   easterEggMode: EasterEggMode;
   driftSettings: DriftSettings;
   onDriftSettings: (settings: DriftSettings) => void;
@@ -1428,6 +1447,13 @@ function SettingsPanel({ layout, setLayout, easterEggMode, driftSettings, onDrif
   return (
     <aside className={`side-panel settings-panel ${className ?? ''}`}>
       <div className="panel-heading"><div><span>НАСТРОЙКИ · СОХРАНЯЮТСЯ АВТОМАТИЧЕСКИ</span><h2>Визуализация</h2></div><button onClick={onClose} title="Закрыть"><ChevronRight /></button></div>
+      <section className="font-concept-settings"><h3>Шрифт интерфейса</h3>
+        <p>Переключается сразу во всём HMI. Выбор сохранится после перезагрузки.</p>
+        <label><span>Концепт</span><select value={fontPreset} onChange={(event) => onFontPreset(event.target.value as FontPreset)}>
+          {FONT_PRESET_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label} — {option.description}</option>)}
+        </select></label>
+        <div className="font-concept-preview"><strong>Portal Robot</strong><span>Станок готов к работе · 12:48</span></div>
+      </section>
       <section className="easter-egg-settings"><h3>Производственный бардак</h3>
         <p>Пасхалки живут только в 3D и никак не влияют на PLC, команды и телеметрию.</p>
         <label><span>Сценарий</span><select value={easterEggMode} onChange={(event) => onEasterEggMode(event.target.value as EasterEggMode)}>
@@ -1539,6 +1565,7 @@ function ManualPanel({ state, layout, setState, machineIndex, setMachineIndex, c
 
 export function App() {
   const [layout, setLayout] = useState<CellLayout>(loadLayout);
+  const [fontPreset, setFontPreset] = useState<FontPreset>(loadFontPreset);
   const [easterEggMode, setEasterEggMode] = useState<EasterEggMode>(loadEasterEggMode);
   const [driftSettings, setDriftSettings] = useState<DriftSettings>(loadDriftSettings);
   const [easterEggRevision, setEasterEggRevision] = useState(0);
@@ -1981,6 +2008,11 @@ export function App() {
   }, [layout]);
 
   useEffect(() => {
+    document.documentElement.dataset.fontPreset = fontPreset;
+    localStorage.setItem(FONT_PRESET_STORAGE_KEY, fontPreset);
+  }, [fontPreset]);
+
+  useEffect(() => {
     localStorage.setItem(EASTER_EGG_STORAGE_KEY, easterEggMode);
   }, [easterEggMode]);
 
@@ -2233,12 +2265,11 @@ export function App() {
           <div className="profile-popover__identity">
             <div className="profile-popover__avatar"><UserRound aria-hidden="true" /></div>
             <div><strong>{authUser.displayName}</strong></div>
-            <div className="profile-popover__online"><i />В сети</div>
           </div>
-          <div className="profile-popover__role"><ShieldCheck aria-hidden="true" /><div><span>УРОВЕНЬ ДОСТУПА</span><strong>{authUser.role === 'admin' ? 'Администратор системы' : 'Оператор ячейки'}</strong></div></div>
+          <div className="profile-popover__role"><ShieldCheck aria-hidden="true" /><div><strong>{authUser.role === 'admin' ? 'Администратор системы' : 'Оператор ячейки'}</strong></div></div>
           <div className="profile-popover__actions">
-            <button className="profile-popover__manage" type="button" onClick={() => { setProfileOpen(false); setPage('statistics'); }}><BarChart3 aria-hidden="true" /><span><b>Статистика</b><small>{authUser.role === 'admin' ? 'Аналитика ячейки и операторов' : 'Личные показатели и уровень'}</small></span><ChevronRight aria-hidden="true" /></button>
-            {authUser.role === 'admin' && <button className="profile-popover__manage" type="button" onClick={() => { setProfileOpen(false); setPage('users'); }}><UsersRound aria-hidden="true" /><span><b>Пользователи</b><small>Учётные записи и права</small></span><ChevronRight aria-hidden="true" /></button>}
+            <button className="profile-popover__manage" type="button" onClick={() => { setProfileOpen(false); setPage('statistics'); }}><BarChart3 aria-hidden="true" /><span><b>Статистика</b></span><ChevronRight aria-hidden="true" /></button>
+            {authUser.role === 'admin' && <button className="profile-popover__manage" type="button" onClick={() => { setProfileOpen(false); setPage('users'); }}><UsersRound aria-hidden="true" /><span><b>Пользователи</b></span><ChevronRight aria-hidden="true" /></button>}
             <button className="profile-popover__logout" type="button" onClick={() => void logout()}><UnlockKeyhole aria-hidden="true" /><span>Завершить сеанс</span></button>
           </div>
         </div>}
@@ -2417,6 +2448,8 @@ export function App() {
       <AnimatedPresence open={page === 'settings'}><SettingsPanel
         layout={layout}
         setLayout={setLayout}
+        fontPreset={fontPreset}
+        onFontPreset={setFontPreset}
         easterEggMode={easterEggMode}
         driftSettings={driftSettings}
         onDriftSettings={setDriftSettings}
