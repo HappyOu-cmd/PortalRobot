@@ -7,6 +7,8 @@ import type {
   IndexedConveyorTestStatus,
   RobotCoordinateFrame,
 } from '../model/types';
+import { DEFAULT_DRIFT_SETTINGS, type DriftSettings, type DriftTelemetry, type EasterEggMode } from '../model/easterEggs';
+import { EasterEggController } from './easterEggs';
 import { createMachine, disposeMachineRig, type MachineRig, updateMachineRig } from './machine';
 import { createIndexedConveyor, type IndexedConveyorRig, updateIndexedConveyorRig } from './indexedConveyor';
 import { createPortal, type PortalRig, updatePortalRig } from './portal';
@@ -25,6 +27,8 @@ export interface EquipmentAnchors {
   magazines: ScreenAnchor[];
 }
 
+const getRenderPixelRatio = (): number => Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+
 export class CellScene {
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.PerspectiveCamera(34, 1, 0.05, 100);
@@ -37,6 +41,9 @@ export class CellScene {
   private machineRigs: MachineRig[] = [];
   private portalRig?: PortalRig;
   private indexedConveyorRigs: IndexedConveyorRig[] = [];
+  private easterEggController?: EasterEggController;
+  private easterEggMode: EasterEggMode = 'off';
+  private easterEggRevision = 0;
   private indexedConveyorTest: IndexedConveyorTestCommand = { id: 0, type: 'none', magazineId: 1 };
   private indexedConveyorStatusKeys = ['', ''];
   private state: CellState;
@@ -45,6 +52,8 @@ export class CellScene {
   private resizeObserver: ResizeObserver;
   private selectedMachine: number | null = null;
   private syncMagazineInventory = true;
+  private cameraPreset: CameraPreset = 'iso';
+  private driftSettings: DriftSettings = DEFAULT_DRIFT_SETTINGS;
 
   constructor(
     private readonly host: HTMLElement,
@@ -55,11 +64,12 @@ export class CellScene {
     private readonly onMagazineSelect?: (magazineId: 1 | 2) => void,
     private readonly onAnchorsUpdate?: (anchors: EquipmentAnchors) => void,
     private readonly onIndexedConveyorTestStatus?: (magazineId: 1 | 2, status: IndexedConveyorTestStatus) => void,
+    private readonly onDriftTelemetry?: (telemetry: DriftTelemetry) => void,
   ) {
     this.layout = layout;
     this.state = state;
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(getRenderPixelRatio());
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.08;
@@ -85,6 +95,8 @@ export class CellScene {
     this.renderer.domElement.addEventListener('pointerdown', this.handlePointerDown);
     this.resizeObserver = new ResizeObserver(this.resize);
     this.resizeObserver.observe(host);
+    window.addEventListener('resize', this.resize);
+    window.visualViewport?.addEventListener('resize', this.resize);
     this.resize();
     this.animate();
   }
@@ -133,6 +145,8 @@ export class CellScene {
 
   rebuild(layout: CellLayout): void {
     this.layout = layout;
+    this.easterEggController?.dispose();
+    this.easterEggController = undefined;
     this.machineRigs.forEach(disposeMachineRig);
     this.scene.remove(this.cellRoot);
     disposeObject(this.cellRoot);
@@ -144,11 +158,19 @@ export class CellScene {
     this.portalRig = createPortal(layout);
     this.cellRoot.add(this.portalRig.root);
     this.indexedConveyorRigs = layout.indexedConveyors.map((config, index) => {
-      const rig = createIndexedConveyor(config, (index + 1) as 1 | 2);
+      const rig = createIndexedConveyor(
+        config,
+        layout.partGeometry,
+        layout.productPartMaterials,
+        (index + 1) as 1 | 2,
+      );
       rig.lastCommandId = this.indexedConveyorTest.id;
       this.cellRoot.add(rig.root);
       return rig;
     });
+    this.easterEggController = new EasterEggController(layout, this.onDriftTelemetry, this.driftSettings);
+    this.easterEggController.setMode(this.easterEggMode, this.easterEggRevision);
+    this.cellRoot.add(this.easterEggController.root);
     this.scene.add(this.cellRoot);
     this.setSelectedMachine(this.selectedMachine);
   }
@@ -165,6 +187,25 @@ export class CellScene {
     this.indexedConveyorTest = command;
   }
 
+  setEasterEgg(mode: EasterEggMode, revision = 0): void {
+    const controlledCameraBefore = this.easterEggController?.controlsCamera ?? false;
+    this.easterEggMode = mode;
+    this.easterEggRevision = revision;
+    this.easterEggController?.setMode(mode, revision);
+    const controlledCameraNow = this.easterEggController?.controlsCamera ?? false;
+    this.controls.enabled = !controlledCameraNow;
+    if (controlledCameraBefore && !controlledCameraNow) this.setCamera(this.cameraPreset);
+    if (this.scene.fog instanceof THREE.Fog) {
+      this.scene.fog.near = controlledCameraNow ? 38 : 18;
+      this.scene.fog.far = controlledCameraNow ? 86 : 34;
+    }
+  }
+
+  setDriftSettings(settings: DriftSettings): void {
+    this.driftSettings = settings;
+    this.easterEggController?.setDriftSettings(settings);
+  }
+
   setSelectedMachine(index: number | null): void {
     this.selectedMachine = index;
     this.machineRigs.forEach((rig, machineIndex) => {
@@ -173,6 +214,8 @@ export class CellScene {
   }
 
   setCamera(preset: CameraPreset): void {
+    this.cameraPreset = preset;
+    if (this.easterEggController?.controlsCamera) return;
     const center = logicalPosition(this.layout.floor.lengthX * 0.5, this.layout.floor.widthY * 0.45, 900);
     const target = preset === 'front'
       ? logicalPosition(this.layout.floor.lengthX * 0.5, this.layout.floor.widthY * 0.45, -100)
@@ -180,14 +223,20 @@ export class CellScene {
     if (preset === 'front') this.camera.position.set(center.x, 5.8, 14.5);
     if (preset === 'top') this.camera.position.set(center.x, 15.5, center.z + 0.01);
     if (preset === 'iso') this.camera.position.set(center.x + 4.2, 7.4, center.z + 13.6);
+    this.camera.fov = 34;
+    this.camera.updateProjectionMatrix();
     this.controls.target.copy(target);
     this.camera.lookAt(target);
-    this.controls.update();
+    if (!this.easterEggController?.controlsCamera) this.controls.update();
   }
 
   private readonly resize = (): void => {
     const width = Math.max(1, this.host.clientWidth);
     const height = Math.max(1, this.host.clientHeight);
+    const pixelRatio = getRenderPixelRatio();
+    if (Math.abs(this.renderer.getPixelRatio() - pixelRatio) > 0.001) {
+      this.renderer.setPixelRatio(pixelRatio);
+    }
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height, false);
@@ -258,7 +307,7 @@ export class CellScene {
     );
     this.machineRigs.forEach((rig, index) => {
       const state = this.state.machines[index];
-      if (state) updateMachineRig(rig, state, dt, this.layout.animation.mechanismResponse);
+      if (state) updateMachineRig(rig, state, dt, this.layout);
     });
     this.indexedConveyorRigs.forEach((rig, index) => {
       const magazineId = (index + 1) as 1 | 2;
@@ -277,7 +326,8 @@ export class CellScene {
         this.onIndexedConveyorTestStatus?.(magazineId, status);
       }
     });
-    this.controls.update();
+    this.easterEggController?.update(dt, this.camera);
+    if (!this.easterEggController?.controlsCamera) this.controls.update();
     this.renderer.render(this.scene, this.camera);
     this.updateEquipmentAnchors();
   };
@@ -285,8 +335,12 @@ export class CellScene {
   dispose(): void {
     cancelAnimationFrame(this.animationFrame);
     this.resizeObserver.disconnect();
+    window.removeEventListener('resize', this.resize);
+    window.visualViewport?.removeEventListener('resize', this.resize);
     this.renderer.domElement.removeEventListener('pointerdown', this.handlePointerDown);
     this.controls.dispose();
+    this.easterEggController?.dispose();
+    this.easterEggController = undefined;
     this.machineRigs.forEach(disposeMachineRig);
     disposeObject(this.cellRoot);
     this.renderer.dispose();

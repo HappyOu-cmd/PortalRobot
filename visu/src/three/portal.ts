@@ -1,8 +1,7 @@
 import * as THREE from 'three';
-import { PART_GEOMETRY } from '../model/partGeometry';
 import { getRobotTravelLimits } from '../model/travel';
-import type { CellLayout, RobotCoordinateFrame, RobotState, Vec3Mm } from '../model/types';
-import { box, COLORS, cylinder, damp, logicalPosition, mm, PRODUCT_PART_COLORS } from './primitives';
+import type { CellLayout, GripperPayloadPoseLayout, PartGeometryLayout, RobotCoordinateFrame, RobotState, Vec3Mm } from '../model/types';
+import { applyPartMaterial, box, COLORS, cylinder, damp, logicalPosition, mm } from './primitives';
 
 interface GripperRig {
   pivot: THREE.Group;
@@ -146,33 +145,41 @@ function makeGripperHead(name: string, color: number): {
   return { root, fingers: [fingerA, fingerB], payloadMount };
 }
 
-function createBlankPayload(): THREE.Group {
+function createBlankPayload(geometry: PartGeometryLayout): THREE.Group {
   const root = new THREE.Group();
-  const body = cylinder('blank_payload', PART_GEOMETRY.blank.radius, PART_GEOMETRY.blank.length, COLORS.blank, new THREE.Vector3());
+  const body = cylinder('blank_payload', mm(geometry.blankDiameter) / 2, mm(geometry.blankLength), COLORS.blank, new THREE.Vector3());
   body.rotation.z = Math.PI / 2;
   root.add(body);
   return root;
 }
 
-function createDetailPayload(): THREE.Group {
+function createDetailPayload(geometry: PartGeometryLayout): THREE.Group {
   const root = new THREE.Group();
-  const body = cylinder('detail_payload', PART_GEOMETRY.detail.bodyRadius, PART_GEOMETRY.detail.bodyLength, COLORS.detail, new THREE.Vector3());
+  const body = cylinder('detail_payload', mm(geometry.detailBodyDiameter) / 2, mm(geometry.detailBodyLength), COLORS.detail, new THREE.Vector3());
   body.rotation.z = Math.PI / 2;
-  const shoulder = cylinder('detail_shoulder', PART_GEOMETRY.detail.shoulderRadius, PART_GEOMETRY.detail.shoulderLength, 0x67c092, new THREE.Vector3(PART_GEOMETRY.detail.shoulderOffset, 0, 0));
+  const shoulder = cylinder('detail_shoulder', mm(geometry.detailShoulderDiameter) / 2, mm(geometry.detailShoulderLength), 0x67c092, new THREE.Vector3(mm(geometry.detailShoulderOffset), 0, 0));
   shoulder.rotation.z = Math.PI / 2;
   root.add(body, shoulder);
   return root;
 }
 
-function setObjectColor(object: THREE.Object3D, color: number): void {
-  object.traverse((child) => {
-    if (!(child instanceof THREE.Mesh)) return;
-    const meshMaterial = child.material;
-    if (meshMaterial instanceof THREE.MeshStandardMaterial) meshMaterial.color.setHex(color);
-  });
+function applyPayloadPose(payload: THREE.Object3D, pose: GripperPayloadPoseLayout): void {
+  payload.position.set(
+    mm(pose.offset.x) / GRIPPER_SCALE,
+    mm(pose.offset.y) / GRIPPER_SCALE,
+    mm(pose.offset.z) / GRIPPER_SCALE,
+  );
+  payload.rotation.set(
+    THREE.MathUtils.degToRad(pose.rotationDeg.x),
+    THREE.MathUtils.degToRad(pose.rotationDeg.y),
+    THREE.MathUtils.degToRad(pose.rotationDeg.z),
+  );
 }
 
-function createDualGripper(): GripperRig {
+function createDualGripper(
+  geometry: PartGeometryLayout,
+  poses: CellLayout['gripperPayloadPoses'],
+): GripperRig {
   const pivot = new THREE.Group();
   pivot.name = 'dual_gripper';
   pivot.add(box('gripper_rotator', new THREE.Vector3(0.34, 0.18, 0.28), COLORS.graphite, new THREE.Vector3()));
@@ -187,11 +194,13 @@ function createDualGripper(): GripperRig {
   second.root.rotation.z = -Math.PI / 2;
   pivot.add(second.root);
 
-  const blank = createBlankPayload();
+  const blank = createBlankPayload(geometry);
   blank.scale.setScalar(1 / GRIPPER_SCALE);
+  applyPayloadPose(blank, poses.blank);
   first.payloadMount.add(blank);
-  const detail = createDetailPayload();
+  const detail = createDetailPayload(geometry);
   detail.scale.setScalar(1 / GRIPPER_SCALE);
+  applyPayloadPose(detail, poses.detail);
   second.payloadMount.add(detail);
 
   pivot.scale.setScalar(GRIPPER_SCALE);
@@ -266,7 +275,7 @@ export function createPortal(layout: CellLayout): PortalRig {
 
   const gripperMount = new THREE.Group();
   gripperMount.position.y = -baseLength;
-  const gripper = createDualGripper();
+  const gripper = createDualGripper(layout.partGeometry, layout.gripperPayloadPoses);
   gripperMount.add(gripper.pivot);
   zMount.add(gripperMount);
 
@@ -334,16 +343,16 @@ export function updatePortalRig(
   rig.gripper.grip1Value = damp(rig.gripper.grip1Value, state.gripper1Closed ? 1 : 0, mechanismResponse, dt);
   rig.gripper.grip2Value = damp(rig.gripper.grip2Value, state.gripper2Closed ? 1 : 0, mechanismResponse, dt);
   const fingerHalfWidth = 0.0175;
-  updateFingerPair(rig.gripper.fingers1, rig.gripper.grip1Value, PART_GEOMETRY.blank.radius / GRIPPER_SCALE + fingerHalfWidth);
-  updateFingerPair(rig.gripper.fingers2, rig.gripper.grip2Value, PART_GEOMETRY.detail.bodyRadius / GRIPPER_SCALE + fingerHalfWidth);
+  updateFingerPair(rig.gripper.fingers1, rig.gripper.grip1Value, (mm(layout.partGeometry.blankDiameter) / 2) / GRIPPER_SCALE + fingerHalfWidth);
+  updateFingerPair(rig.gripper.fingers2, rig.gripper.grip2Value, (mm(layout.partGeometry.detailBodyDiameter) / 2) / GRIPPER_SCALE + fingerHalfWidth);
   rig.gripper.blank.visible = state.gripper1Closed;
   rig.gripper.detail.visible = state.gripper2Closed;
-  const blankColor = state.blankProductType === 1 || state.blankProductType === 2 || state.blankProductType === 3
-    ? PRODUCT_PART_COLORS[state.blankProductType].blank
-    : COLORS.steel;
-  const detailColor = state.detailProductType === 1 || state.detailProductType === 2 || state.detailProductType === 3
-    ? PRODUCT_PART_COLORS[state.detailProductType].detail
-    : COLORS.steel;
-  setObjectColor(rig.gripper.blank, blankColor);
-  setObjectColor(rig.gripper.detail, detailColor);
+  const blankMaterials = state.blankProductType >= 1 && state.blankProductType <= 3
+    ? layout.productPartMaterials[state.blankProductType - 1]
+    : layout.productPartMaterials[0];
+  const detailMaterials = state.detailProductType >= 1 && state.detailProductType <= 3
+    ? layout.productPartMaterials[state.detailProductType - 1]
+    : layout.productPartMaterials[0];
+  applyPartMaterial(rig.gripper.blank, blankMaterials.blank);
+  applyPartMaterial(rig.gripper.detail, detailMaterials.detail);
 }

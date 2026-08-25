@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity, AlertCircle, CheckCircle2, Filter, LoaderCircle, Pause, Play,
-  RefreshCw, Search, SlidersHorizontal, X,
+  RefreshCw, Search, SlidersHorizontal, UserRound, X,
 } from 'lucide-react';
-import type { CellLogEvent } from '../plc/client';
+import type { CellLogActor, CellLogEvent } from '../plc/client';
 
 const SOURCES = [
   [1, 'Станок 1'], [2, 'Станок 2'], [3, 'Станок 3'], [4, 'Магазин'],
@@ -81,6 +81,8 @@ export function CellEventLog({ liveEvent, online, onClose, className }: {
   const [sourceFilters, setSourceFilters] = useState<number[]>([]);
   const [textFilter, setTextFilter] = useState('');
   const [debouncedText, setDebouncedText] = useState('');
+  const [actors, setActors] = useState<CellLogActor[]>([]);
+  const [actorFilter, setActorFilter] = useState('all');
   const [period, setPeriod] = useState('8');
   const [customFrom, setCustomFrom] = useState(() => dateTimeInputValue(now - 8 * 3_600_000));
   const [customTo, setCustomTo] = useState(() => dateTimeInputValue(now));
@@ -114,10 +116,22 @@ export function CellEventLog({ liveEvent, online, onClose, className }: {
     return () => window.clearTimeout(timer);
   }, [textFilter]);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch('/api/cell-event-actors', { signal: controller.signal }).then(async (response) => {
+      if (!response.ok) throw new Error(await errorText(response));
+      return response.json() as Promise<CellLogActor[]>;
+    }).then(setActors).catch((error) => {
+      if (error instanceof DOMException && error.name === 'AbortError') return;
+      setActors([]);
+    });
+    return () => controller.abort();
+  }, []);
+
   const eventTypes = useMemo(() => CATEGORY_TYPES[category] ?? [], [category]);
   const statuses = useMemo(() => STATE_STATUSES[stateFilter] ?? [], [stateFilter]);
   const queryIdentity = JSON.stringify({
-    sourceFilters, text: debouncedText, period, customFrom, customTo, level, category,
+    sourceFilters, text: debouncedText, actorFilter, period, customFrom, customTo, level, category,
     stateFilter, order, operationId: operationId.trim(), commandSeq: commandSeq.trim(), code: code.trim(), refreshSequence,
   });
 
@@ -140,8 +154,9 @@ export function CellEventLog({ liveEvent, online, onClose, className }: {
     if (operationId.trim()) parameters.set('operationId', operationId.trim());
     if (commandSeq.trim()) parameters.set('commandSeq', commandSeq.trim());
     if (code.trim()) parameters.set('code', code.trim());
+    if (actorFilter !== 'all') parameters.set('actorUserId', actorFilter);
     return parameters.toString();
-  }, [code, commandSeq, customFrom, customTo, debouncedText, eventTypes, level, operationId, order, period, sourceFilters, statuses]);
+  }, [actorFilter, code, commandSeq, customFrom, customTo, debouncedText, eventTypes, level, operationId, order, period, sourceFilters, statuses]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -204,6 +219,7 @@ export function CellEventLog({ liveEvent, online, onClose, className }: {
     const { fromMs, toMs } = activeRangeRef.current;
     if (event.timestampMs < fromMs || event.timestampMs > toMs) return false;
     if (sourceFilters.length && !sourceFilters.includes(event.sourceId)) return false;
+    if (actorFilter !== 'all' && event.actor?.id !== Number(actorFilter)) return false;
     if (statuses.length && !statuses.includes(event.status)) return false;
     if (eventTypes.length && !eventTypes.includes(event.eventType)) return false;
     const isError = event.eventType === 'alarm' || ['error', 'rejected', 'lost'].includes(event.status);
@@ -219,7 +235,7 @@ export function CellEventLog({ liveEvent, online, onClose, className }: {
       if (!haystack.includes(debouncedText.toLocaleLowerCase('ru-RU'))) return false;
     }
     return true;
-  }, [code, commandSeq, debouncedText, eventTypes, level, operationId, sourceFilters, statuses]);
+  }, [actorFilter, code, commandSeq, debouncedText, eventTypes, level, operationId, sourceFilters, statuses]);
 
   useEffect(() => {
     if (!liveEvent || lastLiveIdRef.current === liveEvent.id) return;
@@ -269,6 +285,10 @@ export function CellEventLog({ liveEvent, online, onClose, className }: {
 
     <div className="cell-event-toolbar">
       <label className="cell-event-search"><Search /><input value={textFilter} onChange={(event) => setTextFilter(event.target.value)} placeholder="Поиск по событию, ID операции, коду…" /></label>
+      <select value={actorFilter} onChange={(event) => setActorFilter(event.target.value)} aria-label="Фильтр по аккаунту">
+        <option value="all">Все аккаунты</option>
+        {actors.map((actor) => <option value={actor.id} key={actor.id}>{actor.displayName} (@{actor.username})</option>)}
+      </select>
       <select value={period} onChange={(event) => setPeriod(event.target.value)} aria-label="Период журнала">
         <option value="1">Последний час</option><option value="8">Последние 8 часов</option>
         <option value="24">Последние сутки</option><option value="168">Последние 7 дней</option>
@@ -330,7 +350,7 @@ export function CellEventLog({ liveEvent, online, onClose, className }: {
                   <span className="cell-event-source"><i />{event.sourceId}. {event.source}</span>
                   <span className="cell-event-message"><b>{event.message}</b><small>{event.eventType}{event.code ? ` · код ${event.code}` : ''}</small></span>
                   <span className="cell-event-status">{['active', 'error', 'rejected', 'lost'].includes(event.status) ? <AlertCircle /> : <Activity />}{STATUS_LABELS[event.status] ?? event.status}</span>
-                  <span className="cell-event-links">{event.operationId && <small>Операция <b>{event.operationId}</b></small>}{event.commandSeq !== null && <small>CommandSeq <b>{event.commandSeq}</b></small>}{event.requestId && <small>Request <b>{event.requestId.slice(0, 8)}</b></small>}</span>
+                  <span className="cell-event-links">{event.actor && <small className="cell-event-actor"><UserRound />{event.actor.displayName} <b>@{event.actor.username}</b></small>}{event.operationId && <small>Операция <b>{event.operationId}</b></small>}{event.commandSeq !== null && <small>CommandSeq <b>{event.commandSeq}</b></small>}{event.requestId && <small>Request <b>{event.requestId.slice(0, 8)}</b></small>}</span>
                 </article>;
               })}
               {nextCursor && <button className="cell-event-load-more" type="button" style={{ transform: `translateY(${events.length * EVENT_ROW_HEIGHT}px)` }} onClick={() => void loadMore()} disabled={loadingMore}>

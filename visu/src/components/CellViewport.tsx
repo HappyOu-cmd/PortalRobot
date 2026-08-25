@@ -1,4 +1,4 @@
-import { useEffect, useRef, type RefObject } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import type {
   CellLayout,
   CellState,
@@ -6,6 +6,7 @@ import type {
   IndexedConveyorTestStatus,
   RobotCoordinateFrame,
 } from '../model/types';
+import { DEFAULT_DRIFT_SETTINGS, EMPTY_DRIFT_TELEMETRY, type DriftSettings, type DriftTelemetry, type EasterEggMode } from '../model/easterEggs';
 import { CellScene, type CameraPreset, type EquipmentAnchors } from '../three/cellScene';
 
 export interface EquipmentStatus {
@@ -25,6 +26,9 @@ interface CellViewportProps {
   indexedConveyorTest?: IndexedConveyorTestCommand;
   onIndexedConveyorTestStatus?: (magazineId: 1 | 2, status: IndexedConveyorTestStatus) => void;
   syncMagazineInventory?: boolean;
+  easterEggMode?: EasterEggMode;
+  easterEggRevision?: number;
+  driftSettings?: DriftSettings;
   equipmentStatuses?: {
     machines: EquipmentStatus[];
     magazines: [EquipmentStatus, EquipmentStatus];
@@ -42,10 +46,14 @@ export function CellViewport({
   indexedConveyorTest,
   onIndexedConveyorTestStatus,
   syncMagazineInventory = true,
+  easterEggMode = 'off',
+  easterEggRevision = 0,
+  driftSettings = DEFAULT_DRIFT_SETTINGS,
   equipmentStatuses,
 }: CellViewportProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<CellScene>();
+  const [driftTelemetry, setDriftTelemetry] = useState<DriftTelemetry>(EMPTY_DRIFT_TELEMETRY);
   const fallbackRobotCoordinatesRef = useRef<RobotCoordinateFrame>({
     sequence: 0,
     timestampMs: Date.now(),
@@ -107,9 +115,12 @@ export function CellViewport({
       (magazineId) => magazineSelectRef.current?.(magazineId),
       updateAnchors,
       (magazineId, status) => conveyorStatusRef.current?.(magazineId, status),
+      setDriftTelemetry,
     );
     sceneRef.current = scene;
     scene.setMagazineInventorySync(syncMagazineInventory);
+    scene.setDriftSettings(driftSettings);
+    scene.setEasterEgg(easterEggMode, easterEggRevision);
     return () => {
       scene.dispose();
       sceneRef.current = undefined;
@@ -118,6 +129,8 @@ export function CellViewport({
 
   useEffect(() => sceneRef.current?.setState(state), [state]);
   useEffect(() => sceneRef.current?.setMagazineInventorySync(syncMagazineInventory), [syncMagazineInventory]);
+  useEffect(() => sceneRef.current?.setEasterEgg(easterEggMode, easterEggRevision), [easterEggMode, easterEggRevision]);
+  useEffect(() => sceneRef.current?.setDriftSettings(driftSettings), [driftSettings]);
   useEffect(() => {
     if (indexedConveyorTest) sceneRef.current?.setIndexedConveyorTest(indexedConveyorTest);
   }, [indexedConveyorTest]);
@@ -125,8 +138,9 @@ export function CellViewport({
   useEffect(() => sceneRef.current?.setSelectedMachine(selectedMachine), [selectedMachine]);
   useEffect(() => sceneRef.current?.setCamera(cameraPreset), [cameraPreset]);
 
-  return <div ref={hostRef} className="cell-viewport" aria-label="Трехмерная модель ячейки">
-    {equipmentStatuses && <div className="equipment-status-layer" aria-label="Состояния оборудования">
+  const driftActive = easterEggMode === 'drift';
+  return <div ref={hostRef} className={`cell-viewport${driftActive ? ' drift-mode' : ''}`} aria-label="Трехмерная модель ячейки">
+    {equipmentStatuses && !driftActive && <div className="equipment-status-layer" aria-label="Состояния оборудования">
       {equipmentStatuses.machines.map((status, index) => <button
         key={index}
         ref={(element) => { machineStatusRefs.current[index] = element; }}
@@ -148,5 +162,16 @@ export function CellViewport({
         {status.lines.map((line, lineIndex) => <span key={`${line}-${lineIndex}`}>{line}</span>)}
       </button>)}
     </div>}
+    {driftActive && <div className={`drift-hud${driftTelemetry.drifting ? ' active' : ''}${driftTelemetry.impact > 0.08 ? ' impact' : ''}`}>
+      <div className="drift-score"><span>DRIFT SCORE</span><strong>{driftTelemetry.score.toLocaleString('ru-RU')}</strong><small>РЕКОРД {driftTelemetry.bestScore.toLocaleString('ru-RU')}</small></div>
+      <div className="drift-readouts">
+        <div><span>СКОРОСТЬ</span><strong>{driftTelemetry.speedKmh}</strong><small>км/ч</small></div>
+        <div><span>УГОЛ</span><strong>{driftTelemetry.driftAngle}°</strong><small>{driftTelemetry.rearWheelsLocked ? 'КОЛЁСА БЛОК.' : driftTelemetry.rearSlip > 0.16 ? `СРЫВ ${Math.round(driftTelemetry.rearSlip * 100)}%` : 'СЦЕПЛЕНИЕ'}</small></div>
+        <div className="drift-combo"><span>КОМБО</span><strong>×{driftTelemetry.combo.toFixed(1)}</strong><small>{driftTelemetry.impact > 0.08 ? 'ЕБАНУЛСЯ' : driftTelemetry.drifting ? 'НЕ ОТПУСКАЙ' : driftTelemetry.rearSlip > 0.16 ? 'ЛОВИ ЗАЦЕП' : 'ГОТОВ'}</small></div>
+      </div>
+      <div className="drift-traction"><span>ЗАДНЯЯ ОСЬ</span><i><b style={{ width: `${Math.round(driftTelemetry.rearSlip * 100)}%` }} /></i><strong>{driftTelemetry.rearWheelsLocked ? 'РУЧНИК · БЛОКИРОВКА' : driftTelemetry.rearSlip > 0.16 ? 'СЦЕПЛЕНИЕ СОРВАНО' : 'ДЕРЖИТ ПОКРЫТИЕ'}</strong></div>
+      {driftTelemetry.drifting && <div className="drift-callout">{driftTelemetry.rearWheelsLocked ? 'ЗАДНИЕ КОЛЁСА СОРВАНЫ' : 'ЛОВИМ ИНЕРЦИЮ'}</div>}
+    </div>}
+    {driftActive && <div className="drift-controls" aria-hidden="true"><span><kbd>↑</kbd><kbd>↓</kbd> газ / тормоз</span><span><kbd>←</kbd><kbd>→</kbd> руль</span><span><kbd>SPACE</kbd> ручник</span><span><kbd>R</kbd> вернуть телегу</span></div>}
   </div>;
 }

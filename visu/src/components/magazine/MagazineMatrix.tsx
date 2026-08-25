@@ -81,7 +81,7 @@ export function MagazineMatrixCard({
     onPointerDown={(event) => event.stopPropagation()}
   >
     <header className="magazine-matrix-card-header">
-      <div><h2>Магазин {magazineNumber ?? ''}</h2>{onZoneChange && <nav className="magazine-matrix-card-tabs" aria-label="Зона магазина"><button className={zone === 1 ? 'active' : ''} type="button" onClick={() => onZoneChange(1)}>Zone 1</button><button className={zone === 2 ? 'active' : ''} type="button" onClick={() => onZoneChange(2)}>Zone 2</button></nav>}</div>
+      <div><h2>Магазин {magazineNumber ?? ''}</h2>{onZoneChange && <nav className="magazine-matrix-card-tabs" aria-label="Зона магазина"><button className={zone === 1 ? 'active' : ''} type="button" onClick={() => onZoneChange(1)}>Зона загрузки</button><button className={zone === 2 ? 'active' : ''} type="button" onClick={() => onZoneChange(2)}>Зона работы</button></nav>}</div>
       <Icon icon={viewGridOutlineIcon} aria-hidden="true" />
     </header>
     <div className="magazine-matrix-card-stats" aria-label="Состав магазина">

@@ -38,6 +38,15 @@ export interface CellLogEvent {
   oldValue: unknown;
   newValue: unknown;
   details: unknown;
+  actor: CellLogActor | null;
+}
+
+export interface CellLogActor {
+  id: number;
+  username: string;
+  displayName: string;
+  role?: 'admin' | 'operator' | null;
+  enabled?: boolean;
 }
 
 export interface CellLogHistory {
@@ -281,6 +290,7 @@ export interface PlcCommand {
   command: string;
   machine?: number;
   magazine?: number;
+  zone?: number;
   slot?: number;
   content?: number;
   productType?: number;
@@ -352,7 +362,7 @@ const AXIS_ALARM_TEXTS = [
   'Ошибка MC_Home', 'Ошибка MC_MoveAbsolute', 'Ошибка MC_MoveRelative',
   'Ошибка чтения позиции оси', 'Ошибка чтения статуса оси', 'Ось находится в ErrorStop',
   'SoftMotion сообщил внутреннюю ошибку', 'Команда движения прервана',
-  'Неизвестная ошибка оси', 'Ошибка привода', '', '',
+  'Неизвестная ошибка оси', 'Ошибка привода', 'Потеря силовой готовности привода', '',
   'Снято разрешение питания оси', 'Глобальная ошибка при включении оси',
   'Глобальная ошибка в состоянии готовности оси', 'Глобальная ошибка во время движения оси',
   'Одновременно заданы Jog+ и Jog-', 'MoveAbsolute запрещён до Home',
@@ -504,9 +514,9 @@ const WARNING_TEXTS: Partial<Record<PlcAlarmSource, Record<number, string>>> = {
     4: 'Включение магазина отклонено: глобальная ошибка всё ещё активна',
     5: 'Включение магазина отклонено: содержимое магазина не позволяет продолжить работу',
     6: 'Отключение магазина уже запрошено',
-    7: 'Заполнение магазина отклонено: проверьте разрешение Zone 1',
+    7: 'Заполнение магазина отклонено: проверьте разрешение зоны загрузки',
     8: 'Заполнение магазина отклонено: неверно задан размер матрицы',
-    9: 'Очистка магазина отклонена: проверьте разрешение Zone 1',
+    9: 'Очистка магазина отклонена: проверьте разрешение зоны загрузки',
   },
   'axis-x': {
     1: 'Включение оси X отклонено: нет разрешения питания',
@@ -737,6 +747,14 @@ export function mapPlcSnapshot(
         canEnable: booleanValue(values, `${status}.xCanEnable`, magazine.state.canEnable),
         powerAllowed: booleanValue(values, `${status}.xPowerAllowed`, magazine.state.powerAllowed),
         enableSequenceAllowed: booleanValue(values, `${status}.xEnableSequenceAllowed`, magazine.state.enableSequenceAllowed),
+        enableCheckPowered: booleanValue(values, `${status}.xEnableCheckPowered`, magazine.state.enableCheckPowered),
+        enableCheckHomed: booleanValue(values, `${status}.xEnableCheckHomed`, magazine.state.enableCheckHomed),
+        enableCheckPositionValid: booleanValue(values, `${status}.xEnableCheckPositionValid`, magazine.state.enableCheckPositionValid),
+        enableCheckStationary: booleanValue(values, `${status}.xEnableCheckStationary`, magazine.state.enableCheckStationary),
+        enableCheckNoError: booleanValue(values, `${status}.xEnableCheckNoError`, magazine.state.enableCheckNoError),
+        enableCheckRobotReleased: booleanValue(values, `${status}.xEnableCheckRobotReleased`, magazine.state.enableCheckRobotReleased),
+        enableCheckContent: booleanValue(values, `${status}.xEnableCheckContent`, magazine.state.enableCheckContent),
+        enableCheckInventoryVerified: booleanValue(values, `${status}.xEnableCheckInventoryVerified`, magazine.state.enableCheckInventoryVerified),
         fillAllowed: booleanValue(values, `${status}.xFillAllowed`, magazine.state.fillAllowed),
         clearAllowed: booleanValue(values, `${status}.xClearAllowed`, magazine.state.clearAllowed),
         currentBlank: numberValue(values, `${status}.iCurrentBlank`, magazine.state.currentBlank),
@@ -756,6 +774,12 @@ export function mapPlcSnapshot(
         recoveryRequired: booleanValue(values, `${status}.xRecoveryRequired`, magazine.state.recoveryRequired),
         indexAllowed: booleanValue(values, `${status}.xIndexAllowed`, magazine.state.indexAllowed),
         zone1EditAllowed: booleanValue(values, `${status}.xZone1EditAllowed`, magazine.state.zone1EditAllowed),
+        zone2EditAllowed: booleanValue(values, `${status}.xZone2EditAllowed`, magazine.state.zone2EditAllowed),
+        jogPositiveAllowed: booleanValue(values, `${status}.xJogPositiveAllowed`, magazine.state.jogPositiveAllowed),
+        jogNegativeAllowed: booleanValue(values, `${status}.xJogNegativeAllowed`, magazine.state.jogNegativeAllowed),
+        contentRecoveryAllowed: booleanValue(values, `${status}.xContentRecoveryAllowed`, magazine.state.contentRecoveryAllowed),
+        contentRecoveryActive: booleanValue(values, `${status}.xContentRecoveryActive`, magazine.state.contentRecoveryActive),
+        inventoryVerificationRequired: booleanValue(values, `${status}.xInventoryVerificationRequired`, magazine.state.inventoryVerificationRequired),
         indexing: booleanValue(values, `${status}.xIndexing`, magazine.state.indexing),
         indexDone: booleanValue(values, `${status}.xIndexDone`, magazine.state.indexDone),
         axisError: booleanValue(values, `${status}.xAxisError`, magazine.state.axisError),
@@ -1040,6 +1064,7 @@ export function createPlcClient(callbacks: {
   onCellLogHistory?: (history: CellLogHistory) => void;
   onCellLogEvent?: (event: CellLogEvent) => void;
   onCommandError?: (message: string) => void;
+  onAuthenticationRequired?: () => void;
 }) {
   let socket: WebSocket | null = null;
   let stopped = false;
@@ -1111,10 +1136,11 @@ export function createPlcClient(callbacks: {
         callbacks.onCommandError?.(message.error ?? 'PLC отклонил команду');
       }
     };
-    socket.onclose = () => {
+    socket.onclose = (event) => {
       window.clearInterval(heartbeatTimer);
+      if (event.code === 4001) callbacks.onAuthenticationRequired?.();
       callbacks.onConnection({ status: 'disconnected', endpoint: '', message: 'Нет связи со шлюзом', symbols: 0, missing: [] });
-      reconnectTimer = window.setTimeout(connect, 2000);
+      if (event.code !== 4001) reconnectTimer = window.setTimeout(connect, 2000);
     };
     socket.onerror = () => socket?.close();
   };

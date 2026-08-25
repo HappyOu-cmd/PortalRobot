@@ -387,7 +387,7 @@ export function TestWorkbench({
           </div>
 
           <div className="test-section-heading test-magazine-heading">
-            <div><span>03</span><b>Магазин 1 · Zone 2 — 120 слотов</b></div>
+            <div><span>03</span><b>Магазин 1 · зона работы — 120 слотов</b></div>
             <small>ЛКМ — содержимое · ПКМ — тип изделия</small>
           </div>
           <div className="test-slot-legend"><span className="blank">Заготовка</span><span className="detail">Готовая деталь</span><span className="type-two">Тип 2</span><span className="type-three">Тип 3</span></div>

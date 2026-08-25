@@ -44,6 +44,31 @@ export interface MachineLayout {
   position: Vec3Mm;
 }
 
+export interface PartGeometryLayout {
+  blankDiameter: number;
+  blankLength: number;
+  detailBodyDiameter: number;
+  detailBodyLength: number;
+  detailShoulderDiameter: number;
+  detailShoulderLength: number;
+  detailShoulderOffset: number;
+}
+
+export interface PartMaterialLayout {
+  color: string;
+  opacity: number;
+}
+
+export interface ProductPartMaterials {
+  blank: PartMaterialLayout;
+  detail: PartMaterialLayout;
+}
+
+export interface GripperPayloadPoseLayout {
+  offset: Vec3Mm;
+  rotationDeg: Vec3Mm;
+}
+
 export interface IndexedConveyorLayout {
   position: Vec3Mm;
   columnsX: number;
@@ -88,6 +113,12 @@ export interface CellLayout {
     yBeamWidthX: number;
     zBaseLength: number;
     zColumnWidth: number;
+  };
+  partGeometry: PartGeometryLayout;
+  productPartMaterials: [ProductPartMaterials, ProductPartMaterials, ProductPartMaterials];
+  gripperPayloadPoses: {
+    blank: GripperPayloadPoseLayout;
+    detail: GripperPayloadPoseLayout;
   };
   indexedConveyors: [IndexedConveyorLayout, IndexedConveyorLayout];
   animation: {
@@ -164,6 +195,14 @@ export interface MagazineState {
   canEnable: boolean;
   powerAllowed: boolean;
   enableSequenceAllowed: boolean;
+  enableCheckPowered: boolean;
+  enableCheckHomed: boolean;
+  enableCheckPositionValid: boolean;
+  enableCheckStationary: boolean;
+  enableCheckNoError: boolean;
+  enableCheckRobotReleased: boolean;
+  enableCheckContent: boolean;
+  enableCheckInventoryVerified: boolean;
   fillAllowed: boolean;
   clearAllowed: boolean;
   currentBlank: number;
@@ -183,6 +222,12 @@ export interface MagazineState {
   recoveryRequired: boolean;
   indexAllowed: boolean;
   zone1EditAllowed: boolean;
+  zone2EditAllowed: boolean;
+  jogPositiveAllowed: boolean;
+  jogNegativeAllowed: boolean;
+  contentRecoveryAllowed: boolean;
+  contentRecoveryActive: boolean;
+  inventoryVerificationRequired: boolean;
   indexing: boolean;
   indexDone: boolean;
   axisError: boolean;

@@ -66,6 +66,17 @@ const parseJson = (value) => {
   if (value === null || value === '') return null;
   try { return JSON.parse(value); } catch { return value; }
 };
+const normalizeActor = (value) => {
+  if (!value || typeof value !== 'object') return null;
+  const id = Number(value.id);
+  const username = String(value.username ?? '').trim();
+  if (!Number.isInteger(id) || id < 1 || !username) return null;
+  return {
+    id,
+    username,
+    displayName: String(value.displayName ?? value.display_name ?? username).trim() || username,
+  };
+};
 const catalog = (values, code, fallback) => values[code] ?? `${fallback} ${code}`;
 
 const rowToEvent = (row) => ({
@@ -83,6 +94,11 @@ const rowToEvent = (row) => ({
   oldValue: parseJson(row.old_value_json),
   newValue: parseJson(row.new_value_json),
   details: parseJson(row.details_json),
+  actor: row.actor_user_id === null || row.actor_user_id === undefined ? null : {
+    id: Number(row.actor_user_id),
+    username: row.actor_username ?? '',
+    displayName: row.actor_display_name ?? row.actor_username ?? '',
+  },
 });
 
 export class CellEventStore {
@@ -104,7 +120,10 @@ export class CellEventStore {
         request_id TEXT,
         old_value_json TEXT,
         new_value_json TEXT,
-        details_json TEXT
+        details_json TEXT,
+        actor_user_id INTEGER,
+        actor_username TEXT,
+        actor_display_name TEXT
       ) STRICT;
       CREATE INDEX IF NOT EXISTS idx_cell_event_timestamp ON cell_event (timestamp_ms DESC, id DESC);
       CREATE INDEX IF NOT EXISTS idx_cell_event_source ON cell_event (source_id, timestamp_ms DESC);
@@ -113,10 +132,36 @@ export class CellEventStore {
       CREATE INDEX IF NOT EXISTS idx_cell_event_operation ON cell_event (operation_id) WHERE operation_id IS NOT NULL;
       CREATE INDEX IF NOT EXISTS idx_cell_event_command_seq ON cell_event (command_seq) WHERE command_seq IS NOT NULL;
     `);
+    const columns = new Set(this.db.prepare('PRAGMA table_info(cell_event)').all().map((column) => column.name));
+    let actorColumnsAdded = false;
+    for (const [name, type] of [['actor_user_id', 'INTEGER'], ['actor_username', 'TEXT'], ['actor_display_name', 'TEXT']]) {
+      if (!columns.has(name)) {
+        this.db.exec(`ALTER TABLE cell_event ADD COLUMN ${name} ${type}`);
+        actorColumnsAdded = true;
+      }
+    }
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_cell_event_actor_user
+        ON cell_event (actor_user_id, timestamp_ms DESC, id DESC)
+        WHERE actor_user_id IS NOT NULL;
+    `);
+    if (actorColumnsAdded) try {
+      this.db.exec(`
+        UPDATE cell_event
+        SET actor_user_id = CAST(json_extract(details_json, '$.actor.id') AS INTEGER),
+            actor_username = json_extract(details_json, '$.actor.username'),
+            actor_display_name = COALESCE(json_extract(details_json, '$.actor.displayName'), json_extract(details_json, '$.actor.username'))
+        WHERE actor_user_id IS NULL
+          AND json_valid(details_json) = 1
+          AND json_extract(details_json, '$.actor.id') IS NOT NULL
+      `);
+    } catch {
+      // Старые SQLite без JSON1 всё равно могут работать с новыми событиями.
+    }
     this.insertStatement = this.db.prepare(`INSERT INTO cell_event
       (timestamp_ms, source_id, event_type, status, message, code, operation_id, command_seq,
-       request_id, old_value_json, new_value_json, details_json)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+       request_id, old_value_json, new_value_json, details_json, actor_user_id, actor_username, actor_display_name)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     this.recentStatement = this.db.prepare('SELECT * FROM cell_event ORDER BY timestamp_ms DESC, id DESC LIMIT ?');
     this.deleteExpired = this.db.prepare('DELETE FROM cell_event WHERE timestamp_ms < ?');
     this.countStatement = this.db.prepare('SELECT COUNT(*) AS count, MIN(timestamp_ms) AS oldest, MAX(timestamp_ms) AS newest FROM cell_event');
@@ -127,11 +172,13 @@ export class CellEventStore {
     const timestampMs = Math.max(0, Math.round(event.timestampMs ?? Date.now()));
     const sourceId = Math.round(event.sourceId);
     if (!CELL_EVENT_SOURCES[sourceId]) throw new Error(`Недопустимый sourceId события: ${sourceId}`);
+    const actor = normalizeActor(event.actor ?? event.details?.actor);
     const result = this.insertStatement.run(
       timestampMs, sourceId, String(event.eventType ?? 'state'), String(event.status ?? 'changed'),
       String(event.message ?? ''), event.code === undefined ? null : String(event.code),
       event.operationId ?? null, event.commandSeq ?? null, event.requestId ?? null,
       json(event.oldValue), json(event.newValue), json(event.details),
+      actor?.id ?? null, actor?.username ?? null, actor?.displayName ?? null,
     );
     if (timestampMs - this.lastPruneMs >= 3_600_000) this.prune(timestampMs);
     return rowToEvent({
@@ -140,6 +187,9 @@ export class CellEventStore {
       code: event.code === undefined ? null : String(event.code), operation_id: event.operationId ?? null,
       command_seq: event.commandSeq ?? null, request_id: event.requestId ?? null,
       old_value_json: json(event.oldValue), new_value_json: json(event.newValue), details_json: json(event.details),
+      actor_user_id: actor?.id ?? null,
+      actor_username: actor?.username ?? null,
+      actor_display_name: actor?.displayName ?? null,
     });
   }
 
@@ -147,9 +197,24 @@ export class CellEventStore {
     return this.recentStatement.all(Math.max(1, Math.min(10_000, Math.round(limit)))).map(rowToEvent);
   }
 
+  actors() {
+    return this.db.prepare(`
+      SELECT actor_user_id, MAX(actor_username) AS actor_username,
+        MAX(actor_display_name) AS actor_display_name
+      FROM cell_event
+      WHERE actor_user_id IS NOT NULL
+      GROUP BY actor_user_id
+      ORDER BY LOWER(COALESCE(actor_display_name, actor_username)), actor_user_id
+    `).all().map((row) => ({
+      id: Number(row.actor_user_id),
+      username: row.actor_username ?? '',
+      displayName: row.actor_display_name ?? row.actor_username ?? '',
+    }));
+  }
+
   query({
     fromMs, toMs, sourceIds = [], statuses = [], eventTypes = [], level = 'all', text = '',
-    operationId = '', commandSeq, code = '', order = 'desc', cursor = null, limit = 100,
+    operationId = '', commandSeq, code = '', actorUserId, order = 'desc', cursor = null, limit = 100,
   } = {}) {
     const clauses = [];
     const parameters = [];
@@ -192,6 +257,10 @@ export class CellEventStore {
     if (trimmedCode) {
       clauses.push('code = ?');
       parameters.push(trimmedCode);
+    }
+    if (Number.isInteger(Number(actorUserId)) && Number(actorUserId) > 0) {
+      clauses.push('actor_user_id = ?');
+      parameters.push(Number(actorUserId));
     }
 
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
@@ -306,11 +375,15 @@ export class CellEventClassifier {
 
     for (let magazine = 1; magazine <= 2; magazine += 1) {
       const statusRoot = `astMagazineStatus[${magazine}]`;
+      const axisRoot = `astMagazineAxisStatus[${magazine}]`;
       const diagRoot = `astMagazineDiag[${magazine}]`;
       const magazineTransition = (path, eventType, message, status = 'changed', details) => {
         if (changed(path)) push(this.event(4, eventType, status, message(), { oldValue: previous[path], newValue: current[path], details }));
       };
-      magazineTransition(`${statusRoot}.xEnabled`, 'power', () => boolValue(current, `${statusRoot}.xEnabled`) ? `Магазин ${magazine} включён` : `Магазин ${magazine} выключен`);
+      magazineTransition(`${statusRoot}.xEnabled`, 'automatic-mode', () => boolValue(current, `${statusRoot}.xEnabled`) ? `Магазин ${magazine} введён в автоматическую работу` : `Магазин ${magazine} выведен из автоматической работы`);
+      magazineTransition(`${statusRoot}.xDisablePending`, 'automatic-mode', () => boolValue(current, `${statusRoot}.xDisablePending`) ? `Магазин ${magazine}: ожидается освобождение перед отключением` : `Магазин ${magazine}: ожидание отключения завершено`);
+      magazineTransition(`${axisRoot}.xPowered`, 'drive-power', () => boolValue(current, `${axisRoot}.xPowered`) ? `Привод магазина ${magazine} включён` : `Привод магазина ${magazine} выключен`);
+      magazineTransition(`${statusRoot}.xHomed`, 'home', () => boolValue(current, `${statusRoot}.xHomed`) ? `Home магазина ${magazine} подтверждён` : `Home магазина ${magazine} недействителен`);
       magazineTransition(`${diagRoot}.eState`, 'state', () => `Магазин ${magazine}: ${catalog(MAGAZINE_STATES, numberValue(current, `${diagRoot}.eState`), 'состояние')}`);
       magazineTransition(`${statusRoot}.eActualOperation`, 'operation', () => `Магазин ${magazine}: ${catalog(MAGAZINE_OPERATIONS, numberValue(current, `${statusRoot}.eActualOperation`), 'операция')}`);
       magazineTransition(`${statusRoot}.xBusy`, 'operation', () => boolValue(current, `${statusRoot}.xBusy`) ? `Магазин ${magazine} начал операцию` : `Магазин ${magazine} завершил операцию`, boolValue(current, `${statusRoot}.xBusy`) ? 'started' : 'completed', {
@@ -329,6 +402,16 @@ export class CellEventClassifier {
           ? `Магазин ${magazine}, Zone ${zone}: изменилось содержимое слота ${changedSlots[0].slot}`
           : `Магазин ${magazine}, Zone ${zone}: изменилось содержимое ${changedSlots.length} слотов`, { details: { magazine, zone, slots: changedSlots } }));
       }
+    }
+
+    if (changed('stCellStatus.uiActiveMagazine')) {
+      const activeMagazine = numberValue(current, 'stCellStatus.uiActiveMagazine');
+      push(this.event(4, 'ownership', 'changed', activeMagazine > 0
+        ? `Ячейка передала владение магазину ${activeMagazine}`
+        : 'Ячейка освободила оба магазина', {
+        oldValue: previous['stCellStatus.uiActiveMagazine'],
+        newValue: current['stCellStatus.uiActiveMagazine'],
+      }));
     }
 
     const robotTransition = (path, eventType, message, status = 'changed', extra = {}) => {
@@ -429,8 +512,12 @@ const COMMAND_LABELS = {
   'magazine.powerOn': 'Включить привод магазина', 'magazine.powerOff': 'Выключить привод магазина',
   'magazine.home': 'Найти домашнюю позицию магазина', 'magazine.index': 'Переместить магазин в рабочую зону',
   'magazine.stop': 'Остановить привод магазина', 'magazine.reset': 'Сбросить ошибку магазина',
+  'magazine.jogPositive': 'JOG магазина вперёд', 'magazine.jogNegative': 'JOG магазина назад',
+  'magazine.startContentRecovery': 'Начать сверку содержимого магазина',
+  'magazine.confirmRecovery': 'Подтвердить содержимое магазина',
+  'magazine.clearRecoveryZones': 'Очистить зоны при восстановлении магазина',
   'magazine.fillZone1': 'Заполнить Zone 1 заготовками', 'magazine.clearZone1': 'Очистить Zone 1',
-  'magazine.setZone1Slot': 'Изменить содержимое слота Zone 1',
+  'magazine.setZone1Slot': 'Изменить содержимое слота Zone 1', 'magazine.setSlot': 'Изменить содержимое слота магазина',
 };
 
 export function describeOperatorCommand(message) {

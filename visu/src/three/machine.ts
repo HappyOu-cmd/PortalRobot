@@ -1,9 +1,8 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import machineModelUrl from '../assets/models/Headman.glb?url';
-import { PART_GEOMETRY } from '../model/partGeometry';
-import type { CellLayout, MachineState } from '../model/types';
-import { COLORS, cylinder, damp, logicalPosition, mm, PRODUCT_PART_COLORS } from './primitives';
+import type { CellLayout, MachineState, PartGeometryLayout } from '../model/types';
+import { applyPartMaterial, COLORS, cylinder, damp, logicalPosition, mm } from './primitives';
 import { OilMistEffect } from './OilMistEffect';
 
 const MODEL_DOOR_TRAVEL = 1.01;
@@ -71,28 +70,28 @@ function partCylinder(name: string, radius: number, length: number, color: numbe
   return mesh;
 }
 
-function createPartAssembly() {
+function createPartAssembly(geometry: PartGeometryLayout) {
   const root = new THREE.Group();
   root.name = 'visualized_workpiece';
   root.position.set(0.14, 0, 0);
 
   const blank = new THREE.Group();
-  blank.add(partCylinder('blank_body', PART_GEOMETRY.blank.radius, PART_GEOMETRY.blank.length, COLORS.blank));
+  blank.add(partCylinder('blank_body', mm(geometry.blankDiameter) / 2, mm(geometry.blankLength), COLORS.blank));
   root.add(blank);
 
   const detail = new THREE.Group();
-  detail.add(partCylinder('detail_body', PART_GEOMETRY.detail.bodyRadius, PART_GEOMETRY.detail.bodyLength, COLORS.detail));
+  detail.add(partCylinder('detail_body', mm(geometry.detailBodyDiameter) / 2, mm(geometry.detailBodyLength), COLORS.detail));
   detail.add(partCylinder(
     'detail_shoulder',
-    PART_GEOMETRY.detail.shoulderRadius,
-    PART_GEOMETRY.detail.shoulderLength,
+    mm(geometry.detailShoulderDiameter) / 2,
+    mm(geometry.detailShoulderLength),
     0x6cc194,
-    PART_GEOMETRY.detail.shoulderOffset,
+    mm(geometry.detailShoulderOffset),
   ));
   root.add(detail);
 
   const unknown = new THREE.Group();
-  unknown.add(partCylinder('unknown_part', PART_GEOMETRY.blank.radius, PART_GEOMETRY.blank.length, COLORS.steel));
+  unknown.add(partCylinder('unknown_part', mm(geometry.blankDiameter) / 2, mm(geometry.blankLength), COLORS.steel));
   root.add(unknown);
   return { root, blank, detail, unknown };
 }
@@ -176,7 +175,7 @@ export function createMachine(layout: CellLayout, index: number): MachineRig {
   selection.visible = false;
   root.add(selection);
 
-  const part = createPartAssembly();
+  const part = createPartAssembly(layout.partGeometry);
   const rig: MachineRig = {
     root,
     doorOpenX: 0,
@@ -205,15 +204,8 @@ function setLamp(materialValue: THREE.MeshStandardMaterial, color: number, activ
   materialValue.emissiveIntensity = active ? 1.6 : 0;
 }
 
-function setObjectColor(object: THREE.Object3D, color: number): void {
-  object.traverse((child) => {
-    if (!(child instanceof THREE.Mesh)) return;
-    const meshMaterial = child.material;
-    if (meshMaterial instanceof THREE.MeshStandardMaterial) meshMaterial.color.setHex(color);
-  });
-}
-
-export function updateMachineRig(rig: MachineRig, state: MachineState, dt: number, response: number): void {
+export function updateMachineRig(rig: MachineRig, state: MachineState, dt: number, layout: CellLayout): void {
+  const response = layout.animation.mechanismResponse;
   let doorTarget = rig.doorValue;
   if (state.doorOpen && !state.doorClosed) doorTarget = 1;
   if (state.doorClosed && !state.doorOpen) doorTarget = 0;
@@ -227,9 +219,9 @@ export function updateMachineRig(rig: MachineRig, state: MachineState, dt: numbe
   rig.blankPart.visible = state.partType === 'BLANK';
   rig.detailPart.visible = state.partType === 'DETAIL';
   rig.unknownPart.visible = state.partType === 'UNKNOWN';
-  const colors = PRODUCT_PART_COLORS[state.productType] ?? PRODUCT_PART_COLORS[1];
-  setObjectColor(rig.blankPart, colors.blank);
-  setObjectColor(rig.detailPart, colors.detail);
+  const materials = layout.productPartMaterials[state.productType - 1] ?? layout.productPartMaterials[0];
+  applyPartMaterial(rig.blankPart, materials.blank);
+  applyPartMaterial(rig.detailPart, materials.detail);
 
   const error = state.mode === 'error';
   const activeColor = state.mode === 'processing' ? COLORS.green : state.mode === 'change' ? COLORS.amber : COLORS.amber;

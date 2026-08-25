@@ -18,14 +18,28 @@ test('stores persistent events with source, operation and command correlation', 
   const store = new CellEventStore({ databasePath: ':memory:', retentionDays: 90 });
   const saved = store.record({
     timestampMs: 1_000, sourceId: 5, eventType: 'modbus-command', status: 'completed',
-    message: 'Команда завершена', operationId: 'cycle-1', commandSeq: 42, details: { registers: [1, 2] },
+    message: 'Команда завершена', operationId: 'cycle-1', commandSeq: 42,
+    actor: { id: 7, username: 'operator', displayName: 'Оператор 7' }, details: { registers: [1, 2] },
   });
 
   assert.equal(saved.id, 1);
   assert.equal(saved.source, 'Робот');
   assert.equal(saved.operationId, 'cycle-1');
   assert.equal(saved.commandSeq, 42);
+  assert.deepEqual(saved.actor, { id: 7, username: 'operator', displayName: 'Оператор 7' });
   assert.deepEqual(store.recent()[0].details, { registers: [1, 2] });
+  assert.deepEqual(store.actors(), [{ id: 7, username: 'operator', displayName: 'Оператор 7' }]);
+  store.close();
+});
+
+test('reads legacy actor data from event details', () => {
+  const store = new CellEventStore({ databasePath: ':memory:', retentionDays: 90 });
+  const saved = store.record({
+    timestampMs: 1_000, sourceId: 6, eventType: 'operator-command', status: 'accepted',
+    message: 'Команда оператора', details: { actor: { id: 3, username: 'legacy', role: 'operator' } },
+  });
+
+  assert.deepEqual(saved.actor, { id: 3, username: 'legacy', displayName: 'legacy' });
   store.close();
 });
 
@@ -35,6 +49,7 @@ test('queries cell events with server-side filters and cursor pagination', () =>
   store.record({ timestampMs: 2_000, sourceId: 5, eventType: 'modbus-command', status: 'completed', message: 'Робот завершил команду', operationId: 'cycle-2', commandSeq: 42, code: '0' });
   store.record({ timestampMs: 3_000, sourceId: 7, eventType: 'warning', status: 'active', message: 'Предупреждение робота', code: '17' });
   store.record({ timestampMs: 4_000, sourceId: 7, eventType: 'alarm', status: 'active', message: 'Авария робота', code: '18' });
+  store.record({ timestampMs: 5_000, sourceId: 6, eventType: 'operator-command', status: 'accepted', message: 'Команда оператора', actor: { id: 11, username: 'admin', displayName: 'Администратор' } });
 
   const first = store.query({ fromMs: 1_500, sourceIds: [5, 7], order: 'desc', limit: 2 });
   assert.equal(first.count, 3);
@@ -48,6 +63,7 @@ test('queries cell events with server-side filters and cursor pagination', () =>
   assert.deepEqual(store.query({ level: 'warning' }).events.map((event) => event.id), [3]);
   assert.deepEqual(store.query({ text: 'завершил', operationId: 'cycle-2', commandSeq: 42, code: '0' }).events.map((event) => event.id), [2]);
   assert.deepEqual(store.query({ statuses: ['changed'], eventTypes: ['door'], order: 'asc' }).events.map((event) => event.id), [1]);
+  assert.deepEqual(store.query({ actorUserId: 11 }).events.map((event) => event.id), [5]);
   store.close();
 });
 

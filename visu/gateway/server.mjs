@@ -29,6 +29,8 @@ import {
   cyclogramRequiredSymbols,
 } from './cyclogram.mjs';
 import { CellEventClassifier, CellEventStore, describeOperatorCommand } from './cell-events.mjs';
+import { AuthStore, AuthStoreError } from './auth-store.mjs';
+import { StatisticsStore, StatisticsStoreError } from './statistics-store.mjs';
 import { TestStore } from './test-store.mjs';
 import { isHmiCommandAllowedDuringTest } from './test-session.mjs';
 
@@ -40,13 +42,17 @@ const publishingIntervalMs = Math.max(10, Number(process.env.OPCUA_PUBLISHING_MS
 const samplingIntervalMs = Math.max(10, Number(process.env.OPCUA_SAMPLING_MS ?? 50));
 const uiRefreshIntervalMs = Math.max(20, Number(process.env.OPCUA_UI_REFRESH_MS ?? 50));
 const cyclogramSettleMs = Math.max(40, Number(process.env.CYCLOGRAM_SETTLE_MS ?? 80));
+const nonVisualSnapshotSymbols = new Set(['udiHmiHeartbeat', 'udiPlcHeartbeat']);
 const plcRootName = process.env.OPCUA_GVL ?? 'GVL_HMI';
-const cyclogramRetentionHours = Number(process.env.CYCLOGRAM_RETENTION_HOURS ?? 24);
+const cyclogramRetentionHours = Number(process.env.CYCLOGRAM_RETENTION_HOURS ?? 2160);
 const cyclogramDbPath = process.env.CYCLOGRAM_DB_PATH ?? 'gateway/data/cyclogram.sqlite';
 const cyclogramTimeZone = process.env.CYCLOGRAM_TIMEZONE ?? 'Asia/Yekaterinburg';
 const cellEventsDbPath = process.env.CELL_EVENTS_DB_PATH ?? 'gateway/data/cell-events.sqlite';
 const cellEventsRetentionDays = Number(process.env.CELL_EVENTS_RETENTION_DAYS ?? 90);
 const testDbPath = process.env.TEST_DB_PATH ?? 'gateway/data/tests.sqlite';
+const authDbPath = process.env.AUTH_DB_PATH ?? 'gateway/data/auth.sqlite';
+const statisticsDbPath = process.env.STATISTICS_DB_PATH ?? 'gateway/data/statistics.sqlite';
+const authSessionHours = Math.max(1, Number(process.env.AUTH_SESSION_HOURS ?? 12));
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const distDir = normalize(join(__dirname, '..', 'dist'));
 const bundledTestPython = normalize(join(
@@ -289,9 +295,16 @@ const requiredSymbols = [...new Set([
     `astMagazineStatus[${index}].xError`, `astMagazineStatus[${index}].xFinished`,
     `astMagazineStatus[${index}].xCanTake`, `astMagazineStatus[${index}].xCanPut`,
     `astMagazineStatus[${index}].xCanChange`, `astMagazineStatus[${index}].xCanEnable`,
+    `astMagazineStatus[${index}].xEnableCheckPowered`, `astMagazineStatus[${index}].xEnableCheckHomed`,
+    `astMagazineStatus[${index}].xEnableCheckPositionValid`, `astMagazineStatus[${index}].xEnableCheckStationary`,
+    `astMagazineStatus[${index}].xEnableCheckNoError`, `astMagazineStatus[${index}].xEnableCheckRobotReleased`,
+    `astMagazineStatus[${index}].xEnableCheckContent`, `astMagazineStatus[${index}].xEnableCheckInventoryVerified`,
     `astMagazineStatus[${index}].xHomed`, `astMagazineStatus[${index}].xPositionValid`,
     `astMagazineStatus[${index}].xRecoveryRequired`, `astMagazineStatus[${index}].xIndexAllowed`,
-    `astMagazineStatus[${index}].xZone1EditAllowed`, `astMagazineStatus[${index}].xIndexing`,
+    `astMagazineStatus[${index}].xZone1EditAllowed`, `astMagazineStatus[${index}].xZone2EditAllowed`,
+    `astMagazineStatus[${index}].xJogPositiveAllowed`, `astMagazineStatus[${index}].xJogNegativeAllowed`,
+    `astMagazineStatus[${index}].xContentRecoveryAllowed`, `astMagazineStatus[${index}].xContentRecoveryActive`,
+    `astMagazineStatus[${index}].xInventoryVerificationRequired`, `astMagazineStatus[${index}].xIndexing`,
     `astMagazineStatus[${index}].xIndexDone`, `astMagazineStatus[${index}].xAxisError`,
     `astMagazineStatus[${index}].iCurrentBlank`, `astMagazineStatus[${index}].iCurrentFreeSlot`,
     `astMagazineStatus[${index}].iSelectedBlank`, `astMagazineStatus[${index}].iSelectedFreeSlot`,
@@ -304,9 +317,12 @@ const requiredSymbols = [...new Set([
     `astMagazineCommand[${index}].xPowerOn`, `astMagazineCommand[${index}].xPowerOff`,
     `astMagazineCommand[${index}].xHome`, `astMagazineCommand[${index}].xIndex`,
     `astMagazineCommand[${index}].xStop`, `astMagazineCommand[${index}].xReset`,
+    `astMagazineCommand[${index}].xJogPositive`, `astMagazineCommand[${index}].xJogNegative`,
+    `astMagazineCommand[${index}].xStartContentRecovery`, `astMagazineCommand[${index}].xConfirmRecovery`,
+    `astMagazineCommand[${index}].xClearRecoveryZones`,
     `astMagazineCommand[${index}].xFillZone1`, `astMagazineCommand[${index}].xClearZone1`,
     `astMagazineCommand[${index}].xCycleZone1Slot`, `astMagazineCommand[${index}].xApplyZone1Slot`,
-    `astMagazineCommand[${index}].uiEditSlot`, `astMagazineCommand[${index}].uiEditDetailType`,
+    `astMagazineCommand[${index}].uiEditZone`, `astMagazineCommand[${index}].uiEditSlot`, `astMagazineCommand[${index}].uiEditDetailType`,
     `astMagazineCommand[${index}].uiEditProductType`,
     `alrMagazineSafeZ_1[${index}]`, `alrMagazineSafeZ_2[${index}]`,
     ...[1, 2, 3].flatMap((zone) => Array.from({ length: zone === 3 ? 60 : 120 }, (_, slot) => [
@@ -512,6 +528,10 @@ try {
 
 let cellEventStore = null;
 let cellEventError = '';
+let authStore = null;
+let authStoreError = '';
+let statisticsStore = null;
+let statisticsStoreError = '';
 let testStore = null;
 let testStoreError = '';
 let activeTestRun = null;
@@ -525,6 +545,25 @@ try {
 } catch (error) {
   cellEventError = error instanceof Error ? error.message : String(error);
   console.error(`[Cell events] Storage unavailable: ${cellEventError}`);
+}
+
+try {
+  authStore = new AuthStore({
+    databasePath: authDbPath,
+    sessionTtlMs: authSessionHours * 60 * 60 * 1000,
+    bootstrapUsername: process.env.AUTH_BOOTSTRAP_ADMIN_USERNAME ?? 'admin',
+    bootstrapPassword: process.env.AUTH_BOOTSTRAP_ADMIN_PASSWORD ?? 'admin',
+  });
+} catch (error) {
+  authStoreError = error instanceof Error ? error.message : String(error);
+  console.error(`[Auth] Storage unavailable: ${authStoreError}`);
+}
+
+try {
+  statisticsStore = new StatisticsStore({ databasePath: statisticsDbPath, timeZone: cyclogramTimeZone });
+} catch (error) {
+  statisticsStoreError = error instanceof Error ? error.message : String(error);
+  console.error(`[Statistics] Storage unavailable: ${statisticsStoreError}`);
 }
 
 try {
@@ -614,7 +653,10 @@ function send(socket, message) {
 
 function broadcast(message) {
   const payload = JSON.stringify(message);
+  const guestVisible = message.type === 'connection' || message.type === 'snapshot'
+    || message.type === 'cyclogram-history' || message.type === 'cyclogram-update';
   for (const socket of webSocketServer.clients) {
+    if (socket.isGuest && !guestVisible) continue;
     if (socket.readyState === socket.OPEN) socket.send(payload);
   }
 }
@@ -624,10 +666,14 @@ function publishConnection() {
 }
 
 function publishSnapshot(values = latestValues, full = true) {
+  const publishedValues = full
+    ? values
+    : Object.fromEntries(Object.entries(values).filter(([path]) => !nonVisualSnapshotSymbols.has(path)));
+  if (!full && Object.keys(publishedValues).length === 0) return;
   const timestamp = Date.now();
-  const hasRobotCoordinates = full || robotCoordinatePaths.some((path) => Object.hasOwn(values, path));
+  const hasRobotCoordinates = full || robotCoordinatePaths.some((path) => Object.hasOwn(publishedValues, path));
   const coordinateSourceTimestamps = robotCoordinatePaths
-    .filter((path) => full || Object.hasOwn(values, path))
+    .filter((path) => full || Object.hasOwn(publishedValues, path))
     .map((path) => robotCoordinateSourceTimestamps.get(path))
     .filter(Number.isFinite);
   const sourceTimestampMs = coordinateSourceTimestamps.length > 0
@@ -636,13 +682,14 @@ function publishSnapshot(values = latestValues, full = true) {
   const robotFrame = hasRobotCoordinates
     ? captureRobotCoordinateFrame(timestamp, sourceTimestampMs)
     : undefined;
-  broadcast({ type: 'snapshot', timestamp, full, values, ...(robotFrame ? { robotFrame } : {}) });
+  broadcast({ type: 'snapshot', timestamp, full, values: publishedValues, ...(robotFrame ? { robotFrame } : {}) });
 }
 
 function recordCellEvent(event, { broadcastEvent = true } = {}) {
   if (!cellEventStore) return null;
   try {
     const saved = cellEventStore.record(event);
+    statisticsStore?.recordFact(saved);
     if (broadcastEvent) broadcast({ type: 'cell-event', event: saved, serverTime: Date.now() });
     return saved;
   } catch (error) {
@@ -681,6 +728,7 @@ function recordCyclogram(timestamp = Date.now()) {
       { transientForMs: transientRobotSince === null ? 0 : timestamp - transientRobotSince },
     );
     const update = cyclogramStore.record(stableCyclogramStates, timestamp);
+    statisticsStore?.recordEquipment(stableCyclogramStates, timestamp);
     if (update.changed) broadcast({ type: 'cyclogram-update', serverTime: timestamp, ...update });
   } catch (error) {
     cyclogramError = error instanceof Error ? error.message : String(error);
@@ -692,6 +740,7 @@ function stopCyclogram(timestamp = Date.now()) {
   if (!cyclogramStore) return;
   try {
     const update = cyclogramStore.stop(timestamp);
+    statisticsStore?.disconnectEquipment(timestamp);
     stableCyclogramStates = null;
     transientRobotSince = null;
     if (update.changed) broadcast({ type: 'cyclogram-update', serverTime: timestamp, ...update });
@@ -983,14 +1032,23 @@ async function executeCommand(message) {
       enable: 'xEnable', disable: 'xDisable', powerOn: 'xPowerOn', powerOff: 'xPowerOff',
       home: 'xHome', index: 'xIndex', stop: 'xStop', reset: 'xReset',
       fillZone1: 'xFillZone1', clearZone1: 'xClearZone1',
+      startContentRecovery: 'xStartContentRecovery', confirmRecovery: 'xConfirmRecovery',
+      clearRecoveryZones: 'xClearRecoveryZones',
     };
-    if (action === 'setZone1Slot') {
+    if (action === 'jogPositive' || action === 'jogNegative') {
+      await writeValue(`astMagazineCommand[${magazine}].${action === 'jogPositive' ? 'xJogPositive' : 'xJogNegative'}`, DataType.Boolean, Boolean(message.value));
+      return requestId;
+    }
+    if (action === 'setZone1Slot' || action === 'setSlot') {
+      const zone = action === 'setZone1Slot' ? 1 : Math.round(Number(message.zone));
       const slot = Math.round(Number(message.slot ?? message.value));
       const content = Math.round(Number(message.content));
       const productType = content === 0 ? 0 : Math.round(Number(message.productType));
-      if (!Number.isInteger(slot) || slot < 1 || slot > 120) throw new Error('Неверный номер слота Zone 1');
+      if (![1, 2].includes(zone)) throw new Error('Редактировать можно только Zone 1 или Zone 2');
+      if (!Number.isInteger(slot) || slot < 1 || slot > 120) throw new Error(`Неверный номер слота Zone ${zone}`);
       if (![0, 1, 2].includes(content)) throw new Error('Состояние слота должно быть NONE, BLANK или DETAIL');
       if (content !== 0 && (!Number.isInteger(productType) || productType < 1 || productType > 3)) throw new Error('Неверный тип изделия');
+      await writeValue(`astMagazineCommand[${magazine}].uiEditZone`, DataType.UInt16, zone);
       await writeValue(`astMagazineCommand[${magazine}].uiEditSlot`, DataType.UInt16, slot);
       await writeValue(`astMagazineCommand[${magazine}].uiEditDetailType`, DataType.UInt16, content);
       await writeValue(`astMagazineCommand[${magazine}].uiEditProductType`, DataType.UInt16, productType);
@@ -1194,10 +1252,77 @@ async function opcUaLoop() {
   }
 }
 
-const jsonResponse = (response, status, value) => {
-  response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
+const jsonResponse = (response, status, value, headers = {}) => {
+  response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', ...headers });
   response.end(JSON.stringify(value));
 };
+
+const AUTH_COOKIE_NAME = 'portal_session';
+const parseCookies = (header) => Object.fromEntries(String(header ?? '').split(';').map((part) => {
+  const separator = part.indexOf('=');
+  if (separator < 0) return ['', ''];
+  const key = part.slice(0, separator).trim();
+  const rawValue = part.slice(separator + 1).trim();
+  try { return [key, decodeURIComponent(rawValue)]; }
+  catch { return [key, rawValue]; }
+}).filter(([key]) => key));
+const requestSessionToken = (request) => parseCookies(request.headers.cookie)[AUTH_COOKIE_NAME] ?? '';
+const requestSession = (request) => authStore?.getSession(requestSessionToken(request)) ?? null;
+const sessionCookie = (request, token, maxAgeSeconds) => {
+  const secure = request.socket?.encrypted || request.headers['x-forwarded-proto'] === 'https';
+  return `${AUTH_COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${Math.max(0, Math.floor(maxAgeSeconds))}${secure ? '; Secure' : ''}`;
+};
+const requireSession = (request) => {
+  if (!authStore) throw new AuthStoreError(authStoreError || 'Хранилище пользователей недоступно', 503, 'AUTH_UNAVAILABLE');
+  const session = requestSession(request);
+  if (!session) throw new AuthStoreError('Требуется вход в систему', 401, 'AUTH_REQUIRED');
+  return session;
+};
+const requireAdmin = (request) => {
+  const session = requireSession(request);
+  if (session.user.role !== 'admin') throw new AuthStoreError('Доступно только администратору', 403, 'ADMIN_REQUIRED');
+  return session;
+};
+const authErrorResponse = (response, error) => jsonResponse(response,
+  error instanceof AuthStoreError || error instanceof StatisticsStoreError ? error.status : 400,
+  {
+    error: error instanceof Error ? error.message : String(error),
+    code: error instanceof AuthStoreError || error instanceof StatisticsStoreError ? error.code : 'AUTH_ERROR',
+  });
+const recordAuthEvent = (eventType, status, message, user = null, details = {}) => recordCellEvent({
+  timestampMs: Date.now(), sourceId: 6, eventType, status, message,
+  actor: user,
+  details: { ...details, actor: user ? { id: user.id, username: user.username, displayName: user.displayName, role: user.role } : null },
+});
+
+function revokeOperatorSockets(reason = 'Управление перехвачено администратором') {
+  if (typeof webSocketServer === 'undefined') return;
+  for (const socket of webSocketServer.clients) {
+    if (socket.authUserRole !== 'operator') continue;
+    send(socket, { type: 'auth-revoked', reason });
+    socket.close(4001, reason);
+  }
+}
+
+async function stopCellBeforeOperatorLogout(user) {
+  if (user?.role !== 'operator' || statisticsStore?.activeOperator()?.userId !== user.id) return;
+  if (Boolean(latestValues['stCellStatus.xRunning'])) {
+    recordCellEvent({
+      timestampMs: Date.now(), sourceId: 6, eventType: 'operator-warning', status: 'active',
+      message: 'Запрошен выход оператора во время автоматической обработки', actor: user,
+    });
+    await executeCommand({ requestId: `logout-${Date.now()}-stop`, command: 'cell.stop' });
+    const deadline = Date.now() + 60_000;
+    while (Boolean(latestValues['stCellStatus.xRunning']) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    if (Boolean(latestValues['stCellStatus.xRunning'])) {
+      throw new AuthStoreError('PLC не подтвердил штатную остановку ячейки. Сеанс оператора оставлен активным', 409, 'CELL_STOP_NOT_CONFIRMED');
+    }
+  }
+  if (stableCyclogramStates) statisticsStore?.recordEquipment(stableCyclogramStates, Date.now());
+  statisticsStore?.closeActiveOperator(Date.now(), user.id);
+}
 
 const cellEventListParameter = (searchParams, name, { numeric = false } = {}) => {
   const value = searchParams.get(name);
@@ -1354,7 +1479,191 @@ const httpServer = createServer(async (request, response) => {
   const requestUrl = new URL(request.url ?? '/', 'http://gateway.local');
   const scenarioMatch = requestUrl.pathname.match(/^\/api\/test-scenarios\/(\d+)$/);
   const runMatch = requestUrl.pathname.match(/^\/api\/test-runs\/(\d+)(\/abort)?$/);
+  const userMatch = requestUrl.pathname.match(/^\/api\/users\/(\d+)$/);
+  const shiftTemplateMatch = requestUrl.pathname.match(/^\/api\/statistics\/shift-templates\/(\d+)$/);
+  const statisticsIntervalMatch = requestUrl.pathname.match(/^\/api\/statistics\/operator-intervals\/(\d+)$/);
+  if (requestUrl.pathname === '/api/auth/session' && request.method === 'GET') {
+    if (!authStore) { jsonResponse(response, 503, { authenticated: false, error: authStoreError || 'Хранилище пользователей недоступно' }); return; }
+    const session = requestSession(request);
+    jsonResponse(response, 200, session
+      ? { authenticated: true, user: session.user, expiresAt: session.expiresAt }
+      : { authenticated: false, user: null });
+    return;
+  }
+  if (requestUrl.pathname === '/api/auth/login' && request.method === 'POST') {
+    let attemptedUsername = '';
+    try {
+      if (!authStore) throw new AuthStoreError(authStoreError || 'Хранилище пользователей недоступно', 503, 'AUTH_UNAVAILABLE');
+      const body = await requestJson(request);
+      attemptedUsername = String(body.username ?? '').trim().replace(/[\r\n]/g, ' ').slice(0, 32);
+      const login = authStore.login(body.username, body.password);
+      if (stableCyclogramStates) statisticsStore?.recordEquipment(stableCyclogramStates, Date.now());
+      if (login.user.role === 'admin') {
+        statisticsStore?.closeActiveOperator(Date.now());
+        authStore.revokeRoleSessions('operator');
+        revokeOperatorSockets('Управление перехвачено администратором');
+      } else {
+        authStore.revokeRoleSessions('operator', login.token);
+        revokeOperatorSockets(`Управление передано оператору ${login.user.displayName}`);
+        statisticsStore?.openOperator(login.user, Date.now(), 'login');
+      }
+      recordAuthEvent('auth-login', 'accepted', `Пользователь ${login.user.username} вошёл в систему`, login.user);
+      jsonResponse(response, 200, { authenticated: true, user: login.user, expiresAt: login.expiresAt }, {
+        'Set-Cookie': sessionCookie(request, login.token, (login.expiresAt - Date.now()) / 1000),
+      });
+    } catch (error) {
+      recordAuthEvent('auth-login', 'rejected', `Неуспешный вход${attemptedUsername ? `: ${attemptedUsername}` : ''}`, null);
+      authErrorResponse(response, error);
+    }
+    return;
+  }
+  if (requestUrl.pathname === '/api/auth/logout' && request.method === 'POST') {
+    try {
+      const token = requestSessionToken(request);
+      const session = requestSession(request);
+      if (session) await stopCellBeforeOperatorLogout(session.user);
+      authStore?.logout(token);
+      if (session) recordAuthEvent('auth-logout', 'completed', `Пользователь ${session.user.username} вышел из системы`, session.user);
+      jsonResponse(response, 200, { authenticated: false, user: null }, {
+        'Set-Cookie': sessionCookie(request, '', 0),
+      });
+    } catch (error) { authErrorResponse(response, error); }
+    return;
+  }
+  if (requestUrl.pathname === '/api/users' && request.method === 'GET') {
+    try { requireAdmin(request); jsonResponse(response, 200, authStore.listUsers()); }
+    catch (error) { authErrorResponse(response, error); }
+    return;
+  }
+  if (requestUrl.pathname === '/api/users' && request.method === 'POST') {
+    try {
+      const actor = requireAdmin(request).user;
+      const user = authStore.createUser(await requestJson(request));
+      recordAuthEvent('user-created', 'completed', `Создан пользователь ${user.username}`, actor, { targetUserId: user.id, targetRole: user.role });
+      jsonResponse(response, 201, user);
+    } catch (error) { authErrorResponse(response, error); }
+    return;
+  }
+  if (userMatch && request.method === 'PUT') {
+    try {
+      const actor = requireAdmin(request).user;
+      const body = await requestJson(request);
+      if (actor.id === Number(userMatch[1]) && (body.enabled === false || (body.role !== undefined && body.role !== 'admin'))) {
+        throw new AuthStoreError('Нельзя отключить или понизить собственную учётную запись', 409, 'SELF_DISABLE');
+      }
+      const user = authStore.updateUser(userMatch[1], body);
+      recordAuthEvent('user-updated', 'completed', `Изменён пользователь ${user.username}`, actor, { targetUserId: user.id, targetRole: user.role, enabled: user.enabled });
+      jsonResponse(response, 200, user);
+    } catch (error) { authErrorResponse(response, error); }
+    return;
+  }
+  if (userMatch && request.method === 'DELETE') {
+    try {
+      const actor = requireAdmin(request).user;
+      const deleted = authStore.deleteUser(userMatch[1], actor.id);
+      recordAuthEvent('user-deleted', 'completed', `Удалён пользователь ${deleted.username}`, actor, { targetUserId: deleted.id, targetRole: deleted.role });
+      jsonResponse(response, 200, { ok: true });
+    } catch (error) { authErrorResponse(response, error); }
+    return;
+  }
+  if (requestUrl.pathname.startsWith('/api/') && requestUrl.pathname !== '/api/health') {
+    try { requireSession(request); }
+    catch (error) { authErrorResponse(response, error); return; }
+  }
   try {
+    if (requestUrl.pathname === '/api/statistics/summary' && request.method === 'GET') {
+      if (!statisticsStore) { jsonResponse(response, 503, { error: statisticsStoreError || 'Хранилище статистики недоступно' }); return; }
+      const session = requireSession(request);
+      const requestedUser = requestUrl.searchParams.get('userId');
+      const userId = session.user.role === 'operator'
+        ? session.user.id
+        : requestedUser === null || requestedUser === '' || requestedUser === 'all'
+          ? null
+          : requestedUser === 'unassigned' ? 'unassigned' : Number(requestedUser);
+      if (userId !== null && userId !== 'unassigned' && !Number.isInteger(userId)) throw new StatisticsStoreError('Некорректный пользователь');
+      jsonResponse(response, 200, statisticsStore.summary({
+        preset: requestUrl.searchParams.get('preset'),
+        fromMs: Number(requestUrl.searchParams.get('from')),
+        toMs: Number(requestUrl.searchParams.get('to')),
+        userId,
+      }));
+      return;
+    }
+    if (requestUrl.pathname === '/api/statistics/shift-templates' && request.method === 'GET') {
+      requireAdmin(request);
+      if (!statisticsStore) throw new StatisticsStoreError(statisticsStoreError || 'Хранилище статистики недоступно', 503);
+      jsonResponse(response, 200, statisticsStore.templates());
+      return;
+    }
+    if (requestUrl.pathname === '/api/statistics/shift-templates' && request.method === 'POST') {
+      requireAdmin(request);
+      if (!statisticsStore) throw new StatisticsStoreError(statisticsStoreError || 'Хранилище статистики недоступно', 503);
+      jsonResponse(response, 201, statisticsStore.createTemplate(await requestJson(request)));
+      return;
+    }
+    if (shiftTemplateMatch && request.method === 'PUT') {
+      requireAdmin(request);
+      jsonResponse(response, 200, statisticsStore.updateTemplate(shiftTemplateMatch[1], await requestJson(request)));
+      return;
+    }
+    if (shiftTemplateMatch && request.method === 'DELETE') {
+      requireAdmin(request);
+      statisticsStore.deleteTemplate(shiftTemplateMatch[1]);
+      jsonResponse(response, 200, { ok: true });
+      return;
+    }
+    if (requestUrl.pathname === '/api/statistics/operator-intervals' && request.method === 'GET') {
+      requireAdmin(request);
+      const rawUserId = requestUrl.searchParams.get('userId');
+      jsonResponse(response, 200, statisticsStore.intervals({
+        fromMs: Number(requestUrl.searchParams.get('from')),
+        toMs: Number(requestUrl.searchParams.get('to')),
+        userId: rawUserId ? Number(rawUserId) : null,
+      }));
+      return;
+    }
+    if (statisticsIntervalMatch && request.method === 'PUT') {
+      requireAdmin(request);
+      const body = await requestJson(request);
+      const target = authStore.getUser(body.userId);
+      if (!target || target.role !== 'operator') throw new StatisticsStoreError('Выбранный оператор не найден');
+      jsonResponse(response, 200, statisticsStore.updateInterval(statisticsIntervalMatch[1], {
+        ...body, userId: target.id, username: target.username, displayName: target.displayName,
+      }));
+      return;
+    }
+    if (statisticsIntervalMatch && request.method === 'DELETE') {
+      requireAdmin(request);
+      if (!statisticsStore.deleteInterval(statisticsIntervalMatch[1])) throw new StatisticsStoreError('Интервал не найден', 404);
+      jsonResponse(response, 200, { ok: true });
+      return;
+    }
+    if (requestUrl.pathname === '/api/statistics/range' && request.method === 'DELETE') {
+      requireAdmin(request);
+      const body = await requestJson(request);
+      jsonResponse(response, 200, statisticsStore.hardDeleteRange({
+        fromMs: body.fromMs, toMs: body.toMs,
+        userId: body.userId === null || body.userId === undefined || body.userId === '' ? null : Number(body.userId),
+        equipment: body.equipment !== false, facts: body.facts !== false, intervals: body.intervals !== false,
+      }));
+      return;
+    }
+    if (requestUrl.pathname === '/api/cell-event-actors' && request.method === 'GET') {
+      if (!cellEventStore) { jsonResponse(response, 503, { error: cellEventError || 'Хранилище журнала недоступно' }); return; }
+      const actors = new Map();
+      for (const user of authStore?.listUsers() ?? []) {
+        actors.set(user.id, {
+          id: user.id, username: user.username, displayName: user.displayName,
+          role: user.role, enabled: user.enabled,
+        });
+      }
+      for (const actor of cellEventStore.actors()) {
+        if (!actors.has(actor.id)) actors.set(actor.id, { ...actor, role: null, enabled: false });
+      }
+      jsonResponse(response, 200, [...actors.values()].sort((left, right) =>
+        left.displayName.localeCompare(right.displayName, 'ru') || left.id - right.id));
+      return;
+    }
     if (requestUrl.pathname === '/api/cell-events' && request.method === 'GET') {
       if (!cellEventStore) { jsonResponse(response, 503, { error: cellEventError || 'Хранилище журнала недоступно' }); return; }
       const numberParameter = (name) => {
@@ -1377,6 +1686,7 @@ const httpServer = createServer(async (request, response) => {
         operationId: requestUrl.searchParams.get('operationId') ?? '',
         commandSeq: requestUrl.searchParams.get('commandSeq') ?? '',
         code: requestUrl.searchParams.get('code') ?? '', order,
+        actorUserId: numberParameter('actorUserId'),
         cursor: decodeCellEventCursor(requestUrl.searchParams.get('cursor')),
         limit: numberParameter('limit') ?? 100,
       });
@@ -1527,7 +1837,13 @@ webSocketServer.on('connection', (socket, request) => {
     });
     return;
   }
-  send(socket, { type: 'connection', ...connectionState });
+  const authToken = requestSessionToken(request);
+  const connectedSession = authStore?.getSession(authToken) ?? null;
+  const guestConnection = !connectedSession;
+  socket.isGuest = guestConnection;
+  socket.authUserId = connectedSession?.user.id ?? null;
+  socket.authUserRole = connectedSession?.user.role ?? null;
+  send(socket, { type: 'connection', ...connectionState, readOnly: guestConnection });
   const timestamp = Date.now();
   const robotFrame = latestRobotCoordinateFrame ?? captureRobotCoordinateFrame(timestamp);
   send(socket, {
@@ -1540,37 +1856,50 @@ webSocketServer.on('connection', (socket, request) => {
   socket.on('message', async (payload) => {
     let message;
     try {
-      message = JSON.parse(payload.toString());
-      if (message.type === 'cyclogram-clear') {
-        const requestId = String(message.requestId ?? Date.now());
-        clearCyclogram(Date.now());
-        send(socket, { type: 'ack', requestId, ok: true });
+      const liveSession = authStore?.getSession(authToken);
+      if (!guestConnection && !liveSession) {
+        socket.close(4001, 'session expired');
         return;
       }
+      message = JSON.parse(payload.toString());
+      if (message.type === 'cyclogram-clear') {
+        if (!liveSession) throw new AuthStoreError('Авторизуйтесь в аккаунт. Управление запрещено', 401, 'AUTH_REQUIRED');
+        throw new AuthStoreError('История циклограммы защищена статистикой и не удаляется через HMI', 403, 'STATISTICS_HISTORY_PROTECTED');
+      }
       if (message.type !== 'command') return;
+      if (!liveSession && message.command !== 'hmi.heartbeat') {
+        throw new AuthStoreError('Авторизуйтесь в аккаунт. Управление запрещено', 401, 'AUTH_REQUIRED');
+      }
       if (!isHmiCommandAllowedDuringTest(message.command, Boolean(activeTestRun))) {
         throw new Error(`Команда заблокирована эксклюзивным тестовым прогоном ${activeTestRun.id}`);
       }
       const requestId = String(message.requestId ?? Date.now());
       const description = describeOperatorCommand(message);
+      const actorDetails = { ...description.details, actor: liveSession ? {
+        id: liveSession.user.id, username: liveSession.user.username, role: liveSession.user.role,
+      } : null };
       if (message.command !== 'hmi.heartbeat') recordCellEvent({
         timestampMs: Date.now(), sourceId: 6, eventType: 'operator-command', status: 'requested',
-        message: description.label, requestId, details: description.details,
+        message: description.label, requestId, actor: liveSession?.user ?? null, details: actorDetails,
       });
       const acceptedRequestId = await executeCommand(message);
       if (message.command !== 'hmi.heartbeat') recordCellEvent({
         timestampMs: Date.now(), sourceId: 6, eventType: 'operator-command', status: 'accepted',
-        message: `${description.label}: передано в PLC`, requestId, details: description.details,
+        message: `${description.label}: передано в PLC`, requestId, actor: liveSession?.user ?? null, details: actorDetails,
       });
       send(socket, { type: 'ack', requestId: acceptedRequestId, ok: true });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       if (message?.type === 'command' && message.command !== 'hmi.heartbeat') {
         const description = describeOperatorCommand(message);
+        const actor = authStore?.getSession(authToken)?.user ?? null;
         recordCellEvent({
           timestampMs: Date.now(), sourceId: 6, eventType: 'operator-command', status: 'rejected',
           message: `${description.label}: отклонено — ${errorMessage}`,
-          requestId: String(message?.requestId ?? ''), details: description.details,
+          requestId: String(message?.requestId ?? ''), actor,
+          details: { ...description.details, actor: actor
+            ? { id: actor.id, username: actor.username, role: actor.role }
+            : null },
         });
       }
       send(socket, { type: 'ack', requestId: String(message?.requestId ?? ''), ok: false, error: errorMessage });
@@ -1590,6 +1919,8 @@ const closeStores = () => {
   recordSystemEvent('stopped', 'Gateway визуализации остановлен');
   cyclogramStore?.closeDatabase();
   cellEventStore?.close();
+  authStore?.close();
+  statisticsStore?.close();
   testStore?.close();
 };
 const shutdown = () => {

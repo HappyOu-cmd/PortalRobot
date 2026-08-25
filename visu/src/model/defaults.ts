@@ -1,4 +1,5 @@
 import type { CellLayout, CellState, MachineState, MagazineData, ProductType, SlotType } from './types';
+import { DEFAULT_PART_GEOMETRY, DEFAULT_PRODUCT_PART_MATERIALS } from './partGeometry';
 
 const emptyMachine = (): MachineState => ({
   productType: 1,
@@ -55,6 +56,14 @@ const initialMagazine = (id: 1 | 2): MagazineData => ({
     canEnable: true,
     powerAllowed: true,
     enableSequenceAllowed: true,
+    enableCheckPowered: false,
+    enableCheckHomed: false,
+    enableCheckPositionValid: true,
+    enableCheckStationary: true,
+    enableCheckNoError: true,
+    enableCheckRobotReleased: true,
+    enableCheckContent: true,
+    enableCheckInventoryVerified: true,
     fillAllowed: true,
     clearAllowed: true,
     currentBlank: 1,
@@ -74,6 +83,12 @@ const initialMagazine = (id: 1 | 2): MagazineData => ({
     recoveryRequired: false,
     indexAllowed: false,
     zone1EditAllowed: true,
+    zone2EditAllowed: false,
+    jogPositiveAllowed: false,
+    jogNegativeAllowed: false,
+    contentRecoveryAllowed: false,
+    contentRecoveryActive: false,
+    inventoryVerificationRequired: false,
     indexing: false,
     indexDone: false,
     axisError: false,
@@ -118,6 +133,18 @@ export const DEFAULT_LAYOUT: CellLayout = {
     yBeamWidthX: 300,
     zBaseLength: 520,
     zColumnWidth: 120,
+  },
+  partGeometry: { ...DEFAULT_PART_GEOMETRY },
+  productPartMaterials: structuredClone(DEFAULT_PRODUCT_PART_MATERIALS),
+  gripperPayloadPoses: {
+    blank: {
+      offset: { x: 0, y: 0, z: 0 },
+      rotationDeg: { x: 0, y: 0, z: 0 },
+    },
+    detail: {
+      offset: { x: 0, y: 0, z: 0 },
+      rotationDeg: { x: 0, y: 0, z: 0 },
+    },
   },
   indexedConveyors: [{
     position: { x: 8500, y: 80, z: 0 },

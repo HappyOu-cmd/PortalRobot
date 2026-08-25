@@ -4,21 +4,25 @@ import type {
   IndexedConveyorTestCommand,
   IndexedConveyorTestStatus,
   MagazineData,
+  PartGeometryLayout,
+  ProductPartMaterials,
+  ProductType,
   SlotType,
 } from '../model/types';
-import { box, COLORS, logicalPosition, material, mm } from './primitives';
+import { box, COLORS, disposeObject, logicalPosition, material, mm } from './primitives';
 
 interface RowPose {
   position: THREE.Vector3;
   rotationX: number;
 }
 
+type ProductMeshes = [THREE.InstancedMesh, THREE.InstancedMesh, THREE.InstancedMesh];
+
 export interface IndexedConveyorRig {
   root: THREE.Group;
   slats: THREE.InstancedMesh;
   slots: THREE.InstancedMesh;
-  blanks: THREE.InstancedMesh;
-  details: THREE.InstancedMesh;
+  productMeshes: { blank: ProductMeshes; detailBody: ProductMeshes; detailShoulder: ProductMeshes };
   lowerTreads: THREE.InstancedMesh;
   fallingParts: FallingPart[];
   columns: number;
@@ -27,6 +31,16 @@ export interface IndexedConveyorRig {
   pitchX: number;
   rowPitch: number;
   slotRadius: number;
+  blankRadius: number;
+  blankHeight: number;
+  detailBodyRadius: number;
+  detailBodyHeight: number;
+  detailShoulderRadius: number;
+  detailShoulderHeight: number;
+  detailBodyCenterFromBase: number;
+  detailShoulderCenterFromBase: number;
+  detailHeight: number;
+  productPartMaterials: [ProductPartMaterials, ProductPartMaterials, ProductPartMaterials];
   slatThickness: number;
   straightLength: number;
   rollerRadius: number;
@@ -42,22 +56,24 @@ export interface IndexedConveyorRig {
   binLength: number;
   binBottomY: number;
   binTopY: number;
-  binParts: THREE.Mesh[];
+  binParts: THREE.Group[];
   binPartCount: number;
   pathLength: number;
   currentOffset: number;
   targetOffset: number;
   lastCommandId: number;
   slotStates: SlotType[];
+  slotProductTypes: ProductType[];
   liveIndexing: boolean;
 }
 
 interface FallingPart {
-  mesh: THREE.Mesh;
+  mesh: THREE.Group;
   velocity: THREE.Vector3;
   age: number;
   phase: 'drop-to-lower' | 'on-lower' | 'drop-to-bin';
   halfHeight: number;
+  radius: number;
   angularVelocity: THREE.Vector3;
   landingPosition: THREE.Vector3 | null;
 }
@@ -121,10 +137,22 @@ function createSlotInstances(
   return mesh;
 }
 
-function createProductInstances(name: string, count: number, radius: number, height: number, color: number): THREE.InstancedMesh {
+function createProductInstances(
+  name: string,
+  count: number,
+  radius: number,
+  height: number,
+  appearance: ProductPartMaterials['blank'],
+): THREE.InstancedMesh {
   const mesh = new THREE.InstancedMesh(
     new THREE.CylinderGeometry(radius, radius, height, 16),
-    material(color, { metalness: 0.18, roughness: 0.4 }),
+    material(appearance.color, {
+      metalness: 0.18,
+      roughness: 0.4,
+      opacity: appearance.opacity,
+      transparent: appearance.opacity < 1,
+      depthWrite: appearance.opacity >= 0.98,
+    }),
     count,
   );
   mesh.name = name;
@@ -181,10 +209,8 @@ function samplePose(rig: IndexedConveyorRig, pathDistance: number): RowPose {
 function updateInstanceMatrices(rig: IndexedConveyorRig): void {
   const ringRotation = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2);
   const firstX = -((rig.columns - 1) * rig.pitchX) / 2;
-  const blankHeight = rig.slotRadius * 0.9;
-  const detailHeight = rig.slotRadius * 1.35;
-  let blankIndex = 0;
-  let detailIndex = 0;
+  const blankCounts = [0, 0, 0];
+  const detailCounts = [0, 0, 0];
 
   for (let row = 0; row < rig.rowCount; row += 1) {
     const pose = samplePose(rig, (row + 0.5) * rig.rowPitch + rig.currentOffset);
@@ -201,27 +227,53 @@ function updateInstanceMatrices(rig: IndexedConveyorRig): void {
       rig.slots.setMatrixAt(slotIndex, parentMatrix.clone().multiply(ringMatrix));
 
       const state = rig.slotStates[slotIndex];
+      const productType = rig.slotProductTypes[slotIndex] ?? 1;
+      const typeIndex = productType - 1;
       if (state === 'blank') {
-        const blankMatrix = new THREE.Matrix4().makeTranslation(x, rig.slatThickness / 2 + blankHeight / 2 + 0.006, 0);
-        rig.blanks.setMatrixAt(blankIndex, parentMatrix.clone().multiply(blankMatrix));
-        blankIndex += 1;
+        const blankMatrix = new THREE.Matrix4().makeTranslation(x, rig.slatThickness / 2 + rig.blankHeight / 2 + 0.006, 0);
+        rig.productMeshes.blank[typeIndex].setMatrixAt(blankCounts[typeIndex], parentMatrix.clone().multiply(blankMatrix));
+        blankCounts[typeIndex] += 1;
       } else if (state === 'detail') {
-        const detailMatrix = new THREE.Matrix4().makeTranslation(x, rig.slatThickness / 2 + detailHeight / 2 + 0.006, 0);
-        rig.details.setMatrixAt(detailIndex, parentMatrix.clone().multiply(detailMatrix));
-        detailIndex += 1;
+        const detailBase = rig.slatThickness / 2 + 0.006;
+        const bodyMatrix = new THREE.Matrix4().makeTranslation(
+          x,
+          detailBase + rig.detailBodyCenterFromBase,
+          0,
+        );
+        const shoulderMatrix = new THREE.Matrix4().makeTranslation(
+          x,
+          detailBase + rig.detailShoulderCenterFromBase,
+          0,
+        );
+        rig.productMeshes.detailBody[typeIndex].setMatrixAt(
+          detailCounts[typeIndex],
+          parentMatrix.clone().multiply(bodyMatrix),
+        );
+        rig.productMeshes.detailShoulder[typeIndex].setMatrixAt(
+          detailCounts[typeIndex],
+          parentMatrix.clone().multiply(shoulderMatrix),
+        );
+        detailCounts[typeIndex] += 1;
       }
     }
   }
-  rig.blanks.count = blankIndex;
-  rig.details.count = detailIndex;
-  [rig.slats, rig.slots, rig.blanks, rig.details].forEach((mesh) => { mesh.instanceMatrix.needsUpdate = true; });
+  rig.productMeshes.blank.forEach((mesh, index) => { mesh.count = blankCounts[index]; });
+  rig.productMeshes.detailBody.forEach((mesh, index) => { mesh.count = detailCounts[index]; });
+  rig.productMeshes.detailShoulder.forEach((mesh, index) => { mesh.count = detailCounts[index]; });
+  [
+    rig.slats,
+    rig.slots,
+    ...rig.productMeshes.blank,
+    ...rig.productMeshes.detailBody,
+    ...rig.productMeshes.detailShoulder,
+  ]
+    .forEach((mesh) => { mesh.instanceMatrix.needsUpdate = true; });
 }
 
 function clearFallingParts(rig: IndexedConveyorRig): void {
   rig.fallingParts.forEach(({ mesh }) => {
     rig.root.remove(mesh);
-    mesh.geometry.dispose();
-    if (mesh.material instanceof THREE.Material) mesh.material.dispose();
+    disposeObject(mesh);
   });
   rig.fallingParts = [];
 }
@@ -229,22 +281,53 @@ function clearFallingParts(rig: IndexedConveyorRig): void {
 function clearBinParts(rig: IndexedConveyorRig): void {
   rig.binParts.forEach((mesh) => {
     rig.root.remove(mesh);
-    mesh.geometry.dispose();
-    if (mesh.material instanceof THREE.Material) mesh.material.dispose();
+    disposeObject(mesh);
   });
   rig.binParts = [];
   rig.binPartCount = 0;
 }
 
-function spawnFallingPart(rig: IndexedConveyorRig, row: number, column: number, state: SlotType, marker: number): void {
+function spawnFallingPart(
+  rig: IndexedConveyorRig,
+  row: number,
+  column: number,
+  state: Exclude<SlotType, 'empty'>,
+  productType: ProductType,
+  marker: number,
+): void {
   const pose = samplePose(rig, marker);
   const firstX = -((rig.columns - 1) * rig.pitchX) / 2;
-  const radius = rig.slotRadius * (state === 'detail' ? 0.62 : 0.7);
-  const height = rig.slotRadius * (state === 'detail' ? 1.35 : 0.9);
-  const mesh = new THREE.Mesh(
-    new THREE.CylinderGeometry(radius, radius, height, 14),
-    material(state === 'detail' ? COLORS.detail : COLORS.blank, { metalness: 0.16, roughness: 0.42 }),
-  );
+  const height = state === 'detail' ? rig.detailHeight : rig.blankHeight;
+  const radius = state === 'detail'
+    ? Math.max(rig.detailBodyRadius, rig.detailShoulderRadius)
+    : rig.blankRadius;
+  const appearance = rig.productPartMaterials[productType - 1][state];
+  const partMaterial = () => material(appearance.color, {
+      metalness: 0.16,
+      roughness: 0.42,
+      opacity: appearance.opacity,
+      transparent: appearance.opacity < 1,
+      depthWrite: appearance.opacity >= 0.98,
+    });
+  const mesh = new THREE.Group();
+  if (state === 'blank') {
+    mesh.add(new THREE.Mesh(
+      new THREE.CylinderGeometry(rig.blankRadius, rig.blankRadius, rig.blankHeight, 14),
+      partMaterial(),
+    ));
+  } else {
+    const body = new THREE.Mesh(
+      new THREE.CylinderGeometry(rig.detailBodyRadius, rig.detailBodyRadius, rig.detailBodyHeight, 14),
+      partMaterial(),
+    );
+    body.position.y = rig.detailBodyCenterFromBase - rig.detailHeight / 2;
+    const shoulder = new THREE.Mesh(
+      new THREE.CylinderGeometry(rig.detailShoulderRadius, rig.detailShoulderRadius, rig.detailShoulderHeight, 14),
+      partMaterial(),
+    );
+    shoulder.position.y = rig.detailShoulderCenterFromBase - rig.detailHeight / 2;
+    mesh.add(body, shoulder);
+  }
   mesh.name = `falling_${state}_${row}_${column}`;
   mesh.position.copy(new THREE.Vector3(
     firstX + column * rig.pitchX,
@@ -252,7 +335,9 @@ function spawnFallingPart(rig: IndexedConveyorRig, row: number, column: number, 
     0,
   ).applyMatrix4(rowMatrix(pose)));
   mesh.rotation.x = pose.rotationX;
-  mesh.castShadow = true;
+  mesh.traverse((child) => {
+    if (child instanceof THREE.Mesh) child.castShadow = true;
+  });
   rig.root.add(mesh);
   const lateralDrift = (Math.random() - 0.5) * 0.11;
   rig.fallingParts.push({
@@ -261,6 +346,7 @@ function spawnFallingPart(rig: IndexedConveyorRig, row: number, column: number, 
     age: 0,
     phase: 'drop-to-lower',
     halfHeight: height / 2,
+    radius,
     angularVelocity: new THREE.Vector3(
       1.4 + Math.random() * 2.2,
       (Math.random() - 0.5) * 2.4,
@@ -276,22 +362,31 @@ function fillZoneOne(rig: IndexedConveyorRig): void {
     const distance = modulo((row + 0.5) * rig.rowPitch + rig.currentOffset, rig.pathLength);
     if (distance >= zoneLength) continue;
     for (let column = 0; column < rig.columns; column += 1) {
-      rig.slotStates[row * rig.columns + column] = 'blank';
+      const slotIndex = row * rig.columns + column;
+      rig.slotStates[slotIndex] = 'blank';
+      rig.slotProductTypes[slotIndex] = 1;
     }
   }
 }
 
 function syncMagazineInventory(rig: IndexedConveyorRig, magazine: MagazineData): void {
   const visibleSlots = [...magazine.zones[0], ...magazine.zones[1], ...magazine.zones[2]];
+  const visibleProductTypes = [
+    ...magazine.zoneProductTypes[0],
+    ...magazine.zoneProductTypes[1],
+    ...magazine.zoneProductTypes[2],
+  ];
   const visibleRows = Math.min(Math.ceil(visibleSlots.length / rig.columns), rig.rowCount);
   const positionRows = modulo(Math.round(rig.currentOffset / rig.rowPitch), rig.rowCount);
   rig.slotStates.fill('empty');
+  rig.slotProductTypes.fill(1);
   for (let logicalRow = 0; logicalRow < visibleRows; logicalRow += 1) {
     const physicalRow = modulo(logicalRow - positionRows, rig.rowCount);
     for (let column = 0; column < rig.columns; column += 1) {
       const sourceIndex = logicalRow * rig.columns + column;
       const targetIndex = physicalRow * rig.columns + column;
       rig.slotStates[targetIndex] = visibleSlots[sourceIndex] ?? 'empty';
+      rig.slotProductTypes[targetIndex] = visibleProductTypes[sourceIndex] ?? 1;
     }
   }
 }
@@ -312,6 +407,7 @@ function applyTestCommand(rig: IndexedConveyorRig, command: IndexedConveyorTestC
   }
   if (command.type === 'clear') {
     rig.slotStates.fill('empty');
+    rig.slotProductTypes.fill(1);
     clearFallingParts(rig);
     clearBinParts(rig);
   }
@@ -319,6 +415,7 @@ function applyTestCommand(rig: IndexedConveyorRig, command: IndexedConveyorTestC
     rig.currentOffset = 0;
     rig.targetOffset = 0;
     rig.slotStates.fill('empty');
+    rig.slotProductTypes.fill(1);
     clearFallingParts(rig);
     clearBinParts(rig);
   }
@@ -343,23 +440,42 @@ function advanceMotion(rig: IndexedConveyorRig, dt: number): void {
       const slotIndex = row * rig.columns + column;
       const state = rig.slotStates[slotIndex];
       if (state === 'empty') continue;
-      spawnFallingPart(rig, row, column, state, dropMarker);
+      spawnFallingPart(rig, row, column, state, rig.slotProductTypes[slotIndex] ?? 1, dropMarker);
       rig.slotStates[slotIndex] = 'empty';
+      rig.slotProductTypes[slotIndex] = 1;
     }
   }
 }
 
-function makeBinLandingPosition(rig: IndexedConveyorRig, visualIndex: number, halfHeight: number): THREE.Vector3 {
+function makeBinLandingPosition(
+  rig: IndexedConveyorRig,
+  visualIndex: number,
+  halfHeight: number,
+  radius: number,
+): THREE.Vector3 {
   const layer = Math.min(5, Math.floor(visualIndex / 55));
   const pileRise = layer * Math.max(0.018, halfHeight * 1.05);
   const landingY = Math.min(
     rig.binTopY - halfHeight - 0.045,
     rig.binBottomY + halfHeight + 0.018 + pileRise + Math.random() * 0.012,
   );
+  // Стенки наклонные: у дна полезное сечение заметно меньше верхнего.
+  // Старый фиксированный разброс иногда ставил деталь уже снаружи стенки,
+  // из-за чего она выглядела просвечивающей сквозь синюю панель.
+  const slope = THREE.MathUtils.clamp(
+    (landingY - rig.binBottomY) / Math.max(0.001, rig.binTopY - rig.binBottomY),
+    0,
+    1,
+  );
+  const innerWidth = THREE.MathUtils.lerp(rig.binWidth * 0.58, rig.binWidth, slope);
+  const innerLength = THREE.MathUtils.lerp(rig.binLength * 0.5, rig.binLength, slope);
+  const rotatedPartClearance = Math.hypot(radius, halfHeight) + 0.018;
+  const availableX = Math.max(0, innerWidth / 2 - rotatedPartClearance);
+  const availableZ = Math.max(0, innerLength / 2 - rotatedPartClearance);
   return new THREE.Vector3(
-    (Math.random() - 0.5) * rig.binWidth * 0.54,
+    (Math.random() * 2 - 1) * availableX,
     landingY,
-    rig.binCenterZ + (Math.random() - 0.5) * rig.binLength * 0.56,
+    rig.binCenterZ + (Math.random() * 2 - 1) * availableZ,
   );
 }
 
@@ -369,10 +485,9 @@ function rotateFallingPart(part: FallingPart, dt: number): void {
   part.mesh.rotation.z += part.angularVelocity.z * dt;
 }
 
-function discardPart(rig: IndexedConveyorRig, mesh: THREE.Mesh): void {
+function discardPart(rig: IndexedConveyorRig, mesh: THREE.Group): void {
   rig.root.remove(mesh);
-  mesh.geometry.dispose();
-  if (mesh.material instanceof THREE.Material) mesh.material.dispose();
+  disposeObject(mesh);
 }
 
 function updateFallingParts(rig: IndexedConveyorRig, dt: number): void {
@@ -404,7 +519,12 @@ function updateFallingParts(rig: IndexedConveyorRig, dt: number): void {
       );
       part.phase = 'drop-to-bin';
       part.age = 0;
-      part.landingPosition = makeBinLandingPosition(rig, rig.binPartCount + pendingBinParts, part.halfHeight);
+      part.landingPosition = makeBinLandingPosition(
+        rig,
+        rig.binPartCount + pendingBinParts,
+        part.halfHeight,
+        part.radius,
+      );
       part.velocity.set((Math.random() - 0.5) * 0.16, -0.04, 0.24 + Math.random() * 0.16);
       return true;
     } else if (part.landingPosition) {
@@ -554,7 +674,15 @@ function quadPanel(name: string, points: [THREE.Vector3, THREE.Vector3, THREE.Ve
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(points.flatMap((point) => [point.x, point.y, point.z]), 3));
   geometry.setIndex([0, 1, 2, 0, 2, 3]);
   geometry.computeVertexNormals();
-  const mesh = new THREE.Mesh(geometry, material(color, { metalness: 0.18, roughness: 0.46, side: THREE.DoubleSide }));
+  const mesh = new THREE.Mesh(geometry, material(color, {
+    metalness: 0.18,
+    roughness: 0.46,
+    side: THREE.DoubleSide,
+    transparent: false,
+    opacity: 1,
+    depthTest: true,
+    depthWrite: true,
+  }));
   mesh.name = name;
   mesh.castShadow = true;
   mesh.receiveShadow = true;
@@ -615,7 +743,22 @@ function addReceivingBin(
     box('bin_frame_right', new THREE.Vector3(0.07, 0.06, frameLength), CONVEYOR_COLORS.frameDark, new THREE.Vector3(frameWidth / 2, frameY, centerZ), { metalness: 0.32, roughness: 0.42 }),
     box('bin_frame_near', new THREE.Vector3(frameWidth, 0.06, 0.07), CONVEYOR_COLORS.frameDark, new THREE.Vector3(0, frameY, centerZ - frameLength / 2), { metalness: 0.32, roughness: 0.42 }),
     box('bin_frame_far', new THREE.Vector3(frameWidth, 0.06, 0.07), CONVEYOR_COLORS.frameDark, new THREE.Vector3(0, frameY, centerZ + frameLength / 2), { metalness: 0.32, roughness: 0.42 }),
+    // Две поперечины физически связывают узкое дно мульды с колёсной рамой.
+    // Высота корпуса не меняется: верх балок остаётся на текущем bottomY.
+    box('bin_frame_support_near', new THREE.Vector3(frameWidth - 0.07, 0.06, 0.065), CONVEYOR_COLORS.frameDark, new THREE.Vector3(0, frameY, centerZ - bottomLength * 0.34), { metalness: 0.32, roughness: 0.42 }),
+    box('bin_frame_support_far', new THREE.Vector3(frameWidth - 0.07, 0.06, 0.065), CONVEYOR_COLORS.frameDark, new THREE.Vector3(0, frameY, centerZ + bottomLength * 0.34), { metalness: 0.32, roughness: 0.42 }),
   );
+  [-1, 1].forEach((sideX) => [-1, 1].forEach((sideZ) => root.add(box(
+    `bin_body_mount_${sideX}_${sideZ}`,
+    new THREE.Vector3(0.075, 0.055, 0.075),
+    COLORS.steel,
+    new THREE.Vector3(
+      sideX * bottomWidth * 0.38,
+      bottomY - 0.005,
+      centerZ + sideZ * bottomLength * 0.34,
+    ),
+    { metalness: 0.48, roughness: 0.34 },
+  ))));
   [-1, 1].forEach((sideX) => [-1, 1].forEach((sideZ) => {
     const casterX = sideX * frameWidth * 0.42;
     const casterZ = centerZ + sideZ * frameLength * 0.38;
@@ -701,7 +844,12 @@ function addZoneStrips(root: THREE.Group, zoneRows: [number, number, number], pi
   });
 }
 
-export function createIndexedConveyor(config: IndexedConveyorLayout, magazineId: 1 | 2): IndexedConveyorRig {
+export function createIndexedConveyor(
+  config: IndexedConveyorLayout,
+  partGeometry: PartGeometryLayout,
+  productPartMaterials: [ProductPartMaterials, ProductPartMaterials, ProductPartMaterials],
+  magazineId: 1 | 2,
+): IndexedConveyorRig {
   const root = new THREE.Group();
   root.name = `IndexedConveyor_${magazineId}`;
   root.userData.magazineId = magazineId;
@@ -727,11 +875,38 @@ export function createIndexedConveyor(config: IndexedConveyorLayout, magazineId:
   const rowCount = Math.max(totalTopRows + 2, Math.round(pathLength / pitchY));
   const rowPitch = pathLength / rowCount;
   const maxSlots = rowCount * columns;
+  const blankRadius = mm(partGeometry.blankDiameter) / 2;
+  const blankHeight = mm(partGeometry.blankLength);
+  const detailBodyRadius = mm(partGeometry.detailBodyDiameter) / 2;
+  const detailBodyHeight = mm(partGeometry.detailBodyLength);
+  const detailShoulderRadius = mm(partGeometry.detailShoulderDiameter) / 2;
+  const detailShoulderHeight = mm(partGeometry.detailShoulderLength);
+  const detailShoulderOffset = mm(partGeometry.detailShoulderOffset);
+  const detailBottom = Math.min(-detailBodyHeight / 2, detailShoulderOffset - detailShoulderHeight / 2);
+  const detailTop = Math.max(detailBodyHeight / 2, detailShoulderOffset + detailShoulderHeight / 2);
+  const detailHeight = detailTop - detailBottom;
+  const detailBodyCenterFromBase = -detailBottom;
+  const detailShoulderCenterFromBase = detailShoulderOffset - detailBottom;
   const slats = createSlatInstances('conveyor_slats', rowCount, slatWidth, slatDepth, slatThickness);
   const slots = createSlotInstances('conveyor_slots', rowCount, columns, slotRadius);
-  const blanks = createProductInstances('conveyor_test_blanks', maxSlots, slotRadius * 0.7, slotRadius * 0.9, COLORS.blank);
-  const details = createProductInstances('conveyor_test_details', maxSlots, slotRadius * 0.62, slotRadius * 1.35, COLORS.detail);
-  root.add(slats, slots, blanks, details);
+  const productMeshes = {
+    blank: productPartMaterials.map((appearance, index) => createProductInstances(
+      `conveyor_blanks_type_${index + 1}`, maxSlots, blankRadius, blankHeight, appearance.blank,
+    )) as ProductMeshes,
+    detailBody: productPartMaterials.map((appearance, index) => createProductInstances(
+      `conveyor_detail_bodies_type_${index + 1}`, maxSlots, detailBodyRadius, detailBodyHeight, appearance.detail,
+    )) as ProductMeshes,
+    detailShoulder: productPartMaterials.map((appearance, index) => createProductInstances(
+      `conveyor_detail_shoulders_type_${index + 1}`, maxSlots, detailShoulderRadius, detailShoulderHeight, appearance.detail,
+    )) as ProductMeshes,
+  };
+  root.add(
+    slats,
+    slots,
+    ...productMeshes.blank,
+    ...productMeshes.detailBody,
+    ...productMeshes.detailShoulder,
+  );
 
   const lowerBeltStartZ = -straightLength + 0.015;
   const lowerBeltEndZ = 0.06;
@@ -758,8 +933,7 @@ export function createIndexedConveyor(config: IndexedConveyorLayout, magazineId:
     root,
     slats,
     slots,
-    blanks,
-    details,
+    productMeshes,
     lowerTreads,
     fallingParts: [],
     columns,
@@ -768,6 +942,16 @@ export function createIndexedConveyor(config: IndexedConveyorLayout, magazineId:
     pitchX,
     rowPitch,
     slotRadius,
+    blankRadius,
+    blankHeight,
+    detailBodyRadius,
+    detailBodyHeight,
+    detailShoulderRadius,
+    detailShoulderHeight,
+    detailBodyCenterFromBase,
+    detailShoulderCenterFromBase,
+    detailHeight,
+    productPartMaterials,
     slatThickness,
     straightLength,
     rollerRadius,
@@ -790,6 +974,7 @@ export function createIndexedConveyor(config: IndexedConveyorLayout, magazineId:
     targetOffset: 0,
     lastCommandId: 0,
     slotStates: Array.from({ length: maxSlots }, () => 'empty'),
+    slotProductTypes: Array.from({ length: maxSlots }, () => 1 as ProductType),
     liveIndexing: false,
   };
   updateLowerBelt(rig, 0);

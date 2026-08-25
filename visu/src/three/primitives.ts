@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { ProductType } from '../model/types';
+import type { PartMaterialLayout } from '../model/types';
 
 export const COLORS = {
   background: 0xfdfdfe,
@@ -21,12 +21,6 @@ export const COLORS = {
   empty: 0x6f8291,
 };
 
-export const PRODUCT_PART_COLORS: Record<ProductType, { blank: number; detail: number }> = {
-  1: { blank: 0x9fc3df, detail: 0x24689a },
-  2: { blank: 0xc0acd8, detail: 0x70489b },
-  3: { blank: 0x91cdc3, detail: 0x217a70 },
-};
-
 export function mm(value: number): number {
   return value / 1000;
 }
@@ -36,7 +30,7 @@ export function logicalPosition(x: number, y: number, z: number): THREE.Vector3 
 }
 
 export function material(
-  color: number,
+  color: THREE.ColorRepresentation,
   options: Partial<THREE.MeshStandardMaterialParameters> = {},
 ): THREE.MeshStandardMaterial {
   return new THREE.MeshStandardMaterial({
@@ -66,7 +60,7 @@ export function cylinder(
   name: string,
   radius: number,
   height: number,
-  color: number,
+  color: THREE.ColorRepresentation,
   position: THREE.Vector3,
   radialSegments = 24,
 ): THREE.Mesh {
@@ -79,6 +73,24 @@ export function cylinder(
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   return mesh;
+}
+
+export function applyPartMaterial(object: THREE.Object3D, appearance: PartMaterialLayout): void {
+  object.traverse((child) => {
+    if (!(child instanceof THREE.Mesh)) return;
+    const materials = Array.isArray(child.material) ? child.material : [child.material];
+    materials.forEach((entry) => {
+      if (!(entry instanceof THREE.MeshStandardMaterial)) return;
+      const opacity = THREE.MathUtils.clamp(appearance.opacity, 0.1, 1);
+      const transparent = opacity < 1;
+      const requiresMaterialUpdate = entry.transparent !== transparent;
+      entry.color.set(appearance.color);
+      entry.opacity = opacity;
+      entry.transparent = transparent;
+      entry.depthWrite = opacity >= 0.98;
+      if (requiresMaterialUpdate) entry.needsUpdate = true;
+    });
+  });
 }
 
 export function makeLabel(text: string, color = '#174f94'): THREE.Sprite {

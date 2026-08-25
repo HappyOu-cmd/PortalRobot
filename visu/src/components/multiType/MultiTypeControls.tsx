@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Boxes, CheckCircle2, ChevronRight, Clock3, EthernetPort, MapPin, TriangleAlert } from 'lucide-react';
+import { BarChart3, Boxes, CheckCircle2, ChevronRight, Clock3, EthernetPort, MapPin, TriangleAlert } from 'lucide-react';
 import type { ProductType } from '../../model/types';
 import type { PlcCellSettings, PlcRobotModbusInfo, PlcTestEnvironmentInfo } from '../../plc/client';
 
@@ -91,7 +91,7 @@ function CellSettingField({ label, value, unit, min, max, step, disabled, onChan
 	</label>;
 }
 
-export function CellSettingsPanel({ online, modbusMode, modbus, testEnvironment, configurationValid, typeCount, typeCountAllowed, magazineConfigAllowed, settings, accelerationEnabled, accelerationActive, accelerationAllowed, onModeChange, onTestEnvironmentChange, onTypeCountChange, onAutoDistribute, onModbusSettingChange, onModbusApply, onSettingChange, onAccelerationChange, onClose, className }: {
+export function CellSettingsPanel({ online, modbusMode, modbus, testEnvironment, configurationValid, typeCount, typeCountAllowed, magazineConfigAllowed, settings, accelerationEnabled, accelerationActive, accelerationAllowed, onModeChange, onTestEnvironmentChange, onTypeCountChange, onAutoDistribute, onModbusSettingChange, onModbusApply, onSettingChange, onAccelerationChange, onStatisticsSettings, onClose, className }: {
 	online: boolean;
 	modbusMode: boolean;
 	modbus: PlcRobotModbusInfo;
@@ -112,6 +112,7 @@ export function CellSettingsPanel({ online, modbusMode, modbus, testEnvironment,
 	onModbusApply: () => void;
 	onSettingChange: (command: string, value: number) => void;
 	onAccelerationChange: (enabled: boolean) => void;
+	onStatisticsSettings: () => void;
 	onClose: () => void;
 	className?: string;
 }) {
@@ -134,6 +135,7 @@ export function CellSettingsPanel({ online, modbusMode, modbus, testEnvironment,
 
 	return <aside className={`side-panel cell-settings-panel ${className ?? ''}`}>
 		<div className="panel-heading"><div><span>ИНЖЕНЕРНЫЕ ПАРАМЕТРЫ</span><h2>Настройки ячейки</h2></div><button onClick={onClose} title="Закрыть"><ChevronRight /></button></div>
+		<button className="cell-statistics-settings-link" type="button" onClick={onStatisticsSettings}><BarChart3 /><span><b>Статистика</b><small>Расписание смен и редактор статистики</small></span><ChevronRight /></button>
 		<section className="cell-config-section test-environment-settings">
 			<div className="cell-config-title"><Boxes /><div><h3>Среда выполнения</h3><p>Не зависит от выбора SoftMotion / Modbus TCP и не сохраняется после перезапуска PLC.</p></div></div>
 			<div className="robot-mode-selector three" role="group" aria-label="Тестовая среда">
