@@ -672,12 +672,11 @@ function RobotQuickPanel({ robot, robotManual, robotModbus, modbusMode, speedOve
   ] as const;
   const readinessMet = modbusReadiness.filter((condition) => condition[1]).length;
   const orientation = robot.rotatedToBlank ? 'К заготовке' : robot.rotatedToDetail ? 'К детали' : 'Не определена';
-  const gripper1 = robot.gripper1Closed
-    ? robot.blankProductType > 0 ? `Заготовка · тип ${robot.blankProductType}` : 'Заготовка · тип неизвестен'
-    : robot.gripper1Open ? 'Открыт' : 'Движение';
-  const gripper2 = robot.gripper2Closed
-    ? robot.detailProductType > 0 ? `Деталь · тип ${robot.detailProductType}` : 'Деталь · тип неизвестен'
-    : robot.gripper2Open ? 'Открыт' : 'Движение';
+  const gripper1 = robot.gripper1Closed ? 'Заготовка' : robot.gripper1Open ? 'Открыт' : 'Движение';
+  const gripper2 = robot.gripper2Closed ? 'Деталь' : robot.gripper2Open ? 'Открыт' : 'Движение';
+  const gripper1Tone: QuickStatusTone = robot.gripper1Closed ? 'blue' : robot.gripper1Open ? 'gray' : 'amber';
+  const gripper2Tone: QuickStatusTone = robot.gripper2Closed ? 'green' : robot.gripper2Open ? 'gray' : 'amber';
+  const orientationTone: QuickStatusTone = robot.rotatedToBlank || robot.rotatedToDetail ? 'blue' : 'gray';
 
   return <section className={`robot-quick-panel tone-${stateTone} ${className ?? ''}`} aria-label="Управление роботом">
     <SheetGrip onClose={onClose} />
@@ -720,10 +719,10 @@ function RobotQuickPanel({ robot, robotManual, robotModbus, modbusMode, speedOve
         </div>
       </div>
       <div className="robot-quick-status-grid">
-        <div className="robot-position"><Activity /><span>Позиция, мм</span><p>X {Math.round(robot.x)} · Y {Math.round(robot.y)} · Z {Math.round(robot.z)}</p></div>
-        <div className={robot.gripper1Closed ? 'holding-blank' : ''}><Box /><span>Захват 1</span><p><Indicator active={robot.gripper1Closed} tone="blue" />{gripper1}{robot.gripper1Closed && robot.blankProductType > 0 && <ProductTypeBadge type={robot.blankProductType as ProductType} />}</p></div>
-        <div className={robot.gripper2Closed ? 'holding-detail' : ''}><Box /><span>Захват 2</span><p><Indicator active={robot.gripper2Closed} tone="green" />{gripper2}{robot.gripper2Closed && robot.detailProductType > 0 && <ProductTypeBadge type={robot.detailProductType as ProductType} />}</p></div>
-        <div><RotateCcw /><span>Ориентация</span><p><Indicator active={robot.rotatedToBlank || robot.rotatedToDetail} tone="blue" />{orientation}</p></div>
+        <QuickStatusCard icon={Activity} eyebrow="Координаты" title="Позиция" status={`X ${Math.round(robot.x)} · Y ${Math.round(robot.y)} · Z ${Math.round(robot.z)}`} tone={online ? 'blue' : 'gray'} className="robot-position" />
+        <QuickStatusCard icon={Box} eyebrow="Инструмент" title="Захват 1" status={<>{gripper1}{robot.gripper1Closed && robot.blankProductType > 0 && <ProductTypeBadge type={robot.blankProductType as ProductType} />}</>} tone={gripper1Tone} className={robot.gripper1Closed ? 'holding-blank' : ''} />
+        <QuickStatusCard icon={Box} eyebrow="Инструмент" title="Захват 2" status={<>{gripper2}{robot.gripper2Closed && robot.detailProductType > 0 && <ProductTypeBadge type={robot.detailProductType as ProductType} />}</>} tone={gripper2Tone} className={robot.gripper2Closed ? 'holding-detail' : ''} />
+        <QuickStatusCard icon={RotateCcw} eyebrow="Положение" title="Поворот" status={orientation} tone={orientationTone} />
       </div>
     </div>
   </section>;
