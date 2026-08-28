@@ -260,7 +260,7 @@ export function TestWorkbench({
           ? 'Для стенда включите физический ключ'
           : '';
 
-  return <aside className={`test-workbench side-panel ${className}`}>
+  return <aside className={`test-workbench ${className}`}>
     <header className="test-workbench-header">
       <div className="test-title-mark"><FlaskConical /></div>
       <div>

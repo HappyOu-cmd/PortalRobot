@@ -1,0 +1,72 @@
+METHOD PRIVATE GetAlarmEffect : E_ALARM_EFFECT
+VAR_INPUT
+	eSource : E_ALARM_SOURCE; // Первичный владелец ошибки
+	uiCode : UINT; // Номер бита ошибки владельца
+	xRobotStopRequired : BOOL; // Защёлкнутый контекст оборудования требует остановить робота
+	xGlobalError : BOOL; // Активна Safety-ошибка ячейки
+END_VAR
+
+// --- BEGIN IMPLEMENTATION ---
+
+// Safety имеет абсолютный приоритет над любой частной причиной.
+IF xGlobalError THEN
+	GetAlarmEffect := E_ALARM_EFFECT.GLOBAL_STOP;
+
+ELSE
+CASE eSource OF
+	E_ALARM_SOURCE.CELL:
+		CASE uiCode OF
+			1: GetAlarmEffect := E_ALARM_EFFECT.ROBOT_STOP; // ERR_ROBOT
+			4: GetAlarmEffect := E_ALARM_EFFECT.GLOBAL_STOP; // ERR_GLOBAL_STOP
+		ELSE GetAlarmEffect := E_ALARM_EFFECT.EQUIPMENT_STOP;
+		END_CASE;
+
+	E_ALARM_SOURCE.MACHINE_1,
+	E_ALARM_SOURCE.MACHINE_2,
+	E_ALARM_SOURCE.MACHINE_3:
+		CASE uiCode OF
+			9: GetAlarmEffect := E_ALARM_EFFECT.GLOBAL_STOP; // ERR_SAFETY_STOP
+			2, 3, 13, 15, 16, 17: GetAlarmEffect := E_ALARM_EFFECT.ROBOT_STOP;
+		ELSE
+			IF xRobotStopRequired THEN
+				GetAlarmEffect := E_ALARM_EFFECT.ROBOT_STOP;
+			ELSE
+				GetAlarmEffect := E_ALARM_EFFECT.EQUIPMENT_STOP;
+			END_IF;
+		END_CASE;
+
+	E_ALARM_SOURCE.MAGAZINE_LOGIC_1,
+	E_ALARM_SOURCE.MAGAZINE_LOGIC_2:
+		CASE uiCode OF
+			5: GetAlarmEffect := E_ALARM_EFFECT.ROBOT_STOP; // ERR_ROBOT
+			6: GetAlarmEffect := E_ALARM_EFFECT.GLOBAL_STOP; // ERR_GLOBAL_STOP
+		ELSE
+			IF xRobotStopRequired THEN
+				GetAlarmEffect := E_ALARM_EFFECT.ROBOT_STOP;
+			ELSE
+				GetAlarmEffect := E_ALARM_EFFECT.EQUIPMENT_STOP;
+			END_IF;
+		END_CASE;
+
+	E_ALARM_SOURCE.MAGAZINE_AXIS_1,
+	E_ALARM_SOURCE.MAGAZINE_AXIS_2:
+		IF xRobotStopRequired THEN
+			GetAlarmEffect := E_ALARM_EFFECT.ROBOT_STOP;
+		ELSE
+			GetAlarmEffect := E_ALARM_EFFECT.EQUIPMENT_STOP;
+		END_IF;
+
+	E_ALARM_SOURCE.ROBOT,
+	E_ALARM_SOURCE.AXIS_X,
+	E_ALARM_SOURCE.AXIS_Y,
+	E_ALARM_SOURCE.AXIS_Z,
+	E_ALARM_SOURCE.AXIS_GROUP,
+	E_ALARM_SOURCE.MOTION_MANAGER,
+	E_ALARM_SOURCE.POINT_MANAGER,
+	E_ALARM_SOURCE.GRIPPER:
+		GetAlarmEffect := E_ALARM_EFFECT.ROBOT_STOP;
+
+ELSE
+	GetAlarmEffect := E_ALARM_EFFECT.EQUIPMENT_STOP;
+END_CASE;
+END_IF;

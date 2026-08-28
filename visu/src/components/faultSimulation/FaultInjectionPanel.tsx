@@ -84,6 +84,11 @@ export function FaultInjectionPanel({ values, online, send, onClose, className }
     <FaultPanelHeading eyebrow="РУЧНОЕ УПРАВЛЕНИЕ · ДИАГНОСТИКА" title="Инъекции ошибок" onClose={onClose} />
     <FaultModeBanner requested={requested} enabled={enabled} online={online} />
 
+    <section className="fault-injection-mode">
+      <h3>Режим инъекций</h3>
+      <FaultToggle label="Разрешить симуляцию ошибок" checked={requested} online={online} onChange={(value) => send({ command: 'fault.enable', value })} />
+    </section>
+
     <section>
       <h3>Оси и группа XYZ</h3>
       <div className="fault-button-grid three-columns">

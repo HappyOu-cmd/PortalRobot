@@ -9,7 +9,7 @@ export function FaultPanelHeading({ eyebrow, title, onClose }: { eyebrow: string
 export function FaultModeBanner({ requested, enabled, online }: { requested: boolean; enabled: boolean; online: boolean }) {
   const tone = !online ? 'offline' : enabled ? 'enabled' : requested ? 'pending' : 'disabled';
   const text = !online ? 'Нет связи с PLC' : enabled ? 'Инъекция разрешена PLC' : requested ? 'Ожидается подтверждение PLC' : 'Режим инъекции выключен';
-  return <div className={`fault-mode-banner ${tone}`}><span className="fault-mode-dot" /><div><b>{text}</b><small>{enabled ? 'Тестовые команды доступны в пределах условий функциональных блоков.' : 'Включите режим в разделе «Настройки инъекции».'}</small></div></div>;
+  return <div className={`fault-mode-banner ${tone}`}><span className="fault-mode-dot" /><div><b>{text}</b><small>Доступность команд определяет PLC.</small></div></div>;
 }
 
 export function FaultToggle({ label, checked, allowed = true, online, onChange, detail }: {

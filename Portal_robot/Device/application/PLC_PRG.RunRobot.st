@@ -226,6 +226,11 @@ ROBOT(
 	xManual := GVL_CELL_CONTROL.xManual AND NOT GVL_CELL_MANAGER.Status.xRunning,
 	xMode := GVL_HMI.xModbusMode,
 	xGlobalError := GVL_CELL_CONTROL.xGlobalError,
+	xEquipmentStopRequired := GVL_MACHINE.Status[1].xCriticalError
+		OR GVL_MACHINE.Status[2].xCriticalError
+		OR GVL_MACHINE.Status[3].xCriticalError
+		OR GVL_MAGAZINE.astStatus[1].xRobotStopRequired
+		OR GVL_MAGAZINE.astStatus[2].xRobotStopRequired,
 	xManualRecoveryAllowed := xManualRecoveryActive,
 	xModbusBusy := GVL_ROBOT.xModbusBusy,
 	xModbusDone := GVL_ROBOT.xModbusDone,

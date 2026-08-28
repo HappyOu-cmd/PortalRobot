@@ -52,73 +52,105 @@ xAlarmResetAllowed := xAlarmResetRequired
 // В журнал передаются все активные ошибки и предупреждения каждого функционального блока.
 astAlarmSource[1].eSource := E_ALARM_SOURCE.CELL;
 astAlarmSource[1].dwAlarmActive := GVL_CELL_MANAGER.Error.dwAlarmActive;
+astAlarmSource[1].xRobotStopRequired := FALSE;
+astAlarmSource[1].xGlobalError := GVL_CELL_CONTROL.xGlobalError;
 astAlarmSource[1].stWarning := GVL_CELL_MANAGER.Diag.stWarning;
 
 astAlarmSource[2].eSource := E_ALARM_SOURCE.ROBOT;
 astAlarmSource[2].dwAlarmActive := GVL_ROBOT.Error.dwAlarmActive;
+astAlarmSource[2].xRobotStopRequired := FALSE;
+astAlarmSource[2].xGlobalError := GVL_CELL_CONTROL.xGlobalError;
 astAlarmSource[2].stWarning := GVL_ROBOT.Diag.stWarning;
 
 astAlarmSource[3].eSource := E_ALARM_SOURCE.MACHINE_1;
 astAlarmSource[3].dwAlarmActive := GVL_MACHINE.Error[1].dwAlarmActive;
+astAlarmSource[3].xRobotStopRequired := GVL_MACHINE.Status[1].xCriticalError;
+astAlarmSource[3].xGlobalError := GVL_CELL_CONTROL.xGlobalError;
 astAlarmSource[3].stWarning := GVL_MACHINE.Diag[1].stWarning;
 
 astAlarmSource[4].eSource := E_ALARM_SOURCE.MACHINE_2;
 astAlarmSource[4].dwAlarmActive := GVL_MACHINE.Error[2].dwAlarmActive;
+astAlarmSource[4].xRobotStopRequired := GVL_MACHINE.Status[2].xCriticalError;
+astAlarmSource[4].xGlobalError := GVL_CELL_CONTROL.xGlobalError;
 astAlarmSource[4].stWarning := GVL_MACHINE.Diag[2].stWarning;
 
 astAlarmSource[5].eSource := E_ALARM_SOURCE.MACHINE_3;
 astAlarmSource[5].dwAlarmActive := GVL_MACHINE.Error[3].dwAlarmActive;
+astAlarmSource[5].xRobotStopRequired := GVL_MACHINE.Status[3].xCriticalError;
+astAlarmSource[5].xGlobalError := GVL_CELL_CONTROL.xGlobalError;
 astAlarmSource[5].stWarning := GVL_MACHINE.Diag[3].stWarning;
 
 astAlarmSource[6].eSource := E_ALARM_SOURCE.MAGAZINE_LOGIC_1;
 astAlarmSource[6].dwAlarmActive := GVL_MAGAZINE.astError[1].dwAlarmActive;
+astAlarmSource[6].xRobotStopRequired := GVL_MAGAZINE.astStatus[1].xRobotStopRequired;
+astAlarmSource[6].xGlobalError := GVL_CELL_CONTROL.xGlobalError;
 astAlarmSource[6].stWarning := GVL_MAGAZINE.astDiag[1].stWarning;
 
 astAlarmSource[7].eSource := E_ALARM_SOURCE.MAGAZINE_LOGIC_2;
 astAlarmSource[7].dwAlarmActive := GVL_MAGAZINE.astError[2].dwAlarmActive;
+astAlarmSource[7].xRobotStopRequired := GVL_MAGAZINE.astStatus[2].xRobotStopRequired;
+astAlarmSource[7].xGlobalError := GVL_CELL_CONTROL.xGlobalError;
 astAlarmSource[7].stWarning := GVL_MAGAZINE.astDiag[2].stWarning;
 
 astAlarmSource[8].eSource := E_ALARM_SOURCE.MAGAZINE_AXIS_1;
 astAlarmSource[8].dwAlarmActive := GVL_MAGAZINE_AXIS.astAxis[1].Error.dwAlarmActive;
+astAlarmSource[8].xRobotStopRequired := GVL_MAGAZINE.astStatus[1].xRobotStopRequired;
+astAlarmSource[8].xGlobalError := GVL_CELL_CONTROL.xGlobalError;
 astAlarmSource[8].stWarning := GVL_MAGAZINE_AXIS.astAxis[1].Diag.stWarning;
 
 astAlarmSource[9].eSource := E_ALARM_SOURCE.MAGAZINE_AXIS_2;
 astAlarmSource[9].dwAlarmActive := GVL_MAGAZINE_AXIS.astAxis[2].Error.dwAlarmActive;
+astAlarmSource[9].xRobotStopRequired := GVL_MAGAZINE.astStatus[2].xRobotStopRequired;
+astAlarmSource[9].xGlobalError := GVL_CELL_CONTROL.xGlobalError;
 astAlarmSource[9].stWarning := GVL_MAGAZINE_AXIS.astAxis[2].Diag.stWarning;
 
 astAlarmSource[10].eSource := E_ALARM_SOURCE.AXIS_X;
 IF GVL_HMI.xModbusMode THEN astAlarmSource[10].dwAlarmActive := DWORD#0;
 ELSE astAlarmSource[10].dwAlarmActive := GVL_AXIS.arrAxis[1].Error.dwAlarmActive; END_IF;
+astAlarmSource[10].xRobotStopRequired := FALSE;
+astAlarmSource[10].xGlobalError := GVL_CELL_CONTROL.xGlobalError;
 astAlarmSource[10].stWarning := GVL_AXIS.arrAxis[1].Diag.stWarning;
 
 astAlarmSource[11].eSource := E_ALARM_SOURCE.AXIS_Y;
 IF GVL_HMI.xModbusMode THEN astAlarmSource[11].dwAlarmActive := DWORD#0;
 ELSE astAlarmSource[11].dwAlarmActive := GVL_AXIS.arrAxis[2].Error.dwAlarmActive; END_IF;
+astAlarmSource[11].xRobotStopRequired := FALSE;
+astAlarmSource[11].xGlobalError := GVL_CELL_CONTROL.xGlobalError;
 astAlarmSource[11].stWarning := GVL_AXIS.arrAxis[2].Diag.stWarning;
 
 astAlarmSource[12].eSource := E_ALARM_SOURCE.AXIS_Z;
 IF GVL_HMI.xModbusMode THEN astAlarmSource[12].dwAlarmActive := DWORD#0;
 ELSE astAlarmSource[12].dwAlarmActive := GVL_AXIS.arrAxis[3].Error.dwAlarmActive; END_IF;
+astAlarmSource[12].xRobotStopRequired := FALSE;
+astAlarmSource[12].xGlobalError := GVL_CELL_CONTROL.xGlobalError;
 astAlarmSource[12].stWarning := GVL_AXIS.arrAxis[3].Diag.stWarning;
 
 astAlarmSource[13].eSource := E_ALARM_SOURCE.AXIS_GROUP;
 IF GVL_HMI.xModbusMode THEN astAlarmSource[13].dwAlarmActive := DWORD#0;
 ELSE astAlarmSource[13].dwAlarmActive := GVL_AXIS_GROUP.AxisGroup.Error.dwAlarmActive; END_IF;
+astAlarmSource[13].xRobotStopRequired := FALSE;
+astAlarmSource[13].xGlobalError := GVL_CELL_CONTROL.xGlobalError;
 astAlarmSource[13].stWarning := GVL_AXIS_GROUP.AxisGroup.Diag.stWarning;
 
 astAlarmSource[14].eSource := E_ALARM_SOURCE.MOTION_MANAGER;
 IF GVL_HMI.xModbusMode THEN astAlarmSource[14].dwAlarmActive := DWORD#0;
 ELSE astAlarmSource[14].dwAlarmActive := GVL_MOTION_MANAGER.stMotionManager.Error.dwAlarmActive; END_IF;
+astAlarmSource[14].xRobotStopRequired := FALSE;
+astAlarmSource[14].xGlobalError := GVL_CELL_CONTROL.xGlobalError;
 astAlarmSource[14].stWarning := GVL_MOTION_MANAGER.stMotionManager.Diag.stWarning;
 
 astAlarmSource[15].eSource := E_ALARM_SOURCE.POINT_MANAGER;
 IF GVL_HMI.xModbusMode THEN astAlarmSource[15].dwAlarmActive := DWORD#0;
 ELSE astAlarmSource[15].dwAlarmActive := GVL_POINT_MANAGER.PointManager.Error.dwAlarmActive; END_IF;
+astAlarmSource[15].xRobotStopRequired := FALSE;
+astAlarmSource[15].xGlobalError := GVL_CELL_CONTROL.xGlobalError;
 astAlarmSource[15].stWarning := GVL_POINT_MANAGER.PointManager.Diag.stWarning;
 
 astAlarmSource[16].eSource := E_ALARM_SOURCE.GRIPPER;
 IF GVL_HMI.xModbusMode THEN astAlarmSource[16].dwAlarmActive := DWORD#0;
 ELSE astAlarmSource[16].dwAlarmActive := GVL_ROBOT.GripperError.dwAlarmActive; END_IF;
+astAlarmSource[16].xRobotStopRequired := FALSE;
+astAlarmSource[16].xGlobalError := GVL_CELL_CONTROL.xGlobalError;
 astAlarmSource[16].stWarning := GVL_ROBOT.GripperDiag.stWarning;
 
 ALARM_MANAGER(

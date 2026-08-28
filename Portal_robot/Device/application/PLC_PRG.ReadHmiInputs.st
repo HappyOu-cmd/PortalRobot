@@ -39,6 +39,9 @@ IF NOT xHmiConnectionAlive THEN
 		GVL_HMI.astMagazineCommand[uiMagazine].xStop := FALSE;
 		GVL_HMI.astMagazineCommand[uiMagazine].xPowerOn := FALSE;
 		GVL_HMI.astMagazineCommand[uiMagazine].xPowerOff := FALSE;
+		GVL_HMI.astMagazineCommand[uiMagazine].xJogPositive := FALSE;
+		GVL_HMI.astMagazineCommand[uiMagazine].xJogNegative := FALSE;
+		GVL_HMI.astMagazineCommand[uiMagazine].xStartContentRecovery := FALSE;
 		GVL_HMI.astMagazineCommand[uiMagazine].xConfirmRecovery := FALSE;
 		GVL_HMI.astMagazineCommand[uiMagazine].xApplyRecoverySlot := FALSE;
 		GVL_HMI.astMagazineCommand[uiMagazine].xClearRecoveryZones := FALSE;

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { BarChart3, Boxes, CheckCircle2, ChevronRight, Clock3, EthernetPort, MapPin, TriangleAlert } from 'lucide-react';
 import type { ProductType } from '../../model/types';
 import type { PlcCellSettings, PlcRobotModbusInfo, PlcTestEnvironmentInfo } from '../../plc/client';
+import { VercelTabs } from '../ui/VercelTabs';
 
 const TEST_ENVIRONMENT_LABELS = ['Обычная ячейка', 'Симуляция', 'Стенд SC-500'];
 const TEST_REJECT_REASONS = [
@@ -11,6 +12,15 @@ const TEST_REJECT_REASONS = [
 	'для стенда нужны Modbus и физический ключ',
 	'PLC не видит признак Python-симулятора',
 	'FAST разрешён только в остановленной симуляции',
+];
+
+type CellSettingsTopic = 'cell' | 'robot' | 'safety' | 'timeouts' | 'products';
+const CELL_SETTINGS_TOPICS = [
+  { id: 'cell' as const, label: 'Ячейка' },
+  { id: 'robot' as const, label: 'Робот' },
+  { id: 'safety' as const, label: 'Безопасность' },
+  { id: 'timeouts' as const, label: 'Таймауты' },
+  { id: 'products' as const, label: 'Изделия' },
 ];
 
 export const PRODUCT_TYPE_LABELS: Record<ProductType, string> = {
@@ -91,6 +101,14 @@ function CellSettingField({ label, value, unit, min, max, step, disabled, onChan
 	</label>;
 }
 
+function ModeApplicationStatus({ requested, applied }: { requested: string; applied: string }) {
+	const pending = requested !== applied;
+	return <div className={`mode-application-status ${pending ? 'pending' : ''}`} aria-label={`Запрошено: ${requested}. Применено: ${applied}.`}>
+		<div><span>Запрошено</span><strong>{requested}</strong></div>
+		<div><span>Применено</span><strong>{applied}</strong></div>
+	</div>;
+}
+
 export function CellSettingsPanel({ online, modbusMode, modbus, testEnvironment, configurationValid, typeCount, typeCountAllowed, magazineConfigAllowed, settings, accelerationEnabled, accelerationActive, accelerationAllowed, onModeChange, onTestEnvironmentChange, onTypeCountChange, onAutoDistribute, onModbusSettingChange, onModbusApply, onSettingChange, onAccelerationChange, onStatisticsSettings, onClose, className }: {
 	online: boolean;
 	modbusMode: boolean;
@@ -119,6 +137,12 @@ export function CellSettingsPanel({ online, modbusMode, modbus, testEnvironment,
 	const editable = online && settings.changeAllowed;
 	const modbusEditable = online && modbus.settingsChangeAllowed;
 	const [timeoutsOpen, setTimeoutsOpen] = useState(true);
+	const [activeTopic, setActiveTopic] = useState<CellSettingsTopic>('cell');
+	const [topicDirection, setTopicDirection] = useState<1 | -1>(1);
+	const requestedEnvironment = TEST_ENVIRONMENT_LABELS[testEnvironment.requested] ?? `код ${testEnvironment.requested}`;
+	const appliedEnvironment = TEST_ENVIRONMENT_LABELS[testEnvironment.applied] ?? `код ${testEnvironment.applied}`;
+	const requestedRobotMode = modbus.requestedMode === 1 ? 'Modbus TCP' : 'SoftMotion';
+	const appliedRobotMode = modbusMode ? 'Modbus TCP' : 'SoftMotion';
 	const field = (label: string, command: string, value: number, unit: string, min: number, max: number, step: number, enabled = editable) => <CellSettingField
 		key={command}
 		label={label}
@@ -132,25 +156,46 @@ export function CellSettingsPanel({ online, modbusMode, modbus, testEnvironment,
 			? onModbusSettingChange(command, next)
 			: onSettingChange(command, next)}
 	/>;
+	const activeTopicIndex = CELL_SETTINGS_TOPICS.findIndex((topic) => topic.id === activeTopic);
+	const selectTopic = (topic: CellSettingsTopic) => {
+		const nextIndex = CELL_SETTINGS_TOPICS.findIndex((item) => item.id === topic);
+		if (nextIndex === activeTopicIndex) return;
+		setTopicDirection(nextIndex > activeTopicIndex ? 1 : -1);
+		setActiveTopic(topic);
+	};
 
 	return <aside className={`side-panel cell-settings-panel ${className ?? ''}`}>
 		<div className="panel-heading"><div><span>ИНЖЕНЕРНЫЕ ПАРАМЕТРЫ</span><h2>Настройки ячейки</h2></div><button onClick={onClose} title="Закрыть"><ChevronRight /></button></div>
 		<button className="cell-statistics-settings-link" type="button" onClick={onStatisticsSettings}><BarChart3 /><span><b>Статистика</b><small>Расписание смен и редактор статистики</small></span><ChevronRight /></button>
+		<VercelTabs className="settings-topic-tabs cell-settings-topic-tabs" tabs={CELL_SETTINGS_TOPICS} activeTab={activeTopic} onTabChange={selectTopic} ariaLabel="Темы инженерных настроек" panelId="cell-settings-topic-panel" />
+		<div className="settings-topic-viewport cell-settings-topic-viewport">
+		<div className={`settings-topic-content cell-settings-topic-content ${topicDirection > 0 ? 'from-right' : 'from-left'}`} id="cell-settings-topic-panel" role="tabpanel" key={activeTopic}>
+		{activeTopic === 'cell' && <>
 		<section className="cell-config-section test-environment-settings">
-			<div className="cell-config-title"><Boxes /><div><h3>Среда выполнения</h3><p>Не зависит от выбора SoftMotion / Modbus TCP и не сохраняется после перезапуска PLC.</p></div></div>
-			<div className="robot-mode-selector three" role="group" aria-label="Тестовая среда">
+			<div className="cell-config-title"><Boxes /><div><h3>Среда выполнения</h3></div></div>
+			<div className="cell-settings-mode-switch three" role="group" aria-label="Тестовая среда">
 				{TEST_ENVIRONMENT_LABELS.map((label, value) => <button key={label} type="button" className={testEnvironment.applied === value ? 'active' : ''} disabled={!online || !testEnvironment.changeAllowed || testEnvironment.applied === value} onClick={() => onTestEnvironmentChange(value)}>{label}</button>)}
 			</div>
-			<p className="panel-note">Запрошено: {TEST_ENVIRONMENT_LABELS[testEnvironment.requested] ?? `код ${testEnvironment.requested}`}; применено: {TEST_ENVIRONMENT_LABELS[testEnvironment.applied] ?? `код ${testEnvironment.applied}`}. Python: {testEnvironment.simulatorActive ? 'опознан' : 'нет'}; ключ стенда: {testEnvironment.benchKey ? 'включён' : testEnvironment.benchKeyLost ? 'потерян' : 'выключен'}.</p>
+			<ModeApplicationStatus requested={requestedEnvironment} applied={appliedEnvironment} />
 			{testEnvironment.rejectReason > 0 && <p className="panel-note warning">PLC отклонил переключение: {TEST_REJECT_REASONS[testEnvironment.rejectReason] ?? `код ${testEnvironment.rejectReason}`}.</p>}
 		</section>
-		<section className="cell-config-section robot-interface-settings">
-			<div className="cell-config-title"><EthernetPort /><div><h3>Источник управления роботом</h3><p>PLC применяет режим только после проверки остановки и состояния приводов.</p></div></div>
-			<div className="robot-mode-selector" role="group" aria-label="Источник управления роботом">
+		<section className="simulation-acceleration-settings">
+			<h3>Ускорение симуляции</h3>
+			<label className={`toggle-row ${(!online || modbusMode || !accelerationAllowed) ? 'disabled' : ''}`}>
+				<span>Разрешить ускорение</span>
+				<input disabled={!online || modbusMode || !accelerationAllowed} type="checkbox" checked={accelerationEnabled} onChange={(event) => onAccelerationChange(event.target.checked)} />
+				<i />
+			</label>
+			<p className={`simulation-acceleration-status ${accelerationActive ? 'active' : ''}`}>{accelerationActive ? 'Ускорение применено к симуляции.' : 'Ускорение выключено.'}</p>
+		</section>
+		</>}
+		{activeTopic === 'robot' && <section className="cell-config-section robot-interface-settings">
+			<div className="cell-config-title"><EthernetPort /><div><h3>Источник управления роботом</h3></div></div>
+			<div className="cell-settings-mode-switch" role="group" aria-label="Источник управления роботом">
 				<button type="button" className={!modbusMode ? 'active' : ''} disabled={!online || !modbus.modeChangeAllowed || !modbusMode} onClick={() => onModeChange(false)}>SoftMotion</button>
 				<button type="button" className={modbusMode ? 'active' : ''} disabled={!online || !modbus.modeChangeAllowed || modbusMode} onClick={() => onModeChange(true)}>Modbus TCP</button>
 			</div>
-			<p className="panel-note">Запрошено: {modbus.requestedMode === 1 ? 'Modbus TCP' : 'SoftMotion'}; применено: {modbusMode ? 'Modbus TCP' : 'SoftMotion'}.</p>
+			<ModeApplicationStatus requested={requestedRobotMode} applied={appliedRobotMode} />
 			<p className={`cell-settings-access ${modbus.modeChangeAllowed ? 'allowed' : ''}`}>{!online ? 'Нет связи с PLC.' : modbus.modeChangeAllowed ? 'Переключение разрешено PLC.' : 'Для переключения остановите ячейку, робот и технологические операции.'}</p>
 			<div className="cell-settings-grid modbus-grid">
 				{modbus.ip.map((value, index) => field(`IP октет ${index + 1}`, `robot.modbus.ip${index + 1}`, value, '', index === 0 ? 1 : 0, index === 0 ? 223 : 255, 1, modbusEditable))}
@@ -171,9 +216,9 @@ export function CellSettingsPanel({ online, modbusMode, modbus, testEnvironment,
 				<span className={modbus.robotAlarm ? 'fault' : ''}><i />Alarm {modbus.alarmCode || ''}</span>
 			</div>
 			{(modbus.transportError > 0 || modbus.resultCode > 0) && <p className="panel-note warning">Ошибка транспорта: {modbus.transportError}; результат команды: {modbus.resultCode}.</p>}
-		</section>
-		<section className="cell-config-section">
-			<div className="cell-config-title"><MapPin /><div><h3>Точка HOME_SAFETY</h3><p>Безопасная позиция повторного запуска и допустимый диапазон вокруг неё.</p></div></div>
+		</section>}
+		{activeTopic === 'safety' && <section className="cell-config-section">
+			<div className="cell-config-title"><MapPin /><div><h3>Точка HOME_SAFETY</h3></div></div>
 			<div className="cell-settings-grid">
 				{field('Координата X', 'cell.settings.safetyHomeX', settings.safetyHome.x, 'мм', -100000, 100000, 0.1)}
 				{field('Координата Y', 'cell.settings.safetyHomeY', settings.safetyHome.y, 'мм', -100000, 100000, 0.1)}
@@ -184,8 +229,8 @@ export function CellSettingsPanel({ online, modbusMode, modbus, testEnvironment,
 				{field('Допуск Z', 'cell.settings.safetyHomeToleranceZ', settings.safetyHome.toleranceZ, 'мм', 0.1, 1000, 0.1)}
 			</div>
 			<p className={`cell-settings-access ${editable ? 'allowed' : ''}`}>{editable ? 'Изменение разрешено PLC.' : !online ? 'Нет связи с PLC.' : 'Для изменения остановите ячейку и все движения, снимите активные ошибки.'}</p>
-		</section>
-		<details className="cell-settings-disclosure" open={timeoutsOpen} onToggle={(event) => setTimeoutsOpen(event.currentTarget.open)}>
+		</section>}
+		{activeTopic === 'timeouts' && <details className="cell-settings-disclosure" open={timeoutsOpen} onToggle={(event) => setTimeoutsOpen(event.currentTarget.open)}>
 			<summary><Clock3 /><div><strong>TIMEOUT технологических ошибок</strong><span>Предельное ожидание подтверждений, 1–600 секунд</span></div><ChevronRight /></summary>
 			<div className="cell-settings-grid timeout-grid">
 				{field('Движение робота', 'cell.settings.timeoutRobotMove', settings.timeouts.robotMove, 'с', 1, 600, 1)}
@@ -197,36 +242,21 @@ export function CellSettingsPanel({ online, modbusMode, modbus, testEnvironment,
 				{field('Зажим патрона', 'cell.settings.timeoutChuckClose', settings.timeouts.chuckClose, 'с', 1, 600, 1)}
 				{field('Подтверждение цикла', 'cell.settings.timeoutCycleStart', settings.timeouts.cycleStart, 'с', 1, 600, 1)}
 			</div>
-		</details>
-		<div className="multi-type-mode-banner enabled">
-			<Boxes />
-			<div><strong>Универсальный диспетчер</strong><span>Единая маршрутизация для одного, двух или трёх типов</span></div>
-		</div>
+		</details>}
+		{activeTopic === 'products' && <>
 		<section className="cell-config-section product-type-count-settings">
-			<div className="cell-config-title"><Boxes /><div><h3>Типы изделий на ячейке</h3><p>Количество активных типов и начальное распределение 120 слотов магазина.</p></div></div>
+			<div className="cell-config-title"><Boxes /><div><h3>Типы изделий на ячейке</h3></div></div>
 			<div className="robot-mode-selector three" role="group" aria-label="Количество типов изделий">
 				{[1, 2, 3].map((count) => <button key={count} type="button" className={`${typeCount === count ? 'active' : ''} ${typeCountAllowed ? '' : 'command-unavailable'}`} disabled={!online || typeCount === count} aria-disabled={!typeCountAllowed} onClick={() => onTypeCountChange(count)}>{count} {count === 1 ? 'тип' : count < 5 ? 'типа' : 'типов'}</button>)}
 			</div>
-			<button className={`modbus-apply-button ${magazineConfigAllowed ? '' : 'command-unavailable'}`} type="button" disabled={!online} aria-disabled={!magazineConfigAllowed} onClick={onAutoDistribute}>Распределить слоты автоматически</button>
 			<p className={`cell-settings-access ${typeCountAllowed && magazineConfigAllowed ? 'allowed' : ''}`}>{!online ? 'Нет связи с PLC.' : typeCountAllowed && magazineConfigAllowed ? 'Изменение конфигурации разрешено PLC.' : 'Для изменения остановите ячейку и магазины.'}</p>
-		</section>
-    <section className="multi-type-scope-note">
-      <Boxes />
-      <div><h3>Область работы</h3><p>Автоматический цикл использует выбранный интерфейс. В Modbus-режиме отдельные оси недоступны, но именованные точки и захваты работают через SC-500.</p></div>
-    </section>
-		<section className="simulation-acceleration-settings">
-			<h3>Ускорение симуляции</h3>
-			<label className={`toggle-row ${(!online || modbusMode || !accelerationAllowed) ? 'disabled' : ''}`}>
-				<span>Разрешить ускорение</span>
-				<input disabled={!online || modbusMode || !accelerationAllowed} type="checkbox" checked={accelerationEnabled} onChange={(event) => onAccelerationChange(event.target.checked)} />
-				<i />
-			</label>
-			<p className="panel-note">Коэффициент ускоряет виртуальные таймеры симуляции. Скорости и ускорения осей робота задаются отдельно в настройках SoftMotion. Переключатель доступен при остановленной ячейке, без движения, ошибок и Modbus.</p>
-			<p className={`simulation-acceleration-status ${accelerationActive ? 'active' : ''}`}>{accelerationActive ? 'Ускорение применено к симуляции.' : 'Ускорение выключено.'}</p>
 		</section>
 		<section className={`multi-type-validation ${configurationValid ? 'valid' : 'invalid'}`}>
 			{configurationValid ? <CheckCircle2 /> : <TriangleAlert />}
 			<div><h3>{configurationValid ? 'Конфигурация готова' : 'Конфигурация не завершена'}</h3><p>{!online ? 'Нет связи с PLC.' : modbusMode && !modbus.ready ? 'Modbus выбран, ожидается готовность SC-500.' : !configurationValid ? 'Назначьте каждому типу станок и хотя бы один слот.' : 'Проверка выполняется в PLC.'}</p></div>
 		</section>
+		</>}
+		</div>
+		</div>
 	</aside>;
 }

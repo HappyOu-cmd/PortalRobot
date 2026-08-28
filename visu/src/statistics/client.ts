@@ -27,7 +27,10 @@ export interface StatisticsSummary {
   coverageMs: number;
   coveragePercent: number;
   equipment: EquipmentStatistic[];
+  producedParts: number;
+  shiftPlan: number | null;
   alarmsActivated: number;
+  alarmBreakdown: Array<{ code: string; message: string; count: number }>;
   warningsActivated: number;
   commandsAccepted: number;
   commandsRejected: number;
@@ -96,7 +99,12 @@ export const statisticsApi = {
     if (from !== undefined) query.set('from', String(from));
     if (to !== undefined) query.set('to', String(to));
     if (userId !== undefined) query.set('userId', String(userId));
-    return api<StatisticsSummary>(`/api/statistics/summary?${query}`);
+    return api<StatisticsSummary>(`/api/statistics/summary?${query}`).then((summary) => ({
+      ...summary,
+      producedParts: Number(summary.producedParts ?? 0),
+      shiftPlan: summary.shiftPlan ?? null,
+      alarmBreakdown: Array.isArray(summary.alarmBreakdown) ? summary.alarmBreakdown : [],
+    }));
   },
   users: () => api<AppUser[]>('/api/users'),
   templates: () => api<ShiftTemplate[]>('/api/statistics/shift-templates'),

@@ -24,14 +24,22 @@ const assertUsername = (username) => {
   }
 };
 
-const assertDisplayName = (displayName) => {
-  if (!displayName || displayName.length > 80) {
-    throw new AuthStoreError('Имя пользователя должно содержать от 1 до 80 символов');
+const assertDisplayName = (displayName, maxLength = 80) => {
+  if (!displayName || displayName.length > maxLength) {
+    throw new AuthStoreError(`Имя пользователя должно содержать от 1 до ${maxLength} символов`);
   }
 };
 
 const assertRole = (role) => {
   if (!USER_ROLES.includes(role)) throw new AuthStoreError('Неизвестная роль пользователя');
+};
+
+const normalizeShiftPlan = (value, fallback = 0) => {
+  const numeric = value === undefined ? Number(fallback) : Number(value);
+  if (!Number.isInteger(numeric) || numeric < 0 || numeric > 1_000_000) {
+    throw new AuthStoreError('План на смену должен быть целым числом от 0 до 1 000 000');
+  }
+  return numeric;
 };
 
 const assertPassword = (password, { bootstrap = false } = {}) => {
@@ -65,6 +73,7 @@ const publicUser = (row) => row ? ({
   displayName: row.display_name,
   role: row.role,
   enabled: Boolean(row.enabled),
+  shiftPlan: Number(row.shift_plan ?? 0),
   mustChangePassword: Boolean(row.must_change_password),
   createdAt: Number(row.created_at),
   updatedAt: Number(row.updated_at),
@@ -93,6 +102,7 @@ export class AuthStore {
         password_hash TEXT NOT NULL,
         role TEXT NOT NULL CHECK (role IN ('admin', 'operator')),
         enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+        shift_plan INTEGER NOT NULL DEFAULT 0 CHECK (shift_plan BETWEEN 0 AND 1000000),
         must_change_password INTEGER NOT NULL DEFAULT 0 CHECK (must_change_password IN (0, 1)),
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
@@ -108,6 +118,10 @@ export class AuthStore {
       CREATE INDEX IF NOT EXISTS idx_auth_session_user ON auth_session (user_id);
       CREATE INDEX IF NOT EXISTS idx_auth_session_expiry ON auth_session (expires_at);
     `);
+    const userColumns = new Set(this.db.prepare('PRAGMA table_info(app_user)').all().map((column) => column.name));
+    if (!userColumns.has('shift_plan')) {
+      this.db.exec('ALTER TABLE app_user ADD COLUMN shift_plan INTEGER NOT NULL DEFAULT 0 CHECK (shift_plan BETWEEN 0 AND 1000000)');
+    }
     this.bootstrap(bootstrapUsername, bootstrapPassword);
   }
 
@@ -138,17 +152,18 @@ export class AuthStore {
     const username = normalizeUsername(input?.username);
     const displayName = normalizeDisplayName(input?.displayName);
     const role = normalizeRole(input?.role);
+    const shiftPlan = normalizeShiftPlan(input?.shiftPlan);
     const password = assertPassword(input?.password);
     assertUsername(username);
-    assertDisplayName(displayName);
+    assertDisplayName(displayName, 20);
     assertRole(role);
     const credentials = passwordParts(password);
     const now = this.now();
     try {
       const result = this.db.prepare(`INSERT INTO app_user
-        (username, display_name, password_salt, password_hash, role, enabled, must_change_password, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)`)
-        .run(username, displayName, credentials.salt, credentials.hash, role, input?.enabled === false ? 0 : 1, now, now);
+        (username, display_name, password_salt, password_hash, role, enabled, shift_plan, must_change_password, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`)
+        .run(username, displayName, credentials.salt, credentials.hash, role, input?.enabled === false ? 0 : 1, shiftPlan, now, now);
       return this.getUser(result.lastInsertRowid);
     } catch (error) {
       if (/UNIQUE/i.test(String(error))) throw new AuthStoreError('Пользователь с таким логином уже существует', 409, 'USERNAME_EXISTS');
@@ -171,6 +186,7 @@ export class AuthStore {
     const displayName = input?.displayName === undefined ? currentRow.display_name : normalizeDisplayName(input.displayName);
     const role = input?.role === undefined ? currentRow.role : normalizeRole(input.role);
     const enabled = input?.enabled === undefined ? Boolean(currentRow.enabled) : Boolean(input.enabled);
+    const shiftPlan = normalizeShiftPlan(input?.shiftPlan, currentRow.shift_plan);
     assertUsername(username);
     assertDisplayName(displayName);
     assertRole(role);
@@ -190,9 +206,9 @@ export class AuthStore {
     }
     try {
       this.db.prepare(`UPDATE app_user SET username = ?, display_name = ?, password_salt = ?, password_hash = ?,
-        role = ?, enabled = ?, must_change_password = ?, updated_at = ? WHERE id = ?`)
+        role = ?, enabled = ?, shift_plan = ?, must_change_password = ?, updated_at = ? WHERE id = ?`)
         .run(username, displayName, passwordSalt, passwordHash, role, enabled ? 1 : 0,
-          mustChangePassword ? 1 : 0, this.now(), numericId);
+          shiftPlan, mustChangePassword ? 1 : 0, this.now(), numericId);
     } catch (error) {
       if (/UNIQUE/i.test(String(error))) throw new AuthStoreError('Пользователь с таким логином уже существует', 409, 'USERNAME_EXISTS');
       throw error;

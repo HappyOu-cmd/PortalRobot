@@ -20,6 +20,7 @@ VAR_INPUT
     xMode               : BOOL; // Режим робота: TRUE — Modbus, FALSE — SoftMotion
 	xManual      		: BOOL; // 1 - ручной режим работы, 0 - автоматический режим работы
 	xGlobalError        : BOOL; // Глобальная ошибка ячейки
+	xEquipmentStopRequired : BOOL; // Владелец оборудования требует зависимую ошибку робота
 	xModbusBusy         : BOOL; // Внешний робот выполняет команду
 	xModbusDone         : BOOL; // Внешний робот завершил команду
 	xModbusError        : BOOL; // Ошибка обмена или внешнего робота
@@ -73,6 +74,8 @@ VAR
     eActivePoint  : E_POINT_NAME; // Защёлкнутая целевая точка
 	iActiveSlot   : SINT; // Защёлкнутый слот для всей Modbus-транзакции
 	uiActiveMagazineId : UINT; // Защёлкнутый магазин для всей Modbus-транзакции
+	uiRobotMagazineContext : UINT; // Физический контекст магазина сохраняется между командами
+	xEquipmentStopLatched : BOOL; // Робот остановлен именно аварией обслуживаемого оборудования
 
 	xMotionExecute  : BOOL; // Запрос выполнения перемещения
 	xGripperExecute : BOOL; // Запрос выполнения действия захвата
@@ -90,7 +93,9 @@ VAR
 	xResetAllowed         : BOOL; // Визуальная доступность кнопки сброса
 	xResetAccepted        : BOOL; // Общий сброс принят владельцем робота
 	xExternalResetPending : BOOL; // Удерживает асинхронный Reset до подтверждения SC-500
+	xExternalResetIssued  : BOOL; // Reset хотя бы один цикл был передан Modbus-адаптеру
 	xModbusCommandStarted : BOOL; // Текущая команда получила собственную активную транзакцию
+	tonModbusStartTimeout : TON; // Защита от вечного ожидания приёма команды адаптером
 	fbRobotFaultInjector  : FB_ROBOT_FAULT_INJECTOR; // Безопасная недопустимая команда робота
 	xRobotFaultAllowed    : BOOL; // Владелец готов проверить тестовую команду
 	uiTestBlankPayloadType : UINT;
@@ -188,11 +193,11 @@ ModbusCommand.uiMagazineId := UINT#0;
 IF NOT xManual THEN
 	IF stCellCommand.xExecute OR stCellCommand.xStop THEN
 		Command := stCellCommand;
-	ELSIF stMachine_1_Command.xExecute THEN
+	ELSIF stMachine_1_Command.xExecute OR stMachine_1_Command.xStop THEN
 		Command := stMachine_1_Command;
-	ELSIF stMachine_2_Command.xExecute THEN
+	ELSIF stMachine_2_Command.xExecute OR stMachine_2_Command.xStop THEN
 		Command := stMachine_2_Command;
-	ELSIF stMachine_3_Command.xExecute THEN
+	ELSIF stMachine_3_Command.xExecute OR stMachine_3_Command.xStop THEN
 		Command := stMachine_3_Command;
 	ELSIF stMagazineCommand.xExecute OR stMagazineCommand.xStop THEN
 		Command := stMagazineCommand;
@@ -222,6 +227,22 @@ AND (xHmiStopAccepted
 	OR Command.xStop
 	OR (xGlobalError AND stModbusStatus.xBusy)) THEN
 	ModbusCommand.xStop := TRUE;
+END_IF;
+
+// Класс ошибки определяет оборудование-владелец. FB_ROBOT только выполняет
+// зависимую реакцию: активное действие останавливает, неподвижный робот сразу
+// переводит в ERROR без бессмысленной команды Stop.
+IF xEquipmentStopRequired
+AND (eState <> E_ROBOT_STATE.ERROR) THEN
+	xEquipmentStopLatched := TRUE;
+	IF (eState = E_ROBOT_STATE.MOTION)
+	OR (eState = E_ROBOT_STATE.GRIPPER)
+	OR (eState = E_ROBOT_STATE.MODBUS) THEN
+		Command.xStop := TRUE;
+	ELSE
+		Error.dwErrorActive := Error.dwErrorActive OR ERR_ROBOT_STOP;
+		eState := E_ROBOT_STATE.ERROR;
+	END_IF;
 END_IF;
 
 // RunRobot уже выполнил все PLC-проверки и передал Execute только принятой
@@ -259,8 +280,10 @@ xResetAllowed := xHmiPermit
 xResetAccepted := xReset AND xResetAllowed;
 IF xMode AND xResetAccepted THEN
 	xExternalResetPending := TRUE;
+	xExternalResetIssued := FALSE;
 ELSIF NOT xMode THEN
 	xExternalResetPending := FALSE;
+	xExternalResetIssued := FALSE;
 END_IF;
 
 // Недопустимое действие проверяется в IDLE до запуска Motion или захвата.
@@ -336,6 +359,15 @@ END_IF;
 // Автомат FB_ROBOT
 // =====================================================
 
+// Таймаут исполнения принадлежит FB_ROBOT_MODBUS, но до создания активной
+// транзакции его TON ещё не работает. Отдельно ограничиваем фазу ожидания Busy.
+tonModbusStartTimeout(
+	IN := xMode
+		AND (eState = E_ROBOT_STATE.MODBUS)
+		AND NOT xModbusCommandStarted,
+	PT := T#30S
+);
+
 // Ошибка оси или группы является первопричиной в Motion-слое и отдельной
 // каскадной ошибкой робота для его публичного статуса и журнала.
 IF NOT xMode AND xDriveError THEN
@@ -363,6 +395,13 @@ CASE eState OF
             eActivePoint := Command.eSetPoint;
 			iActiveSlot := Command.iActiveSlot;
 			uiActiveMagazineId := Command.uiMagazineId;
+			IF (Command.uiMagazineId >= UINT#1)
+			AND (Command.uiMagazineId <= UINT#2)
+			AND (Command.eAction = E_ROBOT_ACTION.MOVE_TO_POINT)
+			AND ((Command.eSetPoint = E_POINT_NAME.MAGAZINE_IN_SLOT)
+				OR (Command.eSetPoint = E_POINT_NAME.MAGAZINE_CHANGE)) THEN
+				uiRobotMagazineContext := Command.uiMagazineId;
+			END_IF;
 
             IF xMode THEN
 				xModbusCommandStarted := FALSE;
@@ -404,15 +443,19 @@ CASE eState OF
         xMotionExecute := NOT xSingleAxisMotionBusy;
 
 		IF xHmiStopAccepted OR Command.xStop THEN
-            // Операторский Stop отменяет действие штатно. Физическую остановку
-            // текущего владельца выполняет Motion Manager. То же правило действует
-			// при остановке из-за первичной ошибки обслуживаемого станка.
+			// Операторский Stop отменяет действие штатно. Stop от оборудования
+			// дополнительно защёлкивает зависимую ошибку робота.
             xMotionExecute := FALSE;
             Status.xBusy := FALSE;
             Status.xDone := FALSE;
             eActiveAction := E_ROBOT_ACTION.NONE;
             eActivePoint := E_POINT_NAME.NONE;
-            eState := E_ROBOT_STATE.IDLE;
+			IF xEquipmentStopRequired THEN
+				Error.dwErrorActive := Error.dwErrorActive OR ERR_ROBOT_STOP;
+				eState := E_ROBOT_STATE.ERROR;
+			ELSE
+				eState := E_ROBOT_STATE.IDLE;
+			END_IF;
 
         ELSIF xGlobalError THEN
             Error.dwErrorActive := Error.dwErrorActive OR ERR_ROBOT_STOP;
@@ -422,7 +465,12 @@ CASE eState OF
             Error.dwErrorActive := Error.dwErrorActive OR ERR_ROBOT_MOTION;
             eState := E_ROBOT_STATE.ERROR;
 
-        ELSIF stMotionManager.Status.xDone THEN
+		ELSIF stMotionManager.Status.xDone THEN
+			IF (eActiveAction = E_ROBOT_ACTION.MOVE_TO_POINT)
+			AND (eActivePoint <> E_POINT_NAME.MAGAZINE_IN_SLOT)
+			AND (eActivePoint <> E_POINT_NAME.MAGAZINE_CHANGE) THEN
+				uiRobotMagazineContext := UINT#0;
+			END_IF;
             eState := E_ROBOT_STATE.DONE;
         END_IF;
 
@@ -432,7 +480,12 @@ CASE eState OF
         Status.xBusy := TRUE;
         xGripperExecute := TRUE;
 
-        IF xGlobalError AND NOT xActiveManualGripper THEN
+		IF xEquipmentStopRequired THEN
+			xGripperExecute := FALSE;
+			Error.dwErrorActive := Error.dwErrorActive OR ERR_ROBOT_STOP;
+			eState := E_ROBOT_STATE.ERROR;
+
+		ELSIF xGlobalError AND NOT xActiveManualGripper THEN
             Error.dwErrorActive := Error.dwErrorActive OR ERR_ROBOT_STOP;
             eState := E_ROBOT_STATE.ERROR;
 
@@ -504,7 +557,18 @@ CASE eState OF
 				Error.dwErrorActive := Error.dwErrorActive OR ERR_ROBOT_MODBUS_COMM;
 			END_IF;
 			eState := E_ROBOT_STATE.ERROR;
+		ELSIF tonModbusStartTimeout.Q THEN
+			// Адаптер не создал собственную транзакцию: не оставляем публичный
+			// xBusy висеть бесконечно без CommandSeq и физического движения.
+			ModbusCommand.xExecute := FALSE;
+			Error.dwErrorActive := Error.dwErrorActive OR ERR_ROBOT_MODBUS_COMM;
+			eState := E_ROBOT_STATE.ERROR;
 		ELSIF xModbusCommandStarted AND xModbusDone THEN
+			IF (eActiveAction = E_ROBOT_ACTION.MOVE_TO_POINT)
+			AND (eActivePoint <> E_POINT_NAME.MAGAZINE_IN_SLOT)
+			AND (eActivePoint <> E_POINT_NAME.MAGAZINE_CHANGE) THEN
+				uiRobotMagazineContext := UINT#0;
+			END_IF;
 			eState := E_ROBOT_STATE.DONE;
 		END_IF;
 
@@ -526,7 +590,13 @@ CASE eState OF
 		// Локальную ошибку можно снять лишь после подтверждённого исчезновения
 		// внешней аварии; иначе xExternalResetPending очистится до записи 1004.
 		IF ((NOT xMode AND xResetAccepted)
-			OR (xMode AND xExternalResetPending AND NOT xModbusError))
+			OR (xMode
+				AND xExternalResetPending
+				AND xExternalResetIssued
+				AND NOT xModbusError
+				AND NOT stModbusStatus.xBusy
+				AND (stModbusStatus.uiExecutionState =
+					TO_UINT(E_ROBOT_MODBUS_EXECUTION_STATE.IDLE))))
         AND NOT Command.xExecute
         AND NOT Command.xStop
         AND (NOT xGlobalError OR xManualRecoveryAllowed)
@@ -539,8 +609,10 @@ CASE eState OF
 			Error.dwErrorActive := DWORD#0;
             Status.xError := FALSE;
 			xExternalResetPending := FALSE;
+			xExternalResetIssued := FALSE;
 			xModbusCommandStarted := FALSE;
 			xActiveManualGripper := FALSE;
+			xEquipmentStopLatched := FALSE;
             eActiveAction := E_ROBOT_ACTION.NONE;
 			eActivePoint := E_POINT_NAME.NONE;
 			iActiveSlot := SINT#0;
@@ -552,6 +624,7 @@ END_CASE;
 
 IF xMode AND xExternalResetPending THEN
 	ModbusCommand.xReset := TRUE;
+	xExternalResetIssued := TRUE;
 END_IF;
 
 // =====================================================
@@ -619,6 +692,8 @@ IF xTestInitialize THEN
 	uiTestDetailPayloadType := auiTestGripperType[2];
 	xTestBlankPayloadPending := auiTestGripperContent[1] = UINT#1;
 	xTestDetailPayloadPending := auiTestGripperContent[2] = UINT#2;
+	uiRobotMagazineContext := UINT#0;
+	xEquipmentStopLatched := FALSE;
 END_IF;
 
 
@@ -712,12 +787,14 @@ END_IF;
 Status.xPowerAllowed := xPowerAllowed;
 Status.xStopAllowed := xStopAllowed;
 Status.xResetAllowed := xResetAllowed;
+Status.uiMagazineContext := uiRobotMagazineContext;
 
 Diag.eState := eState;
 Diag.eActiveAction := eActiveAction;
 Diag.eActivePoint := eActivePoint;
 Error.dwAlarmActive := Error.dwErrorActive;
-Status.xExternalError := (Error.dwErrorActive AND (ERR_ROBOT_MOTION OR ERR_ROBOT_GRIPPER)) <> DWORD#0;
+Status.xExternalError := ((Error.dwErrorActive AND (ERR_ROBOT_MOTION OR ERR_ROBOT_GRIPPER)) <> DWORD#0)
+	OR xEquipmentStopLatched;
 
 IF Error.dwErrorActive <> DWORD#0 THEN
 	Error.dwErrorLast := Error.dwErrorActive;

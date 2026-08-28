@@ -8,10 +8,18 @@ import type {
   RobotCoordinateFrame,
 } from '../model/types';
 import { DEFAULT_DRIFT_SETTINGS, type DriftSettings, type DriftTelemetry, type EasterEggMode } from '../model/easterEggs';
+import {
+  DEFAULT_VISUAL_EFFECT_SETTINGS,
+  EMPTY_SCENE_ACTIVITY,
+  type SceneActivity,
+  type SceneEquipmentTarget,
+  type VisualEffectSettings,
+} from '../model/visualEffects';
 import { EasterEggController } from './easterEggs';
 import { createMachine, disposeMachineRig, type MachineRig, updateMachineRig } from './machine';
 import { createIndexedConveyor, type IndexedConveyorRig, updateIndexedConveyorRig } from './indexedConveyor';
 import { createPortal, type PortalRig, updatePortalRig } from './portal';
+import { OperationalEffects, type SceneEffectAnchors } from './OperationalEffects';
 import { COLORS, disposeObject, logicalPosition, material, mm } from './primitives';
 
 export type CameraPreset = 'iso' | 'front' | 'top';
@@ -25,6 +33,21 @@ export interface ScreenAnchor {
 export interface EquipmentAnchors {
   machines: ScreenAnchor[];
   magazines: ScreenAnchor[];
+}
+
+interface CameraPose {
+  position: THREE.Vector3;
+  target: THREE.Vector3;
+  fov: number;
+}
+
+interface CameraFlight {
+  elapsed: number;
+  duration: number;
+  startPosition: THREE.Vector3;
+  startTarget: THREE.Vector3;
+  startFov: number;
+  end: CameraPose;
 }
 
 const getRenderPixelRatio = (): number => Math.min(2, Math.max(1, window.devicePixelRatio || 1));
@@ -46,6 +69,7 @@ export class CellScene {
   private easterEggRevision = 0;
   private indexedConveyorTest: IndexedConveyorTestCommand = { id: 0, type: 'none', magazineId: 1 };
   private indexedConveyorStatusKeys = ['', ''];
+  private operationalEffects?: OperationalEffects;
   private state: CellState;
   private layout: CellLayout;
   private animationFrame = 0;
@@ -54,6 +78,17 @@ export class CellScene {
   private syncMagazineInventory = true;
   private cameraPreset: CameraPreset = 'iso';
   private driftSettings: DriftSettings = DEFAULT_DRIFT_SETTINGS;
+  private visualEffects: VisualEffectSettings = DEFAULT_VISUAL_EFFECT_SETTINGS;
+  private sceneActivity: SceneActivity = EMPTY_SCENE_ACTIVITY;
+  private focusTarget: SceneEquipmentTarget | null = null;
+  private activeFocusKey: string | null = null;
+  private cameraFlight?: CameraFlight;
+  private effectAnchors: SceneEffectAnchors = {
+    machines: [],
+    magazines: [],
+    portal: { ground: new THREE.Vector3(), service: new THREE.Vector3() },
+    cell: { center: new THREE.Vector3(), length: 0, width: 0 },
+  };
 
   constructor(
     private readonly host: HTMLElement,
@@ -86,6 +121,7 @@ export class CellScene {
     this.controls.minDistance = 5;
     this.controls.maxDistance = 26;
     this.controls.maxPolarAngle = Math.PI * 0.48;
+    this.controls.addEventListener('start', this.cancelCameraFlight);
 
     this.addLights();
     this.scene.add(this.cellRoot);
@@ -147,6 +183,8 @@ export class CellScene {
     this.layout = layout;
     this.easterEggController?.dispose();
     this.easterEggController = undefined;
+    this.operationalEffects?.dispose();
+    this.operationalEffects = undefined;
     this.machineRigs.forEach(disposeMachineRig);
     this.scene.remove(this.cellRoot);
     disposeObject(this.cellRoot);
@@ -171,8 +209,17 @@ export class CellScene {
     this.easterEggController = new EasterEggController(layout, this.onDriftTelemetry, this.driftSettings);
     this.easterEggController.setMode(this.easterEggMode, this.easterEggRevision);
     this.cellRoot.add(this.easterEggController.root);
+    this.effectAnchors = {
+      machines: this.machineRigs.map(() => ({ ground: new THREE.Vector3(), service: new THREE.Vector3() })),
+      magazines: this.indexedConveyorRigs.map(() => ({ ground: new THREE.Vector3(), service: new THREE.Vector3() })),
+      portal: { ground: new THREE.Vector3(), service: new THREE.Vector3() },
+      cell: { center: new THREE.Vector3(), length: mm(layout.floor.lengthX), width: mm(layout.floor.widthY) },
+    };
+    this.operationalEffects = new OperationalEffects(this.visualEffects);
+    this.cellRoot.add(this.operationalEffects.root);
     this.scene.add(this.cellRoot);
     this.setSelectedMachine(this.selectedMachine);
+    this.activeFocusKey = null;
   }
 
   setState(state: CellState): void {
@@ -206,6 +253,23 @@ export class CellScene {
     this.easterEggController?.setDriftSettings(settings);
   }
 
+  setVisualEffects(settings: VisualEffectSettings): void {
+    this.visualEffects = settings;
+    this.operationalEffects?.setSettings(settings);
+    this.activeFocusKey = null;
+  }
+
+  setSceneActivity(activity: SceneActivity): void {
+    this.sceneActivity = activity;
+  }
+
+  setFocusTarget(target: SceneEquipmentTarget | null): void {
+    const sameTarget = target?.kind === this.focusTarget?.kind && target?.index === this.focusTarget?.index;
+    if (sameTarget) return;
+    this.focusTarget = target ? { ...target } : null;
+    this.activeFocusKey = null;
+  }
+
   setSelectedMachine(index: number | null): void {
     this.selectedMachine = index;
     this.machineRigs.forEach((rig, machineIndex) => {
@@ -216,19 +280,85 @@ export class CellScene {
   setCamera(preset: CameraPreset): void {
     this.cameraPreset = preset;
     if (this.easterEggController?.controlsCamera) return;
+    this.cameraFlight = undefined;
+    this.applyCameraPose(this.createPresetCameraPose());
+    this.activeFocusKey = null;
+  }
+
+  private createPresetCameraPose(): CameraPose {
     const center = logicalPosition(this.layout.floor.lengthX * 0.5, this.layout.floor.widthY * 0.45, 900);
-    const target = preset === 'front'
+    const target = this.cameraPreset === 'front'
       ? logicalPosition(this.layout.floor.lengthX * 0.5, this.layout.floor.widthY * 0.45, -100)
       : center;
-    if (preset === 'front') this.camera.position.set(center.x, 5.8, 14.5);
-    if (preset === 'top') this.camera.position.set(center.x, 15.5, center.z + 0.01);
-    if (preset === 'iso') this.camera.position.set(center.x + 4.2, 7.4, center.z + 13.6);
-    this.camera.fov = 34;
-    this.camera.updateProjectionMatrix();
-    this.controls.target.copy(target);
-    this.camera.lookAt(target);
-    if (!this.easterEggController?.controlsCamera) this.controls.update();
+    const position = new THREE.Vector3();
+    if (this.cameraPreset === 'front') position.set(center.x, 5.8, 14.5);
+    if (this.cameraPreset === 'top') position.set(center.x, 15.5, center.z + 0.01);
+    if (this.cameraPreset === 'iso') position.set(center.x + 4.2, 7.4, center.z + 13.6);
+    return { position, target, fov: 34 };
   }
+
+  private createFocusCameraPose(anchor: THREE.Vector3): CameraPose {
+    const target = anchor.clone();
+    const position = target.clone().add(new THREE.Vector3(0, 2.85, 6.65));
+    return { position, target, fov: 32 };
+  }
+
+  private applyCameraPose(pose: CameraPose): void {
+    this.camera.position.copy(pose.position);
+    this.camera.fov = pose.fov;
+    this.camera.updateProjectionMatrix();
+    this.controls.target.copy(pose.target);
+    this.camera.lookAt(pose.target);
+    this.controls.update();
+  }
+
+  private startCameraFlight(end: CameraPose): void {
+    const reducedMotion = typeof window !== 'undefined'
+      && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    if (reducedMotion) {
+      this.cameraFlight = undefined;
+      this.applyCameraPose(end);
+      return;
+    }
+    this.cameraFlight = {
+      elapsed: 0,
+      duration: 0.7,
+      startPosition: this.camera.position.clone(),
+      startTarget: this.controls.target.clone(),
+      startFov: this.camera.fov,
+      end,
+    };
+  }
+
+  private updateCameraFocus(dt: number): void {
+    if (this.easterEggController?.controlsCamera) return;
+    const target = this.visualEffects.cameraFocus ? this.focusTarget : null;
+    const key = target ? `${target.kind}:${target.index}` : 'preset';
+    if (key !== this.activeFocusKey) {
+      const anchor = target
+        ? (target.kind === 'machine' ? this.effectAnchors.machines : this.effectAnchors.magazines)[target.index]?.service
+        : null;
+      if (target && !anchor) return;
+      this.activeFocusKey = key;
+      this.startCameraFlight(anchor ? this.createFocusCameraPose(anchor) : this.createPresetCameraPose());
+    }
+    const flight = this.cameraFlight;
+    if (!flight) return;
+    flight.elapsed = Math.min(flight.duration, flight.elapsed + dt);
+    const progress = flight.duration === 0 ? 1 : flight.elapsed / flight.duration;
+    const eased = 1 - (1 - progress) ** 3;
+    this.camera.position.lerpVectors(flight.startPosition, flight.end.position, eased);
+    this.controls.target.lerpVectors(flight.startTarget, flight.end.target, eased);
+    this.camera.fov = THREE.MathUtils.lerp(flight.startFov, flight.end.fov, eased);
+    this.camera.updateProjectionMatrix();
+    this.camera.lookAt(this.controls.target);
+    this.controls.update();
+    if (progress >= 1) this.cameraFlight = undefined;
+  }
+
+  private readonly cancelCameraFlight = (): void => {
+    this.cameraFlight = undefined;
+  };
 
   private readonly resize = (): void => {
     const width = Math.max(1, this.host.clientWidth);
@@ -295,6 +425,37 @@ export class CellScene {
     this.onAnchorsUpdate({ machines, magazines });
   }
 
+  private updateEffectAnchors(): void {
+    const machineWidth = mm(this.layout.machine.sizeX);
+    const machineDepth = mm(this.layout.machine.sizeY);
+    const machineHeight = mm(this.layout.machine.sizeZ);
+    this.machineRigs.forEach((rig, index) => {
+      const anchor = this.effectAnchors.machines[index];
+      if (!anchor) return;
+      rig.root.localToWorld(anchor.ground.set(machineWidth / 2, 0.012, -machineDepth / 2));
+      rig.root.localToWorld(anchor.service.set(machineWidth / 2, machineHeight * 0.46, -machineDepth * 0.04));
+    });
+    this.indexedConveyorRigs.forEach((rig, index) => {
+      const anchor = this.effectAnchors.magazines[index];
+      const config = this.layout.indexedConveyors[index];
+      if (!anchor || !config) return;
+      const rows = config.zoneRowsY.reduce((sum, value) => sum + value, 0);
+      const centerZ = -mm(rows * config.pitchY) / 2;
+      rig.root.localToWorld(anchor.ground.set(0, 0.012, centerZ));
+      rig.root.localToWorld(anchor.service.set(0, mm(config.workingHeight) + 0.12, centerZ));
+    });
+    if (this.portalRig) {
+      this.portalRig.gripperMount.getWorldPosition(this.effectAnchors.portal.service);
+      this.effectAnchors.portal.ground.copy(this.effectAnchors.portal.service);
+      this.effectAnchors.portal.ground.y = 0.012;
+    }
+    this.effectAnchors.cell.center.copy(logicalPosition(
+      this.layout.floor.lengthX / 2,
+      this.layout.floor.widthY / 2,
+      0,
+    ));
+  }
+
   private readonly animate = (): void => {
     this.animationFrame = requestAnimationFrame(this.animate);
     const dt = Math.min(this.clock.getDelta(), 0.05);
@@ -326,8 +487,13 @@ export class CellScene {
         this.onIndexedConveyorTestStatus?.(magazineId, status);
       }
     });
+    this.updateEffectAnchors();
+    this.operationalEffects?.update(dt, this.sceneActivity, this.effectAnchors);
     this.easterEggController?.update(dt, this.camera);
-    if (!this.easterEggController?.controlsCamera) this.controls.update();
+    if (!this.easterEggController?.controlsCamera) {
+      this.updateCameraFocus(dt);
+      this.controls.update();
+    }
     this.renderer.render(this.scene, this.camera);
     this.updateEquipmentAnchors();
   };
@@ -338,12 +504,16 @@ export class CellScene {
     window.removeEventListener('resize', this.resize);
     window.visualViewport?.removeEventListener('resize', this.resize);
     this.renderer.domElement.removeEventListener('pointerdown', this.handlePointerDown);
+    this.controls.removeEventListener('start', this.cancelCameraFlight);
     this.controls.dispose();
     this.easterEggController?.dispose();
     this.easterEggController = undefined;
+    this.operationalEffects?.dispose();
+    this.operationalEffects = undefined;
     this.machineRigs.forEach(disposeMachineRig);
     disposeObject(this.cellRoot);
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }
+
 }

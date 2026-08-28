@@ -134,7 +134,9 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1180, 720)
         self._point_rows: dict[int, int] = {}
         self._fault_buttons: dict[str, QPushButton] = {}
+        self._shutdown_complete = False
         self._build_ui()
+        self._connect_configuration_autosave()
         self._refresh()
 
         self.timer = QTimer(self)
@@ -517,7 +519,24 @@ class MainWindow(QMainWindow):
         if not running and message:
             self.server_pill.setToolTip(message)
 
-    def _save_configuration(self) -> None:
+    def _connect_configuration_autosave(self) -> None:
+        self.points_table.itemChanged.connect(self._configuration_changed)
+        for fields in (*self.mag_fields.values(), self.motion_fields, self.gripper_fields):
+            for field in fields.values():
+                field.valueChanged.connect(self._configuration_changed)
+
+    def _configuration_changed(self, *_args: Any) -> None:
+        # Save committed edits immediately. Relying only on closeEvent loses
+        # teaching data when the console or process is stopped externally.
+        self._save_configuration()
+
+    def _commit_active_point_editor(self) -> None:
+        focus_widget = QApplication.focusWidget()
+        if focus_widget is not None and self.points_table.isAncestorOf(focus_widget):
+            self.save_points_button.setFocus(Qt.FocusReason.OtherFocusReason)
+            QApplication.processEvents()
+
+    def _save_configuration(self) -> bool:
         updated = copy.deepcopy(self.config)
         for code, row in self._point_rows.items():
             point = updated["points"][str(code)]
@@ -528,7 +547,7 @@ class MainWindow(QMainWindow):
                 point["speed_factor"] = max(0.01, min(1.0, float(self.points_table.item(row, 5).text().replace(",", "."))))
             except ValueError:
                 QMessageBox.warning(self, "Ошибка точки", f"Проверьте числовые значения точки {code}.")
-                return
+                return False
         for config_key, fields in self.mag_fields.items():
             for key, field in fields.items():
                 updated[config_key][key] = field.value()
@@ -542,9 +561,14 @@ class MainWindow(QMainWindow):
         updated["server"]["port"] = self.port_field.value()
         updated["server"]["unit_id"] = self.unit_field.value()
         updated["server"]["plc_heartbeat_timeout_s"] = self.plc_timeout_field.value()
+        try:
+            self.store.save(updated)
+        except OSError as error:
+            QMessageBox.critical(self, "Точки не сохранены", f"Не удалось записать {self.store.path}:\n{error}")
+            return False
         self.config = updated
         self.model.update_config(updated)
-        self.store.save(updated)
+        return True
 
     def _refresh(self) -> None:
         snap = self.model.snapshot()
@@ -606,11 +630,18 @@ class MainWindow(QMainWindow):
             table.item(row, 1).setText(str(value))
             table.item(row, 2).setText(f"0x{value:04X}")
 
-    def closeEvent(self, event: Any) -> None:
+    def shutdown(self) -> None:
+        if self._shutdown_complete:
+            return
+        self._commit_active_point_editor()
         self._save_configuration()
         self.control_server.stop()
         self.server.stop()
         self.model.stop_runtime()
+        self._shutdown_complete = True
+
+    def closeEvent(self, event: Any) -> None:
+        self.shutdown()
         event.accept()
 
 
@@ -619,5 +650,6 @@ def run_gui(model: RobotModel, store: ConfigStore) -> int:
     app.setStyle("Fusion")
     app.setStyleSheet(STYLE)
     window = MainWindow(model, store)
+    app.aboutToQuit.connect(window.shutdown)
     window.show()
     return app.exec()

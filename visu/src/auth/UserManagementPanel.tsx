@@ -2,7 +2,8 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { Eye, EyeOff, LoaderCircle, Pencil, Plus, ShieldCheck, Trash2, UserRound, X } from 'lucide-react';
 import { authApi, type AppUser, type UserDraft } from './client';
 
-const EMPTY_DRAFT: UserDraft = { username: '', displayName: '', password: '', role: 'operator', enabled: true };
+const EMPTY_DRAFT: UserDraft = { username: '', displayName: '', password: '', role: 'operator', enabled: true, shiftPlan: 0 };
+const NEW_DISPLAY_NAME_MAX_LENGTH = 20;
 const roleName = (role: AppUser['role']) => role === 'admin' ? 'Администратор' : 'Оператор';
 const dateTime = (value: number | null) => value ? new Date(value).toLocaleString('ru-RU') : 'Никогда';
 
@@ -37,7 +38,7 @@ export function UserManagementPanel({ currentUser, onCurrentUserChange, onUnauth
   const beginCreate = () => { setEditingId('new'); setDraft({ ...EMPTY_DRAFT }); setPasswordVisible(false); setError(''); };
   const beginEdit = (user: AppUser) => {
     setEditingId(user.id);
-    setDraft({ username: user.username, displayName: user.displayName, role: user.role, enabled: user.enabled, password: '' });
+    setDraft({ username: user.username, displayName: user.displayName, role: user.role, enabled: user.enabled, shiftPlan: user.shiftPlan ?? 0, password: '' });
     setPasswordVisible(false);
     setError('');
   };
@@ -87,8 +88,9 @@ export function UserManagementPanel({ currentUser, onCurrentUserChange, onUnauth
         <header><div><span>{editingId === 'new' ? 'РЕГИСТРАЦИЯ' : 'РЕДАКТИРОВАНИЕ'}</span><h3 id="user-editor-title">{editingId === 'new' ? 'Новый пользователь' : 'Параметры учётной записи'}</h3></div><button type="button" onClick={() => setEditingId(null)} aria-label="Закрыть"><X /></button></header>
         <div className="user-editor-grid">
           <label><span>Логин</span><input autoFocus value={draft.username} onChange={(event) => setDraft({ ...draft, username: event.target.value })} autoComplete="off" required /></label>
-          <label><span>Отображаемое имя</span><input value={draft.displayName} onChange={(event) => setDraft({ ...draft, displayName: event.target.value })} required /></label>
+          <label><span>Отображаемое имя{editingId === 'new' && <small>до {NEW_DISPLAY_NAME_MAX_LENGTH} символов</small>}</span><input value={draft.displayName} onChange={(event) => setDraft({ ...draft, displayName: editingId === 'new' ? event.target.value.slice(0, NEW_DISPLAY_NAME_MAX_LENGTH) : event.target.value })} maxLength={editingId === 'new' ? NEW_DISPLAY_NAME_MAX_LENGTH : undefined} required /></label>
           <label><span>Роль</span><select value={draft.role} onChange={(event) => setDraft({ ...draft, role: event.target.value as AppUser['role'] })}><option value="operator">Оператор</option><option value="admin">Администратор</option></select></label>
+          <label><span>План деталей на смену</span><input type="number" min={0} max={1000000} step={1} value={draft.shiftPlan} onChange={(event) => setDraft({ ...draft, shiftPlan: Math.max(0, Math.round(Number(event.target.value) || 0)) })} disabled={draft.role !== 'operator'} /></label>
           <label className="user-password-field"><span>{editingId === 'new' ? 'Пароль' : 'Новый пароль (необязательно)'}</span><div><input type={passwordVisible ? 'text' : 'password'} value={draft.password ?? ''} onChange={(event) => setDraft({ ...draft, password: event.target.value })} autoComplete="new-password" minLength={editingId === 'new' ? 8 : undefined} required={editingId === 'new'} /><button type="button" onClick={() => setPasswordVisible((value) => !value)} aria-label={passwordVisible ? 'Скрыть пароль' : 'Показать пароль'}>{passwordVisible ? <EyeOff /> : <Eye />}</button></div></label>
         </div>
         <label className="user-enabled-toggle"><input type="checkbox" checked={draft.enabled} onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })} disabled={editingId === currentUser.id} /><span><b>Учётная запись активна</b><small>Отключённый пользователь не сможет войти, а его сессии будут завершены.</small></span></label>

@@ -306,6 +306,7 @@ const requiredSymbols = [...new Set([
     `astMagazineStatus[${index}].xContentRecoveryAllowed`, `astMagazineStatus[${index}].xContentRecoveryActive`,
     `astMagazineStatus[${index}].xInventoryVerificationRequired`, `astMagazineStatus[${index}].xIndexing`,
     `astMagazineStatus[${index}].xIndexDone`, `astMagazineStatus[${index}].xAxisError`,
+    `astMagazineStatus[${index}].udiProducedPartsTotal`,
     `astMagazineStatus[${index}].iCurrentBlank`, `astMagazineStatus[${index}].iCurrentFreeSlot`,
     `astMagazineStatus[${index}].iSelectedBlank`, `astMagazineStatus[${index}].iSelectedFreeSlot`,
     `astMagazineStatus[${index}].eActualOperation`, `astMagazineDiag[${index}].eState`,
@@ -701,6 +702,29 @@ function recordCellEvent(event, { broadcastEvent = true } = {}) {
 
 function recordCellSnapshot(timestamp = Date.now()) {
   for (const event of cellEventClassifier.process(latestValues, timestamp)) recordCellEvent(event);
+  recordProductionSnapshot(timestamp);
+}
+
+function recordProductionSnapshot(timestamp = Date.now()) {
+  if (!statisticsStore) return;
+  for (let magazine = 1; magazine <= 2; magazine += 1) {
+    const path = `astMagazineStatus[${magazine}].udiProducedPartsTotal`;
+    if (!Object.hasOwn(latestValues, path)) continue;
+    const quantity = statisticsStore.consumeProductionCounter(magazine, latestValues[path], timestamp);
+    if (quantity <= 0) continue;
+    const event = {
+      timestampMs: timestamp,
+      sourceId: 4,
+      eventType: 'production',
+      status: 'completed',
+      message: quantity === 1
+        ? `Магазин ${magazine}: готовая деталь уложена в магазин`
+        : `Магазин ${magazine}: учтено готовых деталей — ${quantity}`,
+      code: `magazine:${magazine}`,
+      details: { magazine, quantity },
+    };
+    if (!recordCellEvent(event)) statisticsStore.recordFact(event);
+  }
 }
 
 function recordSystemEvent(status, message, details) {
@@ -1581,11 +1605,15 @@ const httpServer = createServer(async (request, response) => {
           ? null
           : requestedUser === 'unassigned' ? 'unassigned' : Number(requestedUser);
       if (userId !== null && userId !== 'unassigned' && !Number.isInteger(userId)) throw new StatisticsStoreError('Некорректный пользователь');
+      const fromParam = requestUrl.searchParams.get('from');
+      const toParam = requestUrl.searchParams.get('to');
+      const statisticsUser = Number.isInteger(userId) ? authStore?.getUser(userId) : null;
       jsonResponse(response, 200, statisticsStore.summary({
         preset: requestUrl.searchParams.get('preset'),
-        fromMs: Number(requestUrl.searchParams.get('from')),
-        toMs: Number(requestUrl.searchParams.get('to')),
+        fromMs: fromParam === null || fromParam === '' ? undefined : Number(fromParam),
+        toMs: toParam === null || toParam === '' ? undefined : Number(toParam),
         userId,
+        shiftPlan: statisticsUser?.shiftPlan ?? null,
       }));
       return;
     }

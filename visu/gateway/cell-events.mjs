@@ -1,6 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import alarmCatalog from '../alarm-catalog.json' with { type: 'json' };
 
 export const CELL_EVENT_SOURCES = Object.freeze({
   1: 'Станок 1',
@@ -46,11 +47,9 @@ const MODBUS_COMMANDS = {
   22: POINTS[17], 23: POINTS[19], 24: POINTS[21], 25: POINTS[20],
 };
 const MODBUS_EXECUTION = ['Ожидание', 'Команда принята', 'Выполнение', 'Завершено', 'Ошибка', 'Остановлено'];
-const ALARM_SOURCE = [
-  'Ячейка', 'Робот', 'Станок 1', 'Станок 2', 'Станок 3', 'Магазин 1', 'Магазин 2',
-  'Привод магазина 1', 'Привод магазина 2', 'Ось X', 'Ось Y', 'Ось Z', 'Группа осей',
-  'Менеджер движения', 'Менеджер точек', 'Захват',
-];
+const ALARM_SOURCE_KEYS = Object.keys(alarmCatalog.sources);
+const ALARM_SOURCE = Object.values(alarmCatalog.sources);
+const ALARM_EFFECT = ['GLOBAL_STOP', 'ROBOT_STOP', 'EQUIPMENT_STOP', 'WARNING'];
 
 const numberValue = (values, path, fallback = 0) => {
   const raw = values[path];
@@ -78,6 +77,17 @@ const normalizeActor = (value) => {
   };
 };
 const catalog = (values, code, fallback) => values[code] ?? `${fallback} ${code}`;
+const alarmDescription = (sourceCode, severity, code) => {
+  const sourceKey = ALARM_SOURCE_KEYS[sourceCode];
+  if (!sourceKey) return `Код ${code}`;
+  const messages = severity === 'Предупреждение'
+    ? alarmCatalog.warnings[sourceKey]
+    : alarmCatalog.alarms[sourceKey];
+  const message = messages?.[code];
+  return typeof message === 'string' && message.trim()
+    ? message
+    : `Код ${code}`;
+};
 
 const rowToEvent = (row) => ({
   id: Number(row.id),
@@ -472,22 +482,30 @@ export class CellEventClassifier {
       const sourceCode = numberValue(values, `${root}.eSource`);
       const severity = numberValue(values, `${root}.eSeverity`) === 1 ? 'Предупреждение' : 'Авария';
       const code = numberValue(values, `${root}.uiCode`);
+      const rawEffect = values[`${root}.eEffect`];
+      const effectCode = rawEffect === undefined
+        ? (severity === 'Предупреждение' ? 3 : 2)
+        : numberValue(values, `${root}.eEffect`);
+      const effect = ALARM_EFFECT[effectCode] ?? 'EQUIPMENT_STOP';
+      const source = ALARM_SOURCE[sourceCode] ?? `источник ${sourceCode}`;
+      const reason = alarmDescription(sourceCode, severity, code);
       const known = this.alarms.get(sequence);
       if (!known && active) {
         this.alarms.set(sequence, { active: true, seenAt: timestampMs });
         events.push({
           timestampMs, sourceId: 7, eventType: severity === 'Авария' ? 'alarm' : 'warning', status: 'active',
-          message: `${severity}: ${ALARM_SOURCE[sourceCode] ?? `источник ${sourceCode}`}, код ${code}`,
+          message: `${severity}: ${source} — ${reason}`,
           code: `${sourceCode}:${code}`, operationId: this.activeOperationId,
-          details: { plcSequence: sequence, equipment: ALARM_SOURCE[sourceCode] ?? sourceCode, observedOnConnect: initial },
+          details: { plcSequence: sequence, equipment: source, reason, effect, observedOnConnect: initial },
         });
       } else if (known?.active && !active) {
         known.active = false;
+        const restored = severity === 'Предупреждение' ? 'Предупреждение устранено' : 'Авария устранена';
         events.push({
           timestampMs, sourceId: 7, eventType: severity === 'Авария' ? 'alarm' : 'warning', status: 'restored',
-          message: `${severity} устранена: ${ALARM_SOURCE[sourceCode] ?? `источник ${sourceCode}`}, код ${code}`,
+          message: `${restored}: ${source} — ${reason}`,
           code: `${sourceCode}:${code}`, operationId: this.activeOperationId,
-          details: { plcSequence: sequence, equipment: ALARM_SOURCE[sourceCode] ?? sourceCode, durationMs: Math.max(0, timestampMs - known.seenAt) },
+          details: { plcSequence: sequence, equipment: source, reason, effect, durationMs: Math.max(0, timestampMs - known.seenAt) },
         });
       }
     }

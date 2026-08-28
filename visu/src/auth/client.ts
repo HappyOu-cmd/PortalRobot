@@ -6,6 +6,7 @@ export interface AppUser {
   displayName: string;
   role: UserRole;
   enabled: boolean;
+  shiftPlan: number;
   mustChangePassword: boolean;
   createdAt: number;
   updatedAt: number;
@@ -24,6 +25,7 @@ export interface UserDraft {
   displayName: string;
   role: UserRole;
   enabled: boolean;
+  shiftPlan: number;
   password?: string;
 }
 

@@ -8,6 +8,7 @@ STRUCT
 	xStopAllowed      : BOOL; // Кнопка контролируемой остановки доступна
 	xResetAllowed     : BOOL; // Кнопка сброса ошибок робота и приводов доступна
 	eCurrentPoint     : E_POINT_NAME; // Последняя достигнутая точка
+	uiMagazineContext : UINT; // 0 вне рабочей зоны; 1..2 — магазин, в рабочей зоне которого находится робот
 	xBlankAvailable   : BOOL; // В первом захвате находится заготовка
 	xDetailAvailable  : BOOL; // Во втором захвате находится готовая деталь
 	uiBlankPayloadType  : UINT; // Фактический тип заготовки, 0 — неизвестно

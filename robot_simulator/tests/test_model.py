@@ -142,6 +142,28 @@ def test_stop_during_gripper_finishes_action_before_stopped() -> None:
     assert not model.gripper_status & GRIPPER_1_OPEN
 
 
+def test_stop_after_done_releases_execute_and_allows_next_sequence() -> None:
+    model = build_model()
+    model.accept_command_registers(command_block(CommandCode.GRIPPER_2_CLOSE, 4), now=30.0)
+    run_until_terminal(model)
+    assert model.execution_state == ExecutionState.DONE
+
+    # PLC снимает Execute одновременно со Stop. Для уже завершённой команды
+    # Stop не создаёт новую аварию, а освобождает терминальную транзакцию.
+    model.accept_command_registers(
+        command_block(0, 4, execute=0, stop=1, heartbeat=2),
+        now=31.0,
+    )
+    assert model.execution_state == ExecutionState.IDLE
+
+    model.accept_command_registers(
+        command_block(CommandCode.HOME_SAFETY, 5, heartbeat=3),
+        now=31.1,
+    )
+    assert model.ack_seq == 5
+    assert model.execution_state in {ExecutionState.BUSY, ExecutionState.DONE}
+
+
 def test_manual_and_stopped_modes_reject_external_commands() -> None:
     for mode in (RobotMode.STOPPED, RobotMode.MANUAL):
         model = RobotModel(copy.deepcopy(DEFAULT_CONFIG))

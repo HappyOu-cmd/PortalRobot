@@ -29,6 +29,9 @@ VAR CONSTANT
     AXE_COMMAND_ABORTED      : DWORD := DWORD#16#00000800; // Команда движения прервана
     AXE_UNKNOWN_ACTUAL_ERROR : DWORD := DWORD#16#00001000; // Неизвестная текущая ошибка
     AXE_DRIVE_AXIS_ERROR     : DWORD := DWORD#16#00002000; // Ошибка привода
+    AXE_POWER_FEEDBACK_LOST  : DWORD := DWORD#16#00004000; // Потеря силовой готовности при активной команде питания
+
+    POWER_FEEDBACK_LOSS_DELAY : TIME := T#500MS; // Фильтр кратковременного дребезга обратной связи
 
     // ==================================================
     // Логические ошибки блока
@@ -101,6 +104,8 @@ VAR
     xStepTimerEnable : BOOL; // Разрешение таймера шага
     tonStep          : TON; // Таймер времени на шаге
     tonStepTimeout   : TON; // Таймер превышения времени шага
+    tonPowerFeedbackLoss : TON; // Контроль неожиданного снятия силовой готовности
+    xPowerFeedbackExpected : BOOL; // Текущее состояние требует сохранения питания
 
     // Для удержания предупреждений
     tpWarningHold : TP; // Удержание предупреждения для отображения
@@ -192,6 +197,32 @@ xJogBackwardExec := FALSE;
 AxisData.Status.xDone := FALSE;
 xWarningPulse := FALSE;
 uiResetWarningCode := UINT#0;
+
+// MC_Power не обязан выставлять Error при отказе интерфейса привода. Например,
+// окончание demo-лицензии SoftMotion снимает реальные Regulator/DriveStart,
+// но оставляет AxisError и FBError пустыми. Контролируем поэтому сам факт
+// исчезновения силовой готовности при сохраняющемся запросе питания.
+xPowerFeedbackExpected := xPowerRequest
+	AND AxisData.Command.xPowerPermit
+	AND ((AxisData.Diag.iStep = E_AXIS_STATE.READY)
+		OR (AxisData.Diag.iStep = E_AXIS_STATE.JOGGING)
+		OR (AxisData.Diag.iStep = E_AXIS_STATE.JOG_DECELERATING)
+		OR (AxisData.Diag.iStep = E_AXIS_STATE.HOMING)
+		OR (AxisData.Diag.iStep = E_AXIS_STATE.MOVE_ABSOLUTE)
+		OR (AxisData.Diag.iStep = E_AXIS_STATE.MOVE_RELATIVE)
+		OR (AxisData.Diag.iStep = E_AXIS_STATE.STOPPING)
+		OR (AxisData.Diag.iStep = E_AXIS_STATE.STOP_RELEASE));
+tonPowerFeedbackLoss(
+	IN := xPowerFeedbackExpected AND NOT AxisData.Status.xPowered,
+	PT := POWER_FEEDBACK_LOSS_DELAY
+);
+IF tonPowerFeedbackLoss.Q
+AND (AxisData.Diag.iStep <> E_AXIS_STATE.ERROR_RESET_MANAGER) THEN
+	AxisData.Error.dwAxisErrorLatched :=
+		AxisData.Error.dwAxisErrorLatched OR AXE_POWER_FEEDBACK_LOST;
+	AxisData.Diag.iLastErrorStep := TO_INT(AxisData.Diag.iStep);
+	AxisData.Diag.iStep := E_AXIS_STATE.ERROR_RESET_MANAGER;
+END_IF;
 
 // Конфликт Jog проверяется автоматом до вызова MC_Jog, поэтому тест не создаёт движения.
 xFaultAllowed := (AxisData.Diag.iStep = E_AXIS_STATE.READY)
@@ -289,7 +320,9 @@ CASE AxisData.Diag.iStep OF
             AxisData.Diag.iLastErrorStep := TO_INT(AxisData.Diag.iStep);
             AxisData.Diag.iStep := E_AXIS_STATE.ERROR_RESET_MANAGER;
 
-        ELSIF fbPower.Status THEN
+        // READY допустим только после подтверждения всех трёх признаков:
+        // MC_Power.Status, силовая ступень и снятый quickstop.
+        ELSIF AxisData.Status.xPowered THEN
             AxisData.Diag.iStep := E_AXIS_STATE.READY;
 
         ELSIF rtDisable.Q THEN
@@ -1176,6 +1209,10 @@ ELSIF (AxisData.Error.dwAxisError AND AXE_UNKNOWN_ACTUAL_ERROR) <> DWORD#0 THEN
 ELSIF (AxisData.Error.dwAxisError AND AXE_DRIVE_AXIS_ERROR) <> DWORD#0 THEN
     AxisData.Diag.sErrorText := 'Drive axis error active';
     AxisData.Diag.udiActualErrorID := DWORD_TO_UDINT(fbReadAxisError.AxisErrorID);
+
+ELSIF (AxisData.Error.dwAxisError AND AXE_POWER_FEEDBACK_LOST) <> DWORD#0 THEN
+    AxisData.Diag.sErrorText := 'Drive power feedback lost';
+    AxisData.Diag.udiActualErrorID := 3005;
 
 ELSIF AxisData.Command.xGlobalError THEN
     AxisData.Diag.sErrorText := 'Global error active';

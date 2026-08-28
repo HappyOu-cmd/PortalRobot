@@ -7,6 +7,13 @@ import type {
   RobotCoordinateFrame,
 } from '../model/types';
 import { DEFAULT_DRIFT_SETTINGS, EMPTY_DRIFT_TELEMETRY, type DriftSettings, type DriftTelemetry, type EasterEggMode } from '../model/easterEggs';
+import {
+  DEFAULT_VISUAL_EFFECT_SETTINGS,
+  EMPTY_SCENE_ACTIVITY,
+  type SceneActivity,
+  type SceneEquipmentTarget,
+  type VisualEffectSettings,
+} from '../model/visualEffects';
 import { CellScene, type CameraPreset, type EquipmentAnchors } from '../three/cellScene';
 
 export interface EquipmentStatus {
@@ -29,6 +36,9 @@ interface CellViewportProps {
   easterEggMode?: EasterEggMode;
   easterEggRevision?: number;
   driftSettings?: DriftSettings;
+  visualEffects?: VisualEffectSettings;
+  sceneActivity?: SceneActivity;
+  focusTarget?: SceneEquipmentTarget | null;
   equipmentStatuses?: {
     machines: EquipmentStatus[];
     magazines: [EquipmentStatus, EquipmentStatus];
@@ -49,6 +59,9 @@ export function CellViewport({
   easterEggMode = 'off',
   easterEggRevision = 0,
   driftSettings = DEFAULT_DRIFT_SETTINGS,
+  visualEffects = DEFAULT_VISUAL_EFFECT_SETTINGS,
+  sceneActivity = EMPTY_SCENE_ACTIVITY,
+  focusTarget = null,
   equipmentStatuses,
 }: CellViewportProps) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -120,6 +133,9 @@ export function CellViewport({
     sceneRef.current = scene;
     scene.setMagazineInventorySync(syncMagazineInventory);
     scene.setDriftSettings(driftSettings);
+    scene.setVisualEffects(visualEffects);
+    scene.setSceneActivity(sceneActivity);
+    scene.setFocusTarget(focusTarget);
     scene.setEasterEgg(easterEggMode, easterEggRevision);
     return () => {
       scene.dispose();
@@ -131,6 +147,9 @@ export function CellViewport({
   useEffect(() => sceneRef.current?.setMagazineInventorySync(syncMagazineInventory), [syncMagazineInventory]);
   useEffect(() => sceneRef.current?.setEasterEgg(easterEggMode, easterEggRevision), [easterEggMode, easterEggRevision]);
   useEffect(() => sceneRef.current?.setDriftSettings(driftSettings), [driftSettings]);
+  useEffect(() => sceneRef.current?.setVisualEffects(visualEffects), [visualEffects]);
+  useEffect(() => sceneRef.current?.setSceneActivity(sceneActivity), [sceneActivity]);
+  useEffect(() => sceneRef.current?.setFocusTarget(focusTarget), [focusTarget]);
   useEffect(() => {
     if (indexedConveyorTest) sceneRef.current?.setIndexedConveyorTest(indexedConveyorTest);
   }, [indexedConveyorTest]);

@@ -171,14 +171,21 @@ export class StatisticsStore {
         source_event_id INTEGER UNIQUE,
         timestamp_ms INTEGER NOT NULL,
         kind TEXT NOT NULL,
+        quantity INTEGER NOT NULL DEFAULT 1,
         operator_user_id INTEGER,
         actor_user_id INTEGER,
         status TEXT,
         source_id INTEGER,
-        code TEXT
+        code TEXT,
+        message TEXT
       ) STRICT;
       CREATE INDEX IF NOT EXISTS idx_statistics_fact_range ON statistics_fact (timestamp_ms, kind);
       CREATE INDEX IF NOT EXISTS idx_statistics_fact_operator ON statistics_fact (operator_user_id, timestamp_ms);
+      CREATE TABLE IF NOT EXISTS production_counter (
+        magazine_id INTEGER PRIMARY KEY CHECK (magazine_id BETWEEN 1 AND 2),
+        last_value INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      ) STRICT;
       CREATE TABLE IF NOT EXISTS shift_template (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         group_id INTEGER NOT NULL,
@@ -196,6 +203,9 @@ export class StatisticsStore {
       CREATE INDEX IF NOT EXISTS idx_shift_template_effective
         ON shift_template (effective_from_ms, effective_to_ms);
     `);
+    const factColumns = new Set(this.db.prepare('PRAGMA table_info(statistics_fact)').all().map((column) => column.name));
+    if (!factColumns.has('quantity')) this.db.exec('ALTER TABLE statistics_fact ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1');
+    if (!factColumns.has('message')) this.db.exec('ALTER TABLE statistics_fact ADD COLUMN message TEXT');
     const started = this.db.prepare("SELECT value FROM statistics_meta WHERE key = 'collection_started_at'").get();
     if (!started) this.db.prepare("INSERT INTO statistics_meta (key, value) VALUES ('collection_started_at', ?)").run(String(this.now()));
     const open = this.db.prepare('SELECT * FROM operator_interval WHERE end_ms IS NULL ORDER BY id DESC').all();
@@ -284,16 +294,38 @@ export class StatisticsStore {
     if (!event) return false;
     let kind = null;
     if ((event.eventType === 'alarm' || event.eventType === 'warning') && event.status === 'active') kind = event.eventType;
+    if (event.eventType === 'production' && event.status === 'completed') kind = 'produced';
     if (event.eventType === 'operator-command' && event.status === 'accepted') kind = 'command-accepted';
     if (event.eventType === 'operator-command' && event.status === 'rejected') kind = 'command-rejected';
     if (!kind) return false;
     const active = this.activeOperator();
+    const quantity = kind === 'produced'
+      ? Math.max(1, Math.min(1_000_000, Math.round(Number(event.details?.quantity) || 1)))
+      : 1;
     this.db.prepare(`INSERT OR IGNORE INTO statistics_fact
-      (source_event_id, timestamp_ms, kind, operator_user_id, actor_user_id, status, source_id, code)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(event.id ?? null, event.timestampMs, kind, active?.userId ?? null, event.actor?.id ?? null,
-        event.status ?? null, event.sourceId ?? null, event.code === null || event.code === undefined ? null : String(event.code));
+      (source_event_id, timestamp_ms, kind, quantity, operator_user_id, actor_user_id, status, source_id, code, message)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(event.id ?? null, event.timestampMs, kind, quantity, active?.userId ?? null, event.actor?.id ?? null,
+        event.status ?? null, event.sourceId ?? null, event.code === null || event.code === undefined ? null : String(event.code),
+        String(event.message ?? ''));
     return true;
+  }
+
+  consumeProductionCounter(magazineId, rawValue, timestamp = this.now()) {
+    const id = Math.round(Number(magazineId));
+    const value = Math.round(Number(rawValue));
+    if (![1, 2].includes(id) || !Number.isInteger(value) || value < 0 || value > 0xffff_ffff) return 0;
+    const at = clampTimestamp(timestamp, this.now());
+    const previous = this.db.prepare('SELECT last_value FROM production_counter WHERE magazine_id = ?').get(id);
+    if (!previous) {
+      this.db.prepare('INSERT INTO production_counter (magazine_id, last_value, updated_at) VALUES (?, ?, ?)').run(id, value, at);
+      return 0;
+    }
+    const last = Number(previous.last_value);
+    let delta = value >= last ? value - last : value;
+    if (value < last && last >= 0xf000_0000 && value <= 0x0fff_ffff) delta = 0x1_0000_0000 - last + value;
+    this.db.prepare('UPDATE production_counter SET last_value = ?, updated_at = ? WHERE magazine_id = ?').run(value, at, id);
+    return Math.max(0, delta);
   }
 
   templates() {
@@ -406,6 +438,63 @@ export class StatisticsStore {
     return rows.map(rowToInterval);
   }
 
+  #assertIntervalAvailable(id, startMs, endMs) {
+    const overlap = this.db.prepare(`SELECT id FROM operator_interval
+      WHERE id <> ? AND start_ms < ? AND COALESCE(end_ms, ?) > ? LIMIT 1`)
+      .get(Number(id), endMs, this.now(), startMs);
+    if (overlap) throw new StatisticsStoreError('Интервал пересекается с другой авторизацией', 409, 'INTERVAL_OVERLAP');
+  }
+
+  #rebuildEquipmentScopes(fromMs, toMs) {
+    const bucketFrom = Math.floor(fromMs / MINUTE_MS) * MINUTE_MS;
+    const bucketTo = Math.ceil(toMs / MINUTE_MS) * MINUTE_MS;
+    if (bucketTo <= bucketFrom) return;
+    const sourceRows = this.db.prepare(`SELECT * FROM equipment_minute
+      WHERE scope_user_id = 0 AND bucket_ms >= ? AND bucket_ms < ? ORDER BY bucket_ms, lane`)
+      .all(bucketFrom, bucketTo);
+    this.db.prepare('DELETE FROM equipment_minute WHERE scope_user_id <> 0 AND bucket_ms >= ? AND bucket_ms < ?')
+      .run(bucketFrom, bucketTo);
+    const intervals = this.intervals({ fromMs: bucketFrom, toMs: bucketTo });
+    const upsert = this.db.prepare(`INSERT INTO equipment_minute
+      (bucket_ms, lane, scope_user_id, busy_ms, observed_ms, first_ms, last_ms)
+      VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(bucket_ms, lane, scope_user_id) DO UPDATE SET
+      busy_ms = busy_ms + excluded.busy_ms, observed_ms = observed_ms + excluded.observed_ms,
+      first_ms = MIN(first_ms, excluded.first_ms), last_ms = MAX(last_ms, excluded.last_ms)`);
+    for (const row of sourceRows) {
+      const dataStart = Math.max(Number(row.bucket_ms), Number(row.first_ms));
+      const dataEnd = Math.min(Number(row.bucket_ms) + MINUTE_MS, Number(row.last_ms));
+      const span = dataEnd - dataStart;
+      if (span <= 0 || Number(row.observed_ms) <= 0) continue;
+      const observedRate = Math.min(1, Number(row.observed_ms) / span);
+      const busyRate = Math.min(observedRate, Math.max(0, Number(row.busy_ms) / span));
+      const assigned = [];
+      for (const interval of intervals) {
+        const startMs = Math.max(dataStart, interval.startMs);
+        const endMs = Math.min(dataEnd, interval.endMs ?? bucketTo);
+        if (endMs <= startMs) continue;
+        const duration = endMs - startMs;
+        upsert.run(row.bucket_ms, row.lane, interval.userId, duration * busyRate, duration * observedRate, startMs, endMs);
+        assigned.push({ startMs, endMs });
+      }
+      for (const segment of complementSegments(assigned, dataStart, dataEnd)) {
+        const duration = segment.endMs - segment.startMs;
+        upsert.run(row.bucket_ms, row.lane, -1, duration * busyRate, duration * observedRate, segment.startMs, segment.endMs);
+      }
+    }
+  }
+
+  #reattributeContextFacts(fromMs, toMs) {
+    this.db.prepare(`UPDATE statistics_fact
+      SET operator_user_id = (
+        SELECT user_id FROM operator_interval
+        WHERE start_ms <= statistics_fact.timestamp_ms
+          AND COALESCE(end_ms, ?) > statistics_fact.timestamp_ms
+        ORDER BY start_ms DESC LIMIT 1
+      )
+      WHERE timestamp_ms >= ? AND timestamp_ms < ? AND kind IN ('alarm', 'warning', 'produced')`)
+      .run(this.now(), fromMs, toMs);
+  }
+
   updateInterval(id, input) {
     const current = rowToInterval(this.db.prepare('SELECT * FROM operator_interval WHERE id = ?').get(Number(id)));
     if (!current) throw new StatisticsStoreError('Интервал не найден', 404, 'INTERVAL_NOT_FOUND');
@@ -417,13 +506,28 @@ export class StatisticsStore {
     if (!Number.isInteger(userId) || userId <= 0 || !username || !displayName || endMs <= startMs) {
       throw new StatisticsStoreError('Некорректные границы или пользователь интервала');
     }
-    this.db.prepare(`UPDATE operator_interval SET user_id = ?, username = ?, display_name = ?, start_ms = ?, end_ms = ?, source = 'admin-edit'
-      WHERE id = ?`).run(userId, username, displayName, startMs, endMs, Number(id));
+    this.#assertIntervalAvailable(id, startMs, endMs);
+    const affectedFrom = Math.min(current.startMs, startMs);
+    const affectedTo = Math.max(current.endMs ?? this.now(), endMs);
+    this.#transaction(() => {
+      this.db.prepare(`UPDATE operator_interval SET user_id = ?, username = ?, display_name = ?, start_ms = ?, end_ms = ?, source = 'admin-edit'
+        WHERE id = ?`).run(userId, username, displayName, startMs, endMs, Number(id));
+      this.#rebuildEquipmentScopes(affectedFrom, affectedTo);
+      this.#reattributeContextFacts(affectedFrom, affectedTo);
+    });
     return rowToInterval(this.db.prepare('SELECT * FROM operator_interval WHERE id = ?').get(Number(id)));
   }
 
   deleteInterval(id) {
-    return this.db.prepare('DELETE FROM operator_interval WHERE id = ?').run(Number(id)).changes > 0;
+    const current = rowToInterval(this.db.prepare('SELECT * FROM operator_interval WHERE id = ?').get(Number(id)));
+    if (!current) return false;
+    return this.#transaction(() => {
+      const deleted = this.db.prepare('DELETE FROM operator_interval WHERE id = ?').run(Number(id)).changes > 0;
+      const endMs = current.endMs ?? this.now();
+      this.#rebuildEquipmentScopes(current.startMs, endMs);
+      this.#reattributeContextFacts(current.startMs, endMs);
+      return deleted;
+    });
   }
 
   hardDeleteRange({ fromMs, toMs, userId = null, equipment = true, facts = true, intervals = true }) {
@@ -500,28 +604,44 @@ export class StatisticsStore {
 
   #factsSummary(fromMs, toMs, userId) {
     let rows;
+    let alarmRows;
     if (userId === 'unassigned') {
-      rows = this.db.prepare(`SELECT kind, COUNT(*) AS count FROM statistics_fact
+      rows = this.db.prepare(`SELECT kind, SUM(CASE WHEN kind = 'produced' THEN quantity ELSE 1 END) AS count FROM statistics_fact
         WHERE timestamp_ms >= ? AND timestamp_ms < ? AND operator_user_id IS NULL GROUP BY kind`).all(fromMs, toMs);
+      alarmRows = this.db.prepare(`SELECT code, MAX(message) AS message, COUNT(*) AS count FROM statistics_fact
+        WHERE timestamp_ms >= ? AND timestamp_ms < ? AND operator_user_id IS NULL AND kind = 'alarm'
+        GROUP BY code ORDER BY count DESC, code`).all(fromMs, toMs);
     } else if (userId !== null && userId !== undefined) {
-      rows = this.db.prepare(`SELECT kind, COUNT(*) AS count FROM statistics_fact
+      rows = this.db.prepare(`SELECT kind, SUM(CASE WHEN kind = 'produced' THEN quantity ELSE 1 END) AS count FROM statistics_fact
         WHERE timestamp_ms >= ? AND timestamp_ms < ? AND
-        ((kind IN ('alarm','warning') AND operator_user_id = ?) OR
+        ((kind IN ('alarm','warning','produced') AND operator_user_id = ?) OR
          (kind LIKE 'command-%' AND actor_user_id = ?)) GROUP BY kind`).all(fromMs, toMs, Number(userId), Number(userId));
+      alarmRows = this.db.prepare(`SELECT code, MAX(message) AS message, COUNT(*) AS count FROM statistics_fact
+        WHERE timestamp_ms >= ? AND timestamp_ms < ? AND operator_user_id = ? AND kind = 'alarm'
+        GROUP BY code ORDER BY count DESC, code`).all(fromMs, toMs, Number(userId));
     } else {
-      rows = this.db.prepare(`SELECT kind, COUNT(*) AS count FROM statistics_fact
+      rows = this.db.prepare(`SELECT kind, SUM(CASE WHEN kind = 'produced' THEN quantity ELSE 1 END) AS count FROM statistics_fact
         WHERE timestamp_ms >= ? AND timestamp_ms < ? GROUP BY kind`).all(fromMs, toMs);
+      alarmRows = this.db.prepare(`SELECT code, MAX(message) AS message, COUNT(*) AS count FROM statistics_fact
+        WHERE timestamp_ms >= ? AND timestamp_ms < ? AND kind = 'alarm'
+        GROUP BY code ORDER BY count DESC, code`).all(fromMs, toMs);
     }
     const counts = Object.fromEntries(rows.map((row) => [row.kind, Number(row.count)]));
     return {
+      producedParts: counts.produced ?? 0,
       alarmsActivated: counts.alarm ?? 0,
       warningsActivated: counts.warning ?? 0,
       commandsAccepted: counts['command-accepted'] ?? 0,
       commandsRejected: counts['command-rejected'] ?? 0,
+      alarmBreakdown: alarmRows.map((row) => ({
+        code: row.code ?? '',
+        message: row.message || (row.code ? `Авария, код ${row.code}` : 'Авария без кода'),
+        count: Number(row.count),
+      })),
     };
   }
 
-  summary({ fromMs, toMs, userId = null, preset = null }) {
+  summary({ fromMs, toMs, userId = null, preset = null, shiftPlan = null }) {
     const resolved = preset ? this.resolvePeriod(preset) : null;
     const from = Math.max(this.collectionStartedAt(), clampTimestamp(fromMs, resolved?.fromMs ?? this.collectionStartedAt()));
     const to = Math.max(from, Math.min(this.now(), clampTimestamp(toMs, resolved?.toMs ?? this.now())));
@@ -553,7 +673,9 @@ export class StatisticsStore {
     for (let cursor = Math.floor(from / trendSpan) * trendSpan; cursor < to; cursor += trendSpan) {
       const end = Math.min(to, cursor + trendSpan);
       const piece = this.#equipmentSummary(cursor, end, scopeUserId);
-      trend.push({ timestampMs: cursor, loadPercent: Number((piece.reduce((sum, item) => sum + item.loadPercent, 0) / piece.length).toFixed(1)) });
+      if (piece.some((item) => item.observedMs > 0)) {
+        trend.push({ timestampMs: cursor, loadPercent: Number((piece.reduce((sum, item) => sum + item.loadPercent, 0) / piece.length).toFixed(1)) });
+      }
     }
     return {
       collectionStartedAt: this.collectionStartedAt(),
@@ -564,6 +686,9 @@ export class StatisticsStore {
       coverageMs: observedMs,
       coveragePercent: selectedMs > 0 ? Number((observedMs / selectedMs * 100).toFixed(1)) : 0,
       equipment, ...facts, experience, trend,
+      shiftPlan: userId !== null && userId !== undefined && userId !== 'unassigned'
+        ? Math.max(0, Math.round(Number(shiftPlan) || 0))
+        : null,
       partialData: observedMs < selectedMs * 0.999,
     };
   }

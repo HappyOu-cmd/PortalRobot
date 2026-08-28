@@ -2,6 +2,7 @@ METHOD PRIVATE AddEvent
 VAR_INPUT
 	eSource   : E_ALARM_SOURCE; // Источник события
 	eSeverity : E_ALARM_SEVERITY; // Уровень события
+	eEffect   : E_ALARM_EFFECT; // Воздействие события на ячейку
 	uiCode    : UINT; // Код события внутри источника
 END_VAR
 
@@ -14,6 +15,7 @@ END_IF;
 
 Events[uiWriteIndex].udiSequence := udiSequence;
 Events[uiWriteIndex].eSeverity := eSeverity;
+Events[uiWriteIndex].eEffect := eEffect;
 Events[uiWriteIndex].eSource := eSource;
 Events[uiWriteIndex].uiCode := uiCode;
 Events[uiWriteIndex].xActive := TRUE;

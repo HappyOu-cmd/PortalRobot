@@ -6,7 +6,6 @@ import closeIcon from '@iconify-icons/material-symbols/close';
 import databaseOutlineIcon from '@iconify-icons/material-symbols/database-outline';
 import deleteOutlineIcon from '@iconify-icons/material-symbols/delete-outline';
 import editOutlineIcon from '@iconify-icons/material-symbols/edit-outline';
-import errorOutlineIcon from '@iconify-icons/material-symbols/error-outline';
 import factoryOutlineIcon from '@iconify-icons/material-symbols/factory-outline';
 import microwaveGenOutlineIcon from '@iconify-icons/material-symbols/microwave-gen-outline';
 import ovenGenOutlineIcon from '@iconify-icons/material-symbols/oven-gen-outline';
@@ -14,7 +13,6 @@ import personOutlineIcon from '@iconify-icons/material-symbols/person-outline';
 import refreshIcon from '@iconify-icons/material-symbols/refresh';
 import saveOutlineIcon from '@iconify-icons/material-symbols/save-outline';
 import scheduleOutlineIcon from '@iconify-icons/material-symbols/schedule-outline';
-import toolsWrenchOutlineIcon from '@iconify-icons/material-symbols/tools-wrench-outline';
 import trophyOutlineIcon from '@iconify-icons/material-symbols/trophy-outline';
 import warningOutlineIcon from '@iconify-icons/material-symbols/warning-outline';
 import chartLineIcon from '@iconify-icons/mdi/chart-line';
@@ -23,6 +21,7 @@ import shieldAlertOutlineIcon from '@iconify-icons/mdi/shield-alert-outline';
 import { Icon, type IconProps } from '@iconify/react';
 import { Area, AreaChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { AppUser } from '../auth/client';
+import { Dialog } from '../components/ui/Dialog';
 import {
   statisticsApi, toLocalInput,
   type OperatorInterval, type ShiftTemplate, type ShiftTemplateDraft,
@@ -74,23 +73,24 @@ const timeToMinute = (value: string) => {
   return Math.max(0, Math.min(1439, hours * 60 + minutes));
 };
 
-function LoadCard({ label, percent, kind }: { label: string; percent: number; kind: string }) {
+function LoadCard({ label, percent, observedMs, kind }: { label: string; percent: number; observedMs: number; kind: string }) {
   return <article className={`statistics-load-card ${kind}`}>
-    <div><span><Icon icon={kind === 'robot' ? robotIndustrialOutlineIcon : chartLineIcon} aria-hidden="true" />{label}</span><b>{percent.toFixed(1)}%</b></div>
+    <div><span><Icon icon={kind === 'robot' ? robotIndustrialOutlineIcon : chartLineIcon} aria-hidden="true" />{label}</span><b>{observedMs > 0 ? `${percent.toFixed(1)}%` : '—'}</b></div>
     <div className="statistics-load-track"><i style={{ width: `${Math.min(100, percent)}%` }} /></div>
   </article>;
 }
 
-function OperatorKpiCard({ tone, icon, label, value, detail }: {
+function OperatorKpiCard({ tone, icon, label, value, detail, onActivate }: {
   tone: string;
   icon: StatisticsIcon;
   label: string;
   value: string | number;
   detail: string;
+  onActivate?: () => void;
 }) {
   return <article className={tone}>
     <Icon icon={icon} aria-hidden="true" />
-    <div><span>{label}</span><b>{value}</b><small>{detail}</small></div>
+    <div><span>{label}</span><b>{onActivate ? <button className="statistics-count-button" type="button" onClick={onActivate}>{value}</button> : value}</b><small>{detail}</small></div>
   </article>;
 }
 
@@ -99,6 +99,27 @@ const averageLoad = (summary: StatisticsSummary) => summary.equipment.length ===
   : summary.equipment.reduce((total, item) => total + item.loadPercent, 0) / summary.equipment.length;
 
 const percentOf = (value: number, total: number) => total > 0 ? Math.min(100, Math.max(0, value / total * 100)) : 0;
+
+function AlarmDetailsDialog({ summary, open, onOpenChange }: {
+  summary: StatisticsSummary;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  return <Dialog
+    open={open}
+    onOpenChange={onOpenChange}
+    title="Аварии за выбранный период"
+    description={`${formatDateTime(summary.period.fromMs)} — ${formatDateTime(summary.period.toMs)}`}
+    className="statistics-alarm-dialog"
+  >
+    {summary.alarmBreakdown.length > 0 ? <div className="statistics-alarm-breakdown">
+      <div className="statistics-alarm-breakdown__head"><span>Авария</span><span>Количество</span></div>
+      {summary.alarmBreakdown.map((item) => <article key={item.code || item.message}>
+        <div><b>{item.message}</b>{item.code && <small>Код {item.code}</small>}</div><strong>{item.count}</strong>
+      </article>)}
+    </div> : <div className="statistics-empty compact"><Icon icon={checkCircleOutlineIcon} aria-hidden="true" /><span>Аварий за период нет</span></div>}
+  </Dialog>;
+}
 
 function OperatorMiniTrend({ summary }: { summary: StatisticsSummary }) {
   return <div className="statistics-operator-sparkline">
@@ -113,25 +134,21 @@ function OperatorSummaryBody({ summary, shiftSummary, allSummary }: {
   shiftSummary: StatisticsSummary;
   allSummary: StatisticsSummary;
 }) {
+  const [alarmDetailsOpen, setAlarmDetailsOpen] = useState(false);
   const commandsTotal = summary.commandsAccepted + summary.commandsRejected;
   const periodMs = Math.max(0, summary.period.toMs - summary.period.fromMs);
-  const equipmentCount = Math.max(1, summary.equipment.length);
-  const averageBusyMs = summary.equipment.reduce((total, item) => total + item.busyMs, 0) / equipmentCount;
-  const averageObservedMs = summary.equipment.reduce((total, item) => total + item.observedMs, 0) / equipmentCount;
-  const lossMs = Math.max(0, summary.responsibilityMs - averageBusyMs);
-  const waitingLossPercent = percentOf(Math.max(0, averageObservedMs - averageBusyMs), lossMs);
-  const otherLossPercent = lossMs > 0
-    ? Math.max(0, 100 - waitingLossPercent)
-    : 100;
   const experience = summary.experience ?? allSummary.experience;
+  const shiftPlan = shiftSummary.shiftPlan ?? 0;
+  const planProgress = percentOf(shiftSummary.producedParts, shiftPlan);
   const periodIsShort = periodMs <= 36 * 60 * 60 * 1000;
   const trendFormatter = periodIsShort ? TREND_TIME_FORMATTER : TREND_DATE_FORMATTER;
   const formatTrendTick = (value: number) => trendFormatter.format(value);
 
-  return <div className="statistics-operator-dashboard">
+  return <><div className="statistics-operator-dashboard">
     <section className="statistics-operator-kpis">
       <OperatorKpiCard tone="time" icon={scheduleOutlineIcon} label="Подтверждённое время" value={formatDuration(summary.responsibilityMs)} detail={`${percentOf(summary.responsibilityMs, periodMs).toFixed(0)}% от выбранного периода`} />
-      <OperatorKpiCard tone="alarm" icon={shieldAlertOutlineIcon} label="Аварии" value={summary.alarmsActivated} detail={summary.alarmsActivated === 0 ? 'Без аварий' : 'За выбранный период'} />
+      <OperatorKpiCard tone="production" icon={factoryOutlineIcon} label="Выпущено деталей" value={summary.producedParts} detail="Подтверждено укладкой в магазин" />
+      <OperatorKpiCard tone="alarm" icon={shieldAlertOutlineIcon} label="Аварии" value={summary.alarmsActivated} detail={summary.alarmsActivated === 0 ? 'Без аварий' : 'Нажмите для детализации'} onActivate={() => setAlarmDetailsOpen(true)} />
       <OperatorKpiCard tone="warning" icon={warningOutlineIcon} label="Предупреждения" value={summary.warningsActivated} detail={summary.warningsActivated === 0 ? 'Нет замечаний' : 'Требуют внимания'} />
       <OperatorKpiCard tone="accepted" icon={checkCircleOutlineIcon} label="Команды подтверждены" value={summary.commandsAccepted} detail={`${percentOf(summary.commandsAccepted, commandsTotal).toFixed(1)}% от всех команд`} />
       <OperatorKpiCard tone="rejected" icon={cancelOutlineIcon} label="Команды отклонены" value={summary.commandsRejected} detail={`${percentOf(summary.commandsRejected, commandsTotal).toFixed(1)}% от всех команд`} />
@@ -149,7 +166,7 @@ function OperatorSummaryBody({ summary, shiftSummary, allSummary }: {
         <div className="statistics-operator-equipment-list">{summary.equipment.map((item) => <div key={item.lane}>
           <span className="statistics-operator-equipment-icon"><Icon icon={EQUIPMENT_ICONS[item.lane]} aria-hidden="true" /></span>
           <div><span>{item.label}</span><div className="statistics-load-track"><i style={{ width: `${Math.min(100, item.loadPercent)}%` }} /></div></div>
-          <strong>{item.loadPercent.toFixed(0)}%</strong>
+          <strong>{item.observedMs > 0 ? `${item.loadPercent.toFixed(0)}%` : '—'}</strong>
           <small className={item.observedMs > 0 ? 'ok' : ''}>{item.observedMs > 0 ? 'За период' : 'Нет данных'}</small>
         </div>)}</div>
       </article>
@@ -168,22 +185,22 @@ function OperatorSummaryBody({ summary, shiftSummary, allSummary }: {
       </article>
 
       <article className="statistics-operator-card statistics-operator-averages">
-        <div><span>Средняя загрузка за смену</span><b>{averageLoad(shiftSummary).toFixed(0)}%</b><small className={shiftSummary.coveragePercent > 0 ? 'ok' : ''}>{shiftSummary.coveragePercent.toFixed(0)}% покрытия данных</small><OperatorMiniTrend summary={shiftSummary} /></div>
-        <div><span>Средняя загрузка за всё время</span><b>{averageLoad(allSummary).toFixed(0)}%</b><small className={allSummary.coveragePercent > 0 ? 'ok' : ''}>{allSummary.coveragePercent.toFixed(0)}% покрытия данных</small><OperatorMiniTrend summary={allSummary} /></div>
+        <div><span>Средняя загрузка за смену</span><b>{shiftSummary.coverageMs > 0 ? `${averageLoad(shiftSummary).toFixed(0)}%` : '—'}</b><small className={shiftSummary.coveragePercent > 0 ? 'ok' : ''}>{shiftSummary.coveragePercent.toFixed(0)}% покрытия данных</small><OperatorMiniTrend summary={shiftSummary} /></div>
+        <div><span>Средняя загрузка за всё время</span><b>{allSummary.coverageMs > 0 ? `${averageLoad(allSummary).toFixed(0)}%` : '—'}</b><small className={allSummary.coveragePercent > 0 ? 'ok' : ''}>{allSummary.coveragePercent.toFixed(0)}% покрытия данных</small><OperatorMiniTrend summary={allSummary} /></div>
       </article>
 
-      <article className="statistics-operator-card statistics-operator-time-structure">
-        <header><h3>Причины потерь времени</h3></header>
-        <div><span><Icon icon={scheduleOutlineIcon} aria-hidden="true" />Ожидание</span><i><b style={{ width: `${waitingLossPercent}%` }} /></i><strong>{waitingLossPercent.toFixed(0)}%</strong></div>
-        <div><span><Icon icon={toolsWrenchOutlineIcon} aria-hidden="true" />Сервис</span><i><b style={{ width: 0 }} /></i><strong>—</strong></div>
-        <div className="alarm"><span><Icon icon={errorOutlineIcon} aria-hidden="true" />Аварии</span><i><b style={{ width: 0 }} /></i><strong>{summary.alarmsActivated}</strong></div>
-        <div className="other"><span>Остальное</span><i><b style={{ width: `${otherLossPercent}%` }} /></i><strong>{otherLossPercent.toFixed(0)}%</strong></div>
+      <article className="statistics-operator-card statistics-operator-plan">
+        <header><h3>План / факт текущей смены</h3><small>{shiftPlan > 0 ? `${planProgress.toFixed(0)}% выполнения` : 'План не задан'}</small></header>
+        <div className="statistics-operator-plan-values"><span><small>Факт</small><b>{shiftSummary.producedParts}</b></span><span><small>План</small><b>{shiftPlan || '—'}</b></span></div>
+        <div className="statistics-operator-plan-track"><i style={{ width: `${planProgress}%` }} /></div>
+        <p>{shiftPlan > 0 ? shiftSummary.producedParts >= shiftPlan ? 'Сменный план выполнен' : `Осталось выпустить ${shiftPlan - shiftSummary.producedParts}` : 'Администратор задаёт постоянный план в профиле оператора.'}</p>
       </article>
     </section>
-  </div>;
+  </div><AlarmDetailsDialog summary={summary} open={alarmDetailsOpen} onOpenChange={setAlarmDetailsOpen} /></>;
 }
 
 function SummaryBody({ summary, operatorMode }: { summary: StatisticsSummary; operatorMode: boolean }) {
+  const [alarmDetailsOpen, setAlarmDetailsOpen] = useState(false);
   return <>
     {operatorMode && summary.experience && <section className="statistics-game-card">
       <div className="statistics-level-badge"><Icon icon={trophyOutlineIcon} aria-hidden="true" /><strong>{summary.experience.level}</strong><span>УРОВЕНЬ</span></div>
@@ -199,7 +216,8 @@ function SummaryBody({ summary, operatorMode }: { summary: StatisticsSummary; op
     <section className="statistics-kpi-grid">
       <article><Icon icon={scheduleOutlineIcon} aria-hidden="true" /><span>{operatorMode ? 'Авторизация' : 'Без оператора'}</span><b>{formatDuration(operatorMode ? summary.responsibilityMs : summary.unassignedMs)}</b></article>
       <article><Icon icon={checkCircleOutlineIcon} aria-hidden="true" /><span>Полнота данных</span><b>{summary.coveragePercent.toFixed(1)}%</b></article>
-      <article className="alarm"><Icon icon={shieldAlertOutlineIcon} aria-hidden="true" /><span>Аварии</span><b>{summary.alarmsActivated}</b></article>
+      <article><Icon icon={factoryOutlineIcon} aria-hidden="true" /><span>Выпущено деталей</span><b>{summary.producedParts}</b></article>
+      <article className="alarm"><Icon icon={shieldAlertOutlineIcon} aria-hidden="true" /><span>Аварии</span><b><button className="statistics-count-button" type="button" onClick={() => setAlarmDetailsOpen(true)}>{summary.alarmsActivated}</button></b></article>
       <article className="warning"><Icon icon={warningOutlineIcon} aria-hidden="true" /><span>Предупреждения</span><b>{summary.warningsActivated}</b></article>
       <article><Icon icon={chartLineIcon} aria-hidden="true" /><span>Команды переданы</span><b>{summary.commandsAccepted}</b></article>
       <article><Icon icon={cancelOutlineIcon} aria-hidden="true" /><span>Команды отклонены</span><b>{summary.commandsRejected}</b></article>
@@ -208,7 +226,7 @@ function SummaryBody({ summary, operatorMode }: { summary: StatisticsSummary; op
     <section className="statistics-main-grid">
       <div className="statistics-equipment-card">
         <header><div><span>ОБОРУДОВАНИЕ</span><h3>Загрузка за период</h3></div>{summary.partialData && <small><Icon icon={warningOutlineIcon} aria-hidden="true" />Неполные данные</small>}</header>
-        <div className="statistics-load-grid">{summary.equipment.map((item) => <LoadCard key={item.lane} label={item.label} percent={item.loadPercent} kind={item.lane} />)}</div>
+        <div className="statistics-load-grid">{summary.equipment.map((item) => <LoadCard key={item.lane} label={item.label} percent={item.loadPercent} observedMs={item.observedMs} kind={item.lane} />)}</div>
       </div>
       <div className="statistics-chart-card">
         <header><span>ДИНАМИКА</span><h3>Средняя загрузка ячейки</h3></header>
@@ -224,6 +242,7 @@ function SummaryBody({ summary, operatorMode }: { summary: StatisticsSummary; op
         </div>
       </div>
     </section>
+    <AlarmDetailsDialog summary={summary} open={alarmDetailsOpen} onOpenChange={setAlarmDetailsOpen} />
   </>;
 }
 
@@ -312,8 +331,8 @@ export function StatisticsPanel({ user, onClose }: { user: AppUser; onClose: () 
             : displayedSummary && operatorShiftSummary && operatorAllSummary && <OperatorSummaryBody summary={displayedSummary} shiftSummary={operatorShiftSummary} allSummary={operatorAllSummary} />}
       {admin && selectedUser === 'all' && operatorRows.length > 0 && <section className="statistics-operator-table">
         <header><span>ОПЕРАТОРЫ</span><h3>Показатели за выбранный период</h3></header>
-        <div className="statistics-table-head"><span>Оператор</span><span>Время</span><span>Средняя загрузка</span><span>Аварии</span><span>Предупреждения</span><span>Команды</span></div>
-        {operatorRows.map(({ user: item, summary: row }) => <article key={item.id}><span><Icon icon={personOutlineIcon} aria-hidden="true" /><b>{item.displayName}</b><small>@{item.username}</small></span><span>{formatDuration(row.responsibilityMs)}</span><span>{(row.equipment.reduce((sum, equipment) => sum + equipment.loadPercent, 0) / 4).toFixed(1)}%</span><span>{row.alarmsActivated}</span><span>{row.warningsActivated}</span><span>{row.commandsAccepted}</span></article>)}
+        <div className="statistics-table-head"><span>Оператор</span><span>Время</span><span>Средняя загрузка</span><span>Выпущено</span><span>Аварии</span><span>Команды</span></div>
+        {operatorRows.map(({ user: item, summary: row }) => <article key={item.id}><span><Icon icon={personOutlineIcon} aria-hidden="true" /><b>{item.displayName}</b><small>@{item.username}</small></span><span>{formatDuration(row.responsibilityMs)}</span><span>{row.coverageMs > 0 ? `${(row.equipment.reduce((sum, equipment) => sum + equipment.loadPercent, 0) / 4).toFixed(1)}%` : '—'}</span><span>{row.producedParts}</span><span>{row.alarmsActivated}</span><span>{row.commandsAccepted}</span></article>)}
       </section>}
     </div>
   </section>;

@@ -51,7 +51,6 @@ VAR
 	xMagazine2Available  : BOOL;
 	xAlternateMagazineAvailable : BOOL; // Второй магазин готов принять непрерывный автоматический цикл
 	xAnyMachineBusy      : BOOL; // Хотя бы один станок обслуживается
-	xAnyMachineCriticalError : BOOL; // Критическая ошибка любого станка немедленно останавливает цикл
 	xMachineServiceStarted : BOOL; // Выбранный станок вошёл в рецепт
 	xReselectAfterRobotRelease : BOOL; // После снятия команды требуется повторный выбор
 	xChangePrepared      : BOOL; // Для CHANGE зафиксированы совместимый станок и два корректных слота
@@ -151,8 +150,9 @@ xMagazine2Available := astMagazineStatus[2].xEnabled
 	AND NOT astMagazineStatus[2].xDisablePending
 	AND NOT astMagazineStatus[2].xFinished;
 
-// После полной выработки активного магазина автомат не требует нового Start.
-// Переключение выполняется только когда робот и старый магазин уже освобождены.
+// После полной выработки или операторского запроса отключения активного магазина
+// автомат не требует нового Start. Переключение выполняется только когда робот
+// и старый магазин уже освобождены.
 xAlternateMagazineAvailable := FALSE;
 IF uiActiveMagazine = UINT#1 THEN
 	xAlternateMagazineAvailable := xMagazine2Available;
@@ -162,14 +162,28 @@ END_IF;
 IF xRunning
 AND (uiActiveMagazine >= UINT#1)
 AND (uiActiveMagazine <= UINT#2) THEN
-	IF astMagazineStatus[uiActiveMagazine].xFinished
+	// Операторское отключение активного магазина передаёт владение второму
+	// только на границе операций. Фактический груз FB_ROBOT при этом остаётся
+	// источником истины и будет уложен уже в выбранный магазин.
+	IF (astMagazineStatus[uiActiveMagazine].xFinished
+		OR (astMagazineStatus[uiActiveMagazine].xDisablePending
+			AND ((eState = E_CELL_MANAGER_STATE.PLAN_TARGET)
+				OR (eState = E_CELL_MANAGER_STATE.WAIT_TARGET)
+				OR (eState = E_CELL_MANAGER_STATE.SELECT_FALLBACK)
+				OR (eState = E_CELL_MANAGER_STATE.WAIT_MAGAZINE))))
 	AND NOT astMagazineStatus[uiActiveMagazine].xBusy
-	AND NOT stRobotStatus.xBusy
-	AND xAlternateMagazineAvailable THEN
-		IF uiActiveMagazine = UINT#1 THEN
-			uiActiveMagazine := UINT#2;
+	AND NOT stRobotStatus.xBusy THEN
+		IF xAlternateMagazineAvailable THEN
+			IF uiActiveMagazine = UINT#1 THEN
+				uiActiveMagazine := UINT#2;
+			ELSE
+				uiActiveMagazine := UINT#1;
+			END_IF;
 		ELSE
-			uiActiveMagazine := UINT#1;
+			// Без готовой замены старый код навечно оставлял магазин владельцем:
+			// FB_MAGAZINE видел xRobotOwnsMagazine и не мог завершить Disable.
+			// Освобождаем владение и ждём готовый магазин, не останавливая ячейку.
+			uiActiveMagazine := UINT#0;
 		END_IF;
 		eMagazineOperation := E_MAGAZINE_OPERATION.NONE;
 		eMachineOperation := E_MACHINE_OPERATION.NONE;
@@ -178,7 +192,11 @@ AND (uiActiveMagazine <= UINT#2) THEN
 		iTakeSlot := SINT#0;
 		iPutSlot := SINT#0;
 		iTakeOriginSlot := SINT#0;
-		eState := E_CELL_MANAGER_STATE.PLAN_TARGET;
+		IF uiActiveMagazine = UINT#0 THEN
+			eState := E_CELL_MANAGER_STATE.WAIT_MAGAZINE;
+		ELSE
+			eState := E_CELL_MANAGER_STATE.PLAN_TARGET;
+		END_IF;
 	END_IF;
 END_IF;
 
@@ -292,13 +310,9 @@ END_FOR;
 
 uiReadyMachines := UINT#0;
 xAnyMachineBusy := FALSE;
-xAnyMachineCriticalError := FALSE;
 FOR uiMachine := FIRST_MACHINE TO LAST_MACHINE DO
 	IF astMachineStatus[uiMachine].xBusy THEN
 		xAnyMachineBusy := TRUE;
-	END_IF;
-	IF astMachineStatus[uiMachine].xCriticalError THEN
-		xAnyMachineCriticalError := TRUE;
 	END_IF;
 	IF IsMachineEligible(uiMachine := uiMachine) THEN
 		uiReadyMachines := uiReadyMachines + UINT#1;
@@ -535,18 +549,6 @@ IF xRunning AND stRobotStatus.xError THEN
 	xSafetyHomeRequired := TRUE;
 	xStoppedPoseValid := FALSE;
 	Error.dwErrorActive := Error.dwErrorActive OR ERR_ROBOT;
-	eState := E_CELL_MANAGER_STATE.ERROR;
-END_IF;
-
-// Критическая ошибка станка останавливает весь текущий маршрут независимо от
-// того, какой блок в этот момент владеет роботом. Это исключает продолжение
-// магазинной операции после аварии двери/патрона обслуживаемого станка.
-IF xRunning
-AND xAnyMachineCriticalError
-AND (eState <> E_CELL_MANAGER_STATE.ERROR) THEN
-	xSafetyHomeRequired := TRUE;
-	xStoppedPoseValid := FALSE;
-	Error.dwErrorActive := Error.dwErrorActive OR ERR_MACHINE;
 	eState := E_CELL_MANAGER_STATE.ERROR;
 END_IF;
 
@@ -884,10 +886,16 @@ CASE eState OF
 		END_IF;
 
 		IF stMagazineStatus.xError THEN
-			xSafetyHomeRequired := TRUE;
-			xStoppedPoseValid := FALSE;
-			Error.dwErrorActive := Error.dwErrorActive OR ERR_MAGAZINE;
-			eState := E_CELL_MANAGER_STATE.ERROR;
+			Command.stMagazine.xExecute := FALSE;
+			IF stMagazineStatus.xRobotStopRequired THEN
+				xSafetyHomeRequired := TRUE;
+				xStoppedPoseValid := FALSE;
+				Error.dwErrorActive := Error.dwErrorActive OR ERR_MAGAZINE;
+				eState := E_CELL_MANAGER_STATE.ERROR;
+			ELSE
+				xRunning := FALSE;
+				eState := E_CELL_MANAGER_STATE.IDLE;
+			END_IF;
 		ELSIF stRobotStatus.xError THEN
 			Error.dwErrorActive := Error.dwErrorActive OR ERR_ROBOT;
 			eState := E_CELL_MANAGER_STATE.ERROR;
@@ -897,10 +905,15 @@ CASE eState OF
 
 	E_CELL_MANAGER_STATE.RELEASE_MAGAZINE:
 		IF stMagazineStatus.xError THEN
-			xSafetyHomeRequired := TRUE;
-			xStoppedPoseValid := FALSE;
-			Error.dwErrorActive := Error.dwErrorActive OR ERR_MAGAZINE;
-			eState := E_CELL_MANAGER_STATE.ERROR;
+			IF stMagazineStatus.xRobotStopRequired THEN
+				xSafetyHomeRequired := TRUE;
+				xStoppedPoseValid := FALSE;
+				Error.dwErrorActive := Error.dwErrorActive OR ERR_MAGAZINE;
+				eState := E_CELL_MANAGER_STATE.ERROR;
+			ELSE
+				xRunning := FALSE;
+				eState := E_CELL_MANAGER_STATE.IDLE;
+			END_IF;
 		ELSIF NOT stMagazineStatus.xBusy
 		AND NOT stMagazineStatus.xDone THEN
 			CASE eMagazineOperation OF
@@ -1105,17 +1118,10 @@ CASE eState OF
 				eState := E_CELL_MANAGER_STATE.SELECT_FALLBACK;
 			ELSIF astMachineStatus[uiSelectedMachine].xError THEN
 				Command.axMachineExecute[uiSelectedMachine] := FALSE;
-				IF xMachineServiceStarted THEN
-					// Ошибка принадлежит станку. Ячейка штатно останавливает движение,
-					// но не защёлкивает собственный ERR_MACHINE: после ручного вывода
-					// робота цикл может продолжиться без неисправного станка.
-					xSafetyHomeRequired := TRUE;
-					xStoppedPoseValid := FALSE;
-					xStopRequested := TRUE;
-					eState := E_CELL_MANAGER_STATE.MACHINE_FAULT_STOP;
-				ELSE
-					eState := E_CELL_MANAGER_STATE.SELECT_FALLBACK;
-				END_IF;
+				xMachineServiceStarted := FALSE;
+				// ROBOT_STOP уже публикует сам станок и обрабатывает FB_ROBOT.
+				// Локальная ошибка без робота просто исключает станок из маршрута.
+				eState := E_CELL_MANAGER_STATE.SELECT_FALLBACK;
 			ELSIF stRobotStatus.xError THEN
 				Error.dwErrorActive := Error.dwErrorActive OR ERR_ROBOT;
 				eState := E_CELL_MANAGER_STATE.ERROR;
@@ -1198,8 +1204,13 @@ CASE eState OF
 			xRunning := FALSE;
 			eState := E_CELL_MANAGER_STATE.IDLE;
 		ELSIF stMagazineStatus.xError THEN
-			Error.dwErrorActive := Error.dwErrorActive OR ERR_MAGAZINE;
-			eState := E_CELL_MANAGER_STATE.ERROR;
+			IF stMagazineStatus.xRobotStopRequired THEN
+				Error.dwErrorActive := Error.dwErrorActive OR ERR_MAGAZINE;
+				eState := E_CELL_MANAGER_STATE.ERROR;
+			ELSE
+				xRunning := FALSE;
+				eState := E_CELL_MANAGER_STATE.IDLE;
+			END_IF;
 		ELSIF stRobotStatus.xBlankAvailable THEN
 			IF (uiBlankPayloadType < UINT#1)
 			OR (uiBlankPayloadType > Config.uiTypeCount) THEN

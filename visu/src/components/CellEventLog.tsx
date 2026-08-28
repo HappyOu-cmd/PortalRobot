@@ -3,7 +3,7 @@ import {
   Activity, AlertCircle, CheckCircle2, Filter, LoaderCircle, Pause, Play,
   RefreshCw, Search, SlidersHorizontal, UserRound, X,
 } from 'lucide-react';
-import type { CellLogActor, CellLogEvent } from '../plc/client';
+import { formatAlarmJournalMessage, type CellLogActor, type CellLogEvent } from '../plc/client';
 
 const SOURCES = [
   [1, 'Станок 1'], [2, 'Станок 2'], [3, 'Станок 3'], [4, 'Магазин'],
@@ -15,6 +15,8 @@ const STATUS_LABELS: Record<string, string> = {
   completed: 'Завершено', active: 'Активно', restored: 'Восстановлено', stopped: 'Остановлено',
   rejected: 'Отклонено', error: 'Ошибка', lost: 'Потеряно', warning: 'Предупреждение',
 };
+const eventMessage = (event: CellLogEvent) =>
+  formatAlarmJournalMessage(event.eventType, event.status, event.code) ?? event.message;
 
 const CATEGORY_TYPES: Record<string, string[]> = {
   cycle: ['cell-cycle'],
@@ -33,9 +35,22 @@ const STATE_STATUSES: Record<string, string[]> = {
   changed: ['changed'],
 };
 
+const LEVEL_LABELS: Record<string, string> = {
+  info: 'Информация', warning: 'Предупреждения', error: 'Ошибки',
+};
+
+const CATEGORY_LABELS: Record<string, string> = {
+  cycle: 'Цикл ячейки', equipment: 'Механизмы станков', robot: 'Робот',
+  product: 'Изделия и магазин', connection: 'Связь', operator: 'Действия оператора', alarm: 'Аварии',
+};
+
+const STATE_FILTER_LABELS: Record<string, string> = {
+  active: 'Активные и начатые', completed: 'Завершённые', rejected: 'Ошибки и отклонения', changed: 'Изменения',
+};
+
 const PAGE_SIZE = 150;
-const TABLE_HEADER_HEIGHT = 37;
-const EVENT_ROW_HEIGHT = 58;
+const TABLE_HEADER_HEIGHT = 44;
+const EVENT_ROW_HEIGHT = 70;
 const EVENT_ROW_OVERSCAN = 8;
 
 interface CellEventPage {
@@ -93,6 +108,7 @@ export function CellEventLog({ liveEvent, online, onClose, className }: {
   const [operationId, setOperationId] = useState('');
   const [commandSeq, setCommandSeq] = useState('');
   const [code, setCode] = useState('');
+  const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const [events, setEvents] = useState<CellLogEvent[]>([]);
   const [total, setTotal] = useState(0);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -231,7 +247,7 @@ export function CellEventLog({ liveEvent, online, onClose, className }: {
     if (commandSeq.trim() && String(event.commandSeq ?? '') !== commandSeq.trim()) return false;
     if (code.trim() && String(event.code ?? '') !== code.trim()) return false;
     if (debouncedText) {
-      const haystack = `${event.message} ${event.eventType} ${event.code ?? ''} ${event.operationId ?? ''} ${event.requestId ?? ''}`.toLocaleLowerCase('ru-RU');
+      const haystack = `${eventMessage(event)} ${event.eventType} ${event.code ?? ''} ${event.operationId ?? ''} ${event.requestId ?? ''}`.toLocaleLowerCase('ru-RU');
       if (!haystack.includes(debouncedText.toLocaleLowerCase('ru-RU'))) return false;
     }
     return true;
@@ -277,6 +293,54 @@ export function CellEventLog({ liveEvent, online, onClose, className }: {
     refresh();
   };
 
+  const activeFilters = useMemo(() => {
+    const selectedActor = actors.find((actor) => String(actor.id) === actorFilter);
+    const selectedSources = SOURCES.filter(([id]) => sourceFilters.includes(id)).map(([, label]) => label);
+    return [
+      actorFilter !== 'all' && { key: 'actor', label: `Аккаунт: ${selectedActor?.displayName ?? actorFilter}` },
+      level !== 'all' && { key: 'level', label: `Уровень: ${LEVEL_LABELS[level]}` },
+      category !== 'all' && { key: 'category', label: `Категория: ${CATEGORY_LABELS[category]}` },
+      stateFilter !== 'all' && { key: 'state', label: `Состояние: ${STATE_FILTER_LABELS[stateFilter]}` },
+      sourceFilters.length > 0 && { key: 'sources', label: selectedSources.length > 2 ? `Источники: ${selectedSources.length}` : `Источники: ${selectedSources.join(', ')}` },
+      order !== 'desc' && { key: 'order', label: 'Сначала старые' },
+      operationId.trim() && { key: 'operation', label: `Операция: ${operationId.trim()}` },
+      commandSeq.trim() && { key: 'command', label: `CommandSeq: ${commandSeq.trim()}` },
+      code.trim() && { key: 'code', label: `Код: ${code.trim()}` },
+    ].filter(Boolean) as Array<{ key: string; label: string }>;
+  }, [actorFilter, actors, category, code, commandSeq, level, operationId, order, sourceFilters, stateFilter]);
+
+  const clearAllFilters = () => {
+    setSourceFilters([]);
+    setActorFilter('all');
+    setPeriod('8');
+    setLevel('all');
+    setCategory('all');
+    setStateFilter('all');
+    setOrder('desc');
+    setOperationId('');
+    setCommandSeq('');
+    setCode('');
+  };
+  const clearActiveFilter = (key: string) => {
+    if (key === 'actor') setActorFilter('all');
+    if (key === 'level') setLevel('all');
+    if (key === 'category') setCategory('all');
+    if (key === 'state') setStateFilter('all');
+    if (key === 'sources') setSourceFilters([]);
+    if (key === 'order') setOrder('desc');
+    if (key === 'operation') setOperationId('');
+    if (key === 'command') setCommandSeq('');
+    if (key === 'code') setCode('');
+  };
+  const selectPeriod = (value: string) => {
+    if (value === 'custom' && period !== 'custom') {
+      const timestamp = Date.now();
+      setCustomFrom(dateTimeInputValue(timestamp - 8 * 3_600_000));
+      setCustomTo(dateTimeInputValue(timestamp));
+    }
+    setPeriod(value);
+  };
+
   return <section className={`cell-event-panel ${className ?? ''}`} aria-label="Журнал работы ячейки">
     <header className="cell-event-heading">
       <div><h2>Журнал работы ячейки</h2><p>Серверная выборка событий оборудования, действий оператора, аварий и связи</p></div>
@@ -285,56 +349,48 @@ export function CellEventLog({ liveEvent, online, onClose, className }: {
 
     <div className="cell-event-toolbar">
       <label className="cell-event-search"><Search /><input value={textFilter} onChange={(event) => setTextFilter(event.target.value)} placeholder="Поиск по событию, ID операции, коду…" /></label>
-      <select value={actorFilter} onChange={(event) => setActorFilter(event.target.value)} aria-label="Фильтр по аккаунту">
-        <option value="all">Все аккаунты</option>
-        {actors.map((actor) => <option value={actor.id} key={actor.id}>{actor.displayName} (@{actor.username})</option>)}
-      </select>
-      <select value={period} onChange={(event) => setPeriod(event.target.value)} aria-label="Период журнала">
+      <select value={period} onChange={(event) => selectPeriod(event.target.value)} aria-label="Период журнала">
         <option value="1">Последний час</option><option value="8">Последние 8 часов</option>
         <option value="24">Последние сутки</option><option value="168">Последние 7 дней</option>
         <option value="custom">Произвольный период</option><option value="all">Вся история</option>
       </select>
-      <select value={level} onChange={(event) => setLevel(event.target.value)} aria-label="Уровень события">
-        <option value="all">Все уровни</option><option value="info">Информация</option>
-        <option value="warning">Предупреждения</option><option value="error">Ошибки</option>
-      </select>
-      <select value={category} onChange={(event) => setCategory(event.target.value)} aria-label="Категория события">
-        <option value="all">Все категории</option><option value="cycle">Цикл ячейки</option>
-        <option value="equipment">Механизмы станков</option><option value="robot">Робот</option>
-        <option value="product">Изделия и магазин</option><option value="connection">Связь</option>
-        <option value="operator">Действия оператора</option><option value="alarm">Аварии</option>
-      </select>
-      <select value={stateFilter} onChange={(event) => setStateFilter(event.target.value)} aria-label="Состояние события">
-        <option value="all">Все состояния</option><option value="active">Активные и начатые</option>
-        <option value="completed">Завершённые и восстановленные</option><option value="rejected">Ошибки и отклонения</option>
-        <option value="changed">Изменения</option>
-      </select>
-      <select value={order} onChange={(event) => setOrder(event.target.value as 'desc' | 'asc')} aria-label="Порядок событий">
-        <option value="desc">Сначала новые</option><option value="asc">Сначала старые</option>
-      </select>
+      <button type="button" className={`cell-event-filter-trigger${filterPanelOpen ? ' open' : ''}`} onClick={() => setFilterPanelOpen((current) => !current)} aria-expanded={filterPanelOpen} aria-controls="cell-event-filter-panel"><SlidersHorizontal />Фильтры{activeFilters.length > 0 && <b>{activeFilters.length}</b>}</button>
+      {activeFilters.length > 0 && <button type="button" className="cell-event-clear-filters" onClick={clearAllFilters}>Сбросить</button>}
       <button type="button" className={live ? 'active live' : ''} onClick={toggleLive}>{live ? <Pause /> : <Play />}{live ? 'Пауза' : `Продолжить${pendingLive ? ` · ${pendingLive}` : ''}`}</button>
       <button type="button" onClick={refresh}><RefreshCw />Обновить</button>
       <span><Filter />Загружено {events.length} из {total}</span>
     </div>
 
-    {period === 'custom' && <div className="cell-event-custom-period">
+    {period === 'custom' && <div className="cell-event-custom-period" aria-label="Произвольный период журнала">
+      <strong>Произвольный период</strong>
       <label><span>От</span><input type="datetime-local" value={customFrom} onChange={(event) => setCustomFrom(event.target.value)} /></label>
       <label><span>До</span><input type="datetime-local" value={customTo} onChange={(event) => setCustomTo(event.target.value)} /></label>
     </div>}
 
-    <details className="cell-event-advanced-filter">
-      <summary><SlidersHorizontal />Точные фильтры</summary>
-      <div>
-        <label><span>ID операции</span><input value={operationId} onChange={(event) => setOperationId(event.target.value)} placeholder="cycle-…" /></label>
-        <label><span>CommandSeq</span><input inputMode="numeric" value={commandSeq} onChange={(event) => setCommandSeq(event.target.value.replace(/\D/g, ''))} placeholder="42" /></label>
-        <label><span>Код события</span><input value={code} onChange={(event) => setCode(event.target.value)} placeholder="0" /></label>
-      </div>
-    </details>
+    {activeFilters.length > 0 && <div className="cell-event-active-filters" aria-label="Активные фильтры">
+      {activeFilters.map((filter) => <button type="button" key={filter.key} onClick={() => clearActiveFilter(filter.key)}>{filter.label}<X /></button>)}
+    </div>}
 
-    <div className="cell-event-source-filter" role="group" aria-label="Фильтр принадлежности событий">
-      <button type="button" className={sourceFilters.length === 0 ? 'active' : ''} onClick={() => setSourceFilters([])}>Все</button>
-      {SOURCES.map(([id, label]) => <button type="button" className={`${sourceFilters.includes(id) ? 'active ' : ''}${sourceTone(id)}`.trim()} key={id} onClick={() => toggleSource(id)}><i />{id}. {label}</button>)}
-    </div>
+    {filterPanelOpen && <>
+      <button className="cell-event-filter-scrim" type="button" aria-label="Закрыть фильтры" onClick={() => setFilterPanelOpen(false)} />
+      <aside className="cell-event-filter-panel" id="cell-event-filter-panel" aria-label="Фильтры журнала">
+        <header><div><span>Параметры выборки</span><h3>Фильтры</h3></div><button type="button" onClick={() => setFilterPanelOpen(false)} aria-label="Закрыть фильтры"><X /></button></header>
+        <div className="cell-event-filter-content">
+          <section><h4>События</h4>
+            <label><span>Уровень</span><select value={level} onChange={(event) => setLevel(event.target.value)} aria-label="Уровень события"><option value="all">Все уровни</option><option value="info">Информация</option><option value="warning">Предупреждения</option><option value="error">Ошибки</option></select></label>
+            <label><span>Категория</span><select value={category} onChange={(event) => setCategory(event.target.value)} aria-label="Категория события"><option value="all">Все категории</option><option value="cycle">Цикл ячейки</option><option value="equipment">Механизмы станков</option><option value="robot">Робот</option><option value="product">Изделия и магазин</option><option value="connection">Связь</option><option value="operator">Действия оператора</option><option value="alarm">Аварии</option></select></label>
+            <label><span>Состояние</span><select value={stateFilter} onChange={(event) => setStateFilter(event.target.value)} aria-label="Состояние события"><option value="all">Все состояния</option><option value="active">Активные и начатые</option><option value="completed">Завершённые и восстановленные</option><option value="rejected">Ошибки и отклонения</option><option value="changed">Изменения</option></select></label>
+          </section>
+          <section><h4>Принадлежность</h4><div className="cell-event-source-filter" role="group" aria-label="Фильтр принадлежности событий"><button type="button" className={sourceFilters.length === 0 ? 'active' : ''} onClick={() => setSourceFilters([])}>Все источники</button>{SOURCES.map(([id, label]) => <button type="button" className={`${sourceFilters.includes(id) ? 'active ' : ''}${sourceTone(id)}`.trim()} key={id} onClick={() => toggleSource(id)}><i />{id}. {label}</button>)}</div></section>
+          <section><h4>Контекст и порядок</h4>
+            <label><span>Аккаунт</span><select value={actorFilter} onChange={(event) => setActorFilter(event.target.value)} aria-label="Фильтр по аккаунту"><option value="all">Все аккаунты</option>{actors.map((actor) => <option value={actor.id} key={actor.id}>{actor.displayName} (@{actor.username})</option>)}</select></label>
+            <label><span>Порядок</span><select value={order} onChange={(event) => setOrder(event.target.value as 'desc' | 'asc')} aria-label="Порядок событий"><option value="desc">Сначала новые</option><option value="asc">Сначала старые</option></select></label>
+          </section>
+          <details className="cell-event-advanced-filter"><summary>Точные фильтры</summary><div><label><span>ID операции</span><input value={operationId} onChange={(event) => setOperationId(event.target.value)} placeholder="cycle-…" /></label><label><span>CommandSeq</span><input inputMode="numeric" value={commandSeq} onChange={(event) => setCommandSeq(event.target.value.replace(/\D/g, ''))} placeholder="42" /></label><label><span>Код события</span><input value={code} onChange={(event) => setCode(event.target.value)} placeholder="0" /></label></div></details>
+        </div>
+        <footer><button type="button" onClick={clearAllFilters}>Сбросить всё</button><button type="button" className="primary" onClick={() => setFilterPanelOpen(false)}>Показать {total || 'события'}</button></footer>
+      </aside>
+    </>}
 
     <div className="cell-event-table" ref={tableRef} role="region" aria-label="Хронология работы ячейки" tabIndex={0} onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}>
       <div className="cell-event-table-head"><span>ID</span><span>Время</span><span>Принадлежность</span><span>Событие</span><span>Статус</span><span>Связь</span></div>
@@ -344,11 +400,12 @@ export function CellEventLog({ liveEvent, online, onClose, className }: {
             : <div className="cell-event-virtual-space" style={{ height: events.length * EVENT_ROW_HEIGHT + (nextCursor ? 42 : 0) }}>
               {visibleEvents.map((event, offset) => {
                 const index = firstVisible + offset;
+                const message = eventMessage(event);
                 return <article className={`cell-event-row ${sourceTone(event.sourceId)} status-${event.status}`} key={event.id} style={{ transform: `translateY(${index * EVENT_ROW_HEIGHT}px)` }}>
                   <span className="cell-event-id">#{event.id}</span>
                   <span className="cell-event-time"><b>{formatTime(event.timestampMs)}</b><small>{formatDate(event.timestampMs)}</small></span>
                   <span className="cell-event-source"><i />{event.sourceId}. {event.source}</span>
-                  <span className="cell-event-message"><b>{event.message}</b><small>{event.eventType}{event.code ? ` · код ${event.code}` : ''}</small></span>
+                  <span className="cell-event-message"><b>{message}</b><small>{event.eventType}{event.code ? ` · код ${event.code}` : ''}</small></span>
                   <span className="cell-event-status">{['active', 'error', 'rejected', 'lost'].includes(event.status) ? <AlertCircle /> : <Activity />}{STATUS_LABELS[event.status] ?? event.status}</span>
                   <span className="cell-event-links">{event.actor && <small className="cell-event-actor"><UserRound />{event.actor.displayName} <b>@{event.actor.username}</b></small>}{event.operationId && <small>Операция <b>{event.operationId}</b></small>}{event.commandSeq !== null && <small>CommandSeq <b>{event.commandSeq}</b></small>}{event.requestId && <small>Request <b>{event.requestId.slice(0, 8)}</b></small>}</span>
                 </article>;

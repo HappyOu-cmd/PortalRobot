@@ -35,17 +35,20 @@ FOR uiIndex := 1 TO 16 DO
 	UpdateSource(
 		eSource := Sources[uiIndex].eSource,
 		dwCurrent := Sources[uiIndex].dwAlarmActive,
+		xRobotStopRequired := Sources[uiIndex].xRobotStopRequired,
+		xGlobalError := Sources[uiIndex].xGlobalError,
 		dwPrevious := adwPreviousAlarm[uiIndex]
 	);
 
 	IF Sources[uiIndex].stWarning.udiSequence <> audiPreviousWarning[uiIndex] THEN
 		IF (Sources[uiIndex].stWarning.udiSequence <> UDINT#0)
 		AND (Sources[uiIndex].stWarning.uiCode <> UINT#0) THEN
-			AddEvent(
-				eSource := Sources[uiIndex].eSource,
-				eSeverity := E_ALARM_SEVERITY.WARNING,
-				uiCode := Sources[uiIndex].stWarning.uiCode
-			);
+		AddEvent(
+			eSource := Sources[uiIndex].eSource,
+			eSeverity := E_ALARM_SEVERITY.WARNING,
+			eEffect := E_ALARM_EFFECT.WARNING,
+			uiCode := Sources[uiIndex].stWarning.uiCode
+		);
 		END_IF;
 		audiPreviousWarning[uiIndex] := Sources[uiIndex].stWarning.udiSequence;
 	END_IF;

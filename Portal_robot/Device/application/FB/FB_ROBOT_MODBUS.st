@@ -199,9 +199,35 @@ CASE eState OF
 			eState := E_ROBOT_MODBUS_CLIENT_STATE.RECONNECT_WAIT;
 		ELSIF xStopPending THEN
 			// Stop always preempts Reset and normal commands.
+			// Execute снимается сразу: после принятого CommandSeq это не отменяет
+			// команду, зато позволяет роботу выйти из DONE/ERROR/STOPPED в IDLE.
+			// Без этого уже завершённая дискретная команда навечно удерживала
+			// Execute=1, а xControlClearPending ждал недостижимый IDLE.
+			auiWriteRegisters[0] := UINT#0;
+			auiWriteRegisters[1] := UINT#0;
 			auiWriteRegisters[2] := UINT#1;
 			auiWriteRegisters[3] := UINT#0;
+			auiWriteRegisters[4] := UINT#0;
+			auiWriteRegisters[5] := UINT#0;
+			auiWriteRegisters[6] := UINT#0;
 			xStopPending := FALSE;
+			xResetPending := FALSE;
+			xControlClearPending := TRUE;
+			xWritePending := TRUE;
+		ELSIF xResetPending THEN
+			// Reset обязан прервать незавершённую очистку Stop. Иначе
+			// xControlClearPending имеет приоритет и защёлкнутый Reset никогда
+			// не попадает в регистр 1004.
+			auiWriteRegisters[0] := UINT#0;
+			auiWriteRegisters[1] := UINT#0;
+			auiWriteRegisters[2] := UINT#0;
+			auiWriteRegisters[3] := UINT#1;
+			auiWriteRegisters[4] := UINT#0;
+			auiWriteRegisters[5] := UINT#0;
+			auiWriteRegisters[6] := UINT#0;
+			xCommandActive := FALSE;
+			uiActiveSeq := UINT#0;
+			xCommandArmed := FALSE;
 			xResetPending := FALSE;
 			xControlClearPending := TRUE;
 			xWritePending := TRUE;
@@ -217,25 +243,15 @@ CASE eState OF
 					TO_UINT(E_ROBOT_MODBUS_EXECUTION_STATE.IDLE))) THEN
 				auiWriteRegisters[2] := UINT#0;
 				auiWriteRegisters[3] := UINT#0;
+				xCommandActive := FALSE;
+				uiActiveSeq := UINT#0;
+				// Верхний FB удерживает Execute до появления Busy. Поэтому после
+				// подтверждённой очистки принимаем уже удерживаемую новую команду,
+				// а не требуем ещё одного фронта от HMI.
+				xCommandArmed := TRUE;
 				xControlClearPending := FALSE;
 				xWritePending := TRUE;
 			END_IF;
-		ELSIF xResetPending THEN
-			// Reset допустим только после снятия Execute/Stop. Предыдущая аварийная
-			// транзакция больше не активна; CommandSeq сохраняется для диагностики.
-			auiWriteRegisters[0] := UINT#0;
-			auiWriteRegisters[1] := UINT#0;
-			auiWriteRegisters[2] := UINT#0;
-			auiWriteRegisters[3] := UINT#1;
-			auiWriteRegisters[4] := UINT#0;
-			auiWriteRegisters[5] := UINT#0;
-			auiWriteRegisters[6] := UINT#0;
-			xCommandActive := FALSE;
-			uiActiveSeq := UINT#0;
-			xCommandArmed := NOT Command.xExecute;
-			xResetPending := FALSE;
-			xControlClearPending := TRUE;
-			xWritePending := TRUE;
 		ELSIF Command.xExecute AND xCommandArmed AND NOT xCommandActive THEN
 			uiCommandCode := UINT#0;
 			CASE Command.eAction OF

@@ -14,6 +14,7 @@ STRUCT
 	COMMAND_ABORTED      : BOOL; // Команда движения была прервана
 	UNKNOWN_AXIS_ERROR   : BOOL; // Неизвестная ошибка оси
 	DRIVE_AXIS_ERROR     : BOOL; // Ошибка привода оси
+	POWER_FEEDBACK_LOST  : BOOL; // Потеря силовой готовности при активной команде питания
 	POWER_PERMIT_LOST    : BOOL; // Потеря разрешения питания
 	GLOBAL_DURING_POWER  : BOOL; // Глобальная ошибка при включении
 	GLOBAL_DURING_READY  : BOOL; // Глобальная ошибка в готовности

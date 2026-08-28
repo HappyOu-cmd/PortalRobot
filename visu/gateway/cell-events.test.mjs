@@ -115,9 +115,12 @@ test('records alarm activation and restoration with duration', () => {
   const activated = classifier.process(activeSnapshot, 2_000);
   assert.equal(activated[0].sourceId, 7);
   assert.equal(activated[0].status, 'active');
+  assert.equal(activated[0].message, 'Авария: Станок 1 — Не удалось закрыть дверь');
+  assert.equal(activated[0].details.effect, 'EQUIPMENT_STOP');
 
   const restored = classifier.process({ ...activeSnapshot, 'astAlarmEvent[1].xActive': false }, 5_000);
   assert.equal(restored[0].status, 'restored');
+  assert.equal(restored[0].message, 'Авария устранена: Станок 1 — Не удалось закрыть дверь');
   assert.equal(restored[0].details.durationMs, 3_000);
 });
 

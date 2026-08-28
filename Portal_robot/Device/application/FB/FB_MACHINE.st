@@ -66,6 +66,9 @@ VAR
 	tExpectedCycle          : TIME; // Ожидаемое время текущего цикла
 	xRetreatStarted         : BOOL; // Начат отход робота от станка
 	xRobotInsideMachine     : BOOL; // Робот находится внутри рабочей зоны
+	xFaultContextCaptured   : BOOL; // Контекст робота зафиксирован при входе в ERROR
+	xRobotInsideAtFault     : BOOL; // Робот был в зоне станка при возникновении ошибки
+	xRobotStopRequired      : BOOL; // Итоговая реакция ROBOT_STOP, сформированная станком
 	xRobotResetDependencyReady : BOOL; // Каскадная ошибка робота может быть сброшена тем же импульсом
 	xRobotDone              : BOOL; // Робот освобождён алгоритмом станка
 	xServiceDoorCloseDemand : BOOL; // Внутренний запрос закрытия двери
@@ -80,21 +83,21 @@ VAR
 END_VAR
 
 VAR CONSTANT
-	ERR_WRONG_OPERATION     : DWORD := 1;   	// Приводит к глоабльной ошибке 
-    ERR_WRONG_COMMAND       : DWORD := 2;   	// Приводит к глобальной ошибке
-    ERR_ROBOT_MOTION        : DWORD := 4;   	// Приводит к глобальной ошибке (Другой блок не создаём новую ошибку)
-    ERR_ROBOT_ACTION        : DWORD := 8;   	// Приводит к глобальной ошибке (Другой блок не создаём новую ошибку)
-    ERR_DOOR_OPEN  			: DWORD := 16;  	// Не приводит к глобальной ошибке, уезжаем в другой станок
-	ERR_DOOR_CLOSE 			: DWORD := 32;  	// Не приводит к глобальной ошибке, уезжаем в другой станок
-	ERR_CHUCK_OPEN 			: DWORD := 64;  	// Приводит к глобальной ошибке
-	ERR_CHUCK_CLOSE 		: DWORD := 128; 	// Приводит к глобальной ошибке 
-	ERR_CYCLE_START			: DWORD := 256;     // Не приводит к глобальной ошибке
-	ERR_SAFETY_STOP         : DWORD := 512;		// Глобальная ошибка из вне (Другой блок не создаём новую ошибку)
-	ERR_UNKNOWN_DETAIL      : DWORD := 1024;    // Приводит к глобальной ошибке
-	ERR_MACHINE_ALARM       : DWORD := 2048;    // Приводит к глобальной ошибке
-	ERR_INDEX               : DWORD := 4096;    // Приводит к глобальной ошибке
-	ERR_DOOR_ROBOT          : DWORD := 8192;    // Приводит к глобальной ошибке
-	ERR_MACHINE_IDLE        : DWORD := 16384;   // Не приводит к глобальной ошибке
+	ERR_WRONG_OPERATION     : DWORD := 1;       // Выбрана неподдерживаемая операция
+	ERR_WRONG_COMMAND       : DWORD := 2;       // В рецепте встретился неподдерживаемый шаг
+	ERR_ROBOT_MOTION        : DWORD := 4;       // Робот перешёл в ошибку при движении
+	ERR_ROBOT_ACTION        : DWORD := 8;       // Робот перешёл в ошибку при действии захвата
+	ERR_DOOR_OPEN           : DWORD := 16;      // Авария станка при открытии двери
+	ERR_DOOR_CLOSE          : DWORD := 32;      // Авария станка при закрытии двери
+	ERR_CHUCK_OPEN          : DWORD := 64;      // Авария станка при разжиме патрона
+	ERR_CHUCK_CLOSE         : DWORD := 128;     // Авария станка при зажиме патрона
+	ERR_CYCLE_START         : DWORD := 256;     // Авария станка при запуске цикла
+	ERR_SAFETY_STOP         : DWORD := 512;     // Глобальная ошибка ячейки
+	ERR_UNKNOWN_DETAIL      : DWORD := 1024;    // Неизвестно содержимое патрона
+	ERR_MACHINE_ALARM       : DWORD := 2048;    // Физическая авария станка
+	ERR_INDEX               : DWORD := 4096;    // Индекс рецепта вышел за диапазон
+	ERR_DOOR_ROBOT          : DWORD := 8192;    // Дверь закрывается при роботе в зоне
+	ERR_MACHINE_IDLE        : DWORD := 16384;   // Физическая авария станка в IDLE
 	ERR_TIMEOUT_ROBOT_MOVE    : DWORD := DWORD#16#00008000; // Таймаут перемещения робота
 	ERR_TIMEOUT_ROBOT_ACTION  : DWORD := DWORD#16#00010000; // Таймаут действия захвата
 	ERR_TIMEOUT_ROBOT_RELEASE : DWORD := DWORD#16#00020000; // Таймаут освобождения интерфейса робота
@@ -104,30 +107,32 @@ VAR CONSTANT
 	ERR_TIMEOUT_CHUCK_CLOSE   : DWORD := DWORD#16#00200000; // Таймаут зажима патрона
 	ERR_TIMEOUT_CYCLE_START   : DWORD := DWORD#16#00400000; // Таймаут подтверждения запуска цикла
 
-	// Ошибки, требующие формирования глобальной аварии ячейки.
-	MASK_CRITICAL_ERROR		: DWORD :=
-								ERR_WRONG_OPERATION OR
-								ERR_WRONG_COMMAND OR
-								ERR_CHUCK_OPEN OR
-								ERR_CHUCK_CLOSE OR 
-								ERR_UNKNOWN_DETAIL OR
-								ERR_MACHINE_ALARM OR
-								ERR_INDEX OR
+	// Эти ошибки уже относятся к действию робота и всегда имеют эффект ROBOT_STOP.
+	MASK_ALWAYS_ROBOT_STOP : DWORD :=
+								ERR_ROBOT_MOTION OR
+								ERR_ROBOT_ACTION OR
 								ERR_DOOR_ROBOT OR
 								ERR_TIMEOUT_ROBOT_MOVE OR
 								ERR_TIMEOUT_ROBOT_ACTION OR
-								ERR_TIMEOUT_ROBOT_RELEASE OR
-								ERR_TIMEOUT_CHUCK_OPEN OR
-								ERR_TIMEOUT_CHUCK_CLOSE;
-								
-	// Некритические ошибки конкретного станка.
-	MASK_ALARM_ERROR		: DWORD := 
+								ERR_TIMEOUT_ROBOT_RELEASE;
+
+	// Первичные ошибки станка: EQUIPMENT_STOP без робота и ROBOT_STOP с роботом.
+	MASK_EQUIPMENT_ERROR : DWORD :=
+								ERR_WRONG_OPERATION OR
+								ERR_WRONG_COMMAND OR
 								ERR_DOOR_OPEN OR
 								ERR_DOOR_CLOSE OR
+								ERR_CHUCK_OPEN OR
+								ERR_CHUCK_CLOSE OR
 								ERR_CYCLE_START OR
+								ERR_UNKNOWN_DETAIL OR
+								ERR_MACHINE_ALARM OR
+								ERR_INDEX OR
 								ERR_MACHINE_IDLE OR
 								ERR_TIMEOUT_DOOR_OPEN OR
 								ERR_TIMEOUT_DOOR_CLOSE OR
+								ERR_TIMEOUT_CHUCK_OPEN OR
+								ERR_TIMEOUT_CHUCK_CLOSE OR
 								ERR_TIMEOUT_CYCLE_START;
 								
 	// Ошибки, полученные от других блоков или общей логики ячейки.
@@ -160,15 +165,16 @@ rtSetDetailLoaded(CLK := xHmiSetDetail);
 ftChuckClamped(CLK := stMachineStatus.xChuckClamped);
 
 xRobotInsideMachine := (eState = E_MACHINE_STATE.ROBOT_ACTION)
-	OR (eState = E_MACHINE_STATE.ROBOT_MOVE)
-	OR (eState = E_MACHINE_STATE.RELEASE_ROBOT_ACTION)
+	OR ((eState = E_MACHINE_STATE.ROBOT_MOVE)
+		AND (stRecipe[uiIndex].stPoint <> E_MACHINE_POINTS.ABOVE))
 	OR (stRobotStatus.eCurrentPoint = stPoints.eInside)
 	OR (stRobotStatus.eCurrentPoint = stPoints.eChuck)
 	OR (stRobotStatus.eCurrentPoint = stPoints.eChuckApproach);
 
 xRobotResetDependencyReady := (((Error.dwErrorActive
-		AND (ERR_ROBOT_ACTION OR ERR_ROBOT_MOTION)) = DWORD#0)
-		AND NOT xRobotInsideMachine)
+		AND MASK_ALWAYS_ROBOT_STOP) = DWORD#0)
+		AND (((Error.dwErrorActive AND MASK_EQUIPMENT_ERROR) = DWORD#0)
+			OR NOT xRobotInsideAtFault))
 	OR NOT stRobotStatus.xError
 	OR stRobotStatus.xResetAllowed;
 
@@ -324,6 +330,9 @@ IF xTestInitialize THEN
 	xCycleMeasureValid := FALSE;
 	xRetreatStarted := FALSE;
 	xRobotInsideMachine := FALSE;
+	xFaultContextCaptured := FALSE;
+	xRobotInsideAtFault := FALSE;
+	xRobotStopRequired := FALSE;
 	xRobotDone := FALSE;
 	xServiceDoorCloseDemand := FALSE;
 	xServiceDoorOpenDemand := FALSE;
@@ -420,7 +429,7 @@ AND (eState = E_MACHINE_STATE.DISABLED) THEN
 END_IF;
 
 IF xGlobalError
-AND Status.xBusy THEN
+AND (eState <> E_MACHINE_STATE.DISABLED) THEN
     Error.dwErrorActive := Error.dwErrorActive OR ERR_SAFETY_STOP;
     eState := E_MACHINE_STATE.ERROR;
 END_IF;
@@ -460,7 +469,7 @@ AND (eState <> E_MACHINE_STATE.ERROR) THEN
 END_IF;
 						
 IF xRobotInsideMachine AND NOT tofErrorDoor.Q THEN
-	Command.stRobot.xStop := TRUE;
+	Command.stRobot.xStop := stRobotStatus.xBusy;
 	Error.dwErrorActive := Error.dwErrorActive OR ERR_DOOR_ROBOT;
     eState := E_MACHINE_STATE.ERROR;
 END_IF
@@ -477,31 +486,30 @@ CASE eState OF
 			eState := E_MACHINE_STATE.IDLE;
 			ePartType := E_PART_TYPE.DETAIL;
 		ELSIF rtSetBlankLoaded.Q AND NOT stMachineStatus.xAlarm THEN
-			eState := E_MACHINE_STATE.OPERATOR_CHOICE_DOOR;
 			ePartType := E_PART_TYPE.PART;
+			IF stMachineStatus.xDoorClosed THEN
+				eState := E_MACHINE_STATE.OPERATOR_CHOICE_RUN;
+			ELSE
+				eState := E_MACHINE_STATE.OPERATOR_CHOICE_DOOR;
+			END_IF;
 		ELSIF stMachineStatus.xAlarm THEN
 			Error.dwErrorActive := Error.dwErrorActive OR ERR_MACHINE_ALARM;
     		eState := E_MACHINE_STATE.ERROR;
 		END_IF;
 		
 	E_MACHINE_STATE.OPERATOR_CHOICE_DOOR:
-		IF (eState = E_MACHINE_STATE.DOOR_CLOSE)
-		AND stMachineStatus.xDoorClosed
-		AND NOT stMachineStatus.xAlarm THEN
-			eState := E_MACHINE_STATE.OPERATOR_CHOICE_RUN;
-		ELSIF NOT stMachineStatus.xDoorClosed 
-		AND xHmiAcceptDoor
-		AND NOT stMachineStatus.xAlarm THEN 
-			xOperatorClosingDoor := TRUE; 
-			eState := E_MACHINE_STATE.DOOR_CLOSE;
-		ELSIF NOT stMachineStatus.xDoorClosed
-		AND xHmiRejectDoor
-		AND NOT stMachineStatus.xAlarm THEN  
-			eState := E_MACHINE_STATE.DISABLED;
-		ELSIF (eState = E_MACHINE_STATE.DOOR_CLOSE)
-		AND stMachineStatus.xAlarm THEN
+		// При уже закрытой двери шаг подтверждения закрытия не нужен:
+		// автомат сразу переходит к вопросу о запуске обработки.
+		IF stMachineStatus.xAlarm THEN
 			Error.dwErrorActive := Error.dwErrorActive OR ERR_MACHINE_ALARM;
     		eState := E_MACHINE_STATE.ERROR;
+		ELSIF xHmiRejectDoor THEN
+			eState := E_MACHINE_STATE.DISABLED;
+		ELSIF stMachineStatus.xDoorClosed THEN
+			eState := E_MACHINE_STATE.OPERATOR_CHOICE_RUN;
+		ELSIF xHmiAcceptDoor THEN
+			xOperatorClosingDoor := TRUE;
+			eState := E_MACHINE_STATE.DOOR_CLOSE;
 		END_IF;
 		
 	E_MACHINE_STATE.OPERATOR_CHOICE_RUN:
@@ -614,7 +622,7 @@ CASE eState OF
 			eState := E_MACHINE_STATE.ERROR ;
 			
 		ELSIF stMachineStatus.xAlarm THEN
-			Command.stRobot.xStop := TRUE;
+			Command.stRobot.xStop := stRobotStatus.xBusy;
 			Error.dwErrorActive := Error.dwErrorActive OR ERR_MACHINE_ALARM;
 			eState := E_MACHINE_STATE.ERROR ;
 			
@@ -622,7 +630,7 @@ CASE eState OF
         	eState := E_MACHINE_STATE.RELEASE_ROBOT_ACTION;
 
 		ELSIF tonRobotMoveTimeout.Q THEN
-			Command.stRobot.xStop := TRUE;
+			Command.stRobot.xStop := stRobotStatus.xBusy;
 			Error.dwErrorActive := Error.dwErrorActive OR ERR_TIMEOUT_ROBOT_MOVE;
 			eState := E_MACHINE_STATE.ERROR;
 			
@@ -657,7 +665,7 @@ CASE eState OF
 		
 		IF (eState = E_MACHINE_STATE.ROBOT_ACTION)
 		AND stMachineStatus.xAlarm THEN
-			Command.stRobot.xStop := TRUE;
+			Command.stRobot.xStop := stRobotStatus.xBusy;
 			Error.dwErrorActive := Error.dwErrorActive OR ERR_MACHINE_ALARM;
 			eState := E_MACHINE_STATE.ERROR ;
 	
@@ -668,7 +676,7 @@ CASE eState OF
 
 		ELSIF (eState = E_MACHINE_STATE.ROBOT_ACTION)
 		AND tonRobotActionTimeout.Q THEN
-			Command.stRobot.xStop := TRUE;
+			Command.stRobot.xStop := stRobotStatus.xBusy;
 			Error.dwErrorActive := Error.dwErrorActive OR ERR_TIMEOUT_ROBOT_ACTION;
 			eState := E_MACHINE_STATE.ERROR;
 			
@@ -694,7 +702,7 @@ CASE eState OF
 			eState := E_MACHINE_STATE.ERROR;
 
 		ELSIF tonRobotReleaseTimeout.Q THEN
-			Command.stRobot.xStop := TRUE;
+			Command.stRobot.xStop := stRobotStatus.xBusy;
 			Error.dwErrorActive := Error.dwErrorActive OR ERR_TIMEOUT_ROBOT_RELEASE;
 			eState := E_MACHINE_STATE.ERROR;
     	END_IF;
@@ -845,6 +853,29 @@ CASE eState OF
     	END_IF;
 END_CASE;
 
+// Причина остаётся в своём CASE, а единая реакция рассчитывается один раз.
+// Контекст защёлкивается до сброса, поэтому смена состояния робота его не теряет.
+IF (eState = E_MACHINE_STATE.ERROR) AND NOT xFaultContextCaptured THEN
+	xRobotInsideAtFault := xRobotInsideMachine;
+	xFaultContextCaptured := TRUE;
+ELSIF eState <> E_MACHINE_STATE.ERROR THEN
+	xRobotInsideAtFault := FALSE;
+	xFaultContextCaptured := FALSE;
+END_IF;
+
+xRobotStopRequired := NOT xGlobalError
+	AND (((Error.dwErrorActive AND MASK_ALWAYS_ROBOT_STOP) <> DWORD#0)
+	OR (((Error.dwErrorActive AND MASK_EQUIPMENT_ERROR) <> DWORD#0)
+		AND xRobotInsideAtFault));
+
+// Stop нужен только выполняемому действию. Стоящий в станке робот получает
+// зависимую ошибку через FB_ROBOT, но бессмысленная команда Stop не выдаётся.
+IF (eState = E_MACHINE_STATE.ERROR)
+AND xRobotStopRequired
+AND stRobotStatus.xBusy THEN
+	Command.stRobot.xStop := TRUE;
+END_IF;
+
 IF (eState <> E_MACHINE_STATE.ERROR)
 AND NOT xGlobalError THEN
     IF xServiceDoorCloseDemand 
@@ -903,8 +934,8 @@ Status.xBusy :=  (eState <> E_MACHINE_STATE.IDLE)
 				AND NOT ((eState = E_MACHINE_STATE.CYCLE_START) AND xOperatorRunningCNC)
 				AND NOT ((eState = E_MACHINE_STATE.DOOR_CLOSE) AND xOperatorClosingDoor);
 Status.xError := (eState = E_MACHINE_STATE.ERROR);
-Status.xCriticalError := (Error.dwErrorActive AND MASK_CRITICAL_ERROR) <> DWORD#0;
-Status.xAlarmError    := (Error.dwErrorActive AND MASK_ALARM_ERROR) <> DWORD#0;
+Status.xCriticalError := xRobotStopRequired;
+Status.xAlarmError    := (Error.dwErrorActive AND MASK_EQUIPMENT_ERROR) <> DWORD#0;
 Status.xExternalError := (Error.dwErrorActive AND MASK_EXTERNAL_ERROR) <> DWORD#0;
 Status.xServiceRejected := (Error.dwErrorActive
 	AND (ERR_DOOR_OPEN OR ERR_TIMEOUT_DOOR_OPEN)) <> DWORD#0
