@@ -36,7 +36,6 @@ export function LoginOverlay({ loading, error, onLogin }: {
         {loading ? <LoaderCircle className="spin" aria-hidden="true" /> : <LockKeyhole aria-hidden="true" />}
         {loading ? 'Проверка…' : 'Войти'}
       </button>
-      <footer><b>Первый вход:</b> admin / admin · пароль временный и должен быть заменён</footer>
     </form>
   </div>;
 }

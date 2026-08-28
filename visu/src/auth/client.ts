@@ -7,6 +7,7 @@ export interface AppUser {
   role: UserRole;
   enabled: boolean;
   shiftPlan: number;
+  avatarDataUrl: string | null;
   mustChangePassword: boolean;
   createdAt: number;
   updatedAt: number;
@@ -26,6 +27,7 @@ export interface UserDraft {
   role: UserRole;
   enabled: boolean;
   shiftPlan: number;
+  avatarDataUrl?: string | null;
   password?: string;
 }
 

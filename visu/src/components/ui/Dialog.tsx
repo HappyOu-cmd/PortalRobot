@@ -24,7 +24,7 @@ export function Dialog({ title, description, trigger, children, footer, open, de
         <DialogPrimitive.Overlay className="fixed inset-0 z-[100] bg-[#162b3c]/30" />
         <DialogPrimitive.Content
           aria-describedby={description ? undefined : undefined}
-          className={cn('fixed left-1/2 top-1/2 z-[101] max-h-[calc(100vh-64px)] w-[min(680px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 overflow-auto rounded-[var(--radius-panel)] border border-[#d8e3ea] bg-white text-[#193247] shadow-[0_18px_45px_rgba(25,50,71,0.18)] focus:outline-none', className)}
+          className={cn('touch-scroll-surface fixed left-1/2 top-1/2 z-[101] max-h-[calc(100vh-64px)] w-[min(680px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 overflow-auto rounded-[var(--radius-panel)] border border-[#d8e3ea] bg-white text-[#193247] shadow-[0_18px_45px_rgba(25,50,71,0.18)] focus:outline-none', className)}
         >
           <header className="flex min-h-16 items-start justify-between gap-5 border-b border-[#e0e7ec] px-6 py-4">
             <div className="min-w-0">

@@ -8,6 +8,7 @@ VAR_INPUT
 	xOperatorCancel   : BOOL; // Импульс отмены предпускового опроса
 	uiOperatorChoice  : UINT; // Выбранное содержимое, тип продукции или станок
 	xManual           : BOOL; // Ручной режим ячейки
+	xManualRequest    : BOOL; // Необработанный запрос HMI на ручной режим
 	xGlobalError      : BOOL; // Глобальная ошибка ячейки
 	xDrivesReady      : BOOL; // Приводы готовы
 	xMotionBusy       : BOOL; // Оси ещё движутся
@@ -99,6 +100,7 @@ VAR
 	rtReset              : R_TRIG; // Фронт сброса
 	rtOperatorChoice     : R_TRIG; // Один ответ не переносится на следующий шаг опроса
 	rtOperatorCancel     : R_TRIG; // Фронт отмены предпускового опроса
+	rtManualReject       : R_TRIG; // Фронт отклонённого запроса ручного режима
 	fbFaultInjector      : FB_CELL_FAULT_INJECTOR; // Проверка противоречивого груза
 END_VAR
 VAR CONSTANT
@@ -116,6 +118,7 @@ VAR CONSTANT
 	WRN_SIM_ERROR_NOT_ALLOWED : UINT := UINT#8;
 	WRN_PAYLOAD_ROUTE_MISMATCH : UINT := UINT#9;
 	WRN_SAFETY_HOME_REQUIRED   : UINT := UINT#10;
+	WRN_MANUAL_MODE_REJECTED   : UINT := UINT#11;
 	WRN_GRIPPER1_CONTENT       : UINT := UINT#15;
 	WRN_GRIPPER2_CONTENT       : UINT := UINT#16;
 	WRN_PAYLOAD_TYPE_CHOICE    : UINT := UINT#17;
@@ -133,6 +136,7 @@ rtStop(CLK := xStop);
 rtReset(CLK := xResetRequest);
 rtOperatorChoice(CLK := xOperatorChoice);
 rtOperatorCancel(CLK := xOperatorCancel);
+rtManualReject(CLK := xManualRequest AND xRunning AND NOT xGlobalError);
 
 // Выбор выполняется только между операциями. Внутренний автомат по-прежнему
 // работает с одним снимком, поэтому уже отлажанный маршрут не размазывается
@@ -459,6 +463,14 @@ END_IF;
 
 IF rtStop.Q AND NOT xRunning THEN
 	Diag.stWarning.uiCode := WRN_STOP_NOT_RUNNING;
+	Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
+	IF Diag.stWarning.udiSequence = UDINT#0 THEN
+		Diag.stWarning.udiSequence := UDINT#1;
+	END_IF;
+END_IF;
+
+IF rtManualReject.Q THEN
+	Diag.stWarning.uiCode := WRN_MANUAL_MODE_REJECTED;
 	Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
 	IF Diag.stWarning.udiSequence = UDINT#0 THEN
 		Diag.stWarning.udiSequence := UDINT#1;
@@ -1313,7 +1325,9 @@ Status.xStartAllowed := xReadyToStart
 		AND (eState <> E_CELL_MANAGER_STATE.MACHINE_FAULT_STOP));
 Status.xStopAllowed := xRunning AND NOT xStopRequested;
 Status.xResetAllowed := xResetAllowed;
-Status.xManualAllowed := TRUE;
+// Ручной режим нельзя включить поверх работающего автоматического цикла.
+// xManual уже отфильтрован до вызова FB, но это же условие публикуется HMI.
+Status.xManualAllowed := NOT xRunning OR xGlobalError;
 // В общей аварии оператору оставляем только ручное восстановление.
 Status.xAutomaticAllowed := NOT xGlobalError;
 Status.xDrivesReady := xDrivesReady;

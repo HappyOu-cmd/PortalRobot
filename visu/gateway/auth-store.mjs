@@ -17,6 +17,7 @@ const normalizeUsername = (value) => String(value ?? '').trim().toLowerCase();
 const normalizeDisplayName = (value) => String(value ?? '').trim();
 const normalizeRole = (value) => String(value ?? 'operator').trim().toLowerCase();
 const sessionHash = (token) => createHash('sha256').update(String(token)).digest('hex');
+const MAX_AVATAR_BYTES = 512 * 1024;
 
 const assertUsername = (username) => {
   if (!/^[a-z0-9._-]{3,32}$/.test(username)) {
@@ -40,6 +41,19 @@ const normalizeShiftPlan = (value, fallback = 0) => {
     throw new AuthStoreError('План на смену должен быть целым числом от 0 до 1 000 000');
   }
   return numeric;
+};
+
+const normalizeAvatarDataUrl = (value, fallback = null) => {
+  if (value === undefined) return fallback;
+  if (value === null || value === '') return null;
+  if (typeof value !== 'string') throw new AuthStoreError('Фотография профиля имеет неверный формат');
+  const match = value.match(/^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/);
+  if (!match) throw new AuthStoreError('Фотография профиля должна быть в формате PNG, JPEG или WebP');
+  const bytes = Buffer.from(match[2], 'base64');
+  if (bytes.length === 0 || bytes.length > MAX_AVATAR_BYTES) {
+    throw new AuthStoreError('Фотография профиля не должна превышать 512 КБ');
+  }
+  return `data:image/${match[1]};base64,${match[2]}`;
 };
 
 const assertPassword = (password, { bootstrap = false } = {}) => {
@@ -74,6 +88,7 @@ const publicUser = (row) => row ? ({
   role: row.role,
   enabled: Boolean(row.enabled),
   shiftPlan: Number(row.shift_plan ?? 0),
+  avatarDataUrl: row.avatar_data_url ?? null,
   mustChangePassword: Boolean(row.must_change_password),
   createdAt: Number(row.created_at),
   updatedAt: Number(row.updated_at),
@@ -103,6 +118,7 @@ export class AuthStore {
         role TEXT NOT NULL CHECK (role IN ('admin', 'operator')),
         enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
         shift_plan INTEGER NOT NULL DEFAULT 0 CHECK (shift_plan BETWEEN 0 AND 1000000),
+        avatar_data_url TEXT,
         must_change_password INTEGER NOT NULL DEFAULT 0 CHECK (must_change_password IN (0, 1)),
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
@@ -121,6 +137,9 @@ export class AuthStore {
     const userColumns = new Set(this.db.prepare('PRAGMA table_info(app_user)').all().map((column) => column.name));
     if (!userColumns.has('shift_plan')) {
       this.db.exec('ALTER TABLE app_user ADD COLUMN shift_plan INTEGER NOT NULL DEFAULT 0 CHECK (shift_plan BETWEEN 0 AND 1000000)');
+    }
+    if (!userColumns.has('avatar_data_url')) {
+      this.db.exec('ALTER TABLE app_user ADD COLUMN avatar_data_url TEXT');
     }
     this.bootstrap(bootstrapUsername, bootstrapPassword);
   }
@@ -153,6 +172,7 @@ export class AuthStore {
     const displayName = normalizeDisplayName(input?.displayName);
     const role = normalizeRole(input?.role);
     const shiftPlan = normalizeShiftPlan(input?.shiftPlan);
+    const avatarDataUrl = normalizeAvatarDataUrl(input?.avatarDataUrl);
     const password = assertPassword(input?.password);
     assertUsername(username);
     assertDisplayName(displayName, 20);
@@ -161,9 +181,9 @@ export class AuthStore {
     const now = this.now();
     try {
       const result = this.db.prepare(`INSERT INTO app_user
-        (username, display_name, password_salt, password_hash, role, enabled, shift_plan, must_change_password, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`)
-        .run(username, displayName, credentials.salt, credentials.hash, role, input?.enabled === false ? 0 : 1, shiftPlan, now, now);
+        (username, display_name, password_salt, password_hash, role, enabled, shift_plan, avatar_data_url, must_change_password, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`)
+        .run(username, displayName, credentials.salt, credentials.hash, role, input?.enabled === false ? 0 : 1, shiftPlan, avatarDataUrl, now, now);
       return this.getUser(result.lastInsertRowid);
     } catch (error) {
       if (/UNIQUE/i.test(String(error))) throw new AuthStoreError('Пользователь с таким логином уже существует', 409, 'USERNAME_EXISTS');
@@ -187,6 +207,7 @@ export class AuthStore {
     const role = input?.role === undefined ? currentRow.role : normalizeRole(input.role);
     const enabled = input?.enabled === undefined ? Boolean(currentRow.enabled) : Boolean(input.enabled);
     const shiftPlan = normalizeShiftPlan(input?.shiftPlan, currentRow.shift_plan);
+    const avatarDataUrl = normalizeAvatarDataUrl(input?.avatarDataUrl, currentRow.avatar_data_url ?? null);
     assertUsername(username);
     assertDisplayName(displayName);
     assertRole(role);
@@ -206,9 +227,9 @@ export class AuthStore {
     }
     try {
       this.db.prepare(`UPDATE app_user SET username = ?, display_name = ?, password_salt = ?, password_hash = ?,
-        role = ?, enabled = ?, shift_plan = ?, must_change_password = ?, updated_at = ? WHERE id = ?`)
+        role = ?, enabled = ?, shift_plan = ?, avatar_data_url = ?, must_change_password = ?, updated_at = ? WHERE id = ?`)
         .run(username, displayName, passwordSalt, passwordHash, role, enabled ? 1 : 0,
-          shiftPlan, mustChangePassword ? 1 : 0, this.now(), numericId);
+          shiftPlan, avatarDataUrl, mustChangePassword ? 1 : 0, this.now(), numericId);
     } catch (error) {
       if (/UNIQUE/i.test(String(error))) throw new AuthStoreError('Пользователь с таким логином уже существует', 409, 'USERNAME_EXISTS');
       throw error;

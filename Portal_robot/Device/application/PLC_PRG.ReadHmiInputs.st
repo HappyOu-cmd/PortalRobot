@@ -57,10 +57,10 @@ GVL_CELL_CONTROL.xStop := GVL_HMI.xCellStop;
 // Необработанный общий импульс передаётся всем владельцам аварий.
 // Каждый функциональный блок самостоятельно проверяет возможность сброса.
 GVL_CELL_CONTROL.xReset := GVL_HMI.xCellReset;
-// При общей аварии ручной режим становится фактическим автоматически.
-// Это не снимает общую ошибку и не разрешает точки/захват — только даёт
-// оператору возможность безопасно вывести механику Jog-командами.
-GVL_CELL_CONTROL.xManual := GVL_HMI.xCellManual OR GVL_CELL_CONTROL.xGlobalError;
+// В автоматическом цикле запрос ручного режима не принимается. При общей
+// аварии ручной режим включается принудительно для безопасного восстановления.
+GVL_CELL_CONTROL.xManual := GVL_CELL_CONTROL.xGlobalError
+	OR (GVL_HMI.xCellManual AND NOT GVL_CELL_MANAGER.Status.xRunning);
 GVL_ALARM.Command.xResetWarnings := GVL_HMI.xAlarmResetWarnings;
 
 // Режим инъекции ошибок включается отдельным переключателем страницы CELL_SETTINGS.

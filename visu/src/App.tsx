@@ -31,10 +31,13 @@ import { CellEventLog } from './components/CellEventLog';
 import { TestWorkbench } from './components/tests/TestWorkbench';
 import { LoginOverlay } from './auth/LoginOverlay';
 import { UserManagementPanel } from './auth/UserManagementPanel';
+import { UserAvatar } from './auth/UserAvatar';
 import { authApi, type AppUser } from './auth/client';
 import { StatisticsPanel, StatisticsSettingsPanel } from './statistics/StatisticsPanels';
+import { statisticsApi, type StatisticsSummary } from './statistics/client';
 import { RingStat } from './components/magazine/RingStat';
 import { Indicator } from './components/ui/Indicator';
+import { TouchScrollControls } from './components/ui/TouchScrollControls';
 import { VercelTabs } from './components/ui/VercelTabs';
 import portalRobotLogo from './assets/branding/portal-robot-logo.png';
 import { DEFAULT_LAYOUT, DEFAULT_STATE } from './model/defaults';
@@ -960,6 +963,58 @@ function ProcessOverviewCard({ state, runtime, connected, dataActive, equipmentV
   </section>;
 }
 
+const EQUIPMENT_LOAD_ITEMS = [
+  { lane: 'machine-1', label: 'Станок 1' },
+  { lane: 'machine-2', label: 'Станок 2' },
+  { lane: 'machine-3', label: 'Станок 3' },
+  { lane: 'robot', label: 'Робот' },
+] as const;
+const EQUIPMENT_LOAD_RING_LENGTH = 2 * Math.PI * 11;
+
+function OperatorShiftCard({ user, summary, metricsVisible, onMetricsVisibilityChange }: {
+  user: AppUser;
+  summary: StatisticsSummary | null;
+  metricsVisible: boolean;
+  onMetricsVisibilityChange: (visible: boolean) => void;
+}) {
+  const plan = summary?.shiftPlan ?? (user.role === 'operator' ? user.shiftPlan : null);
+  const producedParts = summary?.producedParts ?? 0;
+  const progress = plan && plan > 0 ? Math.round(producedParts / plan * 100) : null;
+  const progressWidth = progress === null ? 0 : Math.min(100, progress);
+  const planLabel = plan && plan > 0 ? plan : 'Нет данных';
+  const role = user.role === 'admin' ? 'Администратор' : 'Оператор';
+
+  return <section className={`operator-shift-card${metricsVisible ? ' metrics-visible' : ''}`} aria-label="План, факт и загрузка оборудования">
+    <div className="operator-shift-card__profile">
+      <div className="operator-shift-card__identity">
+        <UserAvatar className="operator-shift-card__avatar" avatarDataUrl={user.avatarDataUrl} displayName={user.displayName} />
+        <div><h2>{user.displayName}</h2><p><ShieldCheck aria-hidden="true" />{role}</p></div>
+      </div>
+      <div className="operator-shift-card__progress">
+        <span>Изготовлено деталей</span>
+        <div><b>{producedParts} / {planLabel}</b><strong>{progress === null ? '—' : `${progress}%`}</strong></div>
+        <i aria-hidden="true"><u style={{ width: `${progressWidth}%` }} /></i>
+      </div>
+    </div>
+    <section id="operator-equipment-load" className="operator-shift-card__metrics" aria-hidden={!metricsVisible} aria-label="Загрузка оборудования за смену">
+      <h3>Загрузка за смену</h3>
+      <div>{EQUIPMENT_LOAD_ITEMS.map(({ lane, label }) => {
+        const source = summary?.equipment.find((item) => item.lane === lane);
+        const value = Math.min(100, Math.max(0, Math.round(source?.loadPercent ?? 0)));
+        return <article key={lane}>
+          <span className="operator-load-ring" role="progressbar" aria-label={`${label}: ${value}%`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={value}>
+            <svg viewBox="0 0 28 28" aria-hidden="true"><circle className="track" cx="14" cy="14" r="11" /><circle className="value" cx="14" cy="14" r="11" strokeDasharray={EQUIPMENT_LOAD_RING_LENGTH} strokeDashoffset={EQUIPMENT_LOAD_RING_LENGTH * (1 - value / 100)} /></svg><b>{value}%</b>
+          </span>
+          <span className="operator-load-data"><span><b>{label}</b><strong>{value}%</strong></span><i aria-hidden="true"><u style={{ width: `${value}%` }} /></i></span>
+        </article>;
+      })}</div>
+    </section>
+    <button className="operator-shift-card__metrics-toggle" type="button" aria-label={metricsVisible ? 'Скрыть загрузку оборудования за смену' : 'Показать загрузку оборудования за смену'} aria-controls="operator-equipment-load" aria-expanded={metricsVisible} onClick={() => onMetricsVisibilityChange(!metricsVisible)} title={metricsVisible ? 'Скрыть загрузку оборудования за смену' : 'Показать загрузку оборудования за смену'}>
+      {metricsVisible ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
+    </button>
+  </section>;
+}
+
 function BottomNavigation({ active, onSelect, alarmEvents }: {
   active: BottomSection | null;
   onSelect: (section: BottomSection) => void;
@@ -1734,6 +1789,7 @@ export function App() {
   const [quickMatrixZone, setQuickMatrixZone] = useState<1 | 2>(1);
   const [profileOpen, setProfileOpen] = useState(false);
   const [authUser, setAuthUser] = useState<AppUser | null>(null);
+  const [shiftSummary, setShiftSummary] = useState<StatisticsSummary | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authSubmitting, setAuthSubmitting] = useState(false);
   const [authError, setAuthError] = useState('');
@@ -1761,6 +1817,7 @@ export function App() {
   const [plcDataEnabled, setPlcDataEnabled] = useState(true);
   const [latestEventVisible, setLatestEventVisible] = useState(false);
   const [equipmentStatusVisible, setEquipmentStatusVisible] = useState(true);
+  const [operatorMetricsVisible, setOperatorMetricsVisible] = useState(true);
   const [indexedConveyorTest, setIndexedConveyorTest] = useState<IndexedConveyorTestCommand>({ id: 0, type: 'none', magazineId: 1 });
   const emptyConveyorTestStatus: IndexedConveyorTestStatus = {
     moving: false,
@@ -1773,6 +1830,7 @@ export function App() {
     { ...emptyConveyorTestStatus },
   ]);
   const workspacePointerRef = useRef<{ pointerId: number; x: number; y: number; eligible: boolean } | null>(null);
+  const refreshShiftSummaryRef = useRef<(() => void) | null>(null);
   const plcDataEnabledRef = useRef(true);
   const cellStateRef = useRef(cellState);
   const plcRuntimeRef = useRef(plcRuntime);
@@ -1816,6 +1874,34 @@ export function App() {
     });
     return () => { active = false; };
   }, []);
+
+  useEffect(() => {
+    if (!authUser) {
+      setShiftSummary(null);
+      refreshShiftSummaryRef.current = null;
+      return;
+    }
+    let active = true;
+    let refreshTimer = 0;
+    const loadShiftSummary = () => {
+      void statisticsApi.summary({ preset: 'current-shift', userId: authUser.id })
+        .then((summary) => { if (active) setShiftSummary(summary); })
+        .catch(() => { if (active) setShiftSummary(null); });
+    };
+    const scheduleShiftSummaryRefresh = () => {
+      window.clearTimeout(refreshTimer);
+      refreshTimer = window.setTimeout(loadShiftSummary, 500);
+    };
+    refreshShiftSummaryRef.current = scheduleShiftSummaryRefresh;
+    loadShiftSummary();
+    const intervalId = window.setInterval(loadShiftSummary, 30_000);
+    return () => {
+      active = false;
+      window.clearTimeout(refreshTimer);
+      window.clearInterval(intervalId);
+      if (refreshShiftSummaryRef.current === scheduleShiftSummaryRefresh) refreshShiftSummaryRef.current = null;
+    };
+  }, [authUser?.id, authUser?.role]);
 
   const login = async (username: string, password: string) => {
     setAuthSubmitting(true);
@@ -2135,6 +2221,7 @@ export function App() {
       onCyclogramHistory: setCyclogramHistory,
       onCyclogramUpdate: (update) => {
         setCyclogramHistory((current) => mergeCyclogramUpdate(current, update));
+        refreshShiftSummaryRef.current?.();
       },
       onCellLogEvent: setLatestCellLogEvent,
       onCommandError: setCommandError,
@@ -2302,6 +2389,13 @@ export function App() {
       setCommandError('Переключение режима недоступно без связи с PLC');
       return;
     }
+    if (manual && !plcRuntime.manualModeAllowed) {
+      setCommandError('Переключение в ручной режим отклонено: сначала остановите автоматический цикл.');
+      // Команда всё равно уходит в PLC: он фиксирует отклонение в журнале,
+      // даже если HMI успел показать устаревшее состояние разрешения.
+      sendPlcCommand({ command: 'cell.manual', value: manual });
+      return;
+    }
     sendPlcCommand({ command: 'cell.manual', value: manual });
     if (manual) {
       sendPlcCommand({ command: 'robot.speedOverride', value: MANUAL_MODE_SPEED_PERCENT });
@@ -2437,10 +2531,9 @@ export function App() {
         <AnimatedPresence open={profileOpen && authUser !== null}>
           {authUser && <div className="profile-popover" role="dialog" aria-label="Профиль пользователя">
           <div className="profile-popover__identity">
-            <div className="profile-popover__avatar"><UserRound aria-hidden="true" /></div>
+            <UserAvatar className="profile-popover__avatar" avatarDataUrl={authUser.avatarDataUrl} displayName={authUser.displayName} />
             <div><strong>{authUser.displayName}</strong></div>
           </div>
-          <div className="profile-popover__role"><ShieldCheck aria-hidden="true" /><div><span>Роль</span><strong>{authUser.role === 'admin' ? 'Администратор' : 'Оператор'}</strong></div></div>
           <div className="profile-popover__actions">
             <button className="profile-popover__manage" type="button" onClick={() => { setProfileOpen(false); setPage('statistics'); }}><BarChart3 aria-hidden="true" /><span><b>Статистика</b></span><ChevronRight aria-hidden="true" /></button>
             {authUser.role === 'admin' && <button className="profile-popover__manage" type="button" onClick={() => { setProfileOpen(false); setPage('users'); }}><UsersRound aria-hidden="true" /><span><b>Пользователи</b></span><ChevronRight aria-hidden="true" /></button>}
@@ -2556,6 +2649,7 @@ export function App() {
     }} onPointerCancel={() => {
       workspacePointerRef.current = null;
     }}>
+      {page === 'monitoring' && authUser && <OperatorShiftCard user={authUser} summary={shiftSummary} metricsVisible={operatorMetricsVisible} onMetricsVisibilityChange={setOperatorMetricsVisible} />}
       <CellViewport
         layout={layout}
         state={cellState}
@@ -2730,6 +2824,7 @@ export function App() {
           </div>
         </AnimatedPresence>
       </div>}
+      <TouchScrollControls />
     </main>
     {!authUser && !guestView && <LoginOverlay loading={authLoading || authSubmitting} error={authError} onLogin={login} />}
   </div>;

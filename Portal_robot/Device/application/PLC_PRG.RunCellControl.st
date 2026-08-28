@@ -31,6 +31,7 @@ CELL_MANAGER(
 	xOperatorCancel := GVL_HMI.xCellOperatorCancel,
 	uiOperatorChoice := GVL_HMI.uiCellOperatorChoice,
 	xManual := GVL_CELL_CONTROL.xManual,
+	xManualRequest := GVL_HMI.xCellManual,
 	xGlobalError := GVL_CELL_CONTROL.xGlobalError,
 	xDrivesReady := xDrivesReady,
 	xMotionBusy := xMotionBusy,

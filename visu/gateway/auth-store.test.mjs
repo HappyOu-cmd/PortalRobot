@@ -34,6 +34,18 @@ test('creates, updates, disables and deletes managed users', () => {
   store.close();
 });
 
+test('stores a cropped profile avatar and rejects invalid image payloads', () => {
+  const store = createStore();
+  const avatarDataUrl = 'data:image/webp;base64,UklGRiIAAABXRUJQVlA4IBYAAABwAgCdASoBAAEAAUAmJaQAA3AA/vuUAAA=';
+  const operator = store.createUser({
+    username: 'operator.avatar', displayName: 'Оператор с фото', password: 'strong-pass', role: 'operator', avatarDataUrl,
+  });
+  assert.equal(operator.avatarDataUrl, avatarDataUrl);
+  assert.equal(store.updateUser(operator.id, { avatarDataUrl: null }).avatarDataUrl, null);
+  assert.throws(() => store.updateUser(operator.id, { avatarDataUrl: 'data:text/html;base64,PGgxPk5ldDwvaDE+' }), /PNG, JPEG или WebP/);
+  store.close();
+});
+
 test('protects current user and the last active administrator', () => {
   const store = createStore();
   const admin = store.listUsers()[0];

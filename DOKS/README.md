@@ -20,6 +20,8 @@
 | [12-sc500-controller-commissioning.md](12-sc500-controller-commissioning.md) | Поэтапная реализация и проверка программы реального SC-500 |
 | [13-indexed-conveyor-plan.md](13-indexed-conveyor-plan.md) | Зафиксированные майлстоуны по второму магазину и индексному конвейеру |
 | [14-operator-shifts-statistics.md](14-operator-shifts-statistics.md) | Настраиваемые смены, интервалы операторов и штатная остановка при выходе |
+| [15-equipment-error-reset-table.md](15-equipment-error-reset-table.md) | Единая карта аварий, условий сброса и сообщений журнала |
+| [16-cell-warnings.md](16-cell-warnings.md) | Реестр предупреждений ячейки |
 
 ## Карта правил
 
