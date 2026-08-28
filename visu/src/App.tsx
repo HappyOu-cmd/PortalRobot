@@ -16,6 +16,7 @@ import {
   ChevronDown, Clock3, Cylinder, Disc3, DoorOpen, Factory, Home, BarChart3,
   Eye, EyeOff, FlaskConical, Gauge, Grid2X2, LoaderCircle, LockKeyhole, Menu, Power, PackagePlus, RotateCcw, Settings,
   ShieldAlert, ShieldCheck, Trash2, TriangleAlert, UnlockKeyhole, UserRound, UsersRound, X,
+  type LucideIcon,
 } from 'lucide-react';
 import { CellViewport } from './components/CellViewport';
 import { EquipmentLoadPanel } from './components/EquipmentLoadPanel';
@@ -419,6 +420,57 @@ const INITIAL_CYCLOGRAM: CyclogramHistory = {
   intervals: [],
 };
 
+type QuickStatusTone = 'gray' | 'green' | 'blue' | 'amber' | 'red';
+
+function QuickStatusCard({
+  icon: IconComponent,
+  eyebrow,
+  title,
+  status,
+  tone,
+  detail,
+  className,
+  interactive = false,
+  onClick,
+  ariaExpanded,
+  ariaControls,
+}: {
+  icon: LucideIcon;
+  eyebrow: string;
+  title: string;
+  status: ReactNode;
+  tone: QuickStatusTone;
+  detail?: ReactNode;
+  className?: string;
+  interactive?: boolean;
+  onClick?: () => void;
+  ariaExpanded?: boolean;
+  ariaControls?: string;
+}) {
+  const cardClassName = `quick-status-card tone-${tone}${className ? ` ${className}` : ''}`;
+  const statusTone = tone === 'gray' ? 'blue' : tone;
+  const content = <>
+    <div className="quick-status-card__heading">
+      <span className="quick-status-card__icon"><IconComponent aria-hidden="true" /></span>
+      <span className="quick-status-card__copy">
+        <small>{eyebrow}</small>
+        <strong>{title}</strong>
+      </span>
+    </div>
+    <div className="quick-status-card__state">
+      <i aria-hidden="true" />
+      <span><Indicator active={tone !== 'gray'} tone={statusTone} />{status}</span>
+      {detail && <b>{detail}</b>}
+    </div>
+  </>;
+
+  if (interactive) {
+    return <button className={cardClassName} type="button" onClick={onClick} aria-expanded={ariaExpanded} aria-controls={ariaControls}>{content}</button>;
+  }
+
+  return <article className={cardClassName}>{content}</article>;
+}
+
 function CellQuickPanel({ running, stopPending, online, globalError, readyToStart, startAllowed, stopAllowed,
   manualAllowed, automaticAllowed, robotReady, magazineReady, safetyHomeRequired, robotAtSafetyHome,
   startReadiness, readyMachines, manualMode,
@@ -460,6 +512,8 @@ function CellQuickPanel({ running, stopPending, online, globalError, readyToStar
     ? robotAtSafetyHome ? 'green' : 'amber'
     : online && !globalError && (running || readyToStart) ? 'green' : 'red';
   const primaryAllowed = stopPending ? startAllowed : running ? stopAllowed : startAllowed;
+  const machinesTone: QuickStatusTone = readyMachines === 3 ? 'green' : readyMachines > 0 ? 'amber' : 'red';
+  const machinesStatus = readyMachines === 3 ? 'Готовы' : readyMachines > 0 ? 'Частично готовы' : 'Не готовы';
   const readinessConditions = [
     { key: 'cell', ready: startReadiness.cellIdle, title: 'Менеджер ячейки', done: 'Готов принять новый запуск', blocked: 'Текущая операция ещё не завершена' },
     { key: 'mode', ready: startReadiness.automaticMode, title: 'Режим работы', done: 'Выбран автоматический режим', blocked: 'Выбран ручной режим' },
@@ -558,9 +612,9 @@ function CellQuickPanel({ running, stopPending, online, globalError, readyToStar
         </button>
       </div>
       <div className="cell-quick-statuses">
-        <div><Bot /><span>Робот</span><p><Indicator active tone={robotReady ? 'green' : 'red'} />{robotReady ? 'Готов' : 'Не готов'}</p></div>
-        <div><Factory /><span>Станки</span><p><Indicator active tone={readyMachines > 0 ? 'green' : 'red'} />{readyMachines} / 3 готовы</p></div>
-        <div><Boxes /><span>Магазин</span><p><Indicator active tone={magazineReady ? 'green' : 'red'} />{magazineReady ? 'Готов' : 'Не готов'}</p></div>
+        <QuickStatusCard icon={Bot} eyebrow="Оборудование" title="Робот" status={robotReady ? 'Готов' : 'Не готов'} tone={robotReady ? 'green' : 'red'} />
+        <QuickStatusCard icon={Factory} eyebrow="Группа" title="Станки" status={machinesStatus} tone={machinesTone} detail={`${readyMachines} / 3`} />
+        <QuickStatusCard icon={Boxes} eyebrow="Логистика" title="Магазины" status={magazineReady ? 'Готовы' : 'Не готовы'} tone={magazineReady ? 'green' : 'red'} />
       </div>
     </div>
   </section>;
@@ -705,6 +759,12 @@ function MagazineQuickPanel({ magazines, selectedIndex, onSelect, matrixOpen, on
   const powerText = state.disablePending ? 'Ожидается отключение'
     : state.enabled ? 'Выключить магазин' : 'Включить магазин';
   const toggleAllowed = state.enabled || state.enableSequenceAllowed;
+  const blanksTone: QuickStatusTone = blanks > 0 ? 'blue' : 'gray';
+  const detailsTone: QuickStatusTone = details > 0 ? 'green' : 'gray';
+  const capacityTone: QuickStatusTone = total > 0 ? 'blue' : 'gray';
+  const emptyTone: QuickStatusTone = empty > 0 ? 'green' : 'gray';
+  const driveTone: QuickStatusTone = state.powered && state.homed ? 'green' : state.powered ? 'amber' : 'gray';
+  const driveStatus = state.powered ? state.homed ? 'Готов к работе' : 'Требуется Home' : 'Питание выключено';
 
   return <section className={`magazine-quick-panel tone-${statusTone} ${className ?? ''}`} aria-label="Управление магазином">
     <SheetGrip onClose={onClose} />
@@ -730,29 +790,38 @@ function MagazineQuickPanel({ magazines, selectedIndex, onSelect, matrixOpen, on
       </div>
     </header>
     <div className="magazine-quick-status-grid">
-      <div><Box /><span>Заготовок</span><strong>{blanks}</strong></div>
-      <div><Settings /><span>Деталей</span><strong>{details}</strong></div>
-      <div><Grid2X2 /><span>Рабочая зона</span><strong>{total}</strong></div>
-      <div><PackagePlus /><span>Свободно</span><strong>{empty}</strong></div>
-      <button
+      <QuickStatusCard icon={Box} eyebrow="Зона загрузки" title="Заготовки" status={blanks > 0 ? 'В наличии' : 'Нет заготовок'} tone={blanksTone} detail={blanks} />
+      <QuickStatusCard icon={Settings} eyebrow="Зона выгрузки" title="Детали" status={details > 0 ? 'В наличии' : 'Нет деталей'} tone={detailsTone} detail={details} />
+      <QuickStatusCard icon={Grid2X2} eyebrow="Вместимость" title="Рабочая зона" status={total > 0 ? 'Ячейки доступны' : 'Нет ячеек'} tone={capacityTone} detail={total} />
+      <QuickStatusCard icon={PackagePlus} eyebrow="Резерв" title="Свободно" status={empty > 0 ? 'Есть свободные места' : 'Нет свободных мест'} tone={emptyTone} detail={empty} />
+      <QuickStatusCard
+        icon={Boxes}
+        eyebrow="Конфигурация"
+        title="Матрица"
+        status={matrixOpen ? 'Открыта' : 'Открыть'}
+        tone="blue"
+        detail={`${state.columns} × ${state.rows}`}
         className={`magazine-matrix-trigger ${matrixOpen ? 'active' : ''}`}
-        type="button"
-        aria-expanded={matrixOpen}
-        aria-controls={QUICK_MAGAZINE_MATRIX_ID}
+        interactive
+        ariaExpanded={matrixOpen}
+        ariaControls={QUICK_MAGAZINE_MATRIX_ID}
         onClick={onMatrixToggle}
-      >
-        <Boxes /><span>Матрица</span><strong>{state.columns} × {state.rows}</strong>
-      </button>
-      <button className={`magazine-drive-trigger ${state.powered && state.homed ? 'ready' : ''}`} type="button" onClick={onDriveOpen}>
-        <Power /><span>Привод / Home</span><strong>{state.powered ? 'Питание вкл.' : 'Питание выкл.'} · {state.homed ? 'Home найден' : 'Home не найден'}</strong>
-      </button>
+      />
+      <QuickStatusCard
+        icon={Power}
+        eyebrow="Механизм"
+        title="Привод / Home"
+        status={driveStatus}
+        tone={driveTone}
+        className="magazine-drive-trigger"
+        interactive
+        onClick={onDriveOpen}
+      />
     </div>
   </section>;
 }
 
-type MachineQuickTone = 'gray' | 'red' | 'green' | 'amber' | 'blue';
-
-function machineQuickState(machine: CellState['machines'][number]): { text: string; tone: MachineQuickTone } {
+function machineQuickState(machine: CellState['machines'][number]): { text: string; tone: QuickStatusTone } {
   if (machine.mode === 'error' || machine.activeErrors.length > 0) return { text: 'Авария', tone: 'red' };
   if (!machine.enabled || machine.mode === 'off') return { text: 'Выключен', tone: 'gray' };
   if (machine.mode === 'processing') return { text: 'Обработка', tone: 'green' };
@@ -788,6 +857,9 @@ function MachinesQuickPanel({ machines, selectedIndex, onSelect, onToggleEnabled
   const powerText = machine.disablePending
     ? 'Отменить отключение'
     : machine.enabled ? 'Выключить станок' : 'Включить станок';
+  const doorTone: QuickStatusTone = machine.doorClosed ? 'green' : machine.doorOpen ? 'amber' : 'gray';
+  const chuckTone: QuickStatusTone = machine.chuckClosed ? 'green' : machine.chuckOpen ? 'amber' : 'gray';
+  const productTone: QuickStatusTone = product.kind === 'detail' ? 'green' : product.kind === 'blank' ? 'blue' : 'gray';
 
   return <section className={`machine-quick-panel tone-${state.tone} ${className ?? ''}`} aria-label={`Управление станком ${selectedIndex + 1}`}>
     <SheetGrip onClose={onClose} />
@@ -814,10 +886,10 @@ function MachinesQuickPanel({ machines, selectedIndex, onSelect, onToggleEnabled
         </button>
       </div>
       <div className="machine-quick-status-grid">
-        <div><DoorOpen /><span>Дверь</span><p><Indicator active={machine.doorClosed || machine.doorOpen} tone={machine.doorClosed ? 'green' : 'amber'} />{doorText}</p></div>
-        <div><Disc3 /><span>Патрон</span><p><Indicator active={machine.chuckClosed || machine.chuckOpen} tone={machine.chuckClosed ? 'green' : 'amber'} />{chuckText}</p></div>
-        <div className={`machine-product ${product.kind}`}><Box /><span>Изделие</span><p><Indicator active={product.kind === 'detail' || product.kind === 'blank'} tone={product.kind === 'detail' ? 'green' : 'blue'} />{product.text}</p></div>
-        <div className="machine-current-step"><Settings /><span>Текущий шаг</span><p><Indicator active={state.tone !== 'gray'} tone={state.tone === 'gray' ? 'blue' : state.tone} />{machine.currentStep || state.text}</p></div>
+        <QuickStatusCard icon={DoorOpen} eyebrow="Механика" title="Дверь" status={doorText} tone={doorTone} />
+        <QuickStatusCard icon={Disc3} eyebrow="Оснастка" title="Патрон" status={chuckText} tone={chuckTone} />
+        <QuickStatusCard icon={Box} eyebrow="Изделие" title="Обработка" status={product.text} tone={productTone} className={`machine-product ${product.kind}`} />
+        <QuickStatusCard icon={Settings} eyebrow="Процесс" title="Шаг" status={machine.currentStep || state.text} tone={state.tone} />
       </div>
     </div>
   </section>;
