@@ -5,5 +5,6 @@ STRUCT
 	Y           : LREAL; // Координата Y
 	Z           : LREAL; // Координата Z
 	SpeedFactor : LREAL; // Коэффициент скорости движения
+	xConfigured : BOOL; // TRUE после подтверждённого сохранения инженерной точки
 END_STRUCT
 END_TYPE

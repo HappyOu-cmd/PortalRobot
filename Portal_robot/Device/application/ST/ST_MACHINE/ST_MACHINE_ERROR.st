@@ -23,5 +23,6 @@ STRUCT
 	TIMEOUT_CHUCK_OPEN    : BOOL; // Превышено время разжима патрона
 	TIMEOUT_CHUCK_CLOSE   : BOOL; // Превышено время зажима патрона
 	TIMEOUT_CYCLE_START   : BOOL; // Превышено время подтверждения запуска цикла
+	SAFETY_DOOR_OPEN     : BOOL; // Операторская дверь открылась во время обслуживания
 END_STRUCT
 END_TYPE

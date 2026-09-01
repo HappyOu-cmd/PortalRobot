@@ -13,6 +13,7 @@ VAR_IN_OUT
 	auiReadRegisters  : ARRAY [0..16] OF UINT; // Документные адреса 1101..1117
 END_VAR
 VAR
+	{attribute 'no_assign'}
 	fbClient       : ModbusFB.ClientTCP;
 	fbRead         : ModbusFB.ClientRequestReadHoldingRegisters;
 	fbWrite        : ModbusFB.ClientRequestWriteMultipleRegisters;

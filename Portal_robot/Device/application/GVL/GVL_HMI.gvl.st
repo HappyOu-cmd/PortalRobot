@@ -32,13 +32,13 @@ VAR_GLOBAL
 	xSimulationAccelerationChangeAllowed : BOOL; // PLC разрешает менять настройки ускорения
 	uiSimulationTimeFactorApplied : UINT := 1; // Фактически применённый коэффициент
 	xSimulationAccelerationError : BOOL; // Ошибка применения ускорения виртуальных таймеров
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
 	lrSafetyHomeX : LREAL := 0.0; // Координата X точки HOME_SAFETY
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
 	lrSafetyHomeY : LREAL := 0.0; // Координата Y точки HOME_SAFETY
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
 	lrSafetyHomeZ : LREAL := 0.0; // Координата Z точки HOME_SAFETY
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
 	lrSafetyHomeSpeedFactor : LREAL := 0.2; // Локальный коэффициент скорости точки 0.1..1.0
 	{attribute 'symbol' := 'readwrite'}
 	lrSafetyHomeToleranceX : LREAL := 5.0; // Допуск безопасной зоны по X, мм
@@ -110,6 +110,17 @@ VAR_GLOBAL
 	rRobotManualSpeedPercent : REAL := 0.1; // Общий override скорости JOG, MoveAbsolute и движения к точкам, 0.1..100 %; имя сохранено для OPC UA
 	{attribute 'symbol' := 'readwrite'}
 	lrRobotManualStep : LREAL := 1.0; // Шаг короткого относительного перемещения, мм
+	// Транзакционный редактор 15 фиксированных инженерных точек.
+	{attribute 'symbol' := 'readwrite'}
+	uiPointEditorIndex : UINT := UINT#1;
+	{attribute 'symbol' := 'readwrite'}
+	alrPointEditorDraftXYZ : ARRAY [1..3] OF LREAL;
+	{attribute 'symbol' := 'readwrite'}
+	lrPointEditorDraftSpeedFactor : LREAL;
+	{attribute 'symbol' := 'readwrite'}
+	uiPointEditorCommand : UINT; // 1 CAPTURE, 2 SAVE
+	{attribute 'symbol' := 'readwrite'}
+	udiPointEditorCommandSeq : UDINT;
 	{attribute 'symbol' := 'readwrite'}
 	astAxisHmiCommand : ARRAY [1..3] OF ST_AXIS_HMI_COMMAND; // Команды выбранной оси от HMI
 	{attribute 'symbol' := 'readwrite'}
@@ -154,9 +165,23 @@ VAR_GLOBAL
 	axMachineEnable    : ARRAY [1..3] OF BOOL; // Включить станок или отменить ожидающее отключение
 	axMachineDisable   : ARRAY [1..3] OF BOOL; // Импульсы отключения отдельных станков
 	axMachineReset     : ARRAY [1..3] OF BOOL; // Команды сброса ошибок отдельных станков
+	{attribute 'symbol' := 'readwrite'}
+	axMachineManualSafetyDoorOpen  : ARRAY [1..3] OF BOOL; // Ручное открытие операторской двери
+	{attribute 'symbol' := 'readwrite'}
+	axMachineManualSafetyDoorClose : ARRAY [1..3] OF BOOL; // Ручное закрытие операторской двери
+	{attribute 'symbol' := 'readwrite'}
+	axMachineManualHatchOpen       : ARRAY [1..3] OF BOOL; // Ручное открытие роботного люка
+	{attribute 'symbol' := 'readwrite'}
+	axMachineManualHatchClose      : ARRAY [1..3] OF BOOL; // Ручное закрытие роботного люка
+	{attribute 'symbol' := 'readwrite'}
+	axMachineManualChuckOpen       : ARRAY [1..3] OF BOOL; // Ручной разжим патрона
+	{attribute 'symbol' := 'readwrite'}
+	axMachineManualChuckClose      : ARRAY [1..3] OF BOOL; // Ручной зажим патрона
 	axMachineSimReset  : ARRAY [1..3] OF BOOL; // Отдельный сброс аварий FB_MACHINE_SIMULATION
 	axMachineSimAlarm  : ARRAY [1..3] OF BOOL; // Имитация общей аварии станков
-	axMachineSimDoorFault  : ARRAY [1..3] OF BOOL; // Имитация неисправности дверей станков
+	axMachineSimDoorFault  : ARRAY [1..3] OF BOOL; // Имитация неисправности роботных люков
+	{attribute 'symbol' := 'readwrite'}
+	axMachineSimSafetyDoorOpen : ARRAY [1..3] OF BOOL; // Имитация открытой операторской двери
 	axMachineSimChuckFault : ARRAY [1..3] OF BOOL; // Имитация неисправности патронов станков
 	axMachineTimeoutRobotMove    : ARRAY [1..3] OF BOOL; // Игнорировать завершение движения робота до TIMEOUT
 	axMachineTimeoutRobotAction  : ARRAY [1..3] OF BOOL; // Игнорировать завершение действия захвата до TIMEOUT
@@ -181,8 +206,8 @@ VAR_GLOBAL
 	axMachineUsed      : ARRAY [1..3] OF BOOL := [TRUE, TRUE, TRUE]; // Станки в автоматической работе
 	xUseHmiCycleTime   : ARRAY [1..3] OF BOOL := [TRUE, TRUE, TRUE]; // Использовать заданное время цикла
 	tMachineCycleTime  : ARRAY [1..3] OF TIME := [T#60S, T#60S, T#60S]; // Время цикла станков
-	tMachineDoorOpenTime   : TIME := T#1S; // Время открытия двери в симуляторе станка
-	tMachineDoorCloseTime  : TIME := T#1S; // Время закрытия двери в симуляторе станка
+	tMachineDoorOpenTime   : TIME := T#1S; // Время открытия люка в симуляторе станка
+	tMachineDoorCloseTime  : TIME := T#1S; // Время закрытия люка в симуляторе станка
 	tMachineChuckOpenTime  : TIME := T#1S; // Время разжима патрона в симуляторе станка
 	tMachineChuckCloseTime : TIME := T#1S; // Время зажима патрона в симуляторе станка
 	tGripper1OpenTime   : TIME := T#500MS; // Время открытия первого захвата
@@ -236,6 +261,15 @@ VAR_GLOBAL
 	lrActualX       : LREAL; // Текущая координата X
 	lrActualY       : LREAL; // Текущая координата Y
 	lrActualZ       : LREAL; // Текущая координата Z
+	astPointEditorPoints : ARRAY [1..15] OF ST_POINT; // Подтверждённые значения фиксированных точек
+	auiPointEditorPointId : ARRAY [1..15] OF UINT; // Фактические числовые E_POINT_NAME
+	stPointEditorResultPoint : ST_POINT; // Результат Capture либо подтверждённого Save
+	udiPointEditorAckSeq : UDINT; // Последняя обработанная транзакция
+	uiPointEditorResult : UINT; // 0 ожидание, 1 выполнено, 2 отклонено
+	uiPointEditorRejectReason : UINT; // Подробная причина отклонения для HMI
+	xPointEditorCaptureAllowed : BOOL; // Авторитетное разрешение PLC на Capture
+	xPointEditorSaveAllowed : BOOL; // Авторитетное разрешение PLC на Save
+	xPointTableReady : BOOL; // Все 15 базовых точек настроены
 	{attribute 'symbol' := 'read'}
 	rLoadCNC_1      : REAL; // Процент загрузки станка 1
 	{attribute 'symbol' := 'read'}

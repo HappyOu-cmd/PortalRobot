@@ -94,8 +94,14 @@ VAR
 	astMagazineFaultRequest : ARRAY [1..2] OF ST_MAGAZINE_FAULT_REQUEST; // Диагностика двух магазинов
 	stCellFaultRequest     : ST_CELL_FAULT_REQUEST; // Запрос локальной ошибки менеджера ячейки
 	astAlarmSource : ARRAY [1..16] OF ST_ALARM_SOURCE_DATA; // Два магазина и две отдельные оси
-	xSafetyHomeDefaultsInitialized : BOOL; // Стартовые значения HOME_SAFETY записаны один раз
-	xMagazinePointDefaultsInitialized : BOOL; // Базы двух магазинов не перетираются каждый цикл
+	uiPointEditorIndex : UINT; // Индекс фиксированной точки редактора 1..15
+	ePointEditorName : E_POINT_NAME; // Фактический enum выбранной инженерной точки
+	xPointTableReady : BOOL; // Все 15 базовых точек подтверждены редактором
+	xPointEditorBaseAllowed : BOOL; // Общие безопасные условия Capture/Save
+	xPointEditorAllHomed : BOOL; // Все оси XYZ прошли Home
+	xPointEditorRequestValid : BOOL; // Индекс и код новой транзакции распознаны
+	xPointEditorDraftValid : BOOL; // XYZ и скорость черновика прошли проверку
+	udiLastPointEditorCommandSeq : UDINT; // Последняя обработанная транзакция редактора
 	xRobotInterfaceReady : BOOL; // Готовность применённого интерфейса робота
 	lrRobotActualX : LREAL; // Координаты выбранного источника управления
 	lrRobotActualY : LREAL;
@@ -124,6 +130,7 @@ VAR CONSTANT
 	WRN_HMI_MANUAL_REJECTED : UINT := 12; // PLC отклонил команду расширенного ручного управления
 	WRN_ROBOT_MODE_REJECTED : UINT := 13; // PLC отклонил переключение источника управления
 	WRN_MODBUS_SETTINGS_REJECTED : UINT := 14; // PLC отклонил применение параметров соединения
+	WRN_POINT_EDIT_REJECTED : UINT := 15; // PLC отклонил Capture/Save инженерной точки
 	alrRobotManualFallbackVelocity : ARRAY [1..3] OF LREAL := [1000.0, 1000.0, 1000.0]; // Резерв, если привод не публикует динамический предел
 	alrRobotManualAcceleration : ARRAY [1..3] OF LREAL := [1000.0, 1000.0, 1000.0]; // Резерв ускорения, если привод не публикует предел
 	alrRobotManualDeceleration : ARRAY [1..3] OF LREAL := [1000.0, 1000.0, 1000.0]; // Резерв замедления, если привод не публикует предел
@@ -132,8 +139,8 @@ END_VAR
 
 // --- BEGIN IMPLEMENTATION ---
 
-ReadHmiInputs();
 SetApplicationDefaults();
+ReadHmiInputs();
 RunMotion();
 RunRobotModbus();
 RunTestControl();

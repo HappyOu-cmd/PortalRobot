@@ -45,7 +45,7 @@ CELL_MANAGER(
 	lrSafetyHomeToleranceZ := GVL_CELL_SETTINGS.lrSafetyHomeToleranceZ,
 	lrStoppedPoseTolerance := GVL_CELL_SETTINGS.lrStoppedPoseTolerance,
 	Config := GVL_MULTI_TYPE.Config,
-	xConfigurationValid := GVL_MULTI_TYPE.ConfigStatus.xConfigurationValid,
+	xConfigurationValid := GVL_MULTI_TYPE.ConfigStatus.xConfigurationValid AND xPointTableReady,
 	stRobotStatus := GVL_ROBOT.Status,
 	astMagazineStatus := GVL_MAGAZINE.astStatus,
 	astMachineStatus := GVL_MACHINE.Status,

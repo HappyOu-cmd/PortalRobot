@@ -7,6 +7,14 @@ VAR_INPUT
     xReset            : BOOL; // Сброс ошибки конкретного станка
 	xResetGlobal      : BOOL; // Общий сброс ошибок ячейки
 	xGlobalError      : BOOL; // Глобальная ошибка ячейки
+	xManualMode       : BOOL; // Ручной режим: открытая операторская дверь не формирует аварию обслуживания
+	xAutomaticUseEnabled : BOOL; // Станок выбран для автоматической обработки
+	xHmiOpenSafetyDoor  : BOOL; // Импульс ручного открытия операторской двери
+	xHmiCloseSafetyDoor : BOOL; // Импульс ручного закрытия операторской двери
+	xHmiOpenHatch       : BOOL; // Импульс ручного открытия роботного люка
+	xHmiCloseHatch      : BOOL; // Импульс ручного закрытия роботного люка
+	xHmiOpenChuck       : BOOL; // Импульс ручного разжима патрона
+	xHmiCloseChuck      : BOOL; // Импульс ручного зажима патрона
 	xHmiSetBlank	  : BOOL; // Ручное подтверждение загруженной заготовки
     xHmiSetDetail     : BOOL; // Ручное подтверждение загруженной детали
 	xHmiEnable        : BOOL; // Импульс включения станка или отмены ожидающего отключения
@@ -36,7 +44,7 @@ VAR
 	ePartState              : E_PART_STATE := E_PART_STATE.UNKNOWN; // Состояние детали в патроне
 	ePartType               : E_PART_TYPE := E_PART_TYPE.UNKNOWN; // Тип детали в патроне 
 	uiIndex                 : UINT; // Индекс команды рецепта
-	tofErrorDoor            : TOF; // Контроль закрытия двери при нахождении робота внутри
+	tofErrorDoor            : TOF; // Контроль закрытия люка при нахождении робота внутри
 	rtExectue               : R_TRIG; // Фронт команды запуска
 	rtEnabledMachine        : R_TRIG; // Фронт команды включения
 	rtDisabledMachine       : R_TRIG; // Фронт команды отключения
@@ -44,8 +52,14 @@ VAR
 	rtCycleDone             : R_TRIG; // Фронт завершения цикла станка
 	rtCycleStarted          : R_TRIG; // Фронт фактического запуска обработки
 	ftCycleStopped          : F_TRIG; // Спад фактического цикла обработки
-    rtSetBlankLoaded        : R_TRIG; // Фронт ручного подтверждения заготовки
+	rtSetBlankLoaded        : R_TRIG; // Фронт ручного подтверждения заготовки
     rtSetDetailLoaded       : R_TRIG; // Фронт ручного подтверждения детали
+	rtHmiOpenSafetyDoor      : R_TRIG; // Фронт ручного открытия операторской двери
+	rtHmiCloseSafetyDoor     : R_TRIG; // Фронт ручного закрытия операторской двери
+	rtHmiOpenHatch           : R_TRIG; // Фронт ручного открытия люка
+	rtHmiCloseHatch          : R_TRIG; // Фронт ручного закрытия люка
+	rtHmiOpenChuck           : R_TRIG; // Фронт ручного разжима патрона
+	rtHmiCloseChuck          : R_TRIG; // Фронт ручного зажима патрона
 	ftChuckClamped          : F_TRIG; // Спад закрытия кулачков
 	tonCycleMeasure         : TON; // Измерение длительности автоматического цикла
 	tonRobotMoveTimeout     : TON; // Ограничение времени перемещения робота
@@ -70,6 +84,14 @@ VAR
 	xRobotInsideAtFault     : BOOL; // Робот был в зоне станка при возникновении ошибки
 	xRobotStopRequired      : BOOL; // Итоговая реакция ROBOT_STOP, сформированная станком
 	xRobotResetDependencyReady : BOOL; // Каскадная ошибка робота может быть сброшена тем же импульсом
+	xSafetyDoorSafe        : BOOL; // Оба сигнала операторской двери непротиворечиво подтверждают закрытие
+	xManualControlAllowed  : BOOL; // Общие условия ручного управления механизмами
+	xManualSafetyDoorOpenAllowed  : BOOL;
+	xManualSafetyDoorCloseAllowed : BOOL;
+	xManualHatchOpenAllowed       : BOOL;
+	xManualHatchCloseAllowed      : BOOL;
+	xManualChuckOpenAllowed       : BOOL;
+	xManualChuckCloseAllowed      : BOOL;
 	xRobotDone              : BOOL; // Робот освобождён алгоритмом станка
 	xServiceDoorCloseDemand : BOOL; // Внутренний запрос закрытия двери
 	xServiceDoorOpenDemand  : BOOL; // Внутренний запрос открытия двери
@@ -87,8 +109,8 @@ VAR CONSTANT
 	ERR_WRONG_COMMAND       : DWORD := 2;       // В рецепте встретился неподдерживаемый шаг
 	ERR_ROBOT_MOTION        : DWORD := 4;       // Робот перешёл в ошибку при движении
 	ERR_ROBOT_ACTION        : DWORD := 8;       // Робот перешёл в ошибку при действии захвата
-	ERR_DOOR_OPEN           : DWORD := 16;      // Авария станка при открытии двери
-	ERR_DOOR_CLOSE          : DWORD := 32;      // Авария станка при закрытии двери
+	ERR_DOOR_OPEN           : DWORD := 16;      // Авария станка при открытии люка
+	ERR_DOOR_CLOSE          : DWORD := 32;      // Авария станка при закрытии люка
 	ERR_CHUCK_OPEN          : DWORD := 64;      // Авария станка при разжиме патрона
 	ERR_CHUCK_CLOSE         : DWORD := 128;     // Авария станка при зажиме патрона
 	ERR_CYCLE_START         : DWORD := 256;     // Авария станка при запуске цикла
@@ -96,7 +118,7 @@ VAR CONSTANT
 	ERR_UNKNOWN_DETAIL      : DWORD := 1024;    // Неизвестно содержимое патрона
 	ERR_MACHINE_ALARM       : DWORD := 2048;    // Физическая авария станка
 	ERR_INDEX               : DWORD := 4096;    // Индекс рецепта вышел за диапазон
-	ERR_DOOR_ROBOT          : DWORD := 8192;    // Дверь закрывается при роботе в зоне
+	ERR_DOOR_ROBOT          : DWORD := 8192;    // Люк закрывается при роботе в зоне
 	ERR_MACHINE_IDLE        : DWORD := 16384;   // Физическая авария станка в IDLE
 	ERR_TIMEOUT_ROBOT_MOVE    : DWORD := DWORD#16#00008000; // Таймаут перемещения робота
 	ERR_TIMEOUT_ROBOT_ACTION  : DWORD := DWORD#16#00010000; // Таймаут действия захвата
@@ -106,12 +128,14 @@ VAR CONSTANT
 	ERR_TIMEOUT_CHUCK_OPEN    : DWORD := DWORD#16#00100000; // Таймаут разжима патрона
 	ERR_TIMEOUT_CHUCK_CLOSE   : DWORD := DWORD#16#00200000; // Таймаут зажима патрона
 	ERR_TIMEOUT_CYCLE_START   : DWORD := DWORD#16#00400000; // Таймаут подтверждения запуска цикла
+	ERR_SAFETY_DOOR_OPEN     : DWORD := DWORD#16#00800000; // Дверь открылась во время обслуживания
 
 	// Эти ошибки уже относятся к действию робота и всегда имеют эффект ROBOT_STOP.
 	MASK_ALWAYS_ROBOT_STOP : DWORD :=
 								ERR_ROBOT_MOTION OR
 								ERR_ROBOT_ACTION OR
 								ERR_DOOR_ROBOT OR
+								ERR_SAFETY_DOOR_OPEN OR
 								ERR_TIMEOUT_ROBOT_MOVE OR
 								ERR_TIMEOUT_ROBOT_ACTION OR
 								ERR_TIMEOUT_ROBOT_RELEASE;
@@ -148,6 +172,8 @@ VAR CONSTANT
 	WRN_ENABLE_PROCESSING  : UINT := 5; // Включение отклонено во время обработки
 	WRN_ENABLE_PART_UNKNOWN: UINT := 7; // Состояние изделия в патроне не определено
 	WRN_RESET_ROBOT_ERROR  : UINT := 8; // Каскадная ошибка робота ещё не готова к сбросу
+	WRN_ENABLE_SAFETY_DOOR_OPEN : UINT := 9; // Включение отклонено: операторская дверь не закрыта
+	WRN_MANUAL_CONTROL_REJECTED : UINT := 10; // Ручная команда механизма отклонена PLC
 							
 	
 END_VAR
@@ -162,7 +188,16 @@ rtCycleStarted(CLK := stMachineStatus.xCycleActive);
 ftCycleStopped(CLK := stMachineStatus.xCycleActive);
 rtSetBlankLoaded(CLK := xHmiSetBlank);
 rtSetDetailLoaded(CLK := xHmiSetDetail);
+rtHmiOpenSafetyDoor(CLK := xHmiOpenSafetyDoor);
+rtHmiCloseSafetyDoor(CLK := xHmiCloseSafetyDoor);
+rtHmiOpenHatch(CLK := xHmiOpenHatch);
+rtHmiCloseHatch(CLK := xHmiCloseHatch);
+rtHmiOpenChuck(CLK := xHmiOpenChuck);
+rtHmiCloseChuck(CLK := xHmiCloseChuck);
 ftChuckClamped(CLK := stMachineStatus.xChuckClamped);
+
+xSafetyDoorSafe := stMachineStatus.xSafetyDoorClosed
+	AND NOT stMachineStatus.xSafetyDoorOpen;
 
 xRobotInsideMachine := (eState = E_MACHINE_STATE.ROBOT_ACTION)
 	OR ((eState = E_MACHINE_STATE.ROBOT_MOVE)
@@ -170,6 +205,35 @@ xRobotInsideMachine := (eState = E_MACHINE_STATE.ROBOT_ACTION)
 	OR (stRobotStatus.eCurrentPoint = stPoints.eInside)
 	OR (stRobotStatus.eCurrentPoint = stPoints.eChuck)
 	OR (stRobotStatus.eCurrentPoint = stPoints.eChuckApproach);
+
+// Ручное управление разрешено только при выбранном ручном режиме и полностью
+// исключённом из автоматики станке. Конкретные xAllowed дополнительно не дают
+// отправлять бессмысленную команду уже достигнутого положения.
+xManualControlAllowed := xManualMode
+	AND NOT xAutomaticUseEnabled
+	AND (eState = E_MACHINE_STATE.DISABLED)
+	AND NOT xGlobalError
+	AND NOT stMachineStatus.xAlarm
+	AND NOT stMachineStatus.xCycleActive;
+xManualSafetyDoorOpenAllowed := xManualControlAllowed
+	AND stMachineStatus.xSafetyDoorClosed
+	AND NOT stMachineStatus.xSafetyDoorOpen;
+xManualSafetyDoorCloseAllowed := xManualControlAllowed
+	AND stMachineStatus.xSafetyDoorOpen
+	AND NOT stMachineStatus.xSafetyDoorClosed;
+xManualHatchOpenAllowed := xManualControlAllowed
+	AND stMachineStatus.xDoorClosed
+	AND NOT stMachineStatus.xDoorOpen;
+xManualHatchCloseAllowed := xManualControlAllowed
+	AND stMachineStatus.xDoorOpen
+	AND NOT stMachineStatus.xDoorClosed
+	AND NOT xRobotInsideMachine;
+xManualChuckOpenAllowed := xManualControlAllowed
+	AND stMachineStatus.xChuckClamped
+	AND NOT stMachineStatus.xChuckUnclamped;
+xManualChuckCloseAllowed := xManualControlAllowed
+	AND stMachineStatus.xChuckUnclamped
+	AND NOT stMachineStatus.xChuckClamped;
 
 xRobotResetDependencyReady := (((Error.dwErrorActive
 		AND MASK_ALWAYS_ROBOT_STOP) = DWORD#0)
@@ -206,15 +270,33 @@ IF rtEnabledMachine.Q
 AND (eState = E_MACHINE_STATE.DISABLED)
 AND (stMachineStatus.xAlarm
 	OR stMachineStatus.xCycleActive
+	OR NOT xSafetyDoorSafe
 	OR (ePartState = E_PART_STATE.UNKNOWN)) THEN
 	IF stMachineStatus.xAlarm THEN
 		Diag.stWarning.uiCode := WRN_ENABLE_ALARM_ACTIVE;
 	ELSIF stMachineStatus.xCycleActive THEN
 		Diag.stWarning.uiCode := WRN_ENABLE_PROCESSING;
+	ELSIF NOT xSafetyDoorSafe THEN
+		Diag.stWarning.uiCode := WRN_ENABLE_SAFETY_DOOR_OPEN;
 	ELSE
 		Diag.stWarning.uiCode := WRN_ENABLE_PART_UNKNOWN;
 	END_IF;
 
+	Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
+	IF Diag.stWarning.udiSequence = UDINT#0 THEN
+		Diag.stWarning.udiSequence := UDINT#1;
+	END_IF;
+END_IF;
+
+// HMI показывает xAllowed только визуально. Любая фактически отклонённая
+// команда всё равно фиксируется PLC-предупреждением и попадает в журнал.
+IF (rtHmiOpenSafetyDoor.Q AND NOT xManualSafetyDoorOpenAllowed)
+OR (rtHmiCloseSafetyDoor.Q AND NOT xManualSafetyDoorCloseAllowed)
+OR (rtHmiOpenHatch.Q AND NOT xManualHatchOpenAllowed)
+OR (rtHmiCloseHatch.Q AND NOT xManualHatchCloseAllowed)
+OR (rtHmiOpenChuck.Q AND NOT xManualChuckOpenAllowed)
+OR (rtHmiCloseChuck.Q AND NOT xManualChuckCloseAllowed) THEN
+	Diag.stWarning.uiCode := WRN_MANUAL_CONTROL_REJECTED;
 	Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
 	IF Diag.stWarning.udiSequence = UDINT#0 THEN
 		Diag.stWarning.udiSequence := UDINT#1;
@@ -307,6 +389,8 @@ END_IF;
 // Команды по умолчанию
 Command.stIo.xOpenDoor := FALSE;
 Command.stIo.xCloseDoor := FALSE;
+Command.stIo.xOpenSafetyDoor := FALSE;
+Command.stIo.xCloseSafetyDoor := FALSE;
 Command.stIo.xClampChuck := FALSE;
 Command.stIo.xUnclampChuck := FALSE;
 Command.stIo.xStartCycle := FALSE;
@@ -314,6 +398,27 @@ Command.stIo.xReset := xReset OR xResetGlobal;
 
 Command.stRobot.xExecute := FALSE;
 Command.stRobot.xStop := FALSE;
+
+// Импульсы ручного управления проходят только через рассчитанные PLC-разрешения.
+// Автоматический алгоритм станка в DISABLED не формирует параллельных команд.
+IF xHmiOpenSafetyDoor AND xManualSafetyDoorOpenAllowed THEN
+	Command.stIo.xOpenSafetyDoor := TRUE;
+END_IF;
+IF xHmiCloseSafetyDoor AND xManualSafetyDoorCloseAllowed THEN
+	Command.stIo.xCloseSafetyDoor := TRUE;
+END_IF;
+IF xHmiOpenHatch AND xManualHatchOpenAllowed THEN
+	Command.stIo.xOpenDoor := TRUE;
+END_IF;
+IF xHmiCloseHatch AND xManualHatchCloseAllowed THEN
+	Command.stIo.xCloseDoor := TRUE;
+END_IF;
+IF xHmiOpenChuck AND xManualChuckOpenAllowed THEN
+	Command.stIo.xUnclampChuck := TRUE;
+END_IF;
+IF xHmiCloseChuck AND xManualChuckCloseAllowed THEN
+	Command.stIo.xClampChuck := TRUE;
+END_IF;
 Command.stRobot.eAction := E_ROBOT_ACTION.NONE;
 xServiceDoorOpenDemand := FALSE;
 xServiceDoorCloseDemand := FALSE;
@@ -419,7 +524,8 @@ AND ((eState = E_MACHINE_STATE.IDLE)
 ELSIF rtEnabledMachine.Q
 AND (eState = E_MACHINE_STATE.DISABLED) THEN
 	IF NOT stMachineStatus.xAlarm
-	AND NOT stMachineStatus.xCycleActive THEN
+	AND NOT stMachineStatus.xCycleActive
+	AND xSafetyDoorSafe THEN
 		IF ePartState = E_PART_STATE.EMPTY THEN
 			eState := E_MACHINE_STATE.IDLE;
 		ELSIF ePartState = E_PART_STATE.LOADED THEN
@@ -449,7 +555,7 @@ IF (eState = E_MACHINE_STATE.DISABLED) OR (eState = E_MACHINE_STATE.ERROR) THEN
 	xOperatorClosingDoor := FALSE;
 	ePartType :=   E_PART_TYPE.UNKNOWN;
 END_IF
-//Останавливаем робота, если кто-то попытался закрыть дверь в станке в момент его работы
+// Останавливаем робота, если люк закрылся при нахождении робота в станке.
 tofErrorDoor(
 			PT:= T#100MS,
 			IN:=stMachineStatus.xDoorOpen
@@ -473,6 +579,17 @@ IF xRobotInsideMachine AND NOT tofErrorDoor.Q THEN
 	Error.dwErrorActive := Error.dwErrorActive OR ERR_DOOR_ROBOT;
     eState := E_MACHINE_STATE.ERROR;
 END_IF
+
+// Открытие операторской двери в любой момент роботного обслуживания
+// — первичная авария станка с каскадным ROBOT_STOP.
+IF (eActualOperation <> E_MACHINE_OPERATION.NONE)
+AND NOT xManualMode
+AND NOT xSafetyDoorSafe
+AND (eState <> E_MACHINE_STATE.ERROR) THEN
+	Command.stRobot.xStop := stRobotStatus.xBusy;
+	Error.dwErrorActive := Error.dwErrorActive OR ERR_SAFETY_DOOR_OPEN;
+	eState := E_MACHINE_STATE.ERROR;
+END_IF;
 
 CASE eState OF
 	E_MACHINE_STATE.DISABLED:
@@ -531,6 +648,7 @@ CASE eState OF
 			AND ePartState <> E_PART_STATE.UNKNOWN
 			AND NOT stMachineStatus.xAlarm
 			AND NOT stMachineStatus.xCycleActive
+			AND xSafetyDoorSafe
     		AND NOT stRobotStatus.xBusy 
 			AND NOT stRobotStatus.xError
 			AND NOT xGlobalError THEN
@@ -842,10 +960,11 @@ CASE eState OF
 			xAutoCycleCommanded := FALSE;
 		END_IF;
 
-    	IF (xReset OR xResetGlobal)
-    	AND NOT xGlobalError
-    	AND NOT xExecute 
+		IF (xReset OR xResetGlobal)
+		AND NOT xGlobalError
+		AND NOT xExecute
 		AND NOT stMachineStatus.xAlarm
+		AND xSafetyDoorSafe
 		AND xRobotResetDependencyReady THEN
 			Error.dwErrorLast := Error.dwErrorActive;
 			Error.dwErrorActive := DWORD#0;
@@ -897,6 +1016,7 @@ Status.xCanAcceptService := (eState = E_MACHINE_STATE.IDLE)
 			AND ePartState <> E_PART_STATE.UNKNOWN
 			AND NOT stMachineStatus.xAlarm
 			AND NOT stMachineStatus.xCycleActive
+			AND xSafetyDoorSafe
 			AND NOT xGlobalError;
 
 // В состоянии ERROR станок уже остановлен и не считается включённым.
@@ -911,13 +1031,22 @@ Status.xPowerAllowed := (eState <> E_MACHINE_STATE.ERROR)
 		OR ((eState = E_MACHINE_STATE.DISABLED)
 			AND NOT stMachineStatus.xAlarm
 			AND NOT stMachineStatus.xCycleActive
+			AND xSafetyDoorSafe
 			AND (ePartState <> E_PART_STATE.UNKNOWN)));
 Status.xResetAllowed := (eState = E_MACHINE_STATE.ERROR)
 	AND (Error.dwErrorActive <> DWORD#0)
 	AND NOT stMachineStatus.xAlarm
+	AND xSafetyDoorSafe
 	AND NOT xGlobalError
 	AND NOT xExecute
 	AND xRobotResetDependencyReady;
+Status.xManualControlAllowed := xManualControlAllowed;
+Status.xManualSafetyDoorOpenAllowed := xManualSafetyDoorOpenAllowed;
+Status.xManualSafetyDoorCloseAllowed := xManualSafetyDoorCloseAllowed;
+Status.xManualHatchOpenAllowed := xManualHatchOpenAllowed;
+Status.xManualHatchCloseAllowed := xManualHatchCloseAllowed;
+Status.xManualChuckOpenAllowed := xManualChuckOpenAllowed;
+Status.xManualChuckCloseAllowed := xManualChuckCloseAllowed;
 Status.xProcessing := stMachineStatus.xCycleActive;
 Status.xPartReady := stMachineStatus.xCycleDone;
 Status.xServiceRequired := (eGrantedOperation <> E_MACHINE_OPERATION.NONE)

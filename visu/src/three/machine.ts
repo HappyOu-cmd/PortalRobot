@@ -207,8 +207,8 @@ function setLamp(materialValue: THREE.MeshStandardMaterial, color: number, activ
 export function updateMachineRig(rig: MachineRig, state: MachineState, dt: number, layout: CellLayout): void {
   const response = layout.animation.mechanismResponse;
   let doorTarget = rig.doorValue;
-  if (state.doorOpen && !state.doorClosed) doorTarget = 1;
-  if (state.doorClosed && !state.doorOpen) doorTarget = 0;
+  if (state.hatchOpen && !state.hatchClosed) doorTarget = 1;
+  if (state.hatchClosed && !state.hatchOpen) doorTarget = 0;
   rig.doorValue = damp(rig.doorValue, doorTarget, response, dt);
   if (rig.door) rig.door.position.x = rig.doorClosedX;
   if (rig.hatch) rig.hatch.position.x = THREE.MathUtils.lerp(rig.hatchClosedX, rig.hatchOpenX, rig.doorValue);

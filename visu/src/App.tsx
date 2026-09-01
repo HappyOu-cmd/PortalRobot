@@ -14,7 +14,7 @@ import {
 import {
   Activity, AlertCircle, ArrowRight, Bot, Box, Boxes, CheckCircle2, ChevronLeft, ChevronRight,
   ChevronDown, Clock3, Cylinder, Disc3, DoorOpen, Factory, Home, BarChart3,
-  Eye, EyeOff, FlaskConical, Gauge, Grid2X2, LoaderCircle, LockKeyhole, Menu, Power, PackagePlus, RotateCcw, Settings,
+  Eye, EyeOff, FlaskConical, Gauge, Grid2X2, LoaderCircle, LockKeyhole, Menu, Power, PackageOpen, PackagePlus, RotateCcw, Settings,
   ShieldAlert, ShieldCheck, Trash2, TriangleAlert, UnlockKeyhole, UserRound, UsersRound, X,
   type LucideIcon,
 } from 'lucide-react';
@@ -26,6 +26,14 @@ import { RobotSpeedEditor, normalizeRobotSpeed } from './components/RobotSpeedEd
 import { FaultInjectionPanel } from './components/faultSimulation/FaultInjectionPanel';
 import { SimulationSettingsPanel } from './components/faultSimulation/SimulationSettingsPanel';
 import { MagazineMatrix, MagazineMatrixCard } from './components/magazine/MagazineMatrix';
+import {
+  isMachineMotionAllowed,
+  MachineManualControlMenu,
+  MachineMotionWarning,
+  type MachineMechanism,
+  type MachineMechanismAction,
+  type MachineMotionRequest,
+} from './components/machine/MachineManualControl';
 import { CellSettingsPanel, ProductTypeBadge, ProductTypeSelector } from './components/multiType/MultiTypeControls';
 import { CyclogramPanel } from './components/cyclogram/CyclogramPanel';
 import { CellEventLog } from './components/CellEventLog';
@@ -412,6 +420,14 @@ const INITIAL_RUNTIME: PlcRuntimeInfo = {
     pointsAllowed: false, gripperAllowed: false, gripper1OpenAllowed: false, gripper1CloseAllowed: false,
     gripper2OpenAllowed: false, gripper2CloseAllowed: false, rotateToBlankAllowed: false, rotateToDetailAllowed: false,
     commandBusy: false, activeAction: 0, activePoint: 0, rejectCode: 1, rejectReason: 'Ожидание данных PLC',
+  },
+  pointEditor: {
+    points: Array.from({ length: 15 }, (_, offset) => ({
+      index: offset + 1, pointId: 0, x: 0, y: 0, z: 0, speedFactor: 0, configured: false,
+    })),
+    captureAllowed: false, saveAllowed: false, tableReady: false,
+    ackSeq: 0, result: 0, rejectCode: 3, rejectReason: 'Ожидание данных PLC',
+    resultPoint: { index: 0, pointId: 0, x: 0, y: 0, z: 0, speedFactor: 0, configured: false },
   },
 };
 const INITIAL_CYCLOGRAM: CyclogramHistory = {
@@ -836,10 +852,14 @@ function machineProduct(machine: CellState['machines'][number]): { text: string;
     : { text: 'Заготовка', kind: 'blank' };
 }
 
-function MachinesQuickPanel({ machines, selectedIndex, onSelect, onToggleEnabled, onExtended, onClose, className }: {
+function MachinesQuickPanel({ machines, selectedIndex, activeMechanism, usePlcData, onSelect, onMechanismSelect, onMechanismRequest, onToggleEnabled, onExtended, onClose, className }: {
   machines: CellState['machines'];
   selectedIndex: number;
+  activeMechanism: MachineMechanism | null;
+  usePlcData: boolean;
   onSelect: (index: number) => void;
+  onMechanismSelect: (mechanism: MachineMechanism | null) => void;
+  onMechanismRequest: (action: MachineMechanismAction) => void;
   onToggleEnabled: () => void;
   onExtended: (index: number) => void;
   onClose: () => void;
@@ -851,12 +871,14 @@ function MachinesQuickPanel({ machines, selectedIndex, onSelect, onToggleEnabled
   const progress = machine.cycleExpectedS > 0
     ? Math.min(100, machine.cycleElapsedS / machine.cycleExpectedS * 100)
     : 0;
-  const doorText = machine.doorOpen ? 'Открыта' : machine.doorClosed ? 'Закрыта' : 'Движение';
+  const doorText = machine.doorOpen ? 'Открыта' : machine.doorClosed ? 'Закрыта' : 'Нет данных';
+  const hatchText = machine.hatchOpen ? 'Открыт' : machine.hatchClosed ? 'Закрыт' : 'Движение';
   const chuckText = machine.chuckOpen ? 'Открыт' : machine.chuckClosed ? 'Закрыт' : 'Движение';
   const powerText = machine.disablePending
     ? 'Отменить отключение'
     : machine.enabled ? 'Выключить станок' : 'Включить станок';
   const doorTone: QuickStatusTone = machine.doorClosed ? 'green' : machine.doorOpen ? 'amber' : 'gray';
+  const hatchTone: QuickStatusTone = machine.hatchClosed ? 'green' : machine.hatchOpen ? 'amber' : 'gray';
   const chuckTone: QuickStatusTone = machine.chuckClosed ? 'green' : machine.chuckOpen ? 'amber' : 'gray';
   const productTone: QuickStatusTone = product.kind === 'detail' ? 'green' : product.kind === 'blank' ? 'blue' : 'gray';
 
@@ -885,12 +907,13 @@ function MachinesQuickPanel({ machines, selectedIndex, onSelect, onToggleEnabled
         </button>
       </div>
       <div className="machine-quick-status-grid">
-        <QuickStatusCard icon={DoorOpen} eyebrow="Механика" title="Дверь" status={doorText} tone={doorTone} />
-        <QuickStatusCard icon={Disc3} eyebrow="Оснастка" title="Патрон" status={chuckText} tone={chuckTone} />
+        <QuickStatusCard icon={DoorOpen} eyebrow="Механика" title="Дверь" status={doorText} tone={doorTone} className={activeMechanism === 'door' ? 'machine-mechanism-trigger active' : 'machine-mechanism-trigger'} interactive ariaExpanded={activeMechanism === 'door'} onClick={() => onMechanismSelect(activeMechanism === 'door' ? null : 'door')} />
+        <QuickStatusCard icon={PackageOpen} eyebrow="Механика" title="Люк" status={hatchText} tone={hatchTone} className={activeMechanism === 'hatch' ? 'machine-mechanism-trigger active' : 'machine-mechanism-trigger'} interactive ariaExpanded={activeMechanism === 'hatch'} onClick={() => onMechanismSelect(activeMechanism === 'hatch' ? null : 'hatch')} />
+        <QuickStatusCard icon={Disc3} eyebrow="Оснастка" title="Патрон" status={chuckText} tone={chuckTone} className={activeMechanism === 'chuck' ? 'machine-mechanism-trigger active' : 'machine-mechanism-trigger'} interactive ariaExpanded={activeMechanism === 'chuck'} onClick={() => onMechanismSelect(activeMechanism === 'chuck' ? null : 'chuck')} />
         <QuickStatusCard icon={Box} eyebrow="Изделие" title="Обработка" status={product.text} tone={productTone} className={`machine-product ${product.kind}`} />
-        <QuickStatusCard icon={Settings} eyebrow="Процесс" title="Шаг" status={machine.currentStep || state.text} tone={state.tone} />
       </div>
     </div>
+    {activeMechanism && <MachineManualControlMenu machineIndex={selectedIndex} machine={machine} mechanism={activeMechanism} usePlcData={usePlcData} onRequest={onMechanismRequest} onClose={() => onMechanismSelect(null)} />}
   </section>;
 }
 
@@ -1373,7 +1396,7 @@ function MachinePanel({ index, state, multiTypeCount, productTypeChangeAllowed, 
     </section>
 
     <section><div className="panel-section-title"><Factory size={18} /><h3>Механизмы</h3></div>
-      <div className="machine-io-grid"><div><DoorOpen /><span>Дверь</span><b>{state.doorOpen ? 'Открыта' : state.doorClosed ? 'Закрыта' : 'Движение'}</b></div><div>{state.chuckClosed ? <LockKeyhole /> : <UnlockKeyhole />}<span>Патрон</span><b>{state.chuckOpen ? 'Открыт' : state.chuckClosed ? 'Закрыт' : 'Движение'}</b></div><div><Box /><span>Изделие</span><b>{machineProduct(state).text}</b></div><div>{state.activeErrors.length ? <AlertCircle /> : <CheckCircle2 />}<span>Авария</span><b>{state.activeErrors.length ? 'Есть' : 'Нет'}</b></div></div>
+      <div className="machine-io-grid"><div><DoorOpen /><span>Дверь</span><b>{state.doorOpen ? 'Открыта' : state.doorClosed ? 'Закрыта' : 'Нет данных'}</b></div><div><PackageOpen /><span>Люк</span><b>{state.hatchOpen ? 'Открыт' : state.hatchClosed ? 'Закрыт' : 'Движение'}</b></div><div>{state.chuckClosed ? <LockKeyhole /> : <UnlockKeyhole />}<span>Патрон</span><b>{state.chuckOpen ? 'Открыт' : state.chuckClosed ? 'Закрыт' : 'Движение'}</b></div><div><Box /><span>Изделие</span><b>{machineProduct(state).text}</b></div><div><Bot /><span>Обслуживание</span><b>{state.canAcceptService ? 'Разрешено' : 'Запрещено'}</b></div><div>{state.activeErrors.length ? <AlertCircle /> : <CheckCircle2 />}<span>Авария</span><b>{state.activeErrors.length ? 'Есть' : 'Нет'}</b></div></div>
     </section>
 
     <section><div className="panel-section-title"><Clock3 size={18} /><h3>Оценка времени</h3></div>
@@ -1402,7 +1425,7 @@ function OperatorConfirmation({ index, machine, layout, state, robotCoordinatesR
   const step = machine.plcState === 2 || machine.plcState === 15 ? 3
     : machine.plcState === 3 || machine.plcState === 12 ? 2 : 1;
   const moving = machine.plcState === 12 || machine.plcState === 15 || machine.plcState === 0;
-  const steps = ['Что установлено в станке?', 'Закрыть дверь?', 'Запустить цикл ЧПУ?'];
+  const steps = ['Что установлено в станке?', 'Закрыть люк?', 'Запустить цикл ЧПУ?'];
   return <div className={`confirmation-overlay ${className ?? ''}`} role="dialog" aria-modal="true" aria-label={`Подтверждение оператора для станка ${index + 1}`} onPointerDown={(event) => event.stopPropagation()}>
     <div className="confirmation-modal">
       <aside className="confirmation-context">
@@ -1414,9 +1437,9 @@ function OperatorConfirmation({ index, machine, layout, state, robotCoordinatesR
         <header><div><span>СТАНОК {index + 1}</span><h2>Подтверждение оператора</h2></div><button type="button" onClick={onCancel} title="Отменить ввод в работу"><X /></button></header>
         <div className="confirmation-stepper">{steps.map((label, stepIndex) => <div key={label} className={stepIndex + 1 === step ? 'active' : stepIndex + 1 < step ? 'done' : ''}><i>{stepIndex + 1}</i><span>{label}</span></div>)}</div>
         <div className="confirmation-question">
-          {moving ? <div className="confirmation-wait"><LoaderCircle /><strong>{machine.plcState === 12 ? 'Закрывается дверь' : machine.plcState === 15 ? 'Запускается обработка' : 'Включается станок'}</strong><span>Ожидание подтверждения от PLC</span></div>
+          {moving ? <div className="confirmation-wait"><LoaderCircle /><strong>{machine.plcState === 12 ? 'Закрывается люк' : machine.plcState === 15 ? 'Запускается обработка' : 'Включается станок'}</strong><span>Ожидание подтверждения от PLC</span></div>
           : step === 1 ? <><div className="question-heading"><span>ШАГ 1 ИЗ 3</span><h3>Что находится в патроне станка?</h3><p>Выберите фактический тип установленного изделия.</p></div><div className="part-choice"><button className="blank" type="button" onClick={() => onCommand('machine.setBlank')}><Cylinder /><strong>Заготовка</strong><span>Необработанная заготовка</span></button><button className="detail" type="button" onClick={() => onCommand('machine.setDetail')}><Disc3 /><strong>Деталь</strong><span>Готовая обработанная деталь</span></button></div></>
-          : step === 2 ? <><div className="question-heading"><span>ШАГ 2 ИЗ 3</span><h3>Закрыть дверь станка?</h3><p>После подтверждения PLC подаст команду закрытия двери.</p></div><div className="confirmation-actions"><button className="primary" type="button" onClick={() => onCommand('machine.acceptDoor')}>Закрыть дверь</button><button type="button" onClick={() => onCommand('machine.rejectDoor')}>Не закрывать</button></div></>
+          : step === 2 ? <><div className="question-heading"><span>ШАГ 2 ИЗ 3</span><h3>Закрыть люк станка?</h3><p>После подтверждения PLC подаст команду закрытия люка.</p></div><div className="confirmation-actions"><button className="primary" type="button" onClick={() => onCommand('machine.acceptDoor')}>Закрыть люк</button><button type="button" onClick={() => onCommand('machine.rejectDoor')}>Не закрывать</button></div></>
           : <><div className="question-heading"><span>ШАГ 3 ИЗ 3</span><h3>Запустить цикл обработки?</h3><p>Проверьте установку изделия и готовность станка.</p></div><div className="confirmation-actions"><button className="primary" type="button" onClick={() => onCommand('machine.acceptRun')}>Запустить обработку</button><button type="button" onClick={() => onCommand('machine.rejectRun')}>Не запускать</button></div></>}
         </div>
         <footer><button type="button" onClick={onCancel}>Отменить ввод в работу</button><span>Следующий этап откроется после ответа PLC</span></footer>
@@ -1832,7 +1855,8 @@ function ManualPanel({ state, layout, setState, machineIndex, setMachineIndex, c
           </section>
         </>}
         {activeManualTopic === 'machines' && <section><h3>Механизмы станка</h3><div className="segmented three">{state.machines.map((_, index) => <button key={index} className={machineIndex === index ? 'active' : ''} onClick={() => setMachineIndex(index)}>Станок {index + 1}</button>)}</div>
-          <Toggle label="Дверь открыта" checked={state.machines[machineIndex].doorOpen} disabled={plcDataEnabled} onChange={(v) => updateMachine({ doorOpen: v, doorClosed: !v })} />
+          <Toggle label="Операторская дверь открыта" checked={state.machines[machineIndex].doorOpen} disabled={plcDataEnabled} onChange={(v) => updateMachine({ doorOpen: v, doorClosed: !v, canAcceptService: !v && state.machines[machineIndex].serviceRequired })} />
+          <Toggle label="Роботный люк открыт" checked={state.machines[machineIndex].hatchOpen} disabled={plcDataEnabled} onChange={(v) => updateMachine({ hatchOpen: v, hatchClosed: !v })} />
           <Toggle label="Патрон открыт" checked={state.machines[machineIndex].chuckOpen} disabled={plcDataEnabled} onChange={(v) => updateMachine({ chuckOpen: v, chuckClosed: !v })} />
           <Toggle label="Изделие в патроне" checked={state.machines[machineIndex].partPresent} disabled={plcDataEnabled} onChange={(v) => updateMachine({ partPresent: v, partState: v ? 'LOADED' : 'EMPTY', partType: v ? 'BLANK' : 'UNKNOWN' })} />
         </section>}
@@ -1876,6 +1900,8 @@ export function App() {
   const [magazineDriveMenuOpen, setMagazineDriveMenuOpen] = useState<number | null>(null);
   const [confirmationMachine, setConfirmationMachine] = useState<number | null>(null);
   const [confirmationEntered, setConfirmationEntered] = useState(false);
+  const [machineMechanism, setMachineMechanism] = useState<MachineMechanism | null>(null);
+  const [pendingMachineMotion, setPendingMachineMotion] = useState<MachineMotionRequest | null>(null);
   const [manualMachine, setManualMachine] = useState(1);
   const [running] = useState(false);
   const [globalError] = useState(false);
@@ -2172,9 +2198,9 @@ export function App() {
       sendPlcCommand({ command, machine: confirmationMachine + 1 });
       return;
     }
-    if (command === 'machine.setBlank') updateMachine(confirmationMachine, { plcState: 3, currentStep: 'Ожидается подтверждение закрытия двери' });
+    if (command === 'machine.setBlank') updateMachine(confirmationMachine, { plcState: 3, currentStep: 'Ожидается подтверждение закрытия люка' });
     if (command === 'machine.setDetail') updateMachine(confirmationMachine, { plcState: 4, currentStep: 'Станок готов', canAcceptService: true });
-    if (command === 'machine.acceptDoor') updateMachine(confirmationMachine, { plcState: 2, doorOpen: false, doorClosed: true, currentStep: 'Ожидается подтверждение запуска обработки' });
+    if (command === 'machine.acceptDoor') updateMachine(confirmationMachine, { plcState: 2, hatchOpen: false, hatchClosed: true, currentStep: 'Ожидается подтверждение запуска обработки' });
     if (command === 'machine.rejectDoor' || command === 'machine.rejectRun') updateMachine(confirmationMachine, { plcState: 0, enabled: false, mode: 'off', currentStep: 'Станок выключен' });
     if (command === 'machine.acceptRun') updateMachine(confirmationMachine, { plcState: 4, mode: 'processing', currentStep: 'Обработка' });
   };
@@ -2186,6 +2212,32 @@ export function App() {
     }
     setConfirmationMachine(null);
     setConfirmationEntered(false);
+  };
+  const requestMachineMotion = (action: MachineMechanismAction) => {
+    if (rejectGuestAction() || machineMechanism === null) return;
+    setPendingMachineMotion({ machineIndex: selectedMachine ?? 0, mechanism: machineMechanism, action });
+  };
+  const confirmMachineMotion = () => {
+    if (!pendingMachineMotion) return;
+    const { machineIndex, mechanism, action } = pendingMachineMotion;
+    const command = mechanism === 'door'
+      ? action === 'open' ? 'machine.manualDoorOpen' : 'machine.manualDoorClose'
+      : mechanism === 'hatch'
+        ? action === 'open' ? 'machine.manualHatchOpen' : 'machine.manualHatchClose'
+        : action === 'open' ? 'machine.manualChuckOpen' : 'machine.manualChuckClose';
+    if (usePlcData) {
+      sendPlcCommand({ command, machine: machineIndex + 1 });
+    } else if (isMachineMotionAllowed(cellState.machines[machineIndex], mechanism, action, false)) {
+      const patch = mechanism === 'door'
+        ? { doorOpen: action === 'open', doorClosed: action === 'close' }
+        : mechanism === 'hatch'
+          ? { hatchOpen: action === 'open', hatchClosed: action === 'close' }
+          : { chuckOpen: action === 'open', chuckClosed: action === 'close' };
+      updateMachine(machineIndex, patch);
+    } else {
+      setCommandError('Ручная команда станка отклонена: включите ручной режим и выключите станок из автообработки');
+    }
+    setPendingMachineMotion(null);
   };
   const sendCellStartChoice = (choice: number) => {
     if (rejectGuestAction()) return;
@@ -2396,7 +2448,12 @@ export function App() {
   const systemHeaderText = systemText.charAt(0) + systemText.slice(1).toLowerCase();
   const modeText = usePlcData ? (plcRuntime.manualMode ? 'Ручной' : 'Автомат') : 'Ручной';
   const displayedReadyMachines = usePlcData ? plcRuntime.readyMachines : 0;
-  const displayedRobotReady = usePlcData && plcRuntime.robotReady;
+  // Карточка агрегирует только те PLC-проверки робота, которые могут запретить
+  // автоматический запуск ячейки. Условия станков, магазинов и режима живут отдельно.
+  const displayedRobotReady = usePlcData
+    && plcRuntime.startReadiness.robotInterfaceReady
+    && plcRuntime.startReadiness.drivesReady
+    && plcRuntime.startReadiness.robotReady;
   const displayedMagazineReady = usePlcData && plcRuntime.magazineReady;
   const displayedReadyToStart = usePlcData && plcRuntime.readyToStart;
   const fallbackMachineAlarmIndexes = cellState.machines
@@ -2513,6 +2570,7 @@ export function App() {
   };
   const selectBottomSection = (section: BottomSection) => {
     setMatrixQuickOpen(false);
+    setMachineMechanism(null);
     setBottomSection(section);
     setPage('monitoring');
     if (section === 'machines') {
@@ -2802,7 +2860,7 @@ export function App() {
       <AnimatedPresence open={page === 'manual'}><ManualPanel state={cellState} layout={layout} setState={setCellState} machineIndex={manualMachine} setMachineIndex={setManualMachine} conveyorTestStatuses={indexedConveyorTestStatuses} onConveyorTest={(magazineId, type) => setIndexedConveyorTest((current) => ({ id: current.id + 1, type, magazineId }))} onClose={() => setPage('monitoring')} plcDataEnabled={plcDataEnabled} onPlcDataChange={changePlcDataSource} /></AnimatedPresence>
       <AnimatedPresence open={page === 'injections'}><FaultInjectionPanel values={faultSimulationValues} online={isPlcOnline} send={sendPlcCommand} onClose={() => setPage('monitoring')} /></AnimatedPresence>
       <AnimatedPresence open={page === 'simulation-settings'}><SimulationSettingsPanel values={faultSimulationValues} online={isPlcOnline} send={sendPlcCommand} onClose={() => setPage('monitoring')} /></AnimatedPresence>
-      <AnimatedPresence open={page === 'robot'}><RobotExtendedPanel robot={cellState.robot} magazines={cellState.magazines} runtime={plcRuntime} online={usePlcData} onSend={sendPlcCommand} onClose={() => setPage('monitoring')} /></AnimatedPresence>
+      <AnimatedPresence open={page === 'robot'}><RobotExtendedPanel robot={cellState.robot} magazines={cellState.magazines} runtime={plcRuntime} online={usePlcData} editorEditable={Boolean(authUser)} onSend={sendPlcCommand} onClose={() => setPage('monitoring')} /></AnimatedPresence>
       <AnimatedPresence open={page === 'machines' && selectedMachine !== null}>{selectedMachine !== null && <MachinePanel index={selectedMachine} state={cellState.machines[selectedMachine]} multiTypeCount={plcRuntime.multiTypeCount} productTypeChangeAllowed={!usePlcData || plcRuntime.multiTypeMachineAllowed[selectedMachine]} onClose={closeMachinePanel} onToggleEnabled={() => toggleMachineEnabled(selectedMachine)} onCycleSettings={(useHmi, seconds) => updateCycleSettings(selectedMachine, useHmi, seconds)} onProductType={(type) => changeMachineProductType(selectedMachine, type)} />}</AnimatedPresence>
       <AnimatedPresence open={page === 'magazine'}><MagazineScreen magazine={cellState.magazines[selectedMagazine]} magazineNumber={(selectedMagazine + 1) as 1 | 2} step={usePlcData ? plcRuntime.magazineSteps[selectedMagazine] : 'Локальная модель'} typeCount={plcRuntime.multiTypeCount} onClose={() => setPage('monitoring')} onToggleEnabled={() => toggleMagazineEnabled(selectedMagazine)} onCommand={(action) => sendMagazineCommand(selectedMagazine, action)} onFill={() => fillMagazine(selectedMagazine)} onClear={() => clearMagazine(selectedMagazine)} onSlotApply={(index, content, productType, zone) => applyMagazineSlot(index, content, productType, selectedMagazine, zone)} onSetting={updateMagazineSetting} /></AnimatedPresence>
       <AnimatedPresence open={page === 'alarms'}><AlarmScreen events={plcAlarmEvents} online={isPlcOnline} resetAllowed={usePlcData && plcRuntime.cellResetAllowed} onResetWarnings={() => sendPlcCommand({ command: 'alarms.resetWarnings' })} onResetAlarms={resetCell} onClose={() => setPage('monitoring')} /></AnimatedPresence>
@@ -2813,6 +2871,7 @@ export function App() {
       <AnimatedPresence open={page === 'statistics-settings' && authUser?.role === 'admin'}>{authUser?.role === 'admin' && <StatisticsSettingsPanel onClose={() => setPage('cell-settings')} />}</AnimatedPresence>
       <AnimatedPresence open={confirmationMachine !== null && !plcRuntime.operatorPromptActive}>{confirmationMachine !== null && !plcRuntime.operatorPromptActive && <OperatorConfirmation index={confirmationMachine} machine={cellState.machines[confirmationMachine]} layout={layout} state={cellState} robotCoordinatesRef={robotCoordinatesRef} onCommand={sendMachineConfirmation} onCancel={cancelMachineConfirmation} />}</AnimatedPresence>
       <AnimatedPresence open={plcRuntime.operatorPromptActive}><CellStartConfirmation runtime={plcRuntime} layout={layout} state={cellState} robotCoordinatesRef={robotCoordinatesRef} onChoice={sendCellStartChoice} onCancel={cancelCellStartConfirmation} /></AnimatedPresence>
+      {pendingMachineMotion && <MachineMotionWarning request={pendingMachineMotion} allowed={isMachineMotionAllowed(cellState.machines[pendingMachineMotion.machineIndex], pendingMachineMotion.mechanism, pendingMachineMotion.action, usePlcData)} onConfirm={confirmMachineMotion} onCancel={() => setPendingMachineMotion(null)} />}
       {page === 'monitoring' && confirmationMachine === null && !plcRuntime.operatorPromptActive && <div className="cell-bottom-shell">
         <AnimatedPresence open={bottomSection === 'cell'}><CellQuickPanel
           running={displayedRunning}
@@ -2839,10 +2898,14 @@ export function App() {
         <AnimatedPresence open={bottomSection === 'machines'}><MachinesQuickPanel
           machines={cellState.machines}
           selectedIndex={selectedMachine ?? 0}
-          onSelect={(index) => { setSelectedMachine(index); setManualMachine(index); }}
+          activeMechanism={machineMechanism}
+          usePlcData={usePlcData}
+          onSelect={(index) => { setSelectedMachine(index); setManualMachine(index); setMachineMechanism(null); }}
+          onMechanismSelect={setMachineMechanism}
+          onMechanismRequest={requestMachineMotion}
           onToggleEnabled={() => toggleMachineEnabled(selectedMachine ?? 0)}
-          onExtended={(index) => { setSelectedMachine(index); setManualMachine(index); setPage('machines'); }}
-          onClose={() => setBottomSection(null)}
+          onExtended={(index) => { setMachineMechanism(null); setSelectedMachine(index); setManualMachine(index); setPage('machines'); }}
+          onClose={() => { setMachineMechanism(null); setBottomSection(null); }}
         /></AnimatedPresence>
         <AnimatedPresence open={bottomSection === 'robot'}><RobotQuickPanel
           robot={cellState.robot}

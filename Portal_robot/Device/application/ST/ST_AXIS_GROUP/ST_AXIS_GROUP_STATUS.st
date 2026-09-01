@@ -5,6 +5,7 @@ STRUCT
 	xGroupError     : BOOL; // Активна ошибка SoftMotion группы
 	xMoveDirectDone : BOOL; // Прямое перемещение завершено
 	xSimErrorAllowed: BOOL; // Разрешена безопасная тестовая инъекция ошибки SM3
+	xPositionValid  : BOOL; // Координаты группы подтверждены MC_GroupReadActualPosition
 	ActualX         : LREAL; // Текущая координата X
 	ActualY         : LREAL; // Текущая координата Y
 	ActualZ         : LREAL; // Текущая координата Z

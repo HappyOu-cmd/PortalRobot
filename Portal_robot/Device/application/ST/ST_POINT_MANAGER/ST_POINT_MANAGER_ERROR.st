@@ -7,5 +7,6 @@ STRUCT
 	X_LIMIT_CONFIG_INVALID : BOOL; // Software limits оси X отключены или заданы некорректно
 	Y_LIMIT_CONFIG_INVALID : BOOL; // Software limits оси Y отключены или заданы некорректно
 	Z_LIMIT_CONFIG_INVALID : BOOL; // Software limits оси Z отключены или заданы некорректно
+	POINT_NOT_CONFIGURED : BOOL; // Инженерная точка ещё не сохранена редактором
 END_STRUCT
 END_TYPE

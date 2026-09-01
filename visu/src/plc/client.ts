@@ -112,6 +112,28 @@ export interface PlcRobotManualStatus {
   rejectReason: string;
 }
 
+export interface PlcPointEditorPoint {
+  index: number;
+  pointId: number;
+  x: number;
+  y: number;
+  z: number;
+  speedFactor: number;
+  configured: boolean;
+}
+
+export interface PlcPointEditorStatus {
+  points: PlcPointEditorPoint[];
+  captureAllowed: boolean;
+  saveAllowed: boolean;
+  tableReady: boolean;
+  ackSeq: number;
+  result: number;
+  rejectCode: number;
+  rejectReason: string;
+  resultPoint: PlcPointEditorPoint;
+}
+
 export interface PlcCellStartReadiness {
   cellIdle: boolean;
   automaticMode: boolean;
@@ -272,6 +294,7 @@ export interface PlcRuntimeInfo {
   manualStep: number;
   axisManual: [PlcAxisManualStatus, PlcAxisManualStatus, PlcAxisManualStatus];
   robotManual: PlcRobotManualStatus;
+  pointEditor: PlcPointEditorStatus;
 }
 
 interface GatewayMessage {
@@ -308,6 +331,9 @@ export interface PlcCommand {
   direction?: 'positive' | 'negative';
   action?: number;
   point?: number;
+  index?: number;
+  speedFactor?: number;
+  draft?: { x: number; y: number; z: number; speedFactor: number };
 }
 
 const CELL_STATES = [
@@ -339,6 +365,24 @@ const HMI_MANUAL_REJECT_REASONS = [
   'Механизм уже находится в требуемом состоянии',
   'Внешний робот не подтвердил готовность',
 ];
+const POINT_EDITOR_REJECT_REASONS = [
+  '',
+  'Неизвестная команда редактора',
+  'Выбрана недопустимая инженерная точка',
+  'Нет связи с HMI',
+  'Для обучения включите ручной режим',
+  'Редактор доступен только в режиме SoftMotion',
+  'Остановите автоматический цикл',
+  'Активна глобальная ошибка ячейки',
+  'Робот выполняет другую команду',
+  'Оси или координатная группа движутся',
+  'Активна ошибка оси или группы',
+  'Выполните Home всех осей X/Y/Z',
+  'Координаты группы недостоверны',
+  'Software limits осей недоступны',
+  'Координаты выходят за software limits',
+  'Коэффициент скорости должен быть больше 0.1 и не больше 1.0',
+];
 const ROBOT_ACTIONS = ['Нет действия', 'Движение к точке', 'Открывает захват 1', 'Закрывает захват 1', 'Открывает захват 2', 'Закрывает захват 2', 'Поворот к заготовке', 'Поворот к детали'];
 const POINT_NAMES = [
   'NONE',
@@ -350,10 +394,10 @@ const POINT_NAMES = [
 ];
 const MACHINE_STATES = [
   'Станок выключен', 'Укажите тип детали в патроне',
-  'Ожидается подтверждение запуска обработки', 'Ожидается подтверждение закрытия двери',
+  'Ожидается подтверждение запуска обработки', 'Ожидается подтверждение закрытия люка',
   'Станок готов', 'Подготовка операции', 'Подготовка операции',
   'Переход к следующему шагу', 'Робот завершает команду', 'Робот перемещается',
-  'Робот выполняет действие', 'Станок открывает дверь', 'Станок закрывает дверь',
+  'Робот выполняет действие', 'Станок открывает люк', 'Станок закрывает люк',
   'Станок открывает патрон', 'Станок закрывает патрон', 'Запуск обработки',
   'Обслуживание завершено', 'Ошибка станка',
 ];
@@ -509,8 +553,17 @@ export function mapPlcSnapshot(
       disablePending: booleanValue(values, `${status}.xDisablePending`, machine.disablePending),
       powerAllowed: booleanValue(values, `${status}.xPowerAllowed`, machine.powerAllowed),
       resetAllowed: booleanValue(values, `${status}.xResetAllowed`, machine.resetAllowed),
-      doorOpen: booleanValue(values, `${io}.xDoorOpen`, machine.doorOpen),
-      doorClosed: booleanValue(values, `${io}.xDoorClosed`, machine.doorClosed),
+      manualControlAllowed: booleanValue(values, `${status}.xManualControlAllowed`, machine.manualControlAllowed),
+      manualDoorOpenAllowed: booleanValue(values, `${status}.xManualSafetyDoorOpenAllowed`, machine.manualDoorOpenAllowed),
+      manualDoorCloseAllowed: booleanValue(values, `${status}.xManualSafetyDoorCloseAllowed`, machine.manualDoorCloseAllowed),
+      manualHatchOpenAllowed: booleanValue(values, `${status}.xManualHatchOpenAllowed`, machine.manualHatchOpenAllowed),
+      manualHatchCloseAllowed: booleanValue(values, `${status}.xManualHatchCloseAllowed`, machine.manualHatchCloseAllowed),
+      manualChuckOpenAllowed: booleanValue(values, `${status}.xManualChuckOpenAllowed`, machine.manualChuckOpenAllowed),
+      manualChuckCloseAllowed: booleanValue(values, `${status}.xManualChuckCloseAllowed`, machine.manualChuckCloseAllowed),
+      doorOpen: booleanValue(values, `${io}.xSafetyDoorOpen`, machine.doorOpen),
+      doorClosed: booleanValue(values, `${io}.xSafetyDoorClosed`, machine.doorClosed),
+      hatchOpen: booleanValue(values, `${io}.xDoorOpen`, machine.hatchOpen),
+      hatchClosed: booleanValue(values, `${io}.xDoorClosed`, machine.hatchClosed),
       chuckOpen: booleanValue(values, `${io}.xChuckUnclamped`, machine.chuckOpen),
       chuckClosed: booleanValue(values, `${io}.xChuckClamped`, machine.chuckClosed),
       partPresent: partState === 'LOADED',
@@ -679,6 +732,44 @@ export function mapRuntimeInfo(values: Record<string, unknown>, current: PlcRunt
       stepName: AXIS_MANUAL_STATES[stateCode] ?? `Неизвестное состояние оси (${stateCode})`,
     };
   }) as [PlcAxisManualStatus, PlcAxisManualStatus, PlcAxisManualStatus];
+  const pointEditorPoints = Array.from({ length: 15 }, (_, offset) => {
+    const index = offset + 1;
+    const root = `astPointEditorPoints[${index}]`;
+    const previous = current.pointEditor.points[offset] ?? {
+      index, pointId: 0, x: 0, y: 0, z: 0, speedFactor: 0, configured: false,
+    };
+    return {
+      index,
+      pointId: numberValue(values, `auiPointEditorPointId[${index}]`, previous.pointId),
+      x: numberValue(values, `${root}.X`, previous.x),
+      y: numberValue(values, `${root}.Y`, previous.y),
+      z: numberValue(values, `${root}.Z`, previous.z),
+      speedFactor: numberValue(values, `${root}.SpeedFactor`, previous.speedFactor),
+      configured: booleanValue(values, `${root}.xConfigured`, previous.configured),
+    };
+  });
+  const pointEditorRejectCode = numberValue(values, 'uiPointEditorRejectReason', current.pointEditor.rejectCode);
+  const resultIndex = numberValue(values, 'uiPointEditorIndex', current.pointEditor.resultPoint.index);
+  const pointEditor: PlcPointEditorStatus = {
+    points: pointEditorPoints,
+    captureAllowed: booleanValue(values, 'xPointEditorCaptureAllowed', current.pointEditor.captureAllowed),
+    saveAllowed: booleanValue(values, 'xPointEditorSaveAllowed', current.pointEditor.saveAllowed),
+    tableReady: booleanValue(values, 'xPointTableReady', current.pointEditor.tableReady),
+    ackSeq: numberValue(values, 'udiPointEditorAckSeq', current.pointEditor.ackSeq),
+    result: numberValue(values, 'uiPointEditorResult', current.pointEditor.result),
+    rejectCode: pointEditorRejectCode,
+    rejectReason: POINT_EDITOR_REJECT_REASONS[pointEditorRejectCode]
+      ?? `Неизвестная причина отказа редактора (${pointEditorRejectCode})`,
+    resultPoint: {
+      index: resultIndex,
+      pointId: pointEditorPoints.find((point) => point.index === resultIndex)?.pointId ?? 0,
+      x: numberValue(values, 'stPointEditorResultPoint.X', current.pointEditor.resultPoint.x),
+      y: numberValue(values, 'stPointEditorResultPoint.Y', current.pointEditor.resultPoint.y),
+      z: numberValue(values, 'stPointEditorResultPoint.Z', current.pointEditor.resultPoint.z),
+      speedFactor: numberValue(values, 'stPointEditorResultPoint.SpeedFactor', current.pointEditor.resultPoint.speedFactor),
+      configured: booleanValue(values, 'stPointEditorResultPoint.xConfigured', current.pointEditor.resultPoint.configured),
+    },
+  };
   const robotRejectCode = numberValue(values, 'stRobotHmiStatus.eRejectReason', current.robotManual.rejectCode);
   const robotManual: PlcRobotManualStatus = {
     drivesPowered: booleanValue(values, 'stRobotHmiStatus.xDrivesPowered', current.robotManual.drivesPowered),
@@ -870,6 +961,7 @@ export function mapRuntimeInfo(values: Record<string, unknown>, current: PlcRunt
     manualStep: numberValue(values, 'lrRobotManualStep', current.manualStep),
     axisManual,
     robotManual,
+    pointEditor,
   };
 }
 

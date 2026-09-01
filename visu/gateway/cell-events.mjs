@@ -374,8 +374,10 @@ export class CellEventClassifier {
       };
       transition(`${status}.xEnabled`, 'power', () => boolValue(current, `${status}.xEnabled`) ? `Станок ${machine} включён` : `Станок ${machine} выключен`);
       transition(`${diag}.eState`, 'state', () => `Станок ${machine}: ${catalog(MACHINE_STATES, numberValue(current, `${diag}.eState`), 'состояние')}`);
-      transition(`${io}.xDoorOpen`, 'door', () => boolValue(current, `${io}.xDoorOpen`) ? `Станок ${machine}: дверь открыта` : `Станок ${machine}: сигнал «дверь открыта» снят`);
-      transition(`${io}.xDoorClosed`, 'door', () => boolValue(current, `${io}.xDoorClosed`) ? `Станок ${machine}: дверь закрыта` : `Станок ${machine}: сигнал «дверь закрыта» снят`);
+      transition(`${io}.xDoorOpen`, 'hatch', () => boolValue(current, `${io}.xDoorOpen`) ? `Станок ${machine}: люк открыт` : `Станок ${machine}: сигнал «люк открыт» снят`);
+      transition(`${io}.xDoorClosed`, 'hatch', () => boolValue(current, `${io}.xDoorClosed`) ? `Станок ${machine}: люк закрыт` : `Станок ${machine}: сигнал «люк закрыт» снят`);
+      transition(`${io}.xSafetyDoorOpen`, 'door', () => boolValue(current, `${io}.xSafetyDoorOpen`) ? `Станок ${machine}: операторская дверь открыта` : `Станок ${machine}: сигнал «дверь открыта» снят`);
+      transition(`${io}.xSafetyDoorClosed`, 'door', () => boolValue(current, `${io}.xSafetyDoorClosed`) ? `Станок ${machine}: операторская дверь закрыта` : `Станок ${machine}: сигнал «дверь закрыта» снят`);
       transition(`${io}.xChuckUnclamped`, 'chuck', () => boolValue(current, `${io}.xChuckUnclamped`) ? `Станок ${machine}: патрон разжат` : `Станок ${machine}: сигнал разжима патрона снят`);
       transition(`${io}.xChuckClamped`, 'chuck', () => boolValue(current, `${io}.xChuckClamped`) ? `Станок ${machine}: патрон зажат` : `Станок ${machine}: сигнал зажима патрона снят`);
       transition(`${status}.xProcessing`, 'processing', () => boolValue(current, `${status}.xProcessing`) ? `Станок ${machine}: обработка началась` : `Станок ${machine}: обработка завершилась`, boolValue(current, `${status}.xProcessing`) ? 'started' : 'completed');
@@ -523,6 +525,8 @@ const COMMAND_LABELS = {
   'alarms.resetWarnings': 'Сбросить предупреждения', 'robot.enableDrives': 'Включить приводы робота',
   'robot.disableDrives': 'Отключить приводы робота', 'robot.stop': 'Остановить робота',
   'robot.reset': 'Сбросить ошибки робота', 'robot.action': 'Ручная команда роботу',
+  'robot.point.capture': 'Зафиксировать координаты инженерной точки',
+  'robot.point.save': 'Сохранить инженерную точку',
   'robot.axis.jog': 'JOG оси робота', 'robot.axis.home': 'Базирование оси робота',
   'robot.axis.moveAbsolute': 'Абсолютное движение оси', 'robot.axis.moveRelative': 'Относительное движение оси',
   'robot.controlMode.set': 'Переключить источник управления роботом', 'robot.modbus.apply': 'Применить настройки Modbus',
@@ -536,6 +540,12 @@ const COMMAND_LABELS = {
   'magazine.clearRecoveryZones': 'Очистить зоны при восстановлении магазина',
   'magazine.fillZone1': 'Заполнить Zone 1 заготовками', 'magazine.clearZone1': 'Очистить Zone 1',
   'magazine.setZone1Slot': 'Изменить содержимое слота Zone 1', 'magazine.setSlot': 'Изменить содержимое слота магазина',
+  'machine.manualDoorOpen': 'Открыть операторскую дверь станка',
+  'machine.manualDoorClose': 'Закрыть операторскую дверь станка',
+  'machine.manualHatchOpen': 'Открыть роботный люк станка',
+  'machine.manualHatchClose': 'Закрыть роботный люк станка',
+  'machine.manualChuckOpen': 'Разжать патрон станка',
+  'machine.manualChuckClose': 'Зажать патрон станка',
 };
 
 export function describeOperatorCommand(message) {

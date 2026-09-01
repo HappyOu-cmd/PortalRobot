@@ -2,115 +2,52 @@ METHOD PRIVATE SetApplicationDefaults
 
 // --- BEGIN IMPLEMENTATION ---
 
-// =============================================================================
-// ТОЧКИ СТАНКА 1
-// =============================================================================
-//Над станком 1
-GVL_POINT.Points[E_POINT_NAME.MACHINE_1_ABOVE].X := 2010;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_1_ABOVE].Y := 250;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_1_ABOVE].Z := 350;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_1_ABOVE].SpeedFactor := 1.0;
-
-//В станке 1
-GVL_POINT.Points[E_POINT_NAME.MACHINE_1_INSIDE].X := 1920;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_1_INSIDE].Y := 90;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_1_INSIDE].Z := 800;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_1_INSIDE].SpeedFactor := 1.0;
-
-//У патрона 1
-GVL_POINT.Points[E_POINT_NAME.MACHINE_1_CHUCK_APROACH].X := 2010;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_1_CHUCK_APROACH].Y := 250;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_1_CHUCK_APROACH].Z := 1730;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_1_CHUCK_APROACH].SpeedFactor := 1.0;
-
-//В патроне 1
-GVL_POINT.Points[E_POINT_NAME.MACHINE_1_CHUCK_POSITION].X := 1880;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_1_CHUCK_POSITION].Y := 250;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_1_CHUCK_POSITION].Z := 1730;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_1_CHUCK_POSITION].SpeedFactor := 1.0;
-
-// =============================================================================
-// ТОЧКИ СТАНКА 2
-// =============================================================================
-//Над станком 2
-GVL_POINT.Points[E_POINT_NAME.MACHINE_2_ABOVE].X := 6910;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_2_ABOVE].Y := 250;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_2_ABOVE].Z := 350;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_2_ABOVE].SpeedFactor := 1.0;
-
-//В станке 2
-GVL_POINT.Points[E_POINT_NAME.MACHINE_2_INSIDE].X := 6820;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_2_INSIDE].Y := 90;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_2_INSIDE].Z := 800;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_2_INSIDE].SpeedFactor := 1.0;
-
-//У патрона 2
-GVL_POINT.Points[E_POINT_NAME.MACHINE_2_CHUCK_APROACH].X := 6910;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_2_CHUCK_APROACH].Y := 250;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_2_CHUCK_APROACH].Z := 1730;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_2_CHUCK_APROACH].SpeedFactor := 1.0;
-
-//В патроне 2
-GVL_POINT.Points[E_POINT_NAME.MACHINE_2_CHUCK_POSITION].X := 6780;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_2_CHUCK_POSITION].Y := 250;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_2_CHUCK_POSITION].Z := 1730;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_2_CHUCK_POSITION].SpeedFactor := 1.0;
-
-// =============================================================================
-// ТОЧКИ СТАНКА 3
-// =============================================================================
-//Над станком 3
-GVL_POINT.Points[E_POINT_NAME.MACHINE_3_ABOVE].X := 11810;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_3_ABOVE].Y := 250;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_3_ABOVE].Z := 350;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_3_ABOVE].SpeedFactor := 1.0;
-
-//В станке 3
-GVL_POINT.Points[E_POINT_NAME.MACHINE_3_INSIDE].X := 11810;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_3_INSIDE].Y := 90;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_3_INSIDE].Z := 800;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_3_INSIDE].SpeedFactor := 1.0;
-
-//У патрона 3
-GVL_POINT.Points[E_POINT_NAME.MACHINE_3_CHUCK_APROACH].X := 11810;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_3_CHUCK_APROACH].Y := 250;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_3_CHUCK_APROACH].Z := 1730;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_3_CHUCK_APROACH].SpeedFactor := 1.0;
-
-//В патроне 3
-GVL_POINT.Points[E_POINT_NAME.MACHINE_3_CHUCK_POSITION].X := 11680;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_3_CHUCK_POSITION].Y := 250;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_3_CHUCK_POSITION].Z := 1730;
-GVL_POINT.Points[E_POINT_NAME.MACHINE_3_CHUCK_POSITION].SpeedFactor := 1.0;
-
-// =============================================================================
-// ТОЧКИ МАГАЗИНА
-// =============================================================================
-IF NOT xMagazinePointDefaultsInitialized THEN
-	// Legacy-база совпадает с первым магазином до обновления всех потребителей.
-	GVL_POINT.Points[E_POINT_NAME.MAGAZINE_DETAIL].X := 4230;
-	GVL_POINT.Points[E_POINT_NAME.MAGAZINE_DETAIL].Y := 200;
-	GVL_POINT.Points[E_POINT_NAME.MAGAZINE_DETAIL].Z := 1600;
-	GVL_POINT.Points[E_POINT_NAME.MAGAZINE_DETAIL].SpeedFactor := 1.0;
-	GVL_POINT.Points[E_POINT_NAME.MAGAZINE_1_DETAIL] :=
-		GVL_POINT.Points[E_POINT_NAME.MAGAZINE_DETAIL];
-	// Заглушку второго магазина обязательно откалибровать перед реальным пуском.
-	GVL_POINT.Points[E_POINT_NAME.MAGAZINE_2_DETAIL] :=
-		GVL_POINT.Points[E_POINT_NAME.MAGAZINE_DETAIL];
-	xMagazinePointDefaultsInitialized := TRUE;
+// При первом запуске этой схемы намеренно отбрасываем прежние инженерные
+// координаты. Нулевая скорость и xConfigured=FALSE не позволяют принять
+// нулевую точку за пригодную для движения.
+IF GVL_POINT.udiPointStorageVersion <> GVL_POINT.udiExpectedPointStorageVersion THEN
+	FOR uiPointEditorIndex := UINT#1 TO INT_TO_UINT(GVL_POINT.iEditablePointCount) DO
+		GVL_POINT.astRetainPoints[uiPointEditorIndex].Name := '';
+		GVL_POINT.astRetainPoints[uiPointEditorIndex].X := 0.0;
+		GVL_POINT.astRetainPoints[uiPointEditorIndex].Y := 0.0;
+		GVL_POINT.astRetainPoints[uiPointEditorIndex].Z := 0.0;
+		GVL_POINT.astRetainPoints[uiPointEditorIndex].SpeedFactor := 0.0;
+		GVL_POINT.astRetainPoints[uiPointEditorIndex].xConfigured := FALSE;
+	END_FOR;
+	GVL_POINT.udiPointStorageVersion := GVL_POINT.udiExpectedPointStorageVersion;
 END_IF;
 
-// =============================================================================
-// БЕЗОПАСНАЯ ТОЧКА ПОВТОРНОГО ЗАПУСКА
-// =============================================================================
-// Инженерные стартовые координаты. Перед вводом реальной ячейки в эксплуатацию
-// точка должна быть подтверждена относительно фактических ограждений и оснастки.
-// В отличие от остальных инженерных точек HOME_SAFETY доступна для настройки
-// из HMI, поэтому её стартовые значения нельзя перезаписывать каждый цикл.
-IF NOT xSafetyHomeDefaultsInitialized THEN
-	GVL_POINT.Points[E_POINT_NAME.HOME_SAFETY].X := 0.0;
-	GVL_POINT.Points[E_POINT_NAME.HOME_SAFETY].Y := 0.0;
-	GVL_POINT.Points[E_POINT_NAME.HOME_SAFETY].Z := 0.0;
-	GVL_POINT.Points[E_POINT_NAME.HOME_SAFETY].SpeedFactor := 0.2;
-	xSafetyHomeDefaultsInitialized := TRUE;
-END_IF;
+// Единственное соответствие редакторского индекса и стабильного E_POINT_NAME.
+// Из RETAIN восстанавливаются только 15 базовых точек; временные магазинные
+// точки рассчитываются владельцем команды непосредственно перед движением.
+xPointTableReady := TRUE;
+FOR uiPointEditorIndex := UINT#1 TO INT_TO_UINT(GVL_POINT.iEditablePointCount) DO
+	CASE uiPointEditorIndex OF
+		UINT#1: ePointEditorName := E_POINT_NAME.MACHINE_1_ABOVE;
+		UINT#2: ePointEditorName := E_POINT_NAME.MACHINE_1_INSIDE;
+		UINT#3: ePointEditorName := E_POINT_NAME.MACHINE_1_CHUCK_APROACH;
+		UINT#4: ePointEditorName := E_POINT_NAME.MACHINE_1_CHUCK_POSITION;
+		UINT#5: ePointEditorName := E_POINT_NAME.MACHINE_2_ABOVE;
+		UINT#6: ePointEditorName := E_POINT_NAME.MACHINE_2_INSIDE;
+		UINT#7: ePointEditorName := E_POINT_NAME.MACHINE_2_CHUCK_APROACH;
+		UINT#8: ePointEditorName := E_POINT_NAME.MACHINE_2_CHUCK_POSITION;
+		UINT#9: ePointEditorName := E_POINT_NAME.MACHINE_3_ABOVE;
+		UINT#10: ePointEditorName := E_POINT_NAME.MACHINE_3_INSIDE;
+		UINT#11: ePointEditorName := E_POINT_NAME.MACHINE_3_CHUCK_APROACH;
+		UINT#12: ePointEditorName := E_POINT_NAME.MACHINE_3_CHUCK_POSITION;
+		UINT#13: ePointEditorName := E_POINT_NAME.HOME_SAFETY;
+		UINT#14: ePointEditorName := E_POINT_NAME.MAGAZINE_1_DETAIL;
+		UINT#15: ePointEditorName := E_POINT_NAME.MAGAZINE_2_DETAIL;
+	ELSE
+		ePointEditorName := E_POINT_NAME.NONE;
+	END_CASE;
+
+	IF ePointEditorName <> E_POINT_NAME.NONE THEN
+		GVL_POINT.Points[ePointEditorName] := GVL_POINT.astRetainPoints[uiPointEditorIndex];
+		IF NOT GVL_POINT.astRetainPoints[uiPointEditorIndex].xConfigured THEN
+			xPointTableReady := FALSE;
+		END_IF;
+	ELSE
+		xPointTableReady := FALSE;
+	END_IF;
+END_FOR;

@@ -91,8 +91,8 @@ ELSE
 	GVL_HMI.uiSimulationTimeFactor := GVL_CELL_SETTINGS.uiSimulationTimeFactorApplied;
 END_IF;
 
-// Инженерные настройки безопасной точки и технологических TIMEOUT принимаются
-// только при полностью остановленной ячейке. Окончательные диапазоны проверяет PLC.
+// Общие технологические TIMEOUT и допуски HOME принимаются только при полностью
+// остановленной ячейке. Координатами HOME_SAFETY владеет редактор точек ниже.
 GVL_CELL_SETTINGS.xCellSettingsChangeAllowed :=
 	xHmiConnectionAlive
 	AND NOT GVL_CELL_MANAGER.Status.xRunning
@@ -106,24 +106,6 @@ GVL_CELL_SETTINGS.xCellSettingsChangeAllowed :=
 	AND NOT GVL_ROBOT.Status.xBusy;
 
 IF GVL_CELL_SETTINGS.xCellSettingsChangeAllowed THEN
-	IF (GVL_HMI.lrSafetyHomeX >= GVL_HMI.astAxisHmiStatus[1].lrMinPosition)
-	AND (GVL_HMI.lrSafetyHomeX <= GVL_HMI.astAxisHmiStatus[1].lrMaxPosition) THEN
-		GVL_POINT.Points[E_POINT_NAME.HOME_SAFETY].X := GVL_HMI.lrSafetyHomeX;
-	END_IF;
-	IF (GVL_HMI.lrSafetyHomeY >= GVL_HMI.astAxisHmiStatus[2].lrMinPosition)
-	AND (GVL_HMI.lrSafetyHomeY <= GVL_HMI.astAxisHmiStatus[2].lrMaxPosition) THEN
-		GVL_POINT.Points[E_POINT_NAME.HOME_SAFETY].Y := GVL_HMI.lrSafetyHomeY;
-	END_IF;
-	IF (GVL_HMI.lrSafetyHomeZ >= GVL_HMI.astAxisHmiStatus[3].lrMinPosition)
-	AND (GVL_HMI.lrSafetyHomeZ <= GVL_HMI.astAxisHmiStatus[3].lrMaxPosition) THEN
-		GVL_POINT.Points[E_POINT_NAME.HOME_SAFETY].Z := GVL_HMI.lrSafetyHomeZ;
-	END_IF;
-
-	IF (GVL_HMI.lrSafetyHomeSpeedFactor > 0.1)
-	AND (GVL_HMI.lrSafetyHomeSpeedFactor <= 1.0) THEN
-		GVL_POINT.Points[E_POINT_NAME.HOME_SAFETY].SpeedFactor := GVL_HMI.lrSafetyHomeSpeedFactor;
-	END_IF;
-
 	GVL_CELL_SETTINGS.lrSafetyHomeToleranceX := LIMIT(0.1, GVL_HMI.lrSafetyHomeToleranceX, 1000.0);
 	GVL_CELL_SETTINGS.lrSafetyHomeToleranceY := LIMIT(0.1, GVL_HMI.lrSafetyHomeToleranceY, 1000.0);
 	GVL_CELL_SETTINGS.lrSafetyHomeToleranceZ := LIMIT(0.1, GVL_HMI.lrSafetyHomeToleranceZ, 1000.0);
@@ -136,6 +118,136 @@ IF GVL_CELL_SETTINGS.xCellSettingsChangeAllowed THEN
 	GVL_CELL_SETTINGS.stMachineTimeouts.tChuckOpen := LIMIT(T#1S, GVL_HMI.stCellMachineTimeouts.tChuckOpen, T#600S);
 	GVL_CELL_SETTINGS.stMachineTimeouts.tChuckClose := LIMIT(T#1S, GVL_HMI.stCellMachineTimeouts.tChuckClose, T#600S);
 	GVL_CELL_SETTINGS.stMachineTimeouts.tCycleStart := LIMIT(T#1S, GVL_HMI.stCellMachineTimeouts.tCycleStart, T#600S);
+END_IF;
+
+// =============================================================================
+// Транзакционный редактор 15 фиксированных инженерных точек
+// =============================================================================
+xPointEditorAllHomed := GVL_AXIS.arrAxis[1].Status.xHomed
+	AND GVL_AXIS.arrAxis[2].Status.xHomed
+	AND GVL_AXIS.arrAxis[3].Status.xHomed;
+xPointEditorBaseAllowed := xHmiConnectionAlive
+	AND GVL_CELL_CONTROL.xManual
+	AND NOT GVL_HMI.xModbusMode
+	AND NOT GVL_CELL_MANAGER.Status.xRunning
+	AND NOT GVL_CELL_CONTROL.xGlobalError
+	AND NOT GVL_ROBOT.Status.xBusy
+	AND NOT xMotionBusy
+	AND NOT xDriveError
+	AND NOT GVL_MOTION_MANAGER.stMotionManager.Status.xError
+	AND xPointEditorAllHomed
+	AND GVL_AXIS_GROUP.AxisGroup.Status.xPositionValid;
+GVL_HMI.xPointEditorCaptureAllowed := xPointEditorBaseAllowed;
+GVL_HMI.xPointEditorSaveAllowed := xPointEditorBaseAllowed
+	AND GVL_POINT_MANAGER.PointManager.Diag.xXLimitValid
+	AND GVL_POINT_MANAGER.PointManager.Diag.xYLimitValid
+	AND GVL_POINT_MANAGER.PointManager.Diag.xZLimitValid;
+
+IF (GVL_HMI.udiPointEditorCommandSeq <> UDINT#0)
+AND (GVL_HMI.udiPointEditorCommandSeq <> udiLastPointEditorCommandSeq) THEN
+	udiLastPointEditorCommandSeq := GVL_HMI.udiPointEditorCommandSeq;
+	GVL_HMI.uiPointEditorResult := UINT#2;
+	GVL_HMI.uiPointEditorRejectReason := UINT#0;
+	xPointEditorRequestValid := FALSE;
+	ePointEditorName := E_POINT_NAME.NONE;
+
+	CASE GVL_HMI.uiPointEditorIndex OF
+		UINT#1: ePointEditorName := E_POINT_NAME.MACHINE_1_ABOVE;
+		UINT#2: ePointEditorName := E_POINT_NAME.MACHINE_1_INSIDE;
+		UINT#3: ePointEditorName := E_POINT_NAME.MACHINE_1_CHUCK_APROACH;
+		UINT#4: ePointEditorName := E_POINT_NAME.MACHINE_1_CHUCK_POSITION;
+		UINT#5: ePointEditorName := E_POINT_NAME.MACHINE_2_ABOVE;
+		UINT#6: ePointEditorName := E_POINT_NAME.MACHINE_2_INSIDE;
+		UINT#7: ePointEditorName := E_POINT_NAME.MACHINE_2_CHUCK_APROACH;
+		UINT#8: ePointEditorName := E_POINT_NAME.MACHINE_2_CHUCK_POSITION;
+		UINT#9: ePointEditorName := E_POINT_NAME.MACHINE_3_ABOVE;
+		UINT#10: ePointEditorName := E_POINT_NAME.MACHINE_3_INSIDE;
+		UINT#11: ePointEditorName := E_POINT_NAME.MACHINE_3_CHUCK_APROACH;
+		UINT#12: ePointEditorName := E_POINT_NAME.MACHINE_3_CHUCK_POSITION;
+		UINT#13: ePointEditorName := E_POINT_NAME.HOME_SAFETY;
+		UINT#14: ePointEditorName := E_POINT_NAME.MAGAZINE_1_DETAIL;
+		UINT#15: ePointEditorName := E_POINT_NAME.MAGAZINE_2_DETAIL;
+	END_CASE;
+	xPointEditorRequestValid := ePointEditorName <> E_POINT_NAME.NONE;
+
+	IF (GVL_HMI.uiPointEditorCommand <> UINT#1)
+	AND (GVL_HMI.uiPointEditorCommand <> UINT#2) THEN
+		GVL_HMI.uiPointEditorRejectReason := UINT#1; // Неизвестная команда
+	ELSIF NOT xPointEditorRequestValid THEN
+		GVL_HMI.uiPointEditorRejectReason := UINT#2; // Неверный индекс точки
+	ELSIF NOT xHmiConnectionAlive THEN
+		GVL_HMI.uiPointEditorRejectReason := UINT#3; // HMI offline
+	ELSIF NOT GVL_CELL_CONTROL.xManual THEN
+		GVL_HMI.uiPointEditorRejectReason := UINT#4; // Требуется ручной режим
+	ELSIF GVL_HMI.xModbusMode THEN
+		GVL_HMI.uiPointEditorRejectReason := UINT#5; // Требуется SoftMotion
+	ELSIF GVL_CELL_MANAGER.Status.xRunning THEN
+		GVL_HMI.uiPointEditorRejectReason := UINT#6; // Автоматический цикл выполняется
+	ELSIF GVL_CELL_CONTROL.xGlobalError THEN
+		GVL_HMI.uiPointEditorRejectReason := UINT#7; // Глобальная ошибка
+	ELSIF GVL_ROBOT.Status.xBusy THEN
+		GVL_HMI.uiPointEditorRejectReason := UINT#8; // Робот занят
+	ELSIF xMotionBusy THEN
+		GVL_HMI.uiPointEditorRejectReason := UINT#9; // Motion занят
+	ELSIF xDriveError OR GVL_MOTION_MANAGER.stMotionManager.Status.xError THEN
+		GVL_HMI.uiPointEditorRejectReason := UINT#10; // Ошибка оси или группы
+	ELSIF NOT xPointEditorAllHomed THEN
+		GVL_HMI.uiPointEditorRejectReason := UINT#11; // Не выполнен Home
+	ELSIF NOT GVL_AXIS_GROUP.AxisGroup.Status.xPositionValid THEN
+		GVL_HMI.uiPointEditorRejectReason := UINT#12; // Недостоверные координаты
+	ELSIF (GVL_HMI.uiPointEditorCommand = UINT#2)
+	AND (NOT GVL_POINT_MANAGER.PointManager.Diag.xXLimitValid
+		OR NOT GVL_POINT_MANAGER.PointManager.Diag.xYLimitValid
+		OR NOT GVL_POINT_MANAGER.PointManager.Diag.xZLimitValid) THEN
+		GVL_HMI.uiPointEditorRejectReason := UINT#13; // Software limits недоступны
+	ELSE
+		IF GVL_HMI.uiPointEditorCommand = UINT#1 THEN
+			// CAPTURE возвращает согласованный снимок одного PLC-цикла и не пишет RETAIN.
+			GVL_HMI.stPointEditorResultPoint.Name := '';
+			GVL_HMI.stPointEditorResultPoint.X := GVL_AXIS_GROUP.AxisGroup.Status.ActualX;
+			GVL_HMI.stPointEditorResultPoint.Y := GVL_AXIS_GROUP.AxisGroup.Status.ActualY;
+			GVL_HMI.stPointEditorResultPoint.Z := GVL_AXIS_GROUP.AxisGroup.Status.ActualZ;
+			GVL_HMI.stPointEditorResultPoint.SpeedFactor :=
+				GVL_HMI.lrPointEditorDraftSpeedFactor;
+			GVL_HMI.stPointEditorResultPoint.xConfigured := FALSE;
+			GVL_HMI.uiPointEditorResult := UINT#1;
+		ELSE
+			xPointEditorDraftValid :=
+				(GVL_HMI.alrPointEditorDraftXYZ[1] >= alrRobotSoftwareMinPosition[1])
+				AND (GVL_HMI.alrPointEditorDraftXYZ[1] <= alrRobotSoftwareMaxPosition[1])
+				AND (GVL_HMI.alrPointEditorDraftXYZ[2] >= alrRobotSoftwareMinPosition[2])
+				AND (GVL_HMI.alrPointEditorDraftXYZ[2] <= alrRobotSoftwareMaxPosition[2])
+				AND (GVL_HMI.alrPointEditorDraftXYZ[3] >= alrRobotSoftwareMinPosition[3])
+				AND (GVL_HMI.alrPointEditorDraftXYZ[3] <= alrRobotSoftwareMaxPosition[3]);
+			IF NOT xPointEditorDraftValid THEN
+				GVL_HMI.uiPointEditorRejectReason := UINT#14; // XYZ вне software limits
+			ELSIF NOT ((GVL_HMI.lrPointEditorDraftSpeedFactor > 0.1)
+			AND (GVL_HMI.lrPointEditorDraftSpeedFactor <= 1.0)) THEN
+				GVL_HMI.uiPointEditorRejectReason := UINT#15; // Недопустимая скорость
+			ELSE
+				GVL_POINT.astRetainPoints[GVL_HMI.uiPointEditorIndex].Name := '';
+				GVL_POINT.astRetainPoints[GVL_HMI.uiPointEditorIndex].X :=
+					GVL_HMI.alrPointEditorDraftXYZ[1];
+				GVL_POINT.astRetainPoints[GVL_HMI.uiPointEditorIndex].Y :=
+					GVL_HMI.alrPointEditorDraftXYZ[2];
+				GVL_POINT.astRetainPoints[GVL_HMI.uiPointEditorIndex].Z :=
+					GVL_HMI.alrPointEditorDraftXYZ[3];
+				GVL_POINT.astRetainPoints[GVL_HMI.uiPointEditorIndex].SpeedFactor :=
+					GVL_HMI.lrPointEditorDraftSpeedFactor;
+				GVL_POINT.astRetainPoints[GVL_HMI.uiPointEditorIndex].xConfigured := TRUE;
+				GVL_POINT.Points[ePointEditorName] :=
+					GVL_POINT.astRetainPoints[GVL_HMI.uiPointEditorIndex];
+				GVL_HMI.stPointEditorResultPoint := GVL_POINT.Points[ePointEditorName];
+				GVL_HMI.uiPointEditorResult := UINT#1;
+			END_IF;
+		END_IF;
+	END_IF;
+
+	IF GVL_HMI.uiPointEditorResult <> UINT#1 THEN
+		uiRobotInterfaceWarningCode := WRN_POINT_EDIT_REJECTED;
+	END_IF;
+	// Ack подтверждает обработку конкретной транзакции даже при отказе.
+	GVL_HMI.udiPointEditorAckSeq := GVL_HMI.udiPointEditorCommandSeq;
 END_IF;
 
 // Плоский OPC UA-интерфейс HMI преобразуется в типизированные запросы FB.

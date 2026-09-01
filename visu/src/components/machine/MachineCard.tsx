@@ -51,7 +51,8 @@ export function MachineCard({ index, state, step, active, onClick }: MachineCard
       </div>
 
       <div className="machine-signals">
-        <div><i><DoorOpen /></i><span>ДВЕРЬ</span><b>{state.doorOpen ? 'Открыта' : state.doorClosed ? 'Закрыта' : 'Движение'}</b></div>
+        <div><i><DoorOpen /></i><span>ДВЕРЬ</span><b>{state.doorOpen ? 'Открыта' : state.doorClosed ? 'Закрыта' : 'Нет данных'}</b></div>
+        <div><i><PackageOpen /></i><span>ЛЮК</span><b>{state.hatchOpen ? 'Открыт' : state.hatchClosed ? 'Закрыт' : 'Движение'}</b></div>
         <div><i>{state.chuckClosed ? <LockKeyhole /> : <UnlockKeyhole />}</i><span>ПАТРОН</span><b>{state.chuckOpen ? 'Открыт' : state.chuckClosed ? 'Закрыт' : 'Движение'}</b></div>
         <div><i><Box /></i><span>ИЗДЕЛИЕ</span><b>{productText} · тип {state.productType}</b></div>
       </div>

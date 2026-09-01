@@ -60,7 +60,7 @@ export function SimulationSettingsPanel({ values, online, send, onClose, classNa
       </div>
     </section>
     <section>
-      <h3>Дверь станка</h3>
+      <h3>Роботный люк станка</h3>
       <div className="simulation-fields-grid two-columns">
         <SimulationTimeField label="Открытие" value={draft.machineDoorOpen} min={0.05} max={120} step={0.05} onChange={(value) => changeValue('machineDoorOpen', value)} />
         <SimulationTimeField label="Закрытие" value={draft.machineDoorClose} min={0.05} max={120} step={0.05} onChange={(value) => changeValue('machineDoorClose', value)} />

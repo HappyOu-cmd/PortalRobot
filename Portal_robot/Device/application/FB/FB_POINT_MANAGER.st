@@ -17,6 +17,7 @@ VAR CONSTANT
 	X_LIMIT_CONFIG_INVALID : DWORD := 16; // Software limits оси X недоступны или некорректны
 	Y_LIMIT_CONFIG_INVALID : DWORD := 32; // Software limits оси Y недоступны или некорректны
 	Z_LIMIT_CONFIG_INVALID : DWORD := 64; // Software limits оси Z недоступны или некорректны
+	POINT_NOT_CONFIGURED : DWORD := 128; // Инженерная точка не подтверждена редактором
 END_VAR
 
 // --- BEGIN IMPLEMENTATION ---
@@ -42,6 +43,10 @@ CASE stPointManager.Diag.eState OF
 	E_POINT_MANAGER_STATE.CHECK_ZONE:
 	// --------------------------------------------------
 		stPointManager.Status.xBusy := TRUE;
+		IF NOT stPoint.xConfigured THEN
+			stPointManager.Error.dwErrorActive :=
+				stPointManager.Error.dwErrorActive OR POINT_NOT_CONFIGURED;
+		END_IF
 
 		IF NOT stPointManager.Diag.xXLimitValid
 		OR NOT stPointManager.Diag.xYLimitValid

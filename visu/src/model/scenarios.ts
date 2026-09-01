@@ -13,7 +13,7 @@ export const HMI_SCENARIOS = {
       ...state.machines[1],
       mode: 'error',
       currentStep: 'Авария станка',
-      activeErrors: ['Не закрыта дверь станка'],
+      activeErrors: ['Не закрыт люк станка'],
       canAcceptService: false,
     };
     return state;

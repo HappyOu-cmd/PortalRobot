@@ -62,6 +62,7 @@ export const FAULT_SIMULATION_SYMBOLS = new Set([
   ...[1, 2, 3].flatMap((index) => [
     `axMachineSimAlarm[${index}]`,
     `axMachineSimDoorFault[${index}]`,
+    `axMachineSimSafetyDoorOpen[${index}]`,
     `axMachineSimChuckFault[${index}]`,
     `axMachineTimeoutRobotMove[${index}]`,
     `axMachineTimeoutRobotAction[${index}]`,

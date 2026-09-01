@@ -2,13 +2,14 @@ FUNCTION_BLOCK FB_MACHINE_SIMULATION
 VAR_INPUT
 	xTestInitialize : BOOL;
 	uiTestInitialState : UINT;
+	xSafetyDoorOpen : BOOL; // Принудительно удерживать операторскую дверь открытой для инъекции
 	xSimulationAccelerationEnable : BOOL; // Разрешить ускорение таймеров только в симуляции
 	uiSimulationTimeFactor : UINT := 1; // До x250 для автоматических тестов Python-Modbus
     Command : ST_MACHINE_IO_COMMAND; // Команды исполнительным механизмам
 	FaultRequest : ST_MACHINE_FAULT_REQUEST; // Единый контракт диагностической инъекции
 
-    tDoorOpenTime   : TIME := T#1S; // Время открытия двери
-    tDoorCloseTime  : TIME := T#1S; // Время закрытия двери
+    tDoorOpenTime   : TIME := T#1S; // Время открытия роботного люка
+    tDoorCloseTime  : TIME := T#1S; // Время закрытия роботного люка
     tChuckOpenTime  : TIME := T#1S; // Время разжима патрона
     tChuckCloseTime : TIME := T#1S; // Время зажима патрона
     tCycleTime : TIME := T#47S; // Время цикла обработки
@@ -43,6 +44,8 @@ VAR
 
     tonDoorOpen   : TON; // Таймер открытия двери
     tonDoorClose  : TON; // Таймер закрытия двери
+	tonSafetyDoorOpen  : TON; // Таймер открытия операторской двери
+	tonSafetyDoorClose : TON; // Таймер закрытия операторской двери
     tonChuckClamp : TON; // Таймер зажима патрона
     tonChuckOpen  : TON; // Таймер разжима патрона
     tonCycleStart : TON; // Таймер подтверждения запуска цикла
@@ -50,6 +53,8 @@ VAR
 
     xDoorOpening   : BOOL; // Выполняется открытие двери
     xDoorClosing   : BOOL; // Выполняется закрытие двери
+	xSafetyDoorOpening : BOOL; // Выполняется открытие операторской двери
+	xSafetyDoorClosing : BOOL; // Выполняется закрытие операторской двери
     xChuckClamping : BOOL; // Выполняется зажим патрона
     xChuckOpening  : BOOL; // Выполняется разжим патрона
     xCycleStarting : BOOL; // Выполняется запуск цикла
@@ -98,6 +103,8 @@ tEffectiveCycleTime := UDINT_TO_TIME(udiCycleTime);
 IF NOT xInitialized THEN
     Status.xDoorOpen := FALSE;
     Status.xDoorClosed := TRUE;
+	Status.xSafetyDoorOpen := FALSE;
+	Status.xSafetyDoorClosed := TRUE;
 
     Status.xChuckClamped := TRUE;
     Status.xChuckUnclamped := FALSE;
@@ -112,18 +119,31 @@ END_IF;
 IF xTestInitialize THEN
 	xDoorOpening := FALSE;
 	xDoorClosing := FALSE;
+	xSafetyDoorOpening := FALSE;
+	xSafetyDoorClosing := FALSE;
 	xChuckClamping := FALSE;
 	xChuckOpening := FALSE;
 	xCycleStarting := FALSE;
 	xAlarmLatched := FALSE;
 	Status.xDoorOpen := FALSE;
 	Status.xDoorClosed := TRUE;
+	Status.xSafetyDoorOpen := FALSE;
+	Status.xSafetyDoorClosed := TRUE;
 	Status.xChuckClamped := (uiTestInitialState = UINT#2) OR (uiTestInitialState = UINT#3);
 	Status.xChuckUnclamped := NOT Status.xChuckClamped;
 	Status.xCycleActive := uiTestInitialState = UINT#2;
 	Status.xCycleDone := uiTestInitialState = UINT#3;
 	Status.xAlarm := FALSE;
 	Error.dwErrorActive := DWORD#0;
+END_IF;
+
+// Инъекция имеет приоритет над ручной командой закрытия. После снятия инъекции
+// дверь остаётся открыта, пока оператор явно не подаст команду закрытия.
+IF xSafetyDoorOpen THEN
+	Status.xSafetyDoorOpen := TRUE;
+	Status.xSafetyDoorClosed := FALSE;
+	xSafetyDoorOpening := FALSE;
+	xSafetyDoorClosing := FALSE;
 END_IF;
 
 
@@ -169,6 +189,8 @@ END_IF;
 IF FaultRequest.xReset THEN
 	xDoorOpening := FALSE;
 	xDoorClosing := FALSE;
+	xSafetyDoorOpening := FALSE;
+	xSafetyDoorClosing := FALSE;
 	xChuckClamping := FALSE;
 	xChuckOpening := FALSE;
 	xCycleStarting := FALSE;
@@ -197,6 +219,23 @@ IF NOT xAlarmLatched THEN
         xDoorClosing := TRUE;
         xDoorOpening := FALSE;
     END_IF;
+
+	// Операторская дверь не участвует в автоматическом рецепте и двигается
+	// только отдельными ручными командами.
+	IF Command.xOpenSafetyDoor
+	AND NOT Status.xSafetyDoorOpen
+	AND NOT Status.xCycleActive THEN
+		xSafetyDoorOpening := TRUE;
+		xSafetyDoorClosing := FALSE;
+	END_IF;
+
+	IF Command.xCloseSafetyDoor
+	AND NOT Status.xSafetyDoorClosed
+	AND NOT xSafetyDoorOpen
+	AND NOT Status.xCycleActive THEN
+		xSafetyDoorClosing := TRUE;
+		xSafetyDoorOpening := FALSE;
+	END_IF;
 
     // Зажим патрона
     IF Command.xClampChuck
@@ -239,6 +278,16 @@ tonDoorOpen(
 tonDoorClose(
     IN := xDoorClosing
 		AND NOT (FaultRequest.xEnabled AND FaultRequest.xDoorFault),
+	PT := tEffectiveDoorCloseTime
+);
+
+tonSafetyDoorOpen(
+	IN := xSafetyDoorOpening,
+	PT := tEffectiveDoorOpenTime
+);
+
+tonSafetyDoorClose(
+	IN := xSafetyDoorClosing AND NOT xSafetyDoorOpen,
 	PT := tEffectiveDoorCloseTime
 );
 
@@ -286,6 +335,22 @@ IF tonDoorClose.Q THEN
     Status.xDoorOpen := FALSE;
 
     xDoorClosing := FALSE;
+END_IF;
+
+// =====================================================
+// Завершение движения операторской двери
+// =====================================================
+
+IF tonSafetyDoorOpen.Q THEN
+	Status.xSafetyDoorOpen := TRUE;
+	Status.xSafetyDoorClosed := FALSE;
+	xSafetyDoorOpening := FALSE;
+END_IF;
+
+IF tonSafetyDoorClose.Q THEN
+	Status.xSafetyDoorClosed := TRUE;
+	Status.xSafetyDoorOpen := FALSE;
+	xSafetyDoorClosing := FALSE;
 END_IF;
 
 
@@ -342,6 +407,8 @@ IF xAlarmLatched THEN
 
     xDoorOpening := FALSE;
     xDoorClosing := FALSE;
+	xSafetyDoorOpening := FALSE;
+	xSafetyDoorClosing := FALSE;
 
     xChuckClamping := FALSE;
     xChuckOpening := FALSE;
@@ -355,10 +422,19 @@ END_IF;
 // =====================================================
 
 Status.xAlarm := xAlarmLatched;
-Status.xReady := NOT xAlarmLatched AND NOT Status.xCycleActive;
+Status.xReady := NOT xAlarmLatched
+	AND NOT Status.xCycleActive
+	AND NOT xDoorOpening
+	AND NOT xDoorClosing
+	AND NOT xSafetyDoorOpening
+	AND NOT xSafetyDoorClosing
+	AND NOT xChuckClamping
+	AND NOT xChuckOpening;
 
 Diag.xDoorOpening := xDoorOpening;
 Diag.xDoorClosing := xDoorClosing;
+Diag.xSafetyDoorOpening := xSafetyDoorOpening;
+Diag.xSafetyDoorClosing := xSafetyDoorClosing;
 Diag.xChuckClamping := xChuckClamping;
 Diag.xChuckOpening := xChuckOpening;
 Diag.xCycleStarting := xCycleStarting;

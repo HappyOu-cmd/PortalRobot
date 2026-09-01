@@ -219,11 +219,9 @@ export function CellSettingsPanel({ online, modbusMode, modbus, testEnvironment,
 		</section>}
 		{activeTopic === 'safety' && <section className="cell-config-section">
 			<div className="cell-config-title"><MapPin /><div><h3>Точка HOME_SAFETY</h3></div></div>
+			<p className="panel-note">Координаты и скорость HOME_SAFETY теперь изменяются только в редакторе фиксированных точек SoftMotion.</p>
+			<div className="point-state"><span>Подтверждённое значение PLC</span><strong>X {settings.safetyHome.x.toFixed(1)} · Y {settings.safetyHome.y.toFixed(1)} · Z {settings.safetyHome.z.toFixed(1)} мм · скорость {settings.safetyHome.speedFactor.toFixed(2)}</strong></div>
 			<div className="cell-settings-grid">
-				{field('Координата X', 'cell.settings.safetyHomeX', settings.safetyHome.x, 'мм', -100000, 100000, 0.1)}
-				{field('Координата Y', 'cell.settings.safetyHomeY', settings.safetyHome.y, 'мм', -100000, 100000, 0.1)}
-				{field('Координата Z', 'cell.settings.safetyHomeZ', settings.safetyHome.z, 'мм', -100000, 100000, 0.1)}
-				{field('Коэффициент скорости', 'cell.settings.safetyHomeSpeed', settings.safetyHome.speedFactor, '×', 0.11, 1, 0.01)}
 				{field('Допуск X', 'cell.settings.safetyHomeToleranceX', settings.safetyHome.toleranceX, 'мм', 0.1, 1000, 0.1)}
 				{field('Допуск Y', 'cell.settings.safetyHomeToleranceY', settings.safetyHome.toleranceY, 'мм', 0.1, 1000, 0.1)}
 				{field('Допуск Z', 'cell.settings.safetyHomeToleranceZ', settings.safetyHome.toleranceZ, 'мм', 0.1, 1000, 0.1)}
@@ -236,8 +234,8 @@ export function CellSettingsPanel({ online, modbusMode, modbus, testEnvironment,
 				{field('Движение робота', 'cell.settings.timeoutRobotMove', settings.timeouts.robotMove, 'с', 1, 600, 1)}
 				{field('Действие захвата', 'cell.settings.timeoutRobotAction', settings.timeouts.robotAction, 'с', 1, 600, 1)}
 				{field('Освобождение интерфейса', 'cell.settings.timeoutRobotRelease', settings.timeouts.robotRelease, 'с', 1, 600, 1)}
-				{field('Открытие двери', 'cell.settings.timeoutDoorOpen', settings.timeouts.doorOpen, 'с', 1, 600, 1)}
-				{field('Закрытие двери', 'cell.settings.timeoutDoorClose', settings.timeouts.doorClose, 'с', 1, 600, 1)}
+				{field('Открытие люка', 'cell.settings.timeoutDoorOpen', settings.timeouts.doorOpen, 'с', 1, 600, 1)}
+				{field('Закрытие люка', 'cell.settings.timeoutDoorClose', settings.timeouts.doorClose, 'с', 1, 600, 1)}
 				{field('Разжим патрона', 'cell.settings.timeoutChuckOpen', settings.timeouts.chuckOpen, 'с', 1, 600, 1)}
 				{field('Зажим патрона', 'cell.settings.timeoutChuckClose', settings.timeouts.chuckClose, 'с', 1, 600, 1)}
 				{field('Подтверждение цикла', 'cell.settings.timeoutCycleStart', settings.timeouts.cycleStart, 'с', 1, 600, 1)}

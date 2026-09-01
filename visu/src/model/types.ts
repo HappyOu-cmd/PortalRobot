@@ -135,8 +135,17 @@ export interface MachineState {
   disablePending: boolean;
   powerAllowed: boolean;
   resetAllowed: boolean;
+  manualControlAllowed: boolean;
+  manualDoorOpenAllowed: boolean;
+  manualDoorCloseAllowed: boolean;
+  manualHatchOpenAllowed: boolean;
+  manualHatchCloseAllowed: boolean;
+  manualChuckOpenAllowed: boolean;
+  manualChuckCloseAllowed: boolean;
   doorOpen: boolean;
   doorClosed: boolean;
+  hatchOpen: boolean;
+  hatchClosed: boolean;
   chuckOpen: boolean;
   chuckClosed: boolean;
   partPresent: boolean;

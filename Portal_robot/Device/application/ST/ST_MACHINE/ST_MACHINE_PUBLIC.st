@@ -4,6 +4,13 @@ STRUCT
 	xDisablePending      : BOOL; // Запрошено отключение после выхода автомата в разрешённый шаг
 	xPowerAllowed        : BOOL; // Кнопка включения, отключения или отмены отключения доступна
 	xResetAllowed        : BOOL; // Кнопка сброса ошибки станка доступна
+	xManualControlAllowed       : BOOL; // Ручное управление разрешено режимом и состоянием станка
+	xManualSafetyDoorOpenAllowed : BOOL; // Разрешено открыть операторскую дверь
+	xManualSafetyDoorCloseAllowed: BOOL; // Разрешено закрыть операторскую дверь
+	xManualHatchOpenAllowed      : BOOL; // Разрешено открыть роботный люк
+	xManualHatchCloseAllowed     : BOOL; // Разрешено закрыть роботный люк
+	xManualChuckOpenAllowed      : BOOL; // Разрешено разжать патрон
+	xManualChuckCloseAllowed     : BOOL; // Разрешено зажать патрон
 	xProcessing          : BOOL; // Станок выполняет цикл обработки
     xPartReady           : BOOL; // Обработка детали завершена
     xServiceRequired     : BOOL; // Станку требуется обслуживание роботом

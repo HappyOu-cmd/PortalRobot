@@ -63,6 +63,11 @@ IF xRequestPulse THEN
 END_IF;
 
 Point := PointRaw;
+// Диагностическая инъекция проверяет выбранный дефект, а не состояние
+// инженерного хранилища точек.
+IF xInjectX OR xInjectY OR xInjectZ OR xInjectVelocity THEN
+	Point.xConfigured := TRUE;
+END_IF;
 IF xInjectX THEN
 	Point.X := INVALID_COORDINATE;
 END_IF;

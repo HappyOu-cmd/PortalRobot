@@ -26,7 +26,7 @@ CASE eSource OF
 	E_ALARM_SOURCE.MACHINE_3:
 		CASE uiCode OF
 			9: GetAlarmEffect := E_ALARM_EFFECT.GLOBAL_STOP; // ERR_SAFETY_STOP
-			2, 3, 13, 15, 16, 17: GetAlarmEffect := E_ALARM_EFFECT.ROBOT_STOP;
+			2, 3, 13, 15, 16, 17, 23: GetAlarmEffect := E_ALARM_EFFECT.ROBOT_STOP;
 		ELSE
 			IF xRobotStopRequired THEN
 				GetAlarmEffect := E_ALARM_EFFECT.ROBOT_STOP;

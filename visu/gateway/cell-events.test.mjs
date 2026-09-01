@@ -115,13 +115,29 @@ test('records alarm activation and restoration with duration', () => {
   const activated = classifier.process(activeSnapshot, 2_000);
   assert.equal(activated[0].sourceId, 7);
   assert.equal(activated[0].status, 'active');
-  assert.equal(activated[0].message, 'Авария: Станок 1 — Не удалось закрыть дверь');
+  assert.equal(activated[0].message, 'Авария: Станок 1 — Не удалось закрыть люк');
   assert.equal(activated[0].details.effect, 'EQUIPMENT_STOP');
 
   const restored = classifier.process({ ...activeSnapshot, 'astAlarmEvent[1].xActive': false }, 5_000);
   assert.equal(restored[0].status, 'restored');
-  assert.equal(restored[0].message, 'Авария устранена: Станок 1 — Не удалось закрыть дверь');
+  assert.equal(restored[0].message, 'Авария устранена: Станок 1 — Не удалось закрыть люк');
   assert.equal(restored[0].details.durationMs, 3_000);
+});
+
+test('records an opened operator door during service as ROBOT_STOP', () => {
+  const classifier = new CellEventClassifier();
+  classifier.process(snapshot(), 1_000);
+  const events = classifier.process(snapshot({
+    'astAlarmEvent[1].udiSequence': 78,
+    'astAlarmEvent[1].eSeverity': 0,
+    'astAlarmEvent[1].eSource': 2,
+    'astAlarmEvent[1].uiCode': 23,
+    'astAlarmEvent[1].eEffect': 1,
+    'astAlarmEvent[1].xActive': true,
+  }), 2_000);
+
+  assert.equal(events[0].message, 'Авария: Станок 1 — Дверь открыта во время обслуживания станка');
+  assert.equal(events[0].details.effect, 'ROBOT_STOP');
 });
 
 test('adds a full register snapshot only to meaningful Modbus command transitions', () => {
@@ -150,6 +166,24 @@ test('describes operator commands without storing transport-only fields', () => 
   const command = describeOperatorCommand({ type: 'command', requestId: 'abc', command: 'robot.action', action: 3, point: 0 });
   assert.equal(command.label, 'Ручная команда роботу');
   assert.deepEqual(command.details, { action: 3, point: 0 });
+});
+
+test('describes manual machine mechanism commands in the operator journal', () => {
+  const command = describeOperatorCommand({ type: 'command', requestId: 'door', command: 'machine.manualDoorOpen', machine: 2 });
+  assert.equal(command.label, 'Открыть операторскую дверь станка');
+  assert.deepEqual(command.details, { machine: 2 });
+});
+
+test('describes fixed-point editor commands with their point and draft', () => {
+  const capture = describeOperatorCommand({ type: 'command', requestId: 'cap', command: 'robot.point.capture', index: 13 });
+  const save = describeOperatorCommand({
+    type: 'command', requestId: 'save', command: 'robot.point.save', index: 13,
+    draft: { x: 100, y: 200, z: 300, speedFactor: 0.5 },
+  });
+  assert.equal(capture.label, 'Зафиксировать координаты инженерной точки');
+  assert.deepEqual(capture.details, { index: 13 });
+  assert.equal(save.label, 'Сохранить инженерную точку');
+  assert.deepEqual(save.details, { index: 13, draft: { x: 100, y: 200, z: 300, speedFactor: 0.5 } });
 });
 
 test('does not report the current manual readiness reason as a rejected command', () => {

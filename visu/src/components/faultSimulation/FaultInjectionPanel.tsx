@@ -29,8 +29,9 @@ const pulseDefinitions = {
 } as const;
 
 const machineToggles = [
+  ['safetyDoorOpen', 'Операторская дверь открыта', 'axMachineSimSafetyDoorOpen'],
   ['machineAlarm', 'Авария станка', 'axMachineSimAlarm'],
-  ['doorFault', 'Неисправность двери', 'axMachineSimDoorFault'],
+  ['doorFault', 'Неисправность люка', 'axMachineSimDoorFault'],
   ['chuckFault', 'Неисправность патрона', 'axMachineSimChuckFault'],
 ] as const;
 
@@ -38,8 +39,8 @@ const timeoutToggles = [
   ['timeoutRobotMove', 'Движение робота', 'axMachineTimeoutRobotMove'],
   ['timeoutRobotAction', 'Действие захвата', 'axMachineTimeoutRobotAction'],
   ['timeoutRobotRelease', 'Освобождение интерфейса', 'axMachineTimeoutRobotRelease'],
-  ['timeoutDoorOpen', 'Открытие двери', 'axMachineTimeoutDoorOpen'],
-  ['timeoutDoorClose', 'Закрытие двери', 'axMachineTimeoutDoorClose'],
+  ['timeoutDoorOpen', 'Открытие люка', 'axMachineTimeoutDoorOpen'],
+  ['timeoutDoorClose', 'Закрытие люка', 'axMachineTimeoutDoorClose'],
   ['timeoutChuckOpen', 'Разжим патрона', 'axMachineTimeoutChuckOpen'],
   ['timeoutChuckClose', 'Зажим патрона', 'axMachineTimeoutChuckClose'],
   ['timeoutCycleStart', 'Запуск обработки', 'axMachineTimeoutCycleStart'],

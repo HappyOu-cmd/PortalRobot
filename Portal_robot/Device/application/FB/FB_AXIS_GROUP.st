@@ -161,6 +161,7 @@ IF fbReadPosition.Valid THEN
     GroupData.Status.ActualY := fbReadPosition.Position.c.Y;
     GroupData.Status.ActualZ := fbReadPosition.Position.c.Z;
 END_IF;
+GroupData.Status.xPositionValid := fbReadPosition.Valid AND NOT fbReadPosition.Error;
 
 
 // =============================================================================

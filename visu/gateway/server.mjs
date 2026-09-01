@@ -86,7 +86,7 @@ const faultRequiredSymbols = [
   'tGripper1OpenTime', 'tGripper1CloseTime', 'tGripper2OpenTime', 'tGripper2CloseTime', 'tGripperChangeTime',
   ...[1, 2, 3].flatMap((index) => [
     `axSimAxisJogConflict[${index}]`, `axMachineSimReset[${index}]`,
-    `axMachineSimAlarm[${index}]`, `axMachineSimDoorFault[${index}]`, `axMachineSimChuckFault[${index}]`,
+    `axMachineSimAlarm[${index}]`, `axMachineSimDoorFault[${index}]`, `axMachineSimSafetyDoorOpen[${index}]`, `axMachineSimChuckFault[${index}]`,
     `axMachineTimeoutRobotMove[${index}]`, `axMachineTimeoutRobotAction[${index}]`, `axMachineTimeoutRobotRelease[${index}]`,
     `axMachineTimeoutDoorOpen[${index}]`, `axMachineTimeoutDoorClose[${index}]`,
     `axMachineTimeoutChuckOpen[${index}]`, `axMachineTimeoutChuckClose[${index}]`, `axMachineTimeoutCycleStart[${index}]`,
@@ -238,6 +238,31 @@ const requiredSymbols = [...new Set([
   'stRobotHmiStatus.uiActiveAction',
   'stRobotHmiStatus.uiActivePoint',
   'stRobotHmiStatus.eRejectReason',
+  'stAxisGroupStatus.xPositionValid',
+  'uiPointEditorIndex',
+  'lrPointEditorDraftSpeedFactor',
+  'uiPointEditorCommand',
+  'udiPointEditorCommandSeq',
+  'udiPointEditorAckSeq',
+  'uiPointEditorResult',
+  'uiPointEditorRejectReason',
+  'xPointEditorCaptureAllowed',
+  'xPointEditorSaveAllowed',
+  'xPointTableReady',
+  'stPointEditorResultPoint.X',
+  'stPointEditorResultPoint.Y',
+  'stPointEditorResultPoint.Z',
+  'stPointEditorResultPoint.SpeedFactor',
+  'stPointEditorResultPoint.xConfigured',
+  ...[1, 2, 3].map((index) => `alrPointEditorDraftXYZ[${index}]`),
+  ...Array.from({ length: 15 }, (_, offset) => offset + 1).flatMap((index) => [
+    `auiPointEditorPointId[${index}]`,
+    `astPointEditorPoints[${index}].X`,
+    `astPointEditorPoints[${index}].Y`,
+    `astPointEditorPoints[${index}].Z`,
+    `astPointEditorPoints[${index}].SpeedFactor`,
+    `astPointEditorPoints[${index}].xConfigured`,
+  ]),
   ...[1, 2, 3].flatMap((index) => [
     `astAxisHmiCommand[${index}].xJogPositive`,
     `astAxisHmiCommand[${index}].xJogNegative`,
@@ -277,6 +302,18 @@ const requiredSymbols = [...new Set([
   'astMachineStatus[1].tRemaining',
   'astMachineDiag[1].eState',
   'astMachineIoStatus[1].xDoorOpen',
+  ...[1, 2, 3].flatMap((index) => [
+    `astMachineIoStatus[${index}].xDoorOpen`, `astMachineIoStatus[${index}].xDoorClosed`,
+    `astMachineIoStatus[${index}].xSafetyDoorOpen`, `astMachineIoStatus[${index}].xSafetyDoorClosed`,
+    `astMachineIoStatus[${index}].xChuckUnclamped`, `astMachineIoStatus[${index}].xChuckClamped`,
+    `astMachineStatus[${index}].xManualControlAllowed`,
+    `astMachineStatus[${index}].xManualSafetyDoorOpenAllowed`, `astMachineStatus[${index}].xManualSafetyDoorCloseAllowed`,
+    `astMachineStatus[${index}].xManualHatchOpenAllowed`, `astMachineStatus[${index}].xManualHatchCloseAllowed`,
+    `astMachineStatus[${index}].xManualChuckOpenAllowed`, `astMachineStatus[${index}].xManualChuckCloseAllowed`,
+    `axMachineManualSafetyDoorOpen[${index}]`, `axMachineManualSafetyDoorClose[${index}]`,
+    `axMachineManualHatchOpen[${index}]`, `axMachineManualHatchClose[${index}]`,
+    `axMachineManualChuckOpen[${index}]`, `axMachineManualChuckClose[${index}]`,
+  ]),
   'axMachineSetBlank[1]',
   'axMachineSetDetail[1]',
   'axMachineAcceptDoor[1]',
@@ -394,10 +431,6 @@ const commandMap = {
   'robot.modbus.pollInterval': { path: 'udiModbusPollIntervalMs', dataType: DataType.UInt32, transform: (v) => Math.max(10, Math.min(5000, Math.round(Number(v)))) },
   'robot.modbus.heartbeatTimeout': { path: 'udiModbusHeartbeatTimeoutMs', dataType: DataType.UInt32, transform: (v) => Math.max(500, Math.min(30000, Math.round(Number(v)))) },
   'robot.modbus.apply': { path: 'xModbusSettingsApply', dataType: DataType.Boolean, pulse: true },
-  'cell.settings.safetyHomeX': { path: 'lrSafetyHomeX', dataType: DataType.Double, transform: (v) => Number(v) },
-  'cell.settings.safetyHomeY': { path: 'lrSafetyHomeY', dataType: DataType.Double, transform: (v) => Number(v) },
-  'cell.settings.safetyHomeZ': { path: 'lrSafetyHomeZ', dataType: DataType.Double, transform: (v) => Number(v) },
-  'cell.settings.safetyHomeSpeed': { path: 'lrSafetyHomeSpeedFactor', dataType: DataType.Double, transform: (v) => Math.max(0.11, Math.min(1, Number(v))) },
   'cell.settings.safetyHomeToleranceX': { path: 'lrSafetyHomeToleranceX', dataType: DataType.Double, transform: (v) => Math.max(0.1, Math.min(1000, Number(v))) },
   'cell.settings.safetyHomeToleranceY': { path: 'lrSafetyHomeToleranceY', dataType: DataType.Double, transform: (v) => Math.max(0.1, Math.min(1000, Number(v))) },
   'cell.settings.safetyHomeToleranceZ': { path: 'lrSafetyHomeToleranceZ', dataType: DataType.Double, transform: (v) => Math.max(0.1, Math.min(1000, Number(v))) },
@@ -627,6 +660,16 @@ let connectionState = {
   status: 'connecting', endpoint: endpointUrl, message: 'Подключение к OPC UA', symbols: 0, missing: requiredSymbols,
   cyclogram: cyclogramHealth(), cellEvents: cellEventHealth(),
 };
+let pointEditorSequence = 0;
+const pendingPointEditorAudits = new Map();
+let pointEditorAuditTimer = null;
+const pointEditorRejectReasons = [
+  '', 'неизвестная команда', 'недопустимый индекс точки', 'нет связи с HMI',
+  'требуется ручной режим', 'требуется SoftMotion', 'автоматический цикл не остановлен',
+  'активна глобальная ошибка', 'робот занят', 'оси или группа движутся',
+  'активна Motion-ошибка', 'оси не базированы', 'позиция группы недостоверна',
+  'software limits недоступны', 'координаты вне software limits', 'недопустимый коэффициент скорости',
+];
 
 const mimeTypes = {
   '.css': 'text/css; charset=utf-8', '.html': 'text/html; charset=utf-8',
@@ -882,6 +925,40 @@ async function pulseValue(path) {
   setTimeout(() => writeValue(path, DataType.Boolean, false).catch(console.error), 150);
 }
 
+function nextPointEditorSequence() {
+  const ack = Number(latestValues.udiPointEditorAckSeq ?? 0) >>> 0;
+  const now = Date.now() >>> 0;
+  pointEditorSequence = (Math.max(pointEditorSequence, ack, now) + 1) >>> 0;
+  if (!pointEditorSequence) pointEditorSequence = 1;
+  return pointEditorSequence;
+}
+
+function flushPointEditorAudits() {
+  pointEditorAuditTimer = null;
+  const ackSeq = Number(latestValues.udiPointEditorAckSeq ?? 0) >>> 0;
+  const audit = pendingPointEditorAudits.get(ackSeq);
+  if (!audit) return;
+
+  const result = Number(latestValues.uiPointEditorResult ?? 0);
+  const rejectCode = Number(latestValues.uiPointEditorRejectReason ?? 0);
+  if (result !== 1 && result !== 2) return;
+  pendingPointEditorAudits.delete(ackSeq);
+  const succeeded = result === 1;
+  const reason = pointEditorRejectReasons[rejectCode] ?? `неизвестная причина ${rejectCode}`;
+  recordCellEvent({
+    timestampMs: Date.now(), sourceId: 6, eventType: 'operator-command',
+    status: succeeded ? 'completed' : 'rejected',
+    message: `${audit.label}: ${succeeded ? 'PLC подтвердил выполнение' : `PLC отклонил — ${reason}`}`,
+    requestId: audit.requestId, commandSeq: String(ackSeq), actor: audit.actor,
+    details: { ...audit.details, commandSeq: ackSeq, pointIndex: audit.pointIndex, plcResult: result, rejectCode },
+  });
+}
+
+function schedulePointEditorAudit() {
+  if (pointEditorAuditTimer !== null) clearTimeout(pointEditorAuditTimer);
+  pointEditorAuditTimer = setTimeout(flushPointEditorAudits, cyclogramSettleMs);
+}
+
 async function executeCommand(message) {
   const requestId = String(message.requestId ?? Date.now());
   if (message.command === 'test.environment.set') {
@@ -908,7 +985,7 @@ async function executeCommand(message) {
       'xSimMagazineWrongOperation', 'xSimMagazineNoBlank', 'xSimMagazineNoFreeSlot',
       'xSimMagazineInvalidSlot', 'xSimMagazineSlotContent', 'xSimMagazineGeometry',
       ...[1, 2, 3].flatMap((index) => [
-        `axMachineSimAlarm[${index}]`, `axMachineSimDoorFault[${index}]`, `axMachineSimChuckFault[${index}]`,
+        `axMachineSimAlarm[${index}]`, `axMachineSimDoorFault[${index}]`, `axMachineSimSafetyDoorOpen[${index}]`, `axMachineSimChuckFault[${index}]`,
         `axMachineTimeoutRobotMove[${index}]`, `axMachineTimeoutRobotAction[${index}]`,
         `axMachineTimeoutRobotRelease[${index}]`, `axMachineTimeoutDoorOpen[${index}]`,
         `axMachineTimeoutDoorClose[${index}]`, `axMachineTimeoutChuckOpen[${index}]`,
@@ -950,6 +1027,43 @@ async function executeCommand(message) {
     await writeValue('stTestScenario.udiLoadSeq', DataType.UInt32, loadSeq);
     await writeValue('xTestScenarioApply', DataType.Boolean, true);
     setTimeout(() => writeValue('xTestScenarioApply', DataType.Boolean, false).catch(console.error), 150);
+    return requestId;
+  }
+  if (message.command === 'robot.point.capture') {
+    const index = Math.round(Number(message.index));
+    const speedFactor = Number(message.speedFactor ?? 0);
+    if (!Number.isInteger(index) || index < 1 || index > 15) throw new Error('Неверный индекс инженерной точки');
+    if (!Number.isFinite(speedFactor)) throw new Error('Неверный коэффициент скорости точки');
+    const sequence = nextPointEditorSequence();
+    message._pointEditorSequence = sequence;
+    if (message._pointEditorAudit) pendingPointEditorAudits.set(sequence, { ...message._pointEditorAudit, pointIndex: index });
+    await writeValue('uiPointEditorIndex', DataType.UInt16, index);
+    await writeValue('lrPointEditorDraftSpeedFactor', DataType.Double, speedFactor);
+    await writeValue('uiPointEditorCommand', DataType.UInt16, 1);
+    await writeValue('udiPointEditorCommandSeq', DataType.UInt32, sequence);
+    return requestId;
+  }
+  if (message.command === 'robot.point.save') {
+    const index = Math.round(Number(message.index));
+    const point = message.draft ?? {};
+    const coordinates = [Number(point.x), Number(point.y), Number(point.z)];
+    const speedFactor = Number(point.speedFactor);
+    if (!Number.isInteger(index) || index < 1 || index > 15) throw new Error('Неверный индекс инженерной точки');
+    if (!coordinates.every(Number.isFinite)) throw new Error('Координаты точки должны быть конечными числами');
+    if (!Number.isFinite(speedFactor) || speedFactor <= 0.1 || speedFactor > 1) {
+      throw new Error('Коэффициент скорости точки должен быть больше 0.1 и не больше 1.0');
+    }
+    const sequence = nextPointEditorSequence();
+    message._pointEditorSequence = sequence;
+    if (message._pointEditorAudit) pendingPointEditorAudits.set(sequence, { ...message._pointEditorAudit, pointIndex: index });
+    await writeValue('uiPointEditorIndex', DataType.UInt16, index);
+    for (let axis = 1; axis <= 3; axis += 1) {
+      await writeValue(`alrPointEditorDraftXYZ[${axis}]`, DataType.Double, coordinates[axis - 1]);
+    }
+    await writeValue('lrPointEditorDraftSpeedFactor', DataType.Double, speedFactor);
+    await writeValue('uiPointEditorCommand', DataType.UInt16, 2);
+    // CommandSeq пишется последним: частично подготовленный черновик PLC не применит.
+    await writeValue('udiPointEditorCommandSeq', DataType.UInt32, sequence);
     return requestId;
   }
   if (message.command === 'robot.axis.jog') {
@@ -1104,6 +1218,7 @@ async function executeCommand(message) {
       simReset: { path: `axMachineSimReset[${index}]`, dataType: DataType.Boolean, pulse: true },
       machineAlarm: { path: `axMachineSimAlarm[${index}]`, dataType: DataType.Boolean },
       doorFault: { path: `axMachineSimDoorFault[${index}]`, dataType: DataType.Boolean },
+      safetyDoorOpen: { path: `axMachineSimSafetyDoorOpen[${index}]`, dataType: DataType.Boolean },
       chuckFault: { path: `axMachineSimChuckFault[${index}]`, dataType: DataType.Boolean },
       timeoutRobotMove: { path: `axMachineTimeoutRobotMove[${index}]`, dataType: DataType.Boolean },
       timeoutRobotAction: { path: `axMachineTimeoutRobotAction[${index}]`, dataType: DataType.Boolean },
@@ -1130,6 +1245,12 @@ async function executeCommand(message) {
       rejectDoor: { path: `axMachineRejectDoor[${index}]`, dataType: DataType.Boolean, pulse: true },
       acceptRun: { path: `axMachineAcceptRun[${index}]`, dataType: DataType.Boolean, pulse: true },
       rejectRun: { path: `axMachineRejectRun[${index}]`, dataType: DataType.Boolean, pulse: true },
+      manualDoorOpen: { path: `axMachineManualSafetyDoorOpen[${index}]`, dataType: DataType.Boolean, pulse: true },
+      manualDoorClose: { path: `axMachineManualSafetyDoorClose[${index}]`, dataType: DataType.Boolean, pulse: true },
+      manualHatchOpen: { path: `axMachineManualHatchOpen[${index}]`, dataType: DataType.Boolean, pulse: true },
+      manualHatchClose: { path: `axMachineManualHatchClose[${index}]`, dataType: DataType.Boolean, pulse: true },
+      manualChuckOpen: { path: `axMachineManualChuckOpen[${index}]`, dataType: DataType.Boolean, pulse: true },
+      manualChuckClose: { path: `axMachineManualChuckClose[${index}]`, dataType: DataType.Boolean, pulse: true },
       used: { path: `axMachineUsed[${index}]`, dataType: DataType.Boolean },
       cycleMode: { path: `xUseHmiCycleTime[${index}]`, dataType: DataType.Boolean },
       cycleTime: { path: `tMachineCycleTime[${index}]`, dataType: DataType.Int64, transform: (v) => Math.max(1000, Math.round(Number(v) * 1000)) },
@@ -1194,6 +1315,9 @@ async function connectOpcUa() {
         const value = jsonValue(dataValue.value.value);
         latestValues[path] = value;
         changedValues[path] = value;
+        if (path === 'udiPointEditorAckSeq' || path === 'uiPointEditorResult' || path === 'uiPointEditorRejectReason') {
+          schedulePointEditorAudit();
+        }
         if (robotCoordinatePathSet.has(path)) {
           const timestampMs = dataValueTimestampMs(dataValue);
           if (timestampMs !== null) robotCoordinateSourceTimestamps.set(path, timestampMs);
@@ -1906,6 +2030,11 @@ webSocketServer.on('connection', (socket, request) => {
       const actorDetails = { ...description.details, actor: liveSession ? {
         id: liveSession.user.id, username: liveSession.user.username, role: liveSession.user.role,
       } : null };
+      if (message.command === 'robot.point.capture' || message.command === 'robot.point.save') {
+        message._pointEditorAudit = {
+          requestId, label: description.label, actor: liveSession?.user ?? null, details: actorDetails,
+        };
+      }
       if (message.command !== 'hmi.heartbeat') recordCellEvent({
         timestampMs: Date.now(), sourceId: 6, eventType: 'operator-command', status: 'requested',
         message: description.label, requestId, actor: liveSession?.user ?? null, details: actorDetails,
@@ -1918,6 +2047,7 @@ webSocketServer.on('connection', (socket, request) => {
       send(socket, { type: 'ack', requestId: acceptedRequestId, ok: true });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
+      if (message?._pointEditorSequence) pendingPointEditorAudits.delete(message._pointEditorSequence);
       if (message?.type === 'command' && message.command !== 'hmi.heartbeat') {
         const description = describeOperatorCommand(message);
         const actor = authStore?.getSession(authToken)?.user ?? null;
