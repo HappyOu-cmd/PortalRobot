@@ -14,10 +14,8 @@ VAR
 	MACHINE_1_FAULT: FB_MACHINE_FAULT_INJECTOR; // Инъекция обратной связи первого станка
 	MACHINE_2_FAULT: FB_MACHINE_FAULT_INJECTOR; // Инъекция обратной связи второго станка
 	MACHINE_3_FAULT: FB_MACHINE_FAULT_INJECTOR; // Инъекция обратной связи третьего станка
-	fbMagazine1    : FB_MAGAZINE; // Первый индексный магазин; имя не конфликтует с SoftMotion-осью Magazine_1
-	fbMagazine2    : FB_MAGAZINE; // Второй индексный магазин; имя не конфликтует с SoftMotion-осью Magazine_2
-	MAGAZINE_AXIS_1 : FB_AXIS; // Сервопривод первого магазина
-	MAGAZINE_AXIS_2 : FB_AXIS; // Сервопривод второго магазина
+	fbMagazine1    : FB_MAGAZINE; // Первый статичный магазин
+	fbMagazine2    : FB_MAGAZINE; // Второй статичный магазин
 	ROBOT          : FB_ROBOT; // Координация движений и захвата робота
 	ROBOT_MODBUS   : FB_ROBOT_MODBUS; // Modbus TCP транспорт внешнего контроллера
 	TYPE_CONFIG    : FB_MULTI_TYPE_CONFIG_MANAGER; // Конфигурация типов продукции
@@ -41,12 +39,26 @@ VAR
 	xHmiConnectionAlive : BOOL; // Watchdog связи HMI -> PLC
 	xManualRecoveryActive : BOOL; // Ограниченное ручное восстановление при общей ошибке
 	xHmiRobotActionBaseAllowed : BOOL; // Условия ручного перемещения робота к точке
+	xHmiRobotPointTargetAllowed : BOOL; // Люк соответствующего станка открыт для входной точки
+	xHmiRobotPointAllowed : BOOL; // Полное разрешение выбранной ручной точки
+	eHmiRobotStatusAction : E_ROBOT_ACTION; // Действие для отображения xAllowed/reason
+	eHmiRobotStatusPoint : E_POINT_NAME; // Точка для отображения xAllowed/reason
+	xHmiRobotStatusPointTargetAllowed : BOOL; // Безопасность выбранной HMI-точки
+	xHmiRobotStatusPointAllowed : BOOL; // Полное разрешение выбранной HMI-точки
 	xHmiGripperActionBaseAllowed : BOOL; // Условия ручного действия захвата независимо от Motion-слоя
 	xHmiRobotActionAllowed : BOOL;
 	xHmiRobotActionAttempt : BOOL;
 	rtHmiRobotAction : R_TRIG;
 	udiLastHmiHeartbeat : UDINT; // Последний принятый heartbeat HMI
 	tonHmiWatchdog : TON; // Таймаут HMI heartbeat
+	udiLastMobileMotionHeartbeat : UDINT; // Последний heartbeat мобильной аренды
+	tonMobileMotionWatchdog : TON; // Таймаут gateway/телефон -> PLC для мобильного движения
+	rtMobileMotionStart : R_TRIG; // Фронт новой мобильной аренды
+	xMobileMotionLeaseActive : BOOL; // PLC защёлкнул мобильного владельца до полного останова
+	xMobileMotionConnectionAlive : BOOL; // Мобильный heartbeat обновляется
+	xMobileMotionStopRequest : BOOL; // Независимый запрос контролируемой остановки оси
+	rMobileMotionSpeedLimitPercent : REAL := 0.1; // Защёлкнутый глобальный лимит телефона
+	rRobotManualEffectiveSpeedPercent : REAL := 0.1; // Итоговый override после PLC-ограничения
 	uiManualAxisOwner : UINT; // Единственная ось-владелец текущей команды HMI
 	uiManualAxisRequest : UINT; // Ось, запросившая новую ручную команду в текущем цикле
 	axManualAxisBaseAllowed : ARRAY [1..3] OF BOOL;
@@ -85,7 +97,6 @@ VAR
 	eMagazineBasePoint : E_POINT_NAME; // База выбранного магазина
 	uiMagazine : UINT; // Индекс магазина 1..2
 	auiMagazineEditSlot : ARRAY [1..2] OF UINT; // Новый контракт с fallback на legacy-команду первого магазина
-	astMagazineAxisFaultRequest : ARRAY [1..2] OF ST_AXIS_FAULT_REQUEST;
 	udiLastTypeConfigWarningSequence : UDINT; // Последнее переданное предупреждение конфигуратора
 	astMachineFaultRequest : ARRAY [1..3] OF ST_MACHINE_FAULT_REQUEST; // Запросы ошибок станков
 	astAxisFaultRequest    : ARRAY [1..3] OF ST_AXIS_FAULT_REQUEST; // Запросы ошибок осей
@@ -93,15 +104,33 @@ VAR
 	stRobotFaultRequest    : ST_ROBOT_FAULT_REQUEST; // Запросы ошибок робота и точки
 	astMagazineFaultRequest : ARRAY [1..2] OF ST_MAGAZINE_FAULT_REQUEST; // Диагностика двух магазинов
 	stCellFaultRequest     : ST_CELL_FAULT_REQUEST; // Запрос локальной ошибки менеджера ячейки
-	astAlarmSource : ARRAY [1..16] OF ST_ALARM_SOURCE_DATA; // Два магазина и две отдельные оси
-	uiPointEditorIndex : UINT; // Индекс фиксированной точки редактора 1..15
+	astAlarmSource : ARRAY [1..16] OF ST_ALARM_SOURCE_DATA; // 14 активных источников + 2 legacy-слота журнала
+	uiPointEditorIndex : UINT; // Компактный индекс фиксированной точки редактора 1..12
+	uiPointStorageIndex : UINT; // Индекс в совместимом Persistent-массиве 1..15
 	ePointEditorName : E_POINT_NAME; // Фактический enum выбранной инженерной точки
-	xPointTableReady : BOOL; // Все 15 базовых точек подтверждены редактором
+	xPointTableReady : BOOL; // Все 12 базовых точек подтверждены редактором
 	xPointEditorBaseAllowed : BOOL; // Общие безопасные условия Capture/Save
 	xPointEditorAllHomed : BOOL; // Все оси XYZ прошли Home
 	xPointEditorRequestValid : BOOL; // Индекс и код новой транзакции распознаны
 	xPointEditorDraftValid : BOOL; // XYZ и скорость черновика прошли проверку
 	udiLastPointEditorCommandSeq : UDINT; // Последняя обработанная транзакция редактора
+	xPointCheckRequest : BOOL;
+	xPointCheckActive : BOOL;
+	xPointCheckStopping : BOOL;
+	xPointCheckSeenBusy : BOOL;
+	xPointCheckSeenDone : BOOL; // Терминальный ответ Motion хранится до фактического останова
+	xPointCheckStopRequest : BOOL;
+	xPointCheckConnectionAlive : BOOL;
+	udiLastPointCheckHeartbeat : UDINT;
+	tonPointCheckWatchdog : TON;
+	tonPointCheckStart : TON;
+	ePointCheckName : E_POINT_NAME;
+	uiPointCheckLoop : UINT;
+	uiPointCheckMachine : UINT;
+	uiPointCheckReason : UINT;
+	stPointCheckCandidate : ST_POINT;
+	rPointCheckLatchedSpeed : REAL;
+	lrGroupVelocityOverride : LREAL;
 	xRobotInterfaceReady : BOOL; // Готовность применённого интерфейса робота
 	lrRobotActualX : LREAL; // Координаты выбранного источника управления
 	lrRobotActualY : LREAL;
@@ -124,6 +153,7 @@ VAR
 	xSc500BenchKeyLost : BOOL;
 	uiTestIndex : UINT;
 	uiTestFaultOwnerCount : UINT;
+	xMachineUseInitialized : BOOL; // Однократная синхронизация выбора станков после старта/Online Change
 END_VAR
 
 VAR CONSTANT
@@ -131,6 +161,13 @@ VAR CONSTANT
 	WRN_ROBOT_MODE_REJECTED : UINT := 13; // PLC отклонил переключение источника управления
 	WRN_MODBUS_SETTINGS_REJECTED : UINT := 14; // PLC отклонил применение параметров соединения
 	WRN_POINT_EDIT_REJECTED : UINT := 15; // PLC отклонил Capture/Save инженерной точки
+	WRN_POINT_CHECK_REJECTED : UINT := 16; // Проверка точки отклонена
+	WRN_POINT_CHECK_INTERRUPTED : UINT := 17; // Проверка остановлена потерей связи/разрешений
+	aePointCheckNames : ARRAY [1..12] OF E_POINT_NAME := [
+		E_POINT_NAME.MACHINE_1_ABOVE, E_POINT_NAME.MACHINE_1_CHUCK_APROACH, E_POINT_NAME.MACHINE_1_CHUCK_POSITION,
+		E_POINT_NAME.MACHINE_2_ABOVE, E_POINT_NAME.MACHINE_2_CHUCK_APROACH, E_POINT_NAME.MACHINE_2_CHUCK_POSITION,
+		E_POINT_NAME.MACHINE_3_ABOVE, E_POINT_NAME.MACHINE_3_CHUCK_APROACH, E_POINT_NAME.MACHINE_3_CHUCK_POSITION,
+		E_POINT_NAME.HOME_SAFETY, E_POINT_NAME.MAGAZINE_1_DETAIL, E_POINT_NAME.MAGAZINE_2_DETAIL];
 	alrRobotManualFallbackVelocity : ARRAY [1..3] OF LREAL := [1000.0, 1000.0, 1000.0]; // Резерв, если привод не публикует динамический предел
 	alrRobotManualAcceleration : ARRAY [1..3] OF LREAL := [1000.0, 1000.0, 1000.0]; // Резерв ускорения, если привод не публикует предел
 	alrRobotManualDeceleration : ARRAY [1..3] OF LREAL := [1000.0, 1000.0, 1000.0]; // Резерв замедления, если привод не публикует предел

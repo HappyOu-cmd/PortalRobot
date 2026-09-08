@@ -16,7 +16,7 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Редактирование: Story = {
-  args: { slots: HMI_SCENARIOS.normal().magazines[0].zones[0], columns: 10, rows: 12 },
+  args: { slots: HMI_SCENARIOS.normal().magazines[0].slots, columns: 10, rows: 12 },
   render: (args) => {
     const [slots, setSlots] = useState<SlotType[]>(args.slots);
     const cycleSlot = (index: number) => setSlots((current) => {
@@ -30,9 +30,9 @@ export const Редактирование: Story = {
 };
 
 export const ТолькоПросмотр: Story = {
-  args: { slots: HMI_SCENARIOS.magazineBusy().magazines[0].zones[1], columns: 10, rows: 12 },
+  args: { slots: HMI_SCENARIOS.magazineBusy().magazines[0].slots, columns: 10, rows: 12 },
 };
 
 export const ИзменённыйРазмер: Story = {
-  args: { slots: HMI_SCENARIOS.normal().magazines[0].zones[0], columns: 10, rows: 12 },
+  args: { slots: HMI_SCENARIOS.normal().magazines[0].slots, columns: 10, rows: 12 },
 };

@@ -4,15 +4,15 @@ TYPE E_POINT_NAME :
 (	
 	NONE,
 	MACHINE_1_ABOVE,
-	MACHINE_1_INSIDE,
+	MACHINE_1_INSIDE, // Legacy: исключена из редактора, сохранена ради числового протокола
 	MACHINE_1_CHUCK_APROACH,
 	MACHINE_1_CHUCK_POSITION,
 	MACHINE_2_ABOVE,
-	MACHINE_2_INSIDE,
+	MACHINE_2_INSIDE, // Legacy: исключена из редактора, сохранена ради числового протокола
 	MACHINE_2_CHUCK_APROACH,
 	MACHINE_2_CHUCK_POSITION,
 	MACHINE_3_ABOVE,
-	MACHINE_3_INSIDE,
+	MACHINE_3_INSIDE, // Legacy: исключена из редактора, сохранена ради числового протокола
 	MACHINE_3_CHUCK_APROACH,
 	MACHINE_3_CHUCK_POSITION,
 	MAGAZINE_DETAIL,

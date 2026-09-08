@@ -7,21 +7,6 @@ export type MachineOperation = 'NONE' | 'LOAD' | 'UNLOAD' | 'CHANGE';
 export type MachinePartState = 'EMPTY' | 'LOADED' | 'UNKNOWN';
 export type MachinePartType = 'UNKNOWN' | 'BLANK' | 'DETAIL';
 export type MagazineOperation = 'NONE' | 'PUT' | 'TAKE' | 'CHANGE' | 'RETURN_BLANK';
-export type IndexedConveyorTestCommandType = 'none' | 'fill' | 'move' | 'clear' | 'reset';
-
-export interface IndexedConveyorTestCommand {
-  id: number;
-  type: IndexedConveyorTestCommandType;
-  magazineId: 1 | 2;
-}
-
-export interface IndexedConveyorTestStatus {
-  moving: boolean;
-  positionRows: number;
-  loadedSlots: number;
-  homed: boolean;
-}
-
 export interface Vec3Mm {
   x: number;
   y: number;
@@ -45,13 +30,8 @@ export interface MachineLayout {
 }
 
 export interface PartGeometryLayout {
-  blankDiameter: number;
-  blankLength: number;
-  detailBodyDiameter: number;
-  detailBodyLength: number;
-  detailShoulderDiameter: number;
-  detailShoulderLength: number;
-  detailShoulderOffset: number;
+  diameter: number;
+  length: number;
 }
 
 export interface PartMaterialLayout {
@@ -69,23 +49,11 @@ export interface GripperPayloadPoseLayout {
   rotationDeg: Vec3Mm;
 }
 
-export interface IndexedConveyorLayout {
+export interface StaticMagazineLayout {
   position: Vec3Mm;
-  columnsX: number;
-  zoneRowsY: [number, number, number];
   pitchX: number;
   pitchY: number;
-  slotDiameter: number;
-  slatWidthX: number;
-  slatThickness: number;
-  rollerRadius: number;
   workingHeight: number;
-  lowerBeltWidthX: number;
-  lowerBeltHeight: number;
-  lowerBeltSpeed: number;
-  binWidthX: number;
-  binLengthY: number;
-  binHeight: number;
 }
 
 export interface CellLayout {
@@ -116,11 +84,8 @@ export interface CellLayout {
   };
   partGeometry: PartGeometryLayout;
   productPartMaterials: [ProductPartMaterials, ProductPartMaterials, ProductPartMaterials];
-  gripperPayloadPoses: {
-    blank: GripperPayloadPoseLayout;
-    detail: GripperPayloadPoseLayout;
-  };
-  indexedConveyors: [IndexedConveyorLayout, IndexedConveyorLayout];
+  gripperPayloadPose: GripperPayloadPoseLayout;
+  staticMagazines: StaticMagazineLayout[];
   animation: {
     motionResponse: number;
     mechanismResponse: number;
@@ -169,6 +134,7 @@ export interface MachineState {
 }
 
 export interface RobotState {
+  currentPoint: number;
   x: number;
   y: number;
   z: number;
@@ -204,16 +170,15 @@ export interface MagazineState {
   canEnable: boolean;
   powerAllowed: boolean;
   enableSequenceAllowed: boolean;
-  enableCheckPowered: boolean;
-  enableCheckHomed: boolean;
-  enableCheckPositionValid: boolean;
-  enableCheckStationary: boolean;
+  enableCheckRobotReady: boolean;
   enableCheckNoError: boolean;
   enableCheckRobotReleased: boolean;
   enableCheckContent: boolean;
-  enableCheckInventoryVerified: boolean;
+  enableCheckGeometry: boolean;
   fillAllowed: boolean;
   clearAllowed: boolean;
+  editAllowed: boolean;
+  pitchEditAllowed: boolean;
   currentBlank: number;
   currentFreeSlot: number;
   selectedBlank: number;
@@ -225,32 +190,13 @@ export interface MagazineState {
   pitchY: number;
   safeAbove: number;
   safeInside: number;
-  powered: boolean;
-  homed: boolean;
-  positionValid: boolean;
-  recoveryRequired: boolean;
-  indexAllowed: boolean;
-  zone1EditAllowed: boolean;
-  zone2EditAllowed: boolean;
-  jogPositiveAllowed: boolean;
-  jogNegativeAllowed: boolean;
-  contentRecoveryAllowed: boolean;
-  contentRecoveryActive: boolean;
-  inventoryVerificationRequired: boolean;
-  indexing: boolean;
-  indexDone: boolean;
-  axisError: boolean;
-  axisBusy: boolean;
-  axisDone: boolean;
-  axisPosition: number;
-  axisStep: string;
   activeErrors: string[];
   lastErrors: string[];
 }
 
 export interface MagazineData {
-  zones: [SlotType[], SlotType[], SlotType[]];
-  zoneProductTypes: [ProductType[], ProductType[], ProductType[]];
+  slots: SlotType[];
+  productTypes: ProductType[];
   state: MagazineState;
 }
 

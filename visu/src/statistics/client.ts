@@ -78,7 +78,7 @@ class StatisticsApiError extends Error {
 }
 
 async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, {
+  const response = await fetch(gatewayApiUrl(path), {
     credentials: 'same-origin', ...options,
     headers: { Accept: 'application/json', ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...options.headers },
   });
@@ -120,3 +120,4 @@ export const statisticsApi = {
   deleteInterval: (id: number) => api<{ ok: boolean }>(`/api/statistics/operator-intervals/${id}`, { method: 'DELETE' }),
   hardDelete: (value: { fromMs: number; toMs: number; userId?: number | null; equipment: boolean; facts: boolean; intervals: boolean }) => api<{ equipment: number; facts: number; intervals: number }>('/api/statistics/range', { method: 'DELETE', body: JSON.stringify(value) }),
 };
+import { gatewayApiUrl } from '../api/gateway';

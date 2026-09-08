@@ -175,15 +175,15 @@ test('describes manual machine mechanism commands in the operator journal', () =
 });
 
 test('describes fixed-point editor commands with their point and draft', () => {
-  const capture = describeOperatorCommand({ type: 'command', requestId: 'cap', command: 'robot.point.capture', index: 13 });
+  const capture = describeOperatorCommand({ type: 'command', requestId: 'cap', command: 'robot.point.capture', index: 10 });
   const save = describeOperatorCommand({
-    type: 'command', requestId: 'save', command: 'robot.point.save', index: 13,
+    type: 'command', requestId: 'save', command: 'robot.point.save', index: 10,
     draft: { x: 100, y: 200, z: 300, speedFactor: 0.5 },
   });
   assert.equal(capture.label, 'Зафиксировать координаты инженерной точки');
-  assert.deepEqual(capture.details, { index: 13 });
+  assert.deepEqual(capture.details, { index: 10 });
   assert.equal(save.label, 'Сохранить инженерную точку');
-  assert.deepEqual(save.details, { index: 13, draft: { x: 100, y: 200, z: 300, speedFactor: 0.5 } });
+  assert.deepEqual(save.details, { index: 10, draft: { x: 100, y: 200, z: 300, speedFactor: 0.5 } });
 });
 
 test('does not report the current manual readiness reason as a rejected command', () => {

@@ -1,4 +1,5 @@
 export { Button, buttonVariants, type ButtonProps } from './Button';
+export { RangeSlider, SegmentedControl, ToggleSwitch, type ControlOption } from './ControlPrimitives';
 export { Dialog, DialogClose, type DialogProps } from './Dialog';
 export { Select, type SelectOption, type SelectProps } from './Select';
 export { StatusIndicator, type StatusIndicatorProps } from './StatusIndicator';

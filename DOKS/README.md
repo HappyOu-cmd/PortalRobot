@@ -22,6 +22,7 @@
 | [14-operator-shifts-statistics.md](14-operator-shifts-statistics.md) | Настраиваемые смены, интервалы операторов и штатная остановка при выходе |
 | [15-equipment-error-reset-table.md](15-equipment-error-reset-table.md) | Единая карта аварий, условий сброса и сообщений журнала |
 | [16-cell-warnings.md](16-cell-warnings.md) | Реестр предупреждений ячейки |
+| [19-discrete-signal-list.md](19-discrete-signal-list.md) | Предварительная таблица дискретных сигналов станков, захватов, пультов и цепи безопасности |
 
 ## Карта правил
 

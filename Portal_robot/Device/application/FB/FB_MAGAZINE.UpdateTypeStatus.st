@@ -23,8 +23,8 @@ AND (uiTypeCount >= UINT#1)
 AND (uiTypeCount <= UINT#3) THEN
 	FOR uiSlot := UINT#1 TO SINT_TO_UINT(iActiveSlotCount) DO
 		iSlot := UINT_TO_SINT(uiSlot);
-		IF NOT stMagazineInventory.aZone2[iSlot].xInPosition THEN
-			// После перехода на подвижный тип пустой слот универсален: тип 0
+		IF NOT stMagazineInventory.aSlots[iSlot].xInPosition THEN
+			// Пустой слот универсален: тип 0
 			// означает отсутствие изделия, а не запрет укладки конкретного типа.
 			FOR uiType := UINT#1 TO uiTypeCount DO
 				Status.stTypeStatus.auiFreeCount[uiType] :=
@@ -34,16 +34,16 @@ AND (uiTypeCount <= UINT#3) THEN
 				END_IF;
 			END_FOR;
 		ELSE
-			uiType := stMagazineInventory.aZone2[iSlot].uiProductType;
+			uiType := stMagazineInventory.aSlots[iSlot].uiProductType;
 			IF (uiType >= UINT#1) AND (uiType <= uiTypeCount)
-			AND (stMagazineInventory.aZone2[iSlot].eDetailType = E_DETAIL_TYPE.BLANK) THEN
+			AND (stMagazineInventory.aSlots[iSlot].eDetailType = E_DETAIL_TYPE.BLANK) THEN
 				Status.stTypeStatus.auiBlankCount[uiType] :=
 					Status.stTypeStatus.auiBlankCount[uiType] + UINT#1;
 				IF Status.stTypeStatus.aiBlankSlot[uiType] = SINT#0 THEN
 					Status.stTypeStatus.aiBlankSlot[uiType] := iSlot;
 				END_IF;
 			ELSIF (uiType >= UINT#1) AND (uiType <= uiTypeCount)
-			AND (stMagazineInventory.aZone2[iSlot].eDetailType = E_DETAIL_TYPE.DETAIL) THEN
+			AND (stMagazineInventory.aSlots[iSlot].eDetailType = E_DETAIL_TYPE.DETAIL) THEN
 				Status.stTypeStatus.auiDetailCount[uiType] :=
 					Status.stTypeStatus.auiDetailCount[uiType] + UINT#1;
 			END_IF;

@@ -19,6 +19,14 @@ test('creates bootstrap admin and authenticates with a server session', () => {
   store.close();
 });
 
+test('credential verification for companion access does not create a full session', () => {
+  const store = createStore();
+  const authenticated = store.authenticate('admin', 'admin');
+  assert.equal(authenticated.username, 'admin');
+  assert.equal(store.db.prepare('SELECT COUNT(*) AS count FROM auth_session').get().count, 0);
+  store.close();
+});
+
 test('creates, updates, disables and deletes managed users', () => {
   const store = createStore();
   const admin = store.listUsers()[0];

@@ -140,6 +140,7 @@ export interface PlcCellStartReadiness {
   noBlockingError: boolean;
   robotInterfaceReady: boolean;
   configurationValid: boolean;
+  pointsConfigured: boolean;
   drivesReady: boolean;
   robotReady: boolean;
   magazineReady: boolean;
@@ -202,6 +203,7 @@ export interface PlcRobotModbusInfo {
 
 export interface PlcCellSettings {
   changeAllowed: boolean;
+  pointCheckSpeedPercent: number;
   safetyHome: {
     x: number;
     y: number;
@@ -323,7 +325,6 @@ export interface PlcCommand {
   command: string;
   machine?: number;
   magazine?: number;
-  zone?: number;
   slot?: number;
   content?: number;
   productType?: number;
@@ -364,6 +365,8 @@ const HMI_MANUAL_REJECT_REASONS = [
   'Робот уже выполняет команду',
   'Механизм уже находится в требуемом состоянии',
   'Внешний робот не подтвердил готовность',
+  'Motion-слой не готов: проверьте состояние группы и автомата оси',
+  'Входная точка станка запрещена: люк закрыт',
 ];
 const POINT_EDITOR_REJECT_REASONS = [
   '',
@@ -589,20 +592,18 @@ export function mapPlcSnapshot(
 
   const magazines = current.magazines.map((magazine, magazineIndex) => {
     const number = magazineIndex + 1;
-    const zoneLengths = [120, 120, 60] as const;
-    const zones = zoneLengths.map((length, zoneIndex) => magazine.zones[zoneIndex].map((slot, index): SlotType => {
-      const root = `astMagazineInventory[${number}].aZone${zoneIndex + 1}[${index + 1}]`;
+    const slots = magazine.slots.map((slot, index): SlotType => {
+      const root = `astMagazineInventory[${number}].aSlots[${index + 1}]`;
       if (!booleanValue(values, `${root}.xInPosition`, slot !== 'empty')) return 'empty';
       const detailType = numberValue(values, `${root}.eDetailType`, slot === 'blank' ? 1 : slot === 'detail' ? 2 : 0);
       return detailType === 1 ? 'blank' : detailType === 2 ? 'detail' : 'empty';
-    }).slice(0, length)) as CellState['magazines'][number]['zones'];
-    const zoneProductTypes = zoneLengths.map((length, zoneIndex) => magazine.zoneProductTypes[zoneIndex].map((type, index) =>
-      productTypeValue(values, `astMagazineInventory[${number}].aZone${zoneIndex + 1}[${index + 1}].uiProductType`, type)).slice(0, length)) as CellState['magazines'][number]['zoneProductTypes'];
+    }).slice(0, 120);
+    const productTypes = magazine.productTypes.map((type, index) =>
+      productTypeValue(values, `astMagazineInventory[${number}].aSlots[${index + 1}].uiProductType`, type)).slice(0, 120);
     const status = `astMagazineStatus[${number}]`;
-    const axisStatus = `astMagazineAxisStatus[${number}]`;
     return {
-      zones,
-      zoneProductTypes,
+      slots,
+      productTypes,
       state: {
         ...magazine.state,
         enabled: booleanValue(values, `${status}.xEnabled`, magazine.state.enabled),
@@ -618,16 +619,15 @@ export function mapPlcSnapshot(
         canEnable: booleanValue(values, `${status}.xCanEnable`, magazine.state.canEnable),
         powerAllowed: booleanValue(values, `${status}.xPowerAllowed`, magazine.state.powerAllowed),
         enableSequenceAllowed: booleanValue(values, `${status}.xEnableSequenceAllowed`, magazine.state.enableSequenceAllowed),
-        enableCheckPowered: booleanValue(values, `${status}.xEnableCheckPowered`, magazine.state.enableCheckPowered),
-        enableCheckHomed: booleanValue(values, `${status}.xEnableCheckHomed`, magazine.state.enableCheckHomed),
-        enableCheckPositionValid: booleanValue(values, `${status}.xEnableCheckPositionValid`, magazine.state.enableCheckPositionValid),
-        enableCheckStationary: booleanValue(values, `${status}.xEnableCheckStationary`, magazine.state.enableCheckStationary),
+        enableCheckRobotReady: booleanValue(values, `${status}.xEnableCheckRobotReady`, magazine.state.enableCheckRobotReady),
         enableCheckNoError: booleanValue(values, `${status}.xEnableCheckNoError`, magazine.state.enableCheckNoError),
         enableCheckRobotReleased: booleanValue(values, `${status}.xEnableCheckRobotReleased`, magazine.state.enableCheckRobotReleased),
         enableCheckContent: booleanValue(values, `${status}.xEnableCheckContent`, magazine.state.enableCheckContent),
-        enableCheckInventoryVerified: booleanValue(values, `${status}.xEnableCheckInventoryVerified`, magazine.state.enableCheckInventoryVerified),
+        enableCheckGeometry: booleanValue(values, `${status}.xEnableCheckGeometry`, magazine.state.enableCheckGeometry),
         fillAllowed: booleanValue(values, `${status}.xFillAllowed`, magazine.state.fillAllowed),
         clearAllowed: booleanValue(values, `${status}.xClearAllowed`, magazine.state.clearAllowed),
+        editAllowed: booleanValue(values, `${status}.xEditAllowed`, magazine.state.editAllowed),
+        pitchEditAllowed: booleanValue(values, `${status}.xPitchEditAllowed`, magazine.state.pitchEditAllowed),
         currentBlank: numberValue(values, `${status}.iCurrentBlank`, magazine.state.currentBlank),
         currentFreeSlot: numberValue(values, `${status}.iCurrentFreeSlot`, magazine.state.currentFreeSlot),
         selectedBlank: numberValue(values, `${status}.iSelectedBlank`, magazine.state.selectedBlank),
@@ -639,25 +639,6 @@ export function mapPlcSnapshot(
         pitchY: numberValue(values, 'MagazinePitchY', magazine.state.pitchY),
         safeAbove: numberValue(values, `alrMagazineSafeZ_1[${number}]`, magazine.state.safeAbove),
         safeInside: numberValue(values, `alrMagazineSafeZ_2[${number}]`, magazine.state.safeInside),
-        powered: booleanValue(values, `${axisStatus}.xPowered`, magazine.state.powered),
-        homed: booleanValue(values, `${status}.xHomed`, magazine.state.homed),
-        positionValid: booleanValue(values, `${status}.xPositionValid`, magazine.state.positionValid),
-        recoveryRequired: booleanValue(values, `${status}.xRecoveryRequired`, magazine.state.recoveryRequired),
-        indexAllowed: booleanValue(values, `${status}.xIndexAllowed`, magazine.state.indexAllowed),
-        zone1EditAllowed: booleanValue(values, `${status}.xZone1EditAllowed`, magazine.state.zone1EditAllowed),
-        zone2EditAllowed: booleanValue(values, `${status}.xZone2EditAllowed`, magazine.state.zone2EditAllowed),
-        jogPositiveAllowed: booleanValue(values, `${status}.xJogPositiveAllowed`, magazine.state.jogPositiveAllowed),
-        jogNegativeAllowed: booleanValue(values, `${status}.xJogNegativeAllowed`, magazine.state.jogNegativeAllowed),
-        contentRecoveryAllowed: booleanValue(values, `${status}.xContentRecoveryAllowed`, magazine.state.contentRecoveryAllowed),
-        contentRecoveryActive: booleanValue(values, `${status}.xContentRecoveryActive`, magazine.state.contentRecoveryActive),
-        inventoryVerificationRequired: booleanValue(values, `${status}.xInventoryVerificationRequired`, magazine.state.inventoryVerificationRequired),
-        indexing: booleanValue(values, `${status}.xIndexing`, magazine.state.indexing),
-        indexDone: booleanValue(values, `${status}.xIndexDone`, magazine.state.indexDone),
-        axisError: booleanValue(values, `${status}.xAxisError`, magazine.state.axisError),
-        axisBusy: booleanValue(values, `${axisStatus}.xBusy`, magazine.state.axisBusy),
-        axisDone: booleanValue(values, `${axisStatus}.xDone`, magazine.state.axisDone),
-        axisPosition: numberValue(values, `${axisStatus}.lrActualPosition`, magazine.state.axisPosition),
-        axisStep: stringValue(values, `astMagazineAxisDiag[${number}].sStepName`, magazine.state.axisStep),
         activeErrors: errorList(values, `astMagazineError[${number}].dwErrorActive`, `Ошибка магазина ${number}`, magazine.state.activeErrors),
         lastErrors: errorList(values, `astMagazineError[${number}].dwErrorLast`, `Последняя ошибка магазина ${number}`, magazine.state.lastErrors),
       },
@@ -667,6 +648,7 @@ export function mapPlcSnapshot(
   return {
     robot: {
       ...mapRobotCoordinates(values, current.robot),
+      currentPoint: numberValue(values, 'stRobotStatus.eCurrentPoint', current.robot.currentPoint),
       busy: booleanValue(values, 'stRobotStatus.xBusy', current.robot.busy),
       done: booleanValue(values, 'stRobotStatus.xDone', current.robot.done),
       error: booleanValue(values, 'stRobotStatus.xError', current.robot.error),
@@ -732,7 +714,7 @@ export function mapRuntimeInfo(values: Record<string, unknown>, current: PlcRunt
       stepName: AXIS_MANUAL_STATES[stateCode] ?? `Неизвестное состояние оси (${stateCode})`,
     };
   }) as [PlcAxisManualStatus, PlcAxisManualStatus, PlcAxisManualStatus];
-  const pointEditorPoints = Array.from({ length: 15 }, (_, offset) => {
+  const pointEditorPoints = Array.from({ length: 12 }, (_, offset) => {
     const index = offset + 1;
     const root = `astPointEditorPoints[${index}]`;
     const previous = current.pointEditor.points[offset] ?? {
@@ -810,6 +792,7 @@ export function mapRuntimeInfo(values: Record<string, unknown>, current: PlcRunt
     robotAtSafetyHome: booleanValue(values, 'stCellStatus.xRobotAtSafetyHome', current.robotAtSafetyHome),
     cellSettings: {
       changeAllowed: booleanValue(values, 'xCellSettingsChangeAllowed', current.cellSettings.changeAllowed),
+      pointCheckSpeedPercent: numberValue(values, 'rPointCheckSpeedPercent', current.cellSettings.pointCheckSpeedPercent),
       safetyHome: {
         x: numberValue(values, 'lrSafetyHomeX', current.cellSettings.safetyHome.x),
         y: numberValue(values, 'lrSafetyHomeY', current.cellSettings.safetyHome.y),
@@ -847,6 +830,7 @@ export function mapRuntimeInfo(values: Record<string, unknown>, current: PlcRunt
       noBlockingError: booleanValue(values, 'stCellStatus.xStartCheckNoBlockingError', current.startReadiness.noBlockingError),
       robotInterfaceReady: booleanValue(values, 'stCellStatus.xStartCheckRobotInterfaceReady', current.startReadiness.robotInterfaceReady),
       configurationValid: booleanValue(values, 'stCellStatus.xStartCheckConfigurationValid', current.startReadiness.configurationValid),
+      pointsConfigured: booleanValue(values, 'stCellStatus.xStartCheckPointsConfigured', current.startReadiness.pointsConfigured),
       drivesReady: booleanValue(values, 'stCellStatus.xStartCheckDrivesReady', current.startReadiness.drivesReady),
       robotReady: booleanValue(values, 'stCellStatus.xStartCheckRobotReady', current.startReadiness.robotReady),
       magazineReady: booleanValue(values, 'stCellStatus.xStartCheckMagazineReady', current.startReadiness.magazineReady),
@@ -983,7 +967,8 @@ export function createPlcClient(callbacks: {
   let heartbeatValue = 0;
   let snapshotValues: Record<string, unknown> = {};
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const url = import.meta.env.VITE_GATEWAY_URL ?? `${protocol}//${location.hostname}:3001/ws`;
+  const url = import.meta.env.VITE_GATEWAY_URL
+    ?? (import.meta.env.DEV ? `${protocol}//${location.host}/ws` : `${protocol}//${location.hostname}:3001/ws`);
   const sendHeartbeat = () => {
     if (socket?.readyState !== WebSocket.OPEN) return;
     heartbeatValue = (heartbeatValue + 1) >>> 0;
@@ -995,12 +980,14 @@ export function createPlcClient(callbacks: {
     callbacks.onConnection({ status: 'connecting', endpoint: '', message: 'Подключение к шлюзу', symbols: 0, missing: [] });
     socket = new WebSocket(url);
     socket.onopen = () => {
+      if (stopped) return;
       snapshotValues = {};
       window.clearInterval(heartbeatTimer);
       sendHeartbeat();
       heartbeatTimer = window.setInterval(sendHeartbeat, 150);
     };
     socket.onmessage = (event) => {
+      if (stopped) return;
       const message = JSON.parse(event.data) as GatewayMessage;
       if (message.type === 'connection') {
         callbacks.onConnection({
@@ -1048,6 +1035,7 @@ export function createPlcClient(callbacks: {
     };
     socket.onclose = (event) => {
       window.clearInterval(heartbeatTimer);
+      if (stopped) return;
       if (event.code === 4001) callbacks.onAuthenticationRequired?.();
       callbacks.onConnection({ status: 'disconnected', endpoint: '', message: 'Нет связи со шлюзом', symbols: 0, missing: [] });
       if (event.code !== 4001) reconnectTimer = window.setTimeout(connect, 2000);

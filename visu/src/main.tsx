@@ -28,13 +28,17 @@ import '@fontsource/commissioner/400.css';
 import '@fontsource/commissioner/500.css';
 import '@fontsource/commissioner/600.css';
 import '@fontsource/commissioner/700.css';
-import { App } from './App';
 import './styles/tailwind.css';
 import './styles/theme.css';
 import './styles/global.css';
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-);
+const phoneDevice = /Android|iPhone|iPod|Mobile/i.test(navigator.userAgent);
+const mobilePoints = phoneDevice || location.pathname === '/mobile' || location.pathname.startsWith('/mobile/');
+document.documentElement.dataset.mobilePoints = String(mobilePoints);
+
+const root = ReactDOM.createRoot(document.getElementById('root')!);
+if (mobilePoints) {
+  void import('./mobile/MobilePointsApp').then(({ MobilePointsApp }) => root.render(<React.StrictMode><MobilePointsApp /></React.StrictMode>));
+} else {
+  void import('./App').then(({ App }) => root.render(<React.StrictMode><App /></React.StrictMode>));
+}

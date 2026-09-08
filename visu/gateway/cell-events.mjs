@@ -387,15 +387,12 @@ export class CellEventClassifier {
 
     for (let magazine = 1; magazine <= 2; magazine += 1) {
       const statusRoot = `astMagazineStatus[${magazine}]`;
-      const axisRoot = `astMagazineAxisStatus[${magazine}]`;
       const diagRoot = `astMagazineDiag[${magazine}]`;
       const magazineTransition = (path, eventType, message, status = 'changed', details) => {
         if (changed(path)) push(this.event(4, eventType, status, message(), { oldValue: previous[path], newValue: current[path], details }));
       };
       magazineTransition(`${statusRoot}.xEnabled`, 'automatic-mode', () => boolValue(current, `${statusRoot}.xEnabled`) ? `Магазин ${magazine} введён в автоматическую работу` : `Магазин ${magazine} выведен из автоматической работы`);
       magazineTransition(`${statusRoot}.xDisablePending`, 'automatic-mode', () => boolValue(current, `${statusRoot}.xDisablePending`) ? `Магазин ${magazine}: ожидается освобождение перед отключением` : `Магазин ${magazine}: ожидание отключения завершено`);
-      magazineTransition(`${axisRoot}.xPowered`, 'drive-power', () => boolValue(current, `${axisRoot}.xPowered`) ? `Привод магазина ${magazine} включён` : `Привод магазина ${magazine} выключен`);
-      magazineTransition(`${statusRoot}.xHomed`, 'home', () => boolValue(current, `${statusRoot}.xHomed`) ? `Home магазина ${magazine} подтверждён` : `Home магазина ${magazine} недействителен`);
       magazineTransition(`${diagRoot}.eState`, 'state', () => `Магазин ${magazine}: ${catalog(MAGAZINE_STATES, numberValue(current, `${diagRoot}.eState`), 'состояние')}`);
       magazineTransition(`${statusRoot}.eActualOperation`, 'operation', () => `Магазин ${magazine}: ${catalog(MAGAZINE_OPERATIONS, numberValue(current, `${statusRoot}.eActualOperation`), 'операция')}`);
       magazineTransition(`${statusRoot}.xBusy`, 'operation', () => boolValue(current, `${statusRoot}.xBusy`) ? `Магазин ${magazine} начал операцию` : `Магазин ${magazine} завершил операцию`, boolValue(current, `${statusRoot}.xBusy`) ? 'started' : 'completed', {
@@ -403,17 +400,14 @@ export class CellEventClassifier {
         selectedBlank: numberValue(current, `${statusRoot}.iSelectedBlank`),
         selectedFreeSlot: numberValue(current, `${statusRoot}.iSelectedFreeSlot`),
       });
-      for (let zone = 1; zone <= 3; zone += 1) {
-        const changedSlots = [];
-        const slotCount = zone === 3 ? 60 : 120;
-        for (let slot = 1; slot <= slotCount; slot += 1) {
-          const path = `astMagazineInventory[${magazine}].aZone${zone}[${slot}].eDetailType`;
-          if (changed(path)) changedSlots.push({ magazine, zone, slot, from: previous[path], to: current[path] });
-        }
-        if (changedSlots.length) push(this.event(4, 'slot-content', 'changed', changedSlots.length === 1
-          ? `Магазин ${magazine}, Zone ${zone}: изменилось содержимое слота ${changedSlots[0].slot}`
-          : `Магазин ${magazine}, Zone ${zone}: изменилось содержимое ${changedSlots.length} слотов`, { details: { magazine, zone, slots: changedSlots } }));
+      const changedSlots = [];
+      for (let slot = 1; slot <= 120; slot += 1) {
+        const path = `astMagazineInventory[${magazine}].aSlots[${slot}].eDetailType`;
+        if (changed(path)) changedSlots.push({ magazine, slot, from: previous[path], to: current[path] });
       }
+      if (changedSlots.length) push(this.event(4, 'slot-content', 'changed', changedSlots.length === 1
+        ? `Магазин ${magazine}: изменилось содержимое слота ${changedSlots[0].slot}`
+        : `Магазин ${magazine}: изменилось содержимое ${changedSlots.length} слотов`, { details: { magazine, slots: changedSlots } }));
     }
 
     if (changed('stCellStatus.uiActiveMagazine')) {
@@ -525,21 +519,21 @@ const COMMAND_LABELS = {
   'alarms.resetWarnings': 'Сбросить предупреждения', 'robot.enableDrives': 'Включить приводы робота',
   'robot.disableDrives': 'Отключить приводы робота', 'robot.stop': 'Остановить робота',
   'robot.reset': 'Сбросить ошибки робота', 'robot.action': 'Ручная команда роботу',
-  'robot.point.capture': 'Зафиксировать координаты инженерной точки',
-  'robot.point.save': 'Сохранить инженерную точку',
+    'robot.point.capture': 'Зафиксировать координаты инженерной точки',
+    'robot.point.save': 'Сохранить инженерную точку',
+    'robot.point.check': 'Проверить сохранённую инженерную точку',
+    'robot.point.stop': 'Остановить проверку точки',
   'robot.axis.jog': 'JOG оси робота', 'robot.axis.home': 'Базирование оси робота',
   'robot.axis.moveAbsolute': 'Абсолютное движение оси', 'robot.axis.moveRelative': 'Относительное движение оси',
   'robot.controlMode.set': 'Переключить источник управления роботом', 'robot.modbus.apply': 'Применить настройки Modbus',
   'magazine.enable': 'Включить магазин', 'magazine.disable': 'Выключить магазин',
-  'magazine.powerOn': 'Включить привод магазина', 'magazine.powerOff': 'Выключить привод магазина',
-  'magazine.home': 'Найти домашнюю позицию магазина', 'magazine.index': 'Переместить магазин в рабочую зону',
-  'magazine.stop': 'Остановить привод магазина', 'magazine.reset': 'Сбросить ошибку магазина',
-  'magazine.jogPositive': 'JOG магазина вперёд', 'magazine.jogNegative': 'JOG магазина назад',
-  'magazine.startContentRecovery': 'Начать сверку содержимого магазина',
-  'magazine.confirmRecovery': 'Подтвердить содержимое магазина',
-  'magazine.clearRecoveryZones': 'Очистить зоны при восстановлении магазина',
-  'magazine.fillZone1': 'Заполнить Zone 1 заготовками', 'magazine.clearZone1': 'Очистить Zone 1',
-  'magazine.setZone1Slot': 'Изменить содержимое слота Zone 1', 'magazine.setSlot': 'Изменить содержимое слота магазина',
+  'magazine.stop': 'Остановить операцию магазина', 'magazine.reset': 'Сбросить ошибку магазина',
+  'magazine.fill': 'Заполнить кассету заготовками', 'magazine.clear': 'Очистить кассету',
+  'magazine.setSlot': 'Изменить содержимое слота магазина',
+  'magazine.pitchX': 'Изменить шаг слотов магазина по X',
+  'magazine.pitchY': 'Изменить шаг слотов магазина по Y',
+  'magazine.safeAbove': 'Изменить безопасную высоту над магазином',
+  'magazine.safeInside': 'Изменить рабочую высоту внутри магазина',
   'machine.manualDoorOpen': 'Открыть операторскую дверь станка',
   'machine.manualDoorClose': 'Закрыть операторскую дверь станка',
   'machine.manualHatchOpen': 'Открыть роботный люк станка',

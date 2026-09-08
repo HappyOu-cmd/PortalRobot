@@ -6,7 +6,7 @@ VAR_INPUT
 	xCellRunning     : BOOL; // Автоматический цикл выполняется
 	xMotionBusy      : BOOL; // Оси ещё движутся
 	stRobotStatus    : ST_ROBOT_STATUS; // Состояние робота
-	stMagazineStatus : ST_MAGAZINE_STATUS; // Состояние магазина
+	astMagazineStatus : ARRAY [1..GVL_CELL_SETTINGS.MagazineCount] OF ST_MAGAZINE_STATUS; // Оба магазина
 	astMachineStatus : ARRAY [1..3] OF ST_MACHINE_PUBLIC; // Состояния станков
 	uiRows           : UINT; // Строки активной матрицы
 	uiColumns        : UINT; // Столбцы активной матрицы
@@ -19,8 +19,10 @@ VAR
 	xInitialized        : BOOL; // Начальные безопасные значения заданы
 	xAllMachinesSafe    : BOOL; // Станки не обслуживаются и не обрабатывают
 	xAllMachinesDisabled: BOOL; // Все станки выключены
+	xAllMagazinesEditable : BOOL; // Оба магазина выключены и не заняты
 	xAllTypesHaveMachines : BOOL; // Каждый тип назначен хотя бы одному станку
 	uiMachine           : UINT; // Индекс станка
+	uiMagazine          : UINT; // Индекс магазина
 	uiSlot              : UINT; // Индекс слота
 	uiType              : UINT; // Индекс типа
 	auiMachineCount     : ARRAY [1..3] OF UINT; // Количество станков каждого типа
@@ -79,13 +81,21 @@ FOR uiMachine := FIRST_MACHINE TO LAST_MACHINE DO
 	END_IF;
 END_FOR;
 
+xAllMagazinesEditable := TRUE;
+FOR uiMagazine := UINT#1 TO INT_TO_UINT(GVL_CELL_SETTINGS.MagazineCount) DO
+	IF astMagazineStatus[uiMagazine].xEnabled
+	OR astMagazineStatus[uiMagazine].xBusy
+	OR astMagazineStatus[uiMagazine].xDisablePending THEN
+		xAllMagazinesEditable := FALSE;
+	END_IF;
+END_FOR;
+
 Status.xMagazineConfigAllowed := NOT xCellRunning
 	AND NOT xMotionBusy
 	AND NOT stRobotStatus.xBusy
 	AND NOT stRobotStatus.xBlankAvailable
 	AND NOT stRobotStatus.xDetailAvailable
-	AND NOT stMagazineStatus.xEnabled
-	AND NOT stMagazineStatus.xBusy
+	AND xAllMagazinesEditable
 	AND xAllMachinesSafe;
 Status.xTypeCountAllowed := Status.xMagazineConfigAllowed
 	AND xAllMachinesDisabled;
@@ -96,7 +106,7 @@ FOR uiMachine := FIRST_MACHINE TO LAST_MACHINE DO
 		AND NOT stRobotStatus.xBusy
 		AND NOT stRobotStatus.xBlankAvailable
 		AND NOT stRobotStatus.xDetailAvailable
-		AND NOT stMagazineStatus.xBusy
+		AND xAllMagazinesEditable
 		AND NOT astMachineStatus[uiMachine].xEnabled
 		AND NOT astMachineStatus[uiMachine].xDisablePending
 		AND NOT astMachineStatus[uiMachine].xBusy

@@ -17,28 +17,20 @@ VAR_INPUT
 	xHmiClear         : BOOL; // Полностью очистить содержимое магазина
 	xHmiCycleSlot     : BOOL; // Переключить содержимое выбранного слота
 	xHmiApplySlot     : BOOL; // Явно записать состояние и тип выбранного слота
-	uiHmiEditZone     : UINT; // Редактируемая Zone 1 или Zone 2
+	xHmiApplyPitchX   : BOOL; // Применить новый общий шаг слотов по X
+	xHmiApplyPitchY   : BOOL; // Применить новый общий шаг слотов по Y
+	xHmiApplySafeAbove : BOOL; // Применить безопасную высоту конкретного магазина
+	xHmiApplySafeInside : BOOL; // Применить рабочую высоту конкретного магазина
 	uiHmiEditSlot     : UINT; // Номер слота для ручного редактирования
 	uiHmiEditDetailType : UINT; // 0=NONE, 1=BLANK, 2=DETAIL
 	uiHmiEditProductType : UINT; // Тип изделия 1..3
-	xHmiPowerOn       : BOOL; // Подача питания на сервопривод
-	xHmiPowerOff      : BOOL; // Снятие питания с сервопривода
-	xHmiHome          : BOOL; // Поиск домашней позиции
-	xHmiIndex         : BOOL; // Индекс на 720 мм
-	xHmiAxisStop      : BOOL; // Контролируемая остановка сервопривода
-	xHmiJogPositive   : BOOL; // Удерживаемый ход конвейера вперёд при выключенном магазине
-	xHmiJogNegative   : BOOL; // Удерживаемый ход конвейера назад при выключенном магазине
-	xHmiConfirmRecovery : BOOL; // Подтверждение сверки/коррекции после аварийного Home
-	xHmiStartContentRecovery : BOOL; // Вход в режим сверки содержимого
-	xHmiApplyRecoverySlot : BOOL; // Применить исправление одного слота после Home
-	xHmiClearRecoveryZones : BOOL; // Очистить все зоны в режиме восстановления
-	uiHmiRecoveryZone : UINT;
-	uiHmiRecoverySlot : UINT;
-	eHmiRecoveryDetailType : E_DETAIL_TYPE;
-	uiHmiRecoveryProductType : UINT;
-	xRobotOwnsMagazine : BOOL; // Робот или автомат удерживает этот магазин
-	stAxisStatus      : ST_AXIS_STATUS; // Состояние собственного FB_AXIS
-	lrIndexTolerance  : LREAL; // Допуск подтверждения относительного хода
+	lrHmiEditPitchX   : LREAL;
+	lrHmiEditPitchY   : LREAL;
+	lrHmiEditSafeAbove : LREAL;
+	lrHmiEditSafeInside : LREAL;
+	xRobotOwnsMagazine : BOOL; // Автомат удерживает этот магазин в текущем цикле
+	xRobotCanWorkWithMagazine : BOOL; // Интерфейс робота и обязательные точки готовы
+	xSharedGeometryEditAllowed : BOOL; // Оба магазина выключены; общий шаг можно менять
 	uiRows            : UINT; // Число строк матрицы магазина
 	uiColumns         : UINT; // Число столбцов матрицы магазина
 	uiTypeCount       : UINT; // Количество настроенных типов заготовок, 1..3
@@ -47,14 +39,17 @@ VAR_INPUT
 END_VAR
 VAR_OUTPUT
 	Command : ST_ROBOT_COMMAND; // Текущая пошаговая команда роботу
-	AxisCommand : ST_AXIS_COMMANDS; // Команда отдельному FB_AXIS магазина
 	Status  : ST_MAGAZINE_STATUS; // Рабочие статусы магазина
 	Diag    : ST_MAGAZINE_DIAG; // Состояние автомата магазина
 	Error   : ST_MAGAZINE_ERRORS; // Активные и последние ошибки
 	FaultStatus : ST_FAULT_INJECTION_STATUS; // Состояние инжектора для HMI
 END_VAR
 VAR_IN_OUT
-	stInventory : ST_MAGAZINE_INVENTORY; // Zone 1/2/3 текущего магазина
+	stInventory : ST_MAGAZINE_INVENTORY; // Единственная кассета текущего магазина
+	lrPitchX : LREAL; // Общий фактический шаг слотов по X
+	lrPitchY : LREAL; // Общий фактический шаг слотов по Y
+	lrSafeAbove : LREAL; // Фактическая безопасная высота текущего магазина
+	lrSafeInside : LREAL; // Фактическая рабочая высота текущего магазина
 END_VAR
 VAR
 	eGrantedOperation : E_MAGAZINE_OPERATION; // Доступная операция магазина
@@ -67,16 +62,11 @@ VAR
 	rtClear            : R_TRIG; // Фронт очистки магазина
 	rtCycleSlot        : R_TRIG; // Фронт изменения выбранного слота
 	rtApplySlot        : R_TRIG; // Фронт явной записи выбранного слота
+	rtApplyPitchX      : R_TRIG;
+	rtApplyPitchY      : R_TRIG;
+	rtApplySafeAbove   : R_TRIG;
+	rtApplySafeInside  : R_TRIG;
 	rtReset            : R_TRIG; // Фронт команды сброса магазина
-	rtPowerOn          : R_TRIG;
-	rtPowerOff         : R_TRIG;
-	rtHome             : R_TRIG;
-	rtIndex            : R_TRIG;
-	rtAxisStop         : R_TRIG;
-	rtStartContentRecovery : R_TRIG;
-	rtConfirmRecovery  : R_TRIG;
-	rtApplyRecoverySlot : R_TRIG;
-	rtClearRecoveryZones : R_TRIG;
 
 	xExecuteRequest    : BOOL; // Активный запрос выполнения операции
 	xResetRequest      : BOOL; // Активный запрос сброса
@@ -88,11 +78,6 @@ VAR
 	xRobotInMagazineAtFault : BOOL; // Робот был в рабочей зоне этого магазина при ошибке
 	xRobotStopRequired : BOOL; // Итоговая реакция ROBOT_STOP, сформированная магазином
 	xRobotResetDependencyReady : BOOL; // Каскадная ошибка робота может быть сброшена тем же импульсом
-	xContentRecoveryActive : BOOL; // Сверка содержимого при неподвижной оси
-	xInventoryVerificationRequired : BOOL; // Ошибка робота могла изменить содержимое слота
-	xManualJogActive : BOOL; // Защёлка ручного движения до отпускания кнопок
-	xAxisFaultHandled : BOOL; // Ошибка оси уже инвалидировала карту
-	xHomeConfirmed : BOOL; // Home выполнен после последнего включения/ручного движения/аварии
 
 	iActiveSlotCount   : SINT; // Число активных слотов выбранной матрицы
 	iInventoryIndex    : SINT; // Индекс изменения содержимого магазина
@@ -119,29 +104,13 @@ VAR
 	xAllSlotsDetails    : BOOL; // Все активные слоты заполнены готовыми деталями
 	xNoBlankNoMachinePart : BOOL; // Нет заготовок и нет доступной работы в станках
 	xNoBlankNoDestination : BOOL; // Нет заготовок и нет места для возврата груза
-	xZone1HasLoad       : BOOL; // В загрузочной зоне есть содержимое для следующего индекса
 	uiMachineIndex      : UINT; // Индекс станка при расчёте завершения магазина
 	uiMachineTypeIndex  : UINT; // Тип детали проверяемого станка
 	uiPutProductType    : UINT; // Тип груза, защёлкнутый до физического PUT
 	fbFaultInjector      : FB_MAGAZINE_FAULT_INJECTOR; // Безопасный сценарий ошибки до движения
 	xFaultAllowed        : BOOL; // Владелец разрешает синтетическую проверку
 	xStartupInitialized  : BOOL;
-	xPositionValid       : BOOL;
-	xRecoveryRequired    : BOOL;
-	xHomeActive          : BOOL;
-	xHomeStarted         : BOOL;
-	xIndexActive         : BOOL;
-	xIndexStarted        : BOOL;
-	xIndexDonePulse      : BOOL;
 	udiProducedPartsTotal : UDINT; // Монотонный счётчик подтверждённых укладок готовых деталей
-	xHomeAllowed         : BOOL;
-	xIndexAllowed        : BOOL;
-	xRecoveryEditRejected : BOOL;
-	xContentRecoveryAllowed : BOOL;
-	xManualJogStartAllowed : BOOL;
-	lrIndexStartPosition : LREAL;
-	lrIndexTargetPosition: LREAL;
-	lrIndexDeviation     : LREAL;
 END_VAR
 VAR CONSTANT
 	ERR_WRONG_OPERATION : DWORD := DWORD#16#0000_0001; // Недопустимая операция магазина
@@ -164,39 +133,23 @@ VAR CONSTANT
 	WRN_FILL_GEOMETRY        : UINT := 8; // Активная матрица магазина задана неверно
 	WRN_CLEAR_ENABLED        : UINT := 9; // Очистка запрещена для включённого магазина
 	WRN_SIM_ERROR_NOT_ALLOWED: UINT := 10; // Тестовая ошибка запрещена текущим состоянием
-	WRN_INDEX_REJECTED        : UINT := 11;
-	WRN_HOME_REJECTED         : UINT := 12;
-	WRN_RECOVERY_EDIT_REJECTED: UINT := 13;
-	WRN_ZONE1_EDIT_REJECTED : UINT := 14;
+	WRN_ENABLE_ROBOT_NOT_READY : UINT := 15; // Робот не может работать с магазином
+	WRN_EDIT_REJECTED : UINT := 14; // Редактирование включённого/занятого магазина запрещено
+	WRN_GEOMETRY_EDIT_REJECTED : UINT := 16; // PLC отклонил изменение шага или рабочих высот
 END_VAR
 
 // --- BEGIN IMPLEMENTATION ---
 
-// Инвентарь намеренно не RETAIN. Первый вызов всегда начинает с пустых зон.
+// Инвентарь не RETAIN: после запуска PLC обе статичные кассеты пусты.
 IF NOT xStartupInitialized THEN
-	FOR iInventoryIndex := 1 TO GVL_CELL_SETTINGS.MagazineZone1Slots DO
-		stInventory.aZone1[iInventoryIndex].xInPosition := FALSE;
-		stInventory.aZone1[iInventoryIndex].eDetailType := E_DETAIL_TYPE.NONE;
-		stInventory.aZone1[iInventoryIndex].uiProductType := UINT#0;
-		stInventory.aZone2[iInventoryIndex].xInPosition := FALSE;
-		stInventory.aZone2[iInventoryIndex].eDetailType := E_DETAIL_TYPE.NONE;
-		stInventory.aZone2[iInventoryIndex].uiProductType := UINT#0;
+	FOR iInventoryIndex := 1 TO GVL_CELL_SETTINGS.MagazineSlots DO
+		stInventory.aSlots[iInventoryIndex].xInPosition := FALSE;
+		stInventory.aSlots[iInventoryIndex].eDetailType := E_DETAIL_TYPE.NONE;
+		stInventory.aSlots[iInventoryIndex].uiProductType := UINT#0;
 	END_FOR;
-	FOR iInventoryIndex := 1 TO GVL_CELL_SETTINGS.MagazineZone3Slots DO
-		stInventory.aZone3[iInventoryIndex].xInPosition := FALSE;
-		stInventory.aZone3[iInventoryIndex].eDetailType := E_DETAIL_TYPE.NONE;
-		stInventory.aZone3[iInventoryIndex].uiProductType := UINT#0;
-	END_FOR;
-	xPositionValid := FALSE;
-	xRecoveryRequired := FALSE;
-	xHomeConfirmed := FALSE;
-	xContentRecoveryActive := FALSE;
-	xInventoryVerificationRequired := FALSE;
-	xManualJogActive := FALSE;
 	xFaultContextCaptured := FALSE;
 	xRobotInMagazineAtFault := FALSE;
 	xRobotStopRequired := FALSE;
-	xAxisFaultHandled := FALSE;
 	xStartupInitialized := TRUE;
 END_IF;
 
@@ -214,6 +167,7 @@ IF xTestInitialize THEN
 	xResetRequest := FALSE;
 	xStopRequest := FALSE;
 	xManualCommand := FALSE;
+	xDisableRequest := FALSE;
 	iTakeSlot := SINT#0;
 	iPutSlot := SINT#0;
 	iActiveSlot := SINT#0;
@@ -222,9 +176,6 @@ IF xTestInitialize THEN
 	xPutSlotCommitted := FALSE;
 	xRobotCommandStarted := FALSE;
 	xOperationSequenceComplete := FALSE;
-	xContentRecoveryActive := FALSE;
-	xInventoryVerificationRequired := FALSE;
-	xManualJogActive := FALSE;
 	xFaultContextCaptured := FALSE;
 	xRobotInMagazineAtFault := FALSE;
 	xRobotStopRequired := FALSE;
@@ -242,613 +193,29 @@ rtFillBlanks(CLK := xHmiFillBlanks);
 rtClear(CLK := xHmiClear);
 rtCycleSlot(CLK := xHmiCycleSlot);
 rtApplySlot(CLK := xHmiApplySlot);
-rtPowerOn(CLK := xHmiPowerOn);
-rtPowerOff(CLK := xHmiPowerOff);
-rtHome(CLK := xHmiHome);
-rtIndex(CLK := xHmiIndex);
-rtAxisStop(CLK := xHmiAxisStop);
-rtStartContentRecovery(CLK := xHmiStartContentRecovery);
-rtConfirmRecovery(CLK := xHmiConfirmRecovery);
-rtApplyRecoverySlot(CLK := xHmiApplyRecoverySlot);
-rtClearRecoveryZones(CLK := xHmiClearRecoveryZones);
+rtApplyPitchX(CLK := xHmiApplyPitchX);
+rtApplyPitchY(CLK := xHmiApplyPitchY);
+rtApplySafeAbove(CLK := xHmiApplySafeAbove);
+rtApplySafeInside(CLK := xHmiApplySafeInside);
 
-// Приводом разрешено распоряжаться только у технологически выключенного
-// магазина. Кнопка "Включить магазин" больше не имеет скрытых побочных
-// эффектов Power/Home.
-AxisCommand.xEnable := rtPowerOn.Q
-	AND (Diag.eState = E_MAGAZINE_STATE.DISABLED)
-	AND NOT xGlobalError;
-AxisCommand.xDisable := rtPowerOff.Q
-	AND (Diag.eState = E_MAGAZINE_STATE.DISABLED)
-	AND NOT xContentRecoveryActive
-	AND NOT stAxisStatus.xMotionBusy
-	AND NOT xHomeActive
-	AND NOT xIndexActive
-	AND NOT xManualJogActive;
-AxisCommand.xGlobalError := xGlobalError;
-AxisCommand.xPowerPermit := NOT xGlobalError;
-AxisCommand.xResetAllError := xReset;
-AxisCommand.xResetAxisError := FALSE;
-AxisCommand.xResetLogicalError := FALSE;
-AxisCommand.xStop := rtAxisStop.Q OR (xGlobalError AND stAxisStatus.xMotionBusy);
-AxisCommand.xHome := FALSE;
-AxisCommand.xMoveAbsolute := FALSE;
-AxisCommand.xMoveRelative := FALSE;
-AxisCommand.xJogPositive := FALSE;
-AxisCommand.xJogNegative := FALSE;
-xIndexDonePulse := FALSE;
-
-// Питание и технологическое включение магазина независимы. После снятия
-// питания старый Home больше не считается пригодным для редактирования зон.
-IF NOT stAxisStatus.xPowered THEN
-	xHomeConfirmed := FALSE;
-	xPositionValid := FALSE;
-END_IF;
-
-// Любая ошибка собственной оси означает потерю доверия к физическому
-// расположению изделий. Карта очищается один раз, магазин требует Home и
-// последующего ручного подтверждения содержимого.
-IF stAxisStatus.xError AND NOT xAxisFaultHandled THEN
-	FOR iInventoryIndex := 1 TO GVL_CELL_SETTINGS.MagazineZone1Slots DO
-		stInventory.aZone1[iInventoryIndex].xInPosition := FALSE;
-		stInventory.aZone1[iInventoryIndex].eDetailType := E_DETAIL_TYPE.NONE;
-		stInventory.aZone1[iInventoryIndex].uiProductType := UINT#0;
-		stInventory.aZone2[iInventoryIndex].xInPosition := FALSE;
-		stInventory.aZone2[iInventoryIndex].eDetailType := E_DETAIL_TYPE.NONE;
-		stInventory.aZone2[iInventoryIndex].uiProductType := UINT#0;
-	END_FOR;
-	FOR iInventoryIndex := 1 TO GVL_CELL_SETTINGS.MagazineZone3Slots DO
-		stInventory.aZone3[iInventoryIndex].xInPosition := FALSE;
-		stInventory.aZone3[iInventoryIndex].eDetailType := E_DETAIL_TYPE.NONE;
-		stInventory.aZone3[iInventoryIndex].uiProductType := UINT#0;
-	END_FOR;
-	xPositionValid := FALSE;
-	xRecoveryRequired := TRUE;
-	xHomeConfirmed := FALSE;
-	xContentRecoveryActive := FALSE;
-	xManualJogActive := FALSE;
-	IF Diag.eState <> E_MAGAZINE_STATE.DISABLED THEN
-		// Корневая авария остаётся у оси; магазин лишь исключается из автомата
-		// и после Reset возвращается в DISABLED.
-		Diag.eState := E_MAGAZINE_STATE.ERROR;
-	END_IF;
-	xAxisFaultHandled := TRUE;
-ELSIF NOT stAxisStatus.xError THEN
-	xAxisFaultHandled := FALSE;
-END_IF;
-
-xManualJogStartAllowed := stAxisStatus.xPowered
-	AND xHomeConfirmed
-	AND stAxisStatus.xCanStartMotion
-	AND NOT stAxisStatus.xError
-	AND NOT xGlobalError
-	AND NOT xRobotOwnsMagazine
-	AND NOT xHomeActive
-	AND NOT xIndexActive
-	AND NOT stAxisStatus.xMotionBusy
-	AND NOT xRecoveryRequired
-	AND NOT xContentRecoveryActive
-	AND (Diag.eState = E_MAGAZINE_STATE.DISABLED);
-
-IF NOT xManualJogActive
-AND (xHmiJogPositive <> xHmiJogNegative)
-AND xManualJogStartAllowed THEN
-	// Ручное движение не является индексной транзакцией: карта очищается, а
-	// возврат к работе возможен только после нового Home и сверки.
-	FOR iInventoryIndex := 1 TO GVL_CELL_SETTINGS.MagazineZone1Slots DO
-		stInventory.aZone1[iInventoryIndex].xInPosition := FALSE;
-		stInventory.aZone1[iInventoryIndex].eDetailType := E_DETAIL_TYPE.NONE;
-		stInventory.aZone1[iInventoryIndex].uiProductType := UINT#0;
-		stInventory.aZone2[iInventoryIndex].xInPosition := FALSE;
-		stInventory.aZone2[iInventoryIndex].eDetailType := E_DETAIL_TYPE.NONE;
-		stInventory.aZone2[iInventoryIndex].uiProductType := UINT#0;
-	END_FOR;
-	FOR iInventoryIndex := 1 TO GVL_CELL_SETTINGS.MagazineZone3Slots DO
-		stInventory.aZone3[iInventoryIndex].xInPosition := FALSE;
-		stInventory.aZone3[iInventoryIndex].eDetailType := E_DETAIL_TYPE.NONE;
-		stInventory.aZone3[iInventoryIndex].uiProductType := UINT#0;
-	END_FOR;
-	xPositionValid := FALSE;
-	xRecoveryRequired := TRUE;
-	xHomeConfirmed := FALSE;
-	xManualJogActive := TRUE;
-END_IF;
-
-IF xManualJogActive THEN
-	AxisCommand.xJogPositive := xHmiJogPositive AND NOT xHmiJogNegative;
-	AxisCommand.xJogNegative := xHmiJogNegative AND NOT xHmiJogPositive;
-	IF (NOT xHmiJogPositive AND NOT xHmiJogNegative)
-	OR stAxisStatus.xError OR xGlobalError OR xHmiAxisStop THEN
-		xManualJogActive := FALSE;
-	END_IF;
-END_IF;
-
-xHomeAllowed := stAxisStatus.xPowered
-	AND stAxisStatus.xCanStartMotion
-	AND NOT stAxisStatus.xError
-	AND NOT xRobotOwnsMagazine
-	AND NOT xGlobalError
-	AND NOT xIndexActive
-	AND NOT xManualJogActive
-	AND NOT xContentRecoveryActive
-	AND (Diag.eState = E_MAGAZINE_STATE.DISABLED);
-xIndexAllowed := stAxisStatus.xPowered
-	AND xHomeConfirmed
-	AND stAxisStatus.xCanStartMotion
-	AND NOT stAxisStatus.xError
-	AND xPositionValid
-	AND NOT xRecoveryRequired
-	AND NOT xRobotOwnsMagazine
-	AND NOT xGlobalError
-	AND NOT xHomeActive
-	AND NOT xIndexActive
-	AND NOT Status.xBusy
-	AND NOT xManualJogActive
-	AND NOT xContentRecoveryActive
-	AND (lrIndexTolerance > LREAL#0.0)
-	AND (Diag.eState = E_MAGAZINE_STATE.DISABLED);
-
-IF rtHome.Q THEN
-	IF xHomeAllowed THEN
-		// Home физически переопределяет привязку ленты. Старую карту нельзя
-		// тащить через это движение, даже если SoftMotion завершится штатно.
-		FOR iInventoryIndex := 1 TO GVL_CELL_SETTINGS.MagazineZone1Slots DO
-			stInventory.aZone1[iInventoryIndex].xInPosition := FALSE;
-			stInventory.aZone1[iInventoryIndex].eDetailType := E_DETAIL_TYPE.NONE;
-			stInventory.aZone1[iInventoryIndex].uiProductType := UINT#0;
-			stInventory.aZone2[iInventoryIndex].xInPosition := FALSE;
-			stInventory.aZone2[iInventoryIndex].eDetailType := E_DETAIL_TYPE.NONE;
-			stInventory.aZone2[iInventoryIndex].uiProductType := UINT#0;
-		END_FOR;
-		FOR iInventoryIndex := 1 TO GVL_CELL_SETTINGS.MagazineZone3Slots DO
-			stInventory.aZone3[iInventoryIndex].xInPosition := FALSE;
-			stInventory.aZone3[iInventoryIndex].eDetailType := E_DETAIL_TYPE.NONE;
-			stInventory.aZone3[iInventoryIndex].uiProductType := UINT#0;
-		END_FOR;
-		xPositionValid := FALSE;
-		xHomeConfirmed := FALSE;
-		xInventoryVerificationRequired := FALSE;
-		xHomeActive := TRUE;
-		xHomeStarted := FALSE;
-		AxisCommand.xHome := TRUE;
-	ELSE
-		Diag.stWarning.uiCode := WRN_HOME_REJECTED;
-		Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
-	END_IF;
-END_IF;
-
-IF xHomeActive THEN
-	IF stAxisStatus.xMotionBusy THEN
-		xHomeStarted := TRUE;
-	END_IF;
-	IF stAxisStatus.xError OR xGlobalError OR rtAxisStop.Q OR rtPowerOff.Q THEN
-		xHomeActive := FALSE;
-		xHomeStarted := FALSE;
-		xPositionValid := FALSE;
-		xHomeConfirmed := FALSE;
-		xRecoveryRequired := TRUE;
-	ELSIF xHomeStarted AND stAxisStatus.xDone THEN
-		xHomeActive := FALSE;
-		xHomeStarted := FALSE;
-		xHomeConfirmed := TRUE;
-		IF NOT xRecoveryRequired THEN
-			xPositionValid := TRUE;
-		END_IF;
-	END_IF;
-END_IF;
-
-IF rtIndex.Q THEN
-	IF xIndexAllowed THEN
-		xIndexActive := TRUE;
-		xIndexStarted := FALSE;
-		lrIndexStartPosition := REAL_TO_LREAL(stAxisStatus.lrActualPosition);
-		lrIndexTargetPosition := lrIndexStartPosition + GVL_CELL_SETTINGS.lrMagazineIndexDistance;
-		AxisCommand.xMoveRelative := TRUE;
-	ELSE
-		Diag.stWarning.uiCode := WRN_INDEX_REJECTED;
-		Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
-	END_IF;
-END_IF;
-
-IF xIndexActive THEN
-	IF stAxisStatus.xMotionBusy THEN
-		xIndexStarted := TRUE;
-	END_IF;
-	IF stAxisStatus.xError OR xGlobalError OR rtAxisStop.Q OR rtPowerOff.Q THEN
-		xIndexActive := FALSE;
-		xIndexStarted := FALSE;
-		xPositionValid := FALSE;
-		xRecoveryRequired := TRUE;
-		xHomeConfirmed := FALSE;
-		FOR iInventoryIndex := 1 TO GVL_CELL_SETTINGS.MagazineZone1Slots DO
-			stInventory.aZone1[iInventoryIndex].xInPosition := FALSE;
-			stInventory.aZone1[iInventoryIndex].eDetailType := E_DETAIL_TYPE.NONE;
-			stInventory.aZone1[iInventoryIndex].uiProductType := UINT#0;
-			stInventory.aZone2[iInventoryIndex].xInPosition := FALSE;
-			stInventory.aZone2[iInventoryIndex].eDetailType := E_DETAIL_TYPE.NONE;
-			stInventory.aZone2[iInventoryIndex].uiProductType := UINT#0;
-		END_FOR;
-		FOR iInventoryIndex := 1 TO GVL_CELL_SETTINGS.MagazineZone3Slots DO
-			stInventory.aZone3[iInventoryIndex].xInPosition := FALSE;
-			stInventory.aZone3[iInventoryIndex].eDetailType := E_DETAIL_TYPE.NONE;
-			stInventory.aZone3[iInventoryIndex].uiProductType := UINT#0;
-		END_FOR;
-	ELSIF xIndexStarted AND stAxisStatus.xDone THEN
-		lrIndexDeviation := ABS(REAL_TO_LREAL(stAxisStatus.lrActualPosition) - lrIndexTargetPosition);
-		IF lrIndexDeviation <= lrIndexTolerance THEN
-			// Сначала сохраняем первую половину старой Zone 2 в новую Zone 3.
-			FOR iInventoryIndex := 1 TO GVL_CELL_SETTINGS.MagazineZone3Slots DO
-				stInventory.aZone3[iInventoryIndex] := stInventory.aZone2[iInventoryIndex];
-			END_FOR;
-			// Затем вся загрузочная зона становится рабочей.
-			FOR iInventoryIndex := 1 TO GVL_CELL_SETTINGS.MagazineZone2Slots DO
-				stInventory.aZone2[iInventoryIndex] := stInventory.aZone1[iInventoryIndex];
-				stInventory.aZone1[iInventoryIndex].xInPosition := FALSE;
-				stInventory.aZone1[iInventoryIndex].eDetailType := E_DETAIL_TYPE.NONE;
-				stInventory.aZone1[iInventoryIndex].uiProductType := UINT#0;
-			END_FOR;
-			xIndexDonePulse := TRUE;
-		ELSE
-			xPositionValid := FALSE;
-			xRecoveryRequired := TRUE;
-		END_IF;
-		xIndexActive := FALSE;
-		xIndexStarted := FALSE;
-	END_IF;
-END_IF;
-
-// После аварийного хода или ошибки робота PLC не выдумывает содержимое.
-// Магазин остаётся физически включённым, но технологически выключен до
-// подтверждения оператора.
-xContentRecoveryAllowed := stAxisStatus.xPowered
-	AND xHomeConfirmed
-	AND NOT stAxisStatus.xMotionBusy
-	AND NOT stAxisStatus.xError
-	AND NOT xGlobalError
-	AND NOT xRobotOwnsMagazine
-	AND NOT xHomeActive
-	AND NOT xIndexActive
-	AND NOT xManualJogActive
-	AND (Diag.eState = E_MAGAZINE_STATE.DISABLED)
-	AND (xRecoveryRequired OR xInventoryVerificationRequired);
-
-IF rtStartContentRecovery.Q AND xContentRecoveryAllowed THEN
-	xContentRecoveryActive := TRUE;
-END_IF;
-
-IF xContentRecoveryActive THEN
-	IF rtClearRecoveryZones.Q THEN
-	FOR iInventoryIndex := 1 TO GVL_CELL_SETTINGS.MagazineZone1Slots DO
-		stInventory.aZone1[iInventoryIndex].xInPosition := FALSE;
-		stInventory.aZone1[iInventoryIndex].eDetailType := E_DETAIL_TYPE.NONE;
-		stInventory.aZone1[iInventoryIndex].uiProductType := UINT#0;
-		stInventory.aZone2[iInventoryIndex].xInPosition := FALSE;
-		stInventory.aZone2[iInventoryIndex].eDetailType := E_DETAIL_TYPE.NONE;
-		stInventory.aZone2[iInventoryIndex].uiProductType := UINT#0;
-	END_FOR;
-	FOR iInventoryIndex := 1 TO GVL_CELL_SETTINGS.MagazineZone3Slots DO
-		stInventory.aZone3[iInventoryIndex].xInPosition := FALSE;
-		stInventory.aZone3[iInventoryIndex].eDetailType := E_DETAIL_TYPE.NONE;
-		stInventory.aZone3[iInventoryIndex].uiProductType := UINT#0;
-	END_FOR;
-	ELSIF rtApplyRecoverySlot.Q THEN
-		xRecoveryEditRejected := FALSE;
-		IF ((eHmiRecoveryDetailType = E_DETAIL_TYPE.NONE)
-			AND (uiHmiRecoveryProductType = UINT#0))
-		OR (((eHmiRecoveryDetailType = E_DETAIL_TYPE.BLANK)
-				OR (eHmiRecoveryDetailType = E_DETAIL_TYPE.DETAIL))
-			AND (uiHmiRecoveryProductType >= UINT#1)
-			AND (uiHmiRecoveryProductType <= uiTypeCount)) THEN
-			CASE uiHmiRecoveryZone OF
-				UINT#1:
-					IF (uiHmiRecoverySlot >= UINT#1)
-					AND (uiHmiRecoverySlot <= SINT_TO_UINT(GVL_CELL_SETTINGS.MagazineZone1Slots)) THEN
-						stInventory.aZone1[uiHmiRecoverySlot].eDetailType := eHmiRecoveryDetailType;
-						stInventory.aZone1[uiHmiRecoverySlot].xInPosition := eHmiRecoveryDetailType <> E_DETAIL_TYPE.NONE;
-						stInventory.aZone1[uiHmiRecoverySlot].uiProductType := uiHmiRecoveryProductType;
-					ELSE
-						xRecoveryEditRejected := TRUE;
-					END_IF;
-				UINT#2:
-					IF (uiHmiRecoverySlot >= UINT#1)
-					AND (uiHmiRecoverySlot <= SINT_TO_UINT(GVL_CELL_SETTINGS.MagazineZone2Slots)) THEN
-						stInventory.aZone2[uiHmiRecoverySlot].eDetailType := eHmiRecoveryDetailType;
-						stInventory.aZone2[uiHmiRecoverySlot].xInPosition := eHmiRecoveryDetailType <> E_DETAIL_TYPE.NONE;
-						stInventory.aZone2[uiHmiRecoverySlot].uiProductType := uiHmiRecoveryProductType;
-					ELSE
-						xRecoveryEditRejected := TRUE;
-					END_IF;
-				UINT#3:
-					IF (uiHmiRecoverySlot >= UINT#1)
-					AND (uiHmiRecoverySlot <= SINT_TO_UINT(GVL_CELL_SETTINGS.MagazineZone3Slots)) THEN
-						stInventory.aZone3[uiHmiRecoverySlot].eDetailType := eHmiRecoveryDetailType;
-						stInventory.aZone3[uiHmiRecoverySlot].xInPosition := eHmiRecoveryDetailType <> E_DETAIL_TYPE.NONE;
-						stInventory.aZone3[uiHmiRecoverySlot].uiProductType := uiHmiRecoveryProductType;
-					ELSE
-						xRecoveryEditRejected := TRUE;
-					END_IF;
-			ELSE
-				xRecoveryEditRejected := TRUE;
-			END_CASE;
-		ELSE
-			xRecoveryEditRejected := TRUE;
-		END_IF;
-		IF xRecoveryEditRejected THEN
-			Diag.stWarning.uiCode := WRN_RECOVERY_EDIT_REJECTED;
-			Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
-		END_IF;
-	ELSIF rtConfirmRecovery.Q THEN
-		xRecoveryRequired := FALSE;
-		xInventoryVerificationRequired := FALSE;
-		xPositionValid := TRUE;
-		xContentRecoveryActive := FALSE;
-	END_IF;
-END_IF;
-
-IF xPositionValid AND NOT stAxisStatus.xHomed AND NOT xHomeActive THEN
-	xPositionValid := FALSE;
-END_IF;
-
-// Активный размер матрицы может быть меньше полного массива деталей.
-IF (uiRows > 0)
-AND (uiColumns > 0)
-AND ((uiRows * uiColumns) <= SINT_TO_UINT(GVL_CELL_SETTINGS.NumberDetail)) THEN
+IF (uiRows > UINT#0)
+AND (uiColumns > UINT#0)
+AND ((uiRows * uiColumns) <= SINT_TO_UINT(GVL_CELL_SETTINGS.MagazineSlots)) THEN
 	iActiveSlotCount := UINT_TO_SINT(uiRows * uiColumns);
 ELSE
-	iActiveSlotCount := 0;
+	iActiveSlotCount := SINT#0;
 END_IF;
 
-// Zone 1 можно готовить заранее при включённом неподвижном магазине. Zone 2
-// доступна только после технологического выключения либо в recovery.
-Status.xZone1EditAllowed := stAxisStatus.xPowered
-	AND xHomeConfirmed
-	AND NOT stAxisStatus.xMotionBusy
-	AND NOT xHomeActive
-	AND NOT xIndexActive
-	AND NOT xManualJogActive
-	AND NOT stAxisStatus.xError
-	AND NOT xGlobalError
-	AND ((xPositionValid AND NOT xRecoveryRequired
-		AND NOT xInventoryVerificationRequired)
-		OR xContentRecoveryActive);
-Status.xZone2EditAllowed := Status.xZone1EditAllowed
-	AND ((Diag.eState = E_MAGAZINE_STATE.DISABLED) OR xContentRecoveryActive);
-
-IF NOT stAxisStatus.xMotionBusy
-AND NOT xHomeActive
-AND NOT xIndexActive
-AND NOT xGlobalError THEN
-	IF rtClear.Q AND Status.xZone1EditAllowed THEN
-		FOR iInventoryIndex := 1 TO GVL_CELL_SETTINGS.NumberDetail DO
-			stInventory.aZone1[iInventoryIndex].xInPosition := FALSE;
-			stInventory.aZone1[iInventoryIndex].eDetailType := E_DETAIL_TYPE.NONE;
-			stInventory.aZone1[iInventoryIndex].uiProductType := UINT#0;
-		END_FOR;
-	ELSIF rtFillBlanks.Q
-	AND (iActiveSlotCount > 0)
-	AND Status.xZone1EditAllowed THEN
-		FOR iInventoryIndex := 1 TO GVL_CELL_SETTINGS.NumberDetail DO
-			stInventory.aZone1[iInventoryIndex].xInPosition := iInventoryIndex <= iActiveSlotCount;
-			IF iInventoryIndex <= iActiveSlotCount THEN
-				stInventory.aZone1[iInventoryIndex].eDetailType := E_DETAIL_TYPE.BLANK;
-				stInventory.aZone1[iInventoryIndex].uiProductType := auiSlotType[iInventoryIndex];
-			ELSE
-				stInventory.aZone1[iInventoryIndex].eDetailType := E_DETAIL_TYPE.NONE;
-				stInventory.aZone1[iInventoryIndex].uiProductType := UINT#0;
-			END_IF;
-		END_FOR;
-	ELSIF rtApplySlot.Q
-	AND (uiHmiEditSlot >= UINT#1)
-	AND (uiHmiEditSlot <= SINT_TO_UINT(iActiveSlotCount))
-	AND (uiHmiEditDetailType <= UINT#2)
-	AND ((uiHmiEditDetailType = UINT#0)
-		OR ((uiHmiEditProductType >= UINT#1) AND (uiHmiEditProductType <= uiTypeCount)))
-	AND ((((uiHmiEditZone = UINT#0) OR (uiHmiEditZone = UINT#1)) AND Status.xZone1EditAllowed)
-		OR ((uiHmiEditZone = UINT#2) AND Status.xZone2EditAllowed)) THEN
-		iInventoryIndex := UINT_TO_SINT(uiHmiEditSlot);
-		IF uiHmiEditZone = UINT#2 THEN
-			CASE uiHmiEditDetailType OF
-				UINT#0:
-					stInventory.aZone2[iInventoryIndex].xInPosition := FALSE;
-					stInventory.aZone2[iInventoryIndex].eDetailType := E_DETAIL_TYPE.NONE;
-					stInventory.aZone2[iInventoryIndex].uiProductType := UINT#0;
-				UINT#1:
-					stInventory.aZone2[iInventoryIndex].xInPosition := TRUE;
-					stInventory.aZone2[iInventoryIndex].eDetailType := E_DETAIL_TYPE.BLANK;
-					stInventory.aZone2[iInventoryIndex].uiProductType := uiHmiEditProductType;
-				UINT#2:
-					stInventory.aZone2[iInventoryIndex].xInPosition := TRUE;
-					stInventory.aZone2[iInventoryIndex].eDetailType := E_DETAIL_TYPE.DETAIL;
-					stInventory.aZone2[iInventoryIndex].uiProductType := uiHmiEditProductType;
-			END_CASE;
-		ELSE
-			CASE uiHmiEditDetailType OF
-				UINT#0:
-					stInventory.aZone1[iInventoryIndex].xInPosition := FALSE;
-					stInventory.aZone1[iInventoryIndex].eDetailType := E_DETAIL_TYPE.NONE;
-					stInventory.aZone1[iInventoryIndex].uiProductType := UINT#0;
-				UINT#1:
-					stInventory.aZone1[iInventoryIndex].xInPosition := TRUE;
-					stInventory.aZone1[iInventoryIndex].eDetailType := E_DETAIL_TYPE.BLANK;
-					stInventory.aZone1[iInventoryIndex].uiProductType := uiHmiEditProductType;
-				UINT#2:
-					stInventory.aZone1[iInventoryIndex].xInPosition := TRUE;
-					stInventory.aZone1[iInventoryIndex].eDetailType := E_DETAIL_TYPE.DETAIL;
-					stInventory.aZone1[iInventoryIndex].uiProductType := uiHmiEditProductType;
-			END_CASE;
-		END_IF;
-	ELSIF rtCycleSlot.Q
-	AND (uiHmiEditSlot >= 1)
-	AND (uiHmiEditSlot <= SINT_TO_UINT(iActiveSlotCount))
-	AND Status.xZone1EditAllowed THEN
-		iInventoryIndex := UINT_TO_SINT(uiHmiEditSlot);
-		IF NOT stInventory.aZone1[iInventoryIndex].xInPosition
-		OR (stInventory.aZone1[iInventoryIndex].eDetailType = E_DETAIL_TYPE.NONE) THEN
-			stInventory.aZone1[iInventoryIndex].xInPosition := TRUE;
-			stInventory.aZone1[iInventoryIndex].eDetailType := E_DETAIL_TYPE.BLANK;
-			stInventory.aZone1[iInventoryIndex].uiProductType := auiSlotType[iInventoryIndex];
-		ELSE
-			stInventory.aZone1[iInventoryIndex].xInPosition := FALSE;
-			stInventory.aZone1[iInventoryIndex].eDetailType := E_DETAIL_TYPE.NONE;
-			stInventory.aZone1[iInventoryIndex].uiProductType := UINT#0;
-		END_IF;
-	END_IF;
-END_IF;
-
-IF iActiveSlotCount > 0 THEN
-	Status.iCurrentBlank := FindBlank(
-		stDetail := stInventory.aZone2,
-		iSlotCount := iActiveSlotCount
-	);
-	Status.iCurrentFreeSlot := FindFreeSlot(
-		stDetail := stInventory.aZone2,
-		iSlotCount := iActiveSlotCount
-	);
-ELSE
-	Status.iCurrentBlank := 0;
-	Status.iCurrentFreeSlot := 0;
-END_IF;
-
-Status.xOutBlank := Status.iCurrentBlank = 0;
-Status.xOutFreeSlot := Status.iCurrentFreeSlot = 0;
-Status.xCanTake := NOT Status.xOutBlank;
-Status.xCanPut := NOT Status.xOutFreeSlot;
-Status.xCanChange := Status.xCanTake AND Status.xCanPut;
-Status.xCanEnable := FALSE;
-
-xZone1HasLoad := FALSE;
-IF iActiveSlotCount > SINT#0 THEN
-	FOR uiIndex := UINT#1 TO SINT_TO_UINT(iActiveSlotCount) DO
-		IF stInventory.aZone1[UINT_TO_SINT(uiIndex)].xInPosition
-		AND (stInventory.aZone1[UINT_TO_SINT(uiIndex)].eDetailType <> E_DETAIL_TYPE.NONE) THEN
-			xZone1HasLoad := TRUE;
-		END_IF;
-	END_FOR;
-END_IF;
-
-IF stRobotStatus.xBlankAvailable
-AND NOT stRobotStatus.xDetailAvailable THEN
-	Status.xCanEnable := Status.xCanPut;
-ELSIF stRobotStatus.xDetailAvailable
-AND NOT stRobotStatus.xBlankAvailable THEN
-	Status.xCanEnable := Status.xCanPut;
-ELSIF NOT stRobotStatus.xBlankAvailable
-AND NOT stRobotStatus.xDetailAvailable THEN
-	Status.xCanEnable := Status.xCanTake;
-END_IF;
-
-// Магазин нельзя выключать только потому, что в нём закончились заготовки:
-// при этом робот ещё должен забрать готовые детали из станков.
-xMachineHasRelevantPart := FALSE;
-xMachineHasDestination := FALSE;
-FOR uiMachineIndex := 1 TO 3 DO
-	IF astMachineStatus[uiMachineIndex].xEnabled
-	AND NOT astMachineStatus[uiMachineIndex].xError
-	AND (astMachineStatus[uiMachineIndex].xProcessing
-		OR ((astMachineStatus[uiMachineIndex].ePartState = E_PART_STATE.LOADED)
-			AND ((astMachineStatus[uiMachineIndex].ePartType = E_PART_TYPE.PART)
-				OR (astMachineStatus[uiMachineIndex].ePartType = E_PART_TYPE.DETAIL)))) THEN
-		xMachineHasRelevantPart := TRUE;
-		uiMachineTypeIndex := auiMachineType[uiMachineIndex];
-		IF (uiMachineTypeIndex >= UINT#1)
-		AND (uiMachineTypeIndex <= UINT#3) THEN
-			IF Status.stTypeStatus.aiFreeSlot[uiMachineTypeIndex] > SINT#0 THEN
-				xMachineHasDestination := TRUE;
-			END_IF;
-		END_IF;
-	END_IF;
-END_FOR;
-
-// При пустом роботе магазин можно включить не только для TAKE заготовки,
-// но и для выгрузки готовой детали из станка в свободный слот.
-IF NOT stRobotStatus.xBlankAvailable
-AND NOT stRobotStatus.xDetailAvailable
-AND xMachineHasDestination THEN
-	Status.xCanEnable := TRUE;
-END_IF;
-// Технологическое включение оценивает только рабочую Zone 2. Загрузка Zone 1
-// сама по себе больше не разрешает автомат: сначала оператор выполняет индекс.
-Status.xEnableCheckPowered := stAxisStatus.xPowered;
-Status.xEnableCheckHomed := xHomeConfirmed;
-Status.xEnableCheckPositionValid := xPositionValid;
-Status.xEnableCheckStationary := (Diag.eState = E_MAGAZINE_STATE.DISABLED)
-	AND NOT stAxisStatus.xMotionBusy
-	AND NOT xHomeActive
-	AND NOT xIndexActive
-	AND NOT xManualJogActive;
-Status.xEnableCheckNoError := NOT xGlobalError
-	AND NOT stAxisStatus.xError
-	AND (Diag.eState <> E_MAGAZINE_STATE.ERROR)
-	AND (Error.dwErrorActive = DWORD#0);
-Status.xEnableCheckRobotReleased := NOT xRobotOwnsMagazine;
-Status.xEnableCheckContent := Status.xCanEnable;
-Status.xEnableCheckInventoryVerified := NOT xRecoveryRequired
-	AND NOT xInventoryVerificationRequired
-	AND NOT xContentRecoveryActive;
-Status.xEnableSequenceAllowed := Status.xEnableCheckPowered
-	AND Status.xEnableCheckHomed
-	AND Status.xEnableCheckPositionValid
-	AND Status.xEnableCheckStationary
-	AND Status.xEnableCheckNoError
-	AND Status.xEnableCheckRobotReleased
-	AND Status.xEnableCheckContent
-	AND Status.xEnableCheckInventoryVerified;
-
-// Условия автоматического завершения магазина:
-// 1. Все активные слоты заняты готовыми деталями.
-xAllSlotsDetails := iActiveSlotCount > SINT#0;
-IF xAllSlotsDetails THEN
-	FOR uiIndex := UINT#1 TO SINT_TO_UINT(iActiveSlotCount) DO
-		IF NOT stInventory.aZone2[UINT_TO_SINT(uiIndex)].xInPosition
-		OR (stInventory.aZone2[UINT_TO_SINT(uiIndex)].eDetailType <> E_DETAIL_TYPE.DETAIL) THEN
-			xAllSlotsDetails := FALSE;
-		END_IF;
-	END_FOR;
-END_IF;
-// 2. Заготовок нет и во включённых исправных станках нет оставшейся работы.
-xNoBlankNoMachinePart := Status.xOutBlank AND NOT xMachineHasRelevantPart;
-// 3. Заготовок нет и свободного места для груза станков больше нет.
-xNoBlankNoDestination := Status.xOutBlank AND NOT xMachineHasDestination;
-
-xFinishedCondition :=
-	(NOT stRobotStatus.xBlankAvailable
-		AND NOT stRobotStatus.xDetailAvailable)
-	AND NOT xZone1HasLoad
-	AND (xAllSlotsDetails
-		OR xNoBlankNoMachinePart
-		OR xNoBlankNoDestination);
-
-// Автоматический выбор доступной операции.
-eGrantedOperation := E_MAGAZINE_OPERATION.NONE;
-
-IF NOT Status.xOutBlank
-AND NOT stRobotStatus.xBlankAvailable
-AND NOT stRobotStatus.xDetailAvailable THEN
-	eGrantedOperation := E_MAGAZINE_OPERATION.TAKE;
-
-ELSIF NOT Status.xOutFreeSlot
-AND Status.xOutBlank
-AND stRobotStatus.xDetailAvailable THEN
-	eGrantedOperation := E_MAGAZINE_OPERATION.PUT;
-
-ELSIF NOT Status.xOutFreeSlot
-AND NOT Status.xOutBlank
-AND stRobotStatus.xGripper1Open
-AND NOT stRobotStatus.xBlankAvailable
-AND stRobotStatus.xDetailAvailable THEN
-	eGrantedOperation := E_MAGAZINE_OPERATION.CHANGE;
-END_IF;
-
-// Команды магазина с HMI принимаются только в ручном режиме.
+// Ручная роботная команда принадлежит только выбранному магазину.
 xManualCommand := xManual
-AND (
-	(stHmiCommand.eSetPoint = E_POINT_NAME.MAGAZINE_TAKE_DETAIL)
-	OR (stHmiCommand.eSetPoint = E_POINT_NAME.MAGAZINE_PUT_DETAIL)
-	OR (stHmiCommand.eSetPoint = E_POINT_NAME.MAGAZINE_CHANGE_DETAIL)
-	OR (stHmiCommand.eSetPoint = E_POINT_NAME.MAGAZINE_RETURN_BLANK)
-)
-AND ((stHmiCommand.uiMagazineId = uiMagazineId)
-	OR ((stHmiCommand.uiMagazineId = UINT#0) AND (uiMagazineId = UINT#1)));
+	AND (
+		(stHmiCommand.eSetPoint = E_POINT_NAME.MAGAZINE_TAKE_DETAIL)
+		OR (stHmiCommand.eSetPoint = E_POINT_NAME.MAGAZINE_PUT_DETAIL)
+		OR (stHmiCommand.eSetPoint = E_POINT_NAME.MAGAZINE_CHANGE_DETAIL)
+		OR (stHmiCommand.eSetPoint = E_POINT_NAME.MAGAZINE_RETURN_BLANK)
+	)
+	AND ((stHmiCommand.uiMagazineId = uiMagazineId)
+		OR ((stHmiCommand.uiMagazineId = UINT#0) AND (uiMagazineId = UINT#1)));
 
 IF xManual THEN
 	IF xManualCommand THEN
@@ -862,8 +229,9 @@ ELSE
 	xExecuteRequest := stMagazineCommand.xExecute;
 	xStopRequest := stMagazineCommand.xStop;
 END_IF;
-xStopRequest := xStopRequest OR rtAxisStop.Q;
 
+// Контекст запрещает редактирование и завершает отложенное отключение только
+// после фактического выхода робота из конкретного магазина.
 xRobotInMagazineContext := (stRobotStatus.uiMagazineContext = uiMagazineId)
 	OR ((stRobotStatus.uiMagazineContext = UINT#0)
 		AND (xRobotOwnsMagazine OR xManualCommand)
@@ -875,6 +243,208 @@ xRobotInMagazineContext := xRobotInMagazineContext
 		AND (stActiveRobotCommand.eAction = E_ROBOT_ACTION.MOVE_TO_POINT)
 		AND ((stActiveRobotCommand.eSetPoint = E_POINT_NAME.MAGAZINE_IN_SLOT)
 			OR (stActiveRobotCommand.eSetPoint = E_POINT_NAME.MAGAZINE_CHANGE)));
+
+// Единственную кассету можно менять только у технологически выключенного
+// магазина, когда робот не находится внутри и не владеет текущей операцией.
+Status.xEditAllowed := ((Diag.eState = E_MAGAZINE_STATE.DISABLED)
+		OR (Diag.eState = E_MAGAZINE_STATE.ERROR))
+	AND NOT xRobotOwnsMagazine
+	AND NOT xRobotInMagazineContext
+	AND NOT xGlobalError;
+Status.xPitchEditAllowed := Status.xEditAllowed AND xSharedGeometryEditAllowed;
+
+// Шаг матрицы общий для двух магазинов, поэтому менять его разрешено только
+// когда оба магазина выключены. Z-параметры принадлежат конкретному магазину.
+IF rtApplyPitchX.Q
+AND Status.xEditAllowed
+AND xSharedGeometryEditAllowed
+AND (lrHmiEditPitchX >= LREAL#1.0)
+AND (lrHmiEditPitchX <= LREAL#5000.0) THEN
+	lrPitchX := lrHmiEditPitchX;
+END_IF;
+IF rtApplyPitchY.Q
+AND Status.xEditAllowed
+AND xSharedGeometryEditAllowed
+AND (lrHmiEditPitchY >= LREAL#1.0)
+AND (lrHmiEditPitchY <= LREAL#5000.0) THEN
+	lrPitchY := lrHmiEditPitchY;
+END_IF;
+IF rtApplySafeAbove.Q
+AND Status.xEditAllowed
+AND (lrHmiEditSafeAbove >= -LREAL#10000.0)
+AND (lrHmiEditSafeAbove <= LREAL#10000.0) THEN
+	lrSafeAbove := lrHmiEditSafeAbove;
+END_IF;
+IF rtApplySafeInside.Q
+AND Status.xEditAllowed
+AND (lrHmiEditSafeInside >= -LREAL#10000.0)
+AND (lrHmiEditSafeInside <= LREAL#10000.0) THEN
+	lrSafeInside := lrHmiEditSafeInside;
+END_IF;
+
+IF rtClear.Q AND Status.xEditAllowed THEN
+	FOR iInventoryIndex := 1 TO GVL_CELL_SETTINGS.MagazineSlots DO
+		stInventory.aSlots[iInventoryIndex].xInPosition := FALSE;
+		stInventory.aSlots[iInventoryIndex].eDetailType := E_DETAIL_TYPE.NONE;
+		stInventory.aSlots[iInventoryIndex].uiProductType := UINT#0;
+	END_FOR;
+ELSIF rtFillBlanks.Q
+AND (iActiveSlotCount > SINT#0)
+AND Status.xEditAllowed THEN
+	FOR iInventoryIndex := 1 TO GVL_CELL_SETTINGS.MagazineSlots DO
+		stInventory.aSlots[iInventoryIndex].xInPosition := iInventoryIndex <= iActiveSlotCount;
+		IF iInventoryIndex <= iActiveSlotCount THEN
+			stInventory.aSlots[iInventoryIndex].eDetailType := E_DETAIL_TYPE.BLANK;
+			stInventory.aSlots[iInventoryIndex].uiProductType := auiSlotType[iInventoryIndex];
+		ELSE
+			stInventory.aSlots[iInventoryIndex].eDetailType := E_DETAIL_TYPE.NONE;
+			stInventory.aSlots[iInventoryIndex].uiProductType := UINT#0;
+		END_IF;
+	END_FOR;
+ELSIF rtApplySlot.Q
+AND Status.xEditAllowed
+AND (uiHmiEditSlot >= UINT#1)
+AND (uiHmiEditSlot <= SINT_TO_UINT(iActiveSlotCount))
+AND (uiHmiEditDetailType <= UINT#2)
+AND ((uiHmiEditDetailType = UINT#0)
+	OR ((uiHmiEditProductType >= UINT#1) AND (uiHmiEditProductType <= uiTypeCount))) THEN
+	iInventoryIndex := UINT_TO_SINT(uiHmiEditSlot);
+	CASE uiHmiEditDetailType OF
+		UINT#0:
+			stInventory.aSlots[iInventoryIndex].xInPosition := FALSE;
+			stInventory.aSlots[iInventoryIndex].eDetailType := E_DETAIL_TYPE.NONE;
+			stInventory.aSlots[iInventoryIndex].uiProductType := UINT#0;
+		UINT#1:
+			stInventory.aSlots[iInventoryIndex].xInPosition := TRUE;
+			stInventory.aSlots[iInventoryIndex].eDetailType := E_DETAIL_TYPE.BLANK;
+			stInventory.aSlots[iInventoryIndex].uiProductType := uiHmiEditProductType;
+		UINT#2:
+			stInventory.aSlots[iInventoryIndex].xInPosition := TRUE;
+			stInventory.aSlots[iInventoryIndex].eDetailType := E_DETAIL_TYPE.DETAIL;
+			stInventory.aSlots[iInventoryIndex].uiProductType := uiHmiEditProductType;
+	END_CASE;
+ELSIF rtCycleSlot.Q
+AND Status.xEditAllowed
+AND (uiHmiEditSlot >= UINT#1)
+AND (uiHmiEditSlot <= SINT_TO_UINT(iActiveSlotCount)) THEN
+	iInventoryIndex := UINT_TO_SINT(uiHmiEditSlot);
+	IF NOT stInventory.aSlots[iInventoryIndex].xInPosition
+	OR (stInventory.aSlots[iInventoryIndex].eDetailType = E_DETAIL_TYPE.NONE) THEN
+		stInventory.aSlots[iInventoryIndex].xInPosition := TRUE;
+		stInventory.aSlots[iInventoryIndex].eDetailType := E_DETAIL_TYPE.BLANK;
+		stInventory.aSlots[iInventoryIndex].uiProductType := auiSlotType[iInventoryIndex];
+	ELSE
+		stInventory.aSlots[iInventoryIndex].xInPosition := FALSE;
+		stInventory.aSlots[iInventoryIndex].eDetailType := E_DETAIL_TYPE.NONE;
+		stInventory.aSlots[iInventoryIndex].uiProductType := UINT#0;
+	END_IF;
+END_IF;
+
+IF iActiveSlotCount > SINT#0 THEN
+	Status.iCurrentBlank := FindBlank(stDetail := stInventory.aSlots, iSlotCount := iActiveSlotCount);
+	Status.iCurrentFreeSlot := FindFreeSlot(stDetail := stInventory.aSlots, iSlotCount := iActiveSlotCount);
+ELSE
+	Status.iCurrentBlank := SINT#0;
+	Status.iCurrentFreeSlot := SINT#0;
+END_IF;
+
+Status.xOutBlank := Status.iCurrentBlank = SINT#0;
+Status.xOutFreeSlot := Status.iCurrentFreeSlot = SINT#0;
+Status.xCanTake := NOT Status.xOutBlank;
+Status.xCanPut := NOT Status.xOutFreeSlot;
+Status.xCanChange := Status.xCanTake AND Status.xCanPut;
+Status.xCanEnable := FALSE;
+
+IF stRobotStatus.xBlankAvailable AND NOT stRobotStatus.xDetailAvailable THEN
+	Status.xCanEnable := Status.xCanPut;
+ELSIF stRobotStatus.xDetailAvailable AND NOT stRobotStatus.xBlankAvailable THEN
+	Status.xCanEnable := Status.xCanPut;
+ELSIF NOT stRobotStatus.xBlankAvailable AND NOT stRobotStatus.xDetailAvailable THEN
+	Status.xCanEnable := Status.xCanTake;
+END_IF;
+
+// Отсутствие заготовок не завершает магазин, пока из станков ещё можно вернуть
+// готовую деталь в свободный слот соответствующего типа.
+xMachineHasRelevantPart := FALSE;
+xMachineHasDestination := FALSE;
+FOR uiMachineIndex := UINT#1 TO UINT#3 DO
+	IF astMachineStatus[uiMachineIndex].xEnabled
+	AND NOT astMachineStatus[uiMachineIndex].xError
+	AND (astMachineStatus[uiMachineIndex].xProcessing
+		OR ((astMachineStatus[uiMachineIndex].ePartState = E_PART_STATE.LOADED)
+			AND ((astMachineStatus[uiMachineIndex].ePartType = E_PART_TYPE.PART)
+				OR (astMachineStatus[uiMachineIndex].ePartType = E_PART_TYPE.DETAIL)))) THEN
+		xMachineHasRelevantPart := TRUE;
+		uiMachineTypeIndex := auiMachineType[uiMachineIndex];
+		IF (uiMachineTypeIndex >= UINT#1)
+		AND (uiMachineTypeIndex <= UINT#3)
+		AND (Status.stTypeStatus.aiFreeSlot[uiMachineTypeIndex] > SINT#0) THEN
+			xMachineHasDestination := TRUE;
+		END_IF;
+	END_IF;
+END_FOR;
+
+IF NOT stRobotStatus.xBlankAvailable
+AND NOT stRobotStatus.xDetailAvailable
+AND xMachineHasDestination THEN
+	Status.xCanEnable := TRUE;
+END_IF;
+
+Status.xEnableCheckRobotReady := xRobotCanWorkWithMagazine;
+Status.xEnableCheckRobotReleased := NOT xRobotInMagazineContext;
+Status.xEnableCheckNoError := NOT xGlobalError
+	AND NOT stRobotStatus.xError
+	AND (Diag.eState <> E_MAGAZINE_STATE.ERROR)
+	AND (Error.dwErrorActive = DWORD#0);
+Status.xEnableCheckContent := Status.xCanEnable;
+Status.xEnableCheckGeometry := (iActiveSlotCount > SINT#0)
+	AND (lrPitchX >= LREAL#1.0)
+	AND (lrPitchX <= LREAL#5000.0)
+	AND (lrPitchY >= LREAL#1.0)
+	AND (lrPitchY <= LREAL#5000.0)
+	AND (lrSafeAbove >= -LREAL#10000.0)
+	AND (lrSafeAbove <= LREAL#10000.0)
+	AND (lrSafeInside >= -LREAL#10000.0)
+	AND (lrSafeInside <= LREAL#10000.0);
+Status.xEnableSequenceAllowed := (Diag.eState = E_MAGAZINE_STATE.DISABLED)
+	AND Status.xEnableCheckRobotReady
+	AND Status.xEnableCheckRobotReleased
+	AND Status.xEnableCheckNoError
+	AND Status.xEnableCheckContent
+	AND Status.xEnableCheckGeometry;
+
+// Finished остаётся прежним по смыслу, но теперь оценивает единственную кассету.
+xAllSlotsDetails := iActiveSlotCount > SINT#0;
+IF xAllSlotsDetails THEN
+	FOR uiIndex := UINT#1 TO SINT_TO_UINT(iActiveSlotCount) DO
+		IF NOT stInventory.aSlots[UINT_TO_SINT(uiIndex)].xInPosition
+		OR (stInventory.aSlots[UINT_TO_SINT(uiIndex)].eDetailType <> E_DETAIL_TYPE.DETAIL) THEN
+			xAllSlotsDetails := FALSE;
+		END_IF;
+	END_FOR;
+END_IF;
+xNoBlankNoMachinePart := Status.xOutBlank AND NOT xMachineHasRelevantPart;
+xNoBlankNoDestination := Status.xOutBlank AND NOT xMachineHasDestination;
+xFinishedCondition :=
+	(NOT stRobotStatus.xBlankAvailable AND NOT stRobotStatus.xDetailAvailable)
+	AND (xAllSlotsDetails OR xNoBlankNoMachinePart OR xNoBlankNoDestination);
+
+eGrantedOperation := E_MAGAZINE_OPERATION.NONE;
+IF NOT Status.xOutBlank
+AND NOT stRobotStatus.xBlankAvailable
+AND NOT stRobotStatus.xDetailAvailable THEN
+	eGrantedOperation := E_MAGAZINE_OPERATION.TAKE;
+ELSIF NOT Status.xOutFreeSlot
+AND Status.xOutBlank
+AND stRobotStatus.xDetailAvailable THEN
+	eGrantedOperation := E_MAGAZINE_OPERATION.PUT;
+ELSIF NOT Status.xOutFreeSlot
+AND NOT Status.xOutBlank
+AND stRobotStatus.xGripper1Open
+AND NOT stRobotStatus.xBlankAvailable
+AND stRobotStatus.xDetailAvailable THEN
+	eGrantedOperation := E_MAGAZINE_OPERATION.CHANGE;
+END_IF;
 
 xResetRequest := xReset;
 rtReset(CLK := xResetRequest);
@@ -913,6 +483,9 @@ AND (Diag.eState = E_MAGAZINE_STATE.DISABLED)
 AND NOT Status.xEnableSequenceAllowed THEN
 	IF xGlobalError THEN
 		Diag.stWarning.uiCode := WRN_ENABLE_GLOBAL_ERROR;
+	ELSIF NOT Status.xEnableCheckRobotReady
+	OR NOT Status.xEnableCheckRobotReleased THEN
+		Diag.stWarning.uiCode := WRN_ENABLE_ROBOT_NOT_READY;
 	ELSE
 		Diag.stWarning.uiCode := WRN_ENABLE_CONTENT;
 	END_IF;
@@ -936,15 +509,38 @@ AND (iActiveSlotCount = 0) THEN
 		Diag.stWarning.udiSequence := UDINT#1;
 	END_IF;
 ELSIF rtFillBlanks.Q
-AND (stAxisStatus.xMotionBusy OR xHomeActive OR xIndexActive OR xGlobalError) THEN
+AND NOT Status.xEditAllowed THEN
 	Diag.stWarning.uiCode := WRN_FILL_ENABLED;
 	Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
 	IF Diag.stWarning.udiSequence = UDINT#0 THEN
 		Diag.stWarning.udiSequence := UDINT#1;
 	END_IF;
 ELSIF rtClear.Q
-AND (stAxisStatus.xMotionBusy OR xHomeActive OR xIndexActive OR xGlobalError) THEN
+AND NOT Status.xEditAllowed THEN
 	Diag.stWarning.uiCode := WRN_CLEAR_ENABLED;
+	Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
+	IF Diag.stWarning.udiSequence = UDINT#0 THEN
+		Diag.stWarning.udiSequence := UDINT#1;
+	END_IF;
+ELSIF (rtApplyPitchX.Q
+	AND (NOT Status.xEditAllowed
+		OR NOT xSharedGeometryEditAllowed
+		OR (lrHmiEditPitchX < LREAL#1.0)
+		OR (lrHmiEditPitchX > LREAL#5000.0)))
+OR (rtApplyPitchY.Q
+	AND (NOT Status.xEditAllowed
+		OR NOT xSharedGeometryEditAllowed
+		OR (lrHmiEditPitchY < LREAL#1.0)
+		OR (lrHmiEditPitchY > LREAL#5000.0)))
+OR (rtApplySafeAbove.Q
+	AND (NOT Status.xEditAllowed
+		OR (lrHmiEditSafeAbove < -LREAL#10000.0)
+		OR (lrHmiEditSafeAbove > LREAL#10000.0)))
+OR (rtApplySafeInside.Q
+	AND (NOT Status.xEditAllowed
+		OR (lrHmiEditSafeInside < -LREAL#10000.0)
+		OR (lrHmiEditSafeInside > LREAL#10000.0))) THEN
+	Diag.stWarning.uiCode := WRN_GEOMETRY_EDIT_REJECTED;
 	Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
 	IF Diag.stWarning.udiSequence = UDINT#0 THEN
 		Diag.stWarning.udiSequence := UDINT#1;
@@ -955,14 +551,17 @@ AND ((uiHmiEditSlot < UINT#1)
 	OR (uiHmiEditDetailType > UINT#2)
 	OR ((uiHmiEditDetailType <> UINT#0)
 		AND ((uiHmiEditProductType < UINT#1) OR (uiHmiEditProductType > uiTypeCount)))
-	OR (uiHmiEditZone > UINT#2)
-	OR (((uiHmiEditZone = UINT#0) OR (uiHmiEditZone = UINT#1)) AND NOT Status.xZone1EditAllowed)
-	OR ((uiHmiEditZone = UINT#2) AND NOT Status.xZone2EditAllowed)
-	OR stAxisStatus.xMotionBusy
-	OR xHomeActive
-	OR xIndexActive
-	OR xGlobalError) THEN
-	Diag.stWarning.uiCode := WRN_ZONE1_EDIT_REJECTED;
+	OR NOT Status.xEditAllowed) THEN
+	Diag.stWarning.uiCode := WRN_EDIT_REJECTED;
+	Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
+	IF Diag.stWarning.udiSequence = UDINT#0 THEN
+		Diag.stWarning.udiSequence := UDINT#1;
+	END_IF;
+ELSIF rtCycleSlot.Q
+AND ((uiHmiEditSlot < UINT#1)
+	OR (uiHmiEditSlot > SINT_TO_UINT(iActiveSlotCount))
+	OR NOT Status.xEditAllowed) THEN
+	Diag.stWarning.uiCode := WRN_EDIT_REJECTED;
 	Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
 	IF Diag.stWarning.udiSequence = UDINT#0 THEN
 		Diag.stWarning.udiSequence := UDINT#1;
@@ -1013,8 +612,6 @@ Command.uiMagazineId := UINT#0;
 IF xRobotInMagazineContext
 AND stRobotStatus.xError
 AND (Diag.eState <> E_MAGAZINE_STATE.ERROR) THEN
-	xInventoryVerificationRequired := TRUE;
-	xContentRecoveryActive := FALSE;
 	Error.dwErrorActive := Error.dwErrorActive OR ERR_ROBOT;
 	Diag.eState := E_MAGAZINE_STATE.ERROR;
 END_IF;
@@ -1071,7 +668,7 @@ CASE Diag.eState OF
 		// магазину. До этого сохраняем xEnabled + xDisablePending, иначе менеджер
 		// остаётся владельцем уже выключенного магазина и не может продолжить груз.
 		ELSIF xDisableRequest
-		AND NOT xRobotOwnsMagazine THEN
+		AND NOT xRobotInMagazineContext THEN
 			Diag.eState := E_MAGAZINE_STATE.DISABLED;
 		ELSIF xGlobalError THEN
 			Error.dwErrorActive := Error.dwErrorActive OR ERR_GLOBAL_STOP;
@@ -1113,14 +710,14 @@ CASE Diag.eState OF
 		xPutSlotEmpty := FALSE;
 
 		IF xTakeSlotValid THEN
-		xTakeSlotHasBlank := stInventory.aZone2[iTakeSlot].xInPosition
-			AND (stInventory.aZone2[iTakeSlot].eDetailType = E_DETAIL_TYPE.BLANK)
-			AND (stInventory.aZone2[iTakeSlot].uiProductType >= UINT#1)
-			AND (stInventory.aZone2[iTakeSlot].uiProductType <= uiTypeCount);
+		xTakeSlotHasBlank := stInventory.aSlots[iTakeSlot].xInPosition
+			AND (stInventory.aSlots[iTakeSlot].eDetailType = E_DETAIL_TYPE.BLANK)
+			AND (stInventory.aSlots[iTakeSlot].uiProductType >= UINT#1)
+			AND (stInventory.aSlots[iTakeSlot].uiProductType <= uiTypeCount);
 		END_IF;
 
 	IF xPutSlotValid THEN
-		xPutSlotEmpty := NOT stInventory.aZone2[iPutSlot].xInPosition;
+		xPutSlotEmpty := NOT stInventory.aSlots[iPutSlot].xInPosition;
 	END_IF;
 	xPutProductTypeValid := TRUE;
 	IF (eActualOperation = E_MAGAZINE_OPERATION.PUT)
@@ -1397,40 +994,40 @@ CASE Diag.eState OF
 			CASE eActualOperation OF
 				E_MAGAZINE_OPERATION.TAKE:
 					IF (uiStep = UINT#3) AND NOT xTakeSlotCommitted THEN
-						stInventory.aZone2[iTakeSlot].xInPosition := FALSE;
-						stInventory.aZone2[iTakeSlot].eDetailType := E_DETAIL_TYPE.NONE;
-						stInventory.aZone2[iTakeSlot].uiProductType := UINT#0;
+						stInventory.aSlots[iTakeSlot].xInPosition := FALSE;
+						stInventory.aSlots[iTakeSlot].eDetailType := E_DETAIL_TYPE.NONE;
+						stInventory.aSlots[iTakeSlot].uiProductType := UINT#0;
 						xTakeSlotCommitted := TRUE;
 					END_IF;
 
 				E_MAGAZINE_OPERATION.PUT:
 					IF (uiStep = UINT#3) AND NOT xPutSlotCommitted THEN
-						stInventory.aZone2[iPutSlot].xInPosition := TRUE;
-						stInventory.aZone2[iPutSlot].eDetailType := E_DETAIL_TYPE.DETAIL;
-						stInventory.aZone2[iPutSlot].uiProductType := uiPutProductType;
+						stInventory.aSlots[iPutSlot].xInPosition := TRUE;
+						stInventory.aSlots[iPutSlot].eDetailType := E_DETAIL_TYPE.DETAIL;
+						stInventory.aSlots[iPutSlot].uiProductType := uiPutProductType;
 						udiProducedPartsTotal := udiProducedPartsTotal + UDINT#1;
 						xPutSlotCommitted := TRUE;
 					END_IF;
 
 				E_MAGAZINE_OPERATION.CHANGE:
 					IF (uiStep = UINT#3) AND NOT xPutSlotCommitted THEN
-						stInventory.aZone2[iPutSlot].xInPosition := TRUE;
-						stInventory.aZone2[iPutSlot].eDetailType := E_DETAIL_TYPE.DETAIL;
-						stInventory.aZone2[iPutSlot].uiProductType := uiPutProductType;
+						stInventory.aSlots[iPutSlot].xInPosition := TRUE;
+						stInventory.aSlots[iPutSlot].eDetailType := E_DETAIL_TYPE.DETAIL;
+						stInventory.aSlots[iPutSlot].uiProductType := uiPutProductType;
 						udiProducedPartsTotal := udiProducedPartsTotal + UDINT#1;
 						xPutSlotCommitted := TRUE;
 					ELSIF (uiStep = UINT#8) AND NOT xTakeSlotCommitted THEN
-						stInventory.aZone2[iTakeSlot].xInPosition := FALSE;
-						stInventory.aZone2[iTakeSlot].eDetailType := E_DETAIL_TYPE.NONE;
-						stInventory.aZone2[iTakeSlot].uiProductType := UINT#0;
+						stInventory.aSlots[iTakeSlot].xInPosition := FALSE;
+						stInventory.aSlots[iTakeSlot].eDetailType := E_DETAIL_TYPE.NONE;
+						stInventory.aSlots[iTakeSlot].uiProductType := UINT#0;
 						xTakeSlotCommitted := TRUE;
 					END_IF;
 
 				E_MAGAZINE_OPERATION.RETURN_BLANK:
 					IF (uiStep = UINT#3) AND NOT xPutSlotCommitted THEN
-						stInventory.aZone2[iPutSlot].xInPosition := TRUE;
-						stInventory.aZone2[iPutSlot].eDetailType := E_DETAIL_TYPE.BLANK;
-						stInventory.aZone2[iPutSlot].uiProductType := uiPutProductType;
+						stInventory.aSlots[iPutSlot].xInPosition := TRUE;
+						stInventory.aSlots[iPutSlot].eDetailType := E_DETAIL_TYPE.BLANK;
+						stInventory.aSlots[iPutSlot].uiProductType := uiPutProductType;
 						xPutSlotCommitted := TRUE;
 					END_IF;
 			END_CASE;
@@ -1459,38 +1056,38 @@ CASE Diag.eState OF
 			CASE eActualOperation OF
 				E_MAGAZINE_OPERATION.TAKE:
 					IF NOT xTakeSlotCommitted THEN
-						stInventory.aZone2[iTakeSlot].xInPosition := FALSE;
-						stInventory.aZone2[iTakeSlot].eDetailType := E_DETAIL_TYPE.NONE;
-						stInventory.aZone2[iTakeSlot].uiProductType := UINT#0;
+						stInventory.aSlots[iTakeSlot].xInPosition := FALSE;
+						stInventory.aSlots[iTakeSlot].eDetailType := E_DETAIL_TYPE.NONE;
+						stInventory.aSlots[iTakeSlot].uiProductType := UINT#0;
 						xTakeSlotCommitted := TRUE;
 					END_IF;
 				E_MAGAZINE_OPERATION.PUT:
 					IF NOT xPutSlotCommitted THEN
-						stInventory.aZone2[iPutSlot].xInPosition := TRUE;
-						stInventory.aZone2[iPutSlot].eDetailType := E_DETAIL_TYPE.DETAIL;
-						stInventory.aZone2[iPutSlot].uiProductType := uiPutProductType;
+						stInventory.aSlots[iPutSlot].xInPosition := TRUE;
+						stInventory.aSlots[iPutSlot].eDetailType := E_DETAIL_TYPE.DETAIL;
+						stInventory.aSlots[iPutSlot].uiProductType := uiPutProductType;
 						udiProducedPartsTotal := udiProducedPartsTotal + UDINT#1;
 						xPutSlotCommitted := TRUE;
 					END_IF;
 				E_MAGAZINE_OPERATION.CHANGE:
 					IF NOT xPutSlotCommitted THEN
-						stInventory.aZone2[iPutSlot].xInPosition := TRUE;
-						stInventory.aZone2[iPutSlot].eDetailType := E_DETAIL_TYPE.DETAIL;
-						stInventory.aZone2[iPutSlot].uiProductType := uiPutProductType;
+						stInventory.aSlots[iPutSlot].xInPosition := TRUE;
+						stInventory.aSlots[iPutSlot].eDetailType := E_DETAIL_TYPE.DETAIL;
+						stInventory.aSlots[iPutSlot].uiProductType := uiPutProductType;
 						udiProducedPartsTotal := udiProducedPartsTotal + UDINT#1;
 						xPutSlotCommitted := TRUE;
 					END_IF;
 					IF NOT xTakeSlotCommitted THEN
-						stInventory.aZone2[iTakeSlot].xInPosition := FALSE;
-						stInventory.aZone2[iTakeSlot].eDetailType := E_DETAIL_TYPE.NONE;
-						stInventory.aZone2[iTakeSlot].uiProductType := UINT#0;
+						stInventory.aSlots[iTakeSlot].xInPosition := FALSE;
+						stInventory.aSlots[iTakeSlot].eDetailType := E_DETAIL_TYPE.NONE;
+						stInventory.aSlots[iTakeSlot].uiProductType := UINT#0;
 						xTakeSlotCommitted := TRUE;
 					END_IF;
 				E_MAGAZINE_OPERATION.RETURN_BLANK:
 					IF NOT xPutSlotCommitted THEN
-						stInventory.aZone2[iPutSlot].xInPosition := TRUE;
-						stInventory.aZone2[iPutSlot].eDetailType := E_DETAIL_TYPE.BLANK;
-						stInventory.aZone2[iPutSlot].uiProductType := uiPutProductType;
+						stInventory.aSlots[iPutSlot].xInPosition := TRUE;
+						stInventory.aSlots[iPutSlot].eDetailType := E_DETAIL_TYPE.BLANK;
+						stInventory.aSlots[iPutSlot].uiProductType := uiPutProductType;
 						xPutSlotCommitted := TRUE;
 					END_IF;
 			END_CASE;
@@ -1499,7 +1096,7 @@ CASE Diag.eState OF
 		IF NOT xExecuteRequest THEN
 			eActualOperation := E_MAGAZINE_OPERATION.NONE;
 			IF xDisableRequest
-			AND NOT xRobotOwnsMagazine THEN
+			AND NOT xRobotInMagazineContext THEN
 				Diag.eState := E_MAGAZINE_STATE.DISABLED;
 			ELSE
 				Diag.eState := E_MAGAZINE_STATE.IDLE;
@@ -1522,24 +1119,21 @@ END_CASE;
 
 // Класс реакции не размазывается по CASE. Первичная причина остаётся в своей
 // маске, а контекст конкретного магазина хранится до принятого сброса.
-IF ((Diag.eState = E_MAGAZINE_STATE.ERROR) OR stAxisStatus.xError)
+IF (Diag.eState = E_MAGAZINE_STATE.ERROR)
 AND NOT xFaultContextCaptured THEN
 	xRobotInMagazineAtFault := xRobotInMagazineContext;
-	IF xRobotInMagazineAtFault THEN
-		xInventoryVerificationRequired := TRUE;
-		xContentRecoveryActive := FALSE;
-	END_IF;
 	xFaultContextCaptured := TRUE;
-ELSIF (Diag.eState <> E_MAGAZINE_STATE.ERROR) AND NOT stAxisStatus.xError THEN
+ELSIF Diag.eState <> E_MAGAZINE_STATE.ERROR THEN
 	xRobotInMagazineAtFault := FALSE;
 	xFaultContextCaptured := FALSE;
 END_IF;
 
 xRobotStopRequired := NOT xGlobalError
-	AND (((Error.dwErrorActive AND ERR_ROBOT) <> DWORD#0)
-	OR ((((Error.dwErrorActive AND MASK_EQUIPMENT_ERROR) <> DWORD#0)
-		OR stAxisStatus.xError)
-		AND xRobotInMagazineAtFault));
+	AND (
+		((Error.dwErrorActive AND ERR_ROBOT) <> DWORD#0)
+		OR (((Error.dwErrorActive AND MASK_EQUIPMENT_ERROR) <> DWORD#0)
+			AND xRobotInMagazineAtFault)
+	);
 
 // Физический Stop нужен только занятому роботу. При неподвижном роботе внутри
 // магазина FB_ROBOT получит зависимую ошибку без пустой команды остановки.
@@ -1551,49 +1145,25 @@ AND stRobotStatus.xBusy THEN
 	Command.xStop := TRUE;
 END_IF;
 
-Status.xEnabled := Diag.eState <> E_MAGAZINE_STATE.DISABLED;
+// ERROR технологически отключает магазин немедленно, но причина остаётся
+// защёлкнутой до разрешённого Reset.
+Status.xEnabled := (Diag.eState <> E_MAGAZINE_STATE.DISABLED)
+	AND (Diag.eState <> E_MAGAZINE_STATE.ERROR);
 Status.xDisablePending := xDisableRequest AND Status.xEnabled;
-Status.xPowerAllowed := (Diag.eState = E_MAGAZINE_STATE.DISABLED)
-	AND NOT xRobotOwnsMagazine
-	AND NOT stAxisStatus.xMotionBusy
-	AND NOT xHomeActive
-	AND NOT xIndexActive
-	AND NOT xManualJogActive
-	AND NOT xContentRecoveryActive
-	AND NOT xGlobalError;
-Status.xFillAllowed := (iActiveSlotCount > 0) AND Status.xZone1EditAllowed;
-Status.xClearAllowed := Status.xZone1EditAllowed;
+Status.xPowerAllowed := Status.xEnabled OR Status.xEnableSequenceAllowed;
+Status.xFillAllowed := (iActiveSlotCount > SINT#0) AND Status.xEditAllowed;
+Status.xClearAllowed := Status.xEditAllowed;
 Status.xReady := (Diag.eState = E_MAGAZINE_STATE.IDLE)
-	AND xHomeConfirmed
-	AND xPositionValid
-	AND NOT xRecoveryRequired
-	AND NOT xInventoryVerificationRequired
-	AND NOT xContentRecoveryActive
-	AND NOT xHomeActive
-	AND NOT xIndexActive
-	AND NOT stAxisStatus.xError;
+	AND xRobotCanWorkWithMagazine
+	AND (Error.dwErrorActive = DWORD#0);
 Status.xBusy := (Diag.eState <> E_MAGAZINE_STATE.DISABLED)
 	AND (Diag.eState <> E_MAGAZINE_STATE.IDLE)
 	AND (Diag.eState <> E_MAGAZINE_STATE.DONE)
 	AND (Diag.eState <> E_MAGAZINE_STATE.ERROR);
-Status.xBusy := Status.xBusy OR xHomeActive OR xIndexActive
-	OR xManualJogActive OR stAxisStatus.xMotionBusy;
 Status.xDone := Diag.eState = E_MAGAZINE_STATE.DONE;
-Status.xError := (Diag.eState = E_MAGAZINE_STATE.ERROR) OR stAxisStatus.xError;
+Status.xError := Diag.eState = E_MAGAZINE_STATE.ERROR;
 Status.xRobotStopRequired := xRobotStopRequired;
-Status.xHomed := xHomeConfirmed;
-Status.xPositionValid := xPositionValid;
-Status.xRecoveryRequired := xRecoveryRequired;
-Status.xIndexAllowed := xIndexAllowed;
-Status.xIndexing := xIndexActive;
-Status.xIndexDone := xIndexDonePulse;
-Status.xAxisError := stAxisStatus.xError;
 Status.udiProducedPartsTotal := udiProducedPartsTotal;
-Status.xJogPositiveAllowed := xManualJogStartAllowed OR xManualJogActive;
-Status.xJogNegativeAllowed := xManualJogStartAllowed OR xManualJogActive;
-Status.xContentRecoveryAllowed := xContentRecoveryAllowed;
-Status.xContentRecoveryActive := xContentRecoveryActive;
-Status.xInventoryVerificationRequired := xInventoryVerificationRequired;
 Status.uiMagazineId := uiMagazineId;
 Status.eGrantedOperation := eGrantedOperation;
 Status.eActualOperation := eActualOperation;
@@ -1615,5 +1185,5 @@ FaultStatus.xResetAllowed := Status.xError
 	AND NOT xGlobalError
 	AND xRobotResetDependencyReady;
 
-// Карта секций публикуется владельцем содержимого после всех изменений слотов.
+// Сводка публикуется владельцем содержимого после всех изменений слотов.
 UpdateTypeStatus(stMagazineInventory := stInventory);

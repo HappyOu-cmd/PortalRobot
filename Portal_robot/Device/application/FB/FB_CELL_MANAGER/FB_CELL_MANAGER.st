@@ -22,7 +22,8 @@ VAR_INPUT
 	lrSafetyHomeToleranceZ : LREAL; // Допуск HOME_SAFETY по Z
 	lrStoppedPoseTolerance : LREAL; // Допуск контроля позы после штатной остановки
 	Config            : ST_MULTI_TYPE_CONFIG; // Активная конфигурация типов
-	xConfigurationValid : BOOL; // Конфигурация прошла проверку
+	xConfigurationValid : BOOL; // Конфигурация типов прошла проверку
+	xPointsConfigured : BOOL; // Все обязательные инженерные точки настроены
 	stRobotStatus     : ST_ROBOT_STATUS; // Состояние робота
 	astMagazineStatus : ARRAY [1..GVL_CELL_SETTINGS.MagazineCount] OF ST_MAGAZINE_STATUS;
 	astMachineStatus  : ARRAY [1..3] OF ST_MACHINE_PUBLIC; // Состояния станков
@@ -69,6 +70,7 @@ VAR
 	xStartCheckNoBlockingError    : BOOL;
 	xStartCheckRobotInterfaceReady: BOOL;
 	xStartCheckConfigurationValid : BOOL;
+	xStartCheckPointsConfigured   : BOOL;
 	xStartCheckDrivesReady        : BOOL;
 	xStartCheckRobotReady         : BOOL;
 	xStartCheckMagazineReady      : BOOL;
@@ -168,9 +170,12 @@ AND (uiActiveMagazine >= UINT#1)
 AND (uiActiveMagazine <= UINT#2) THEN
 	// Операторское отключение активного магазина передаёт владение второму
 	// только на границе операций. Фактический груз FB_ROBOT при этом остаётся
-	// источником истины и будет уложен уже в выбранный магазин.
+	// источником истины и будет уложен уже в выбранный магазин. Проверяем также
+	// итоговый xEnabled: FB_MAGAZINE может завершить отключение и снять
+	// xDisablePending раньше, чем робот достигнет границы перепланирования.
 	IF (astMagazineStatus[uiActiveMagazine].xFinished
-		OR (astMagazineStatus[uiActiveMagazine].xDisablePending
+		OR ((astMagazineStatus[uiActiveMagazine].xDisablePending
+			OR NOT astMagazineStatus[uiActiveMagazine].xEnabled)
 			AND ((eState = E_CELL_MANAGER_STATE.PLAN_TARGET)
 				OR (eState = E_CELL_MANAGER_STATE.WAIT_TARGET)
 				OR (eState = E_CELL_MANAGER_STATE.SELECT_FALLBACK)
@@ -374,6 +379,7 @@ xStartCheckAutomaticMode := NOT xManual;
 xStartCheckNoBlockingError := NOT xGlobalError AND (Error.dwErrorActive = DWORD#0);
 xStartCheckRobotInterfaceReady := xRobotInterfaceReady;
 xStartCheckConfigurationValid := xConfigurationValid;
+xStartCheckPointsConfigured := xPointsConfigured;
 xStartCheckDrivesReady := xDrivesReady;
 xStartCheckRobotReady := xRobotReady;
 xStartCheckMagazineReady := xMagazineReady;
@@ -387,6 +393,7 @@ xReadyToStart := xStartCheckCellIdle
 	AND xStartCheckNoBlockingError
 	AND xStartCheckRobotInterfaceReady
 	AND xStartCheckConfigurationValid
+	AND xStartCheckPointsConfigured
 	AND xStartCheckDrivesReady
 	AND xStartCheckRobotReady
 	AND xStartCheckMagazineReady
@@ -407,6 +414,9 @@ IF xStartCheckRobotInterfaceReady THEN
 	uiStartConditionsMet := uiStartConditionsMet + UINT#1;
 END_IF;
 IF xStartCheckConfigurationValid THEN
+	uiStartConditionsMet := uiStartConditionsMet + UINT#1;
+END_IF;
+IF xStartCheckPointsConfigured THEN
 	uiStartConditionsMet := uiStartConditionsMet + UINT#1;
 END_IF;
 IF xStartCheckDrivesReady THEN
@@ -489,6 +499,7 @@ xOperatorChoiceAllowed := xOperatorPromptState
 	AND (Error.dwErrorActive = DWORD#0)
 	AND xRobotInterfaceReady
 	AND xConfigurationValid
+	AND xPointsConfigured
 	AND xDrivesReady
 	AND xRobotReady
 	AND xMagazineReady
@@ -1340,13 +1351,14 @@ Status.xStartCheckAutomaticMode := xStartCheckAutomaticMode;
 Status.xStartCheckNoBlockingError := xStartCheckNoBlockingError;
 Status.xStartCheckRobotInterfaceReady := xStartCheckRobotInterfaceReady;
 Status.xStartCheckConfigurationValid := xStartCheckConfigurationValid;
+Status.xStartCheckPointsConfigured := xStartCheckPointsConfigured;
 Status.xStartCheckDrivesReady := xStartCheckDrivesReady;
 Status.xStartCheckRobotReady := xStartCheckRobotReady;
 Status.xStartCheckMagazineReady := xStartCheckMagazineReady;
 Status.xStartCheckTaskAvailable := xStartCheckTaskAvailable;
 Status.xStartCheckSafetyHome := xStartCheckSafetyHome;
 Status.uiStartConditionsMet := uiStartConditionsMet;
-Status.uiStartConditionsTotal := UINT#10;
+Status.uiStartConditionsTotal := UINT#11;
 Status.uiReadyMachines := uiReadyMachines;
 Status.uiSelectedMachine := uiSelectedMachine;
 Status.uiActiveMagazine := uiActiveMagazine;
@@ -1367,6 +1379,7 @@ Status.xOperatorChoiceAllowed := Status.xOperatorPromptActive
 	AND (Error.dwErrorActive = DWORD#0)
 	AND xRobotInterfaceReady
 	AND xConfigurationValid
+	AND xPointsConfigured
 	AND xDrivesReady
 	AND xRobotReady
 	AND xMagazineReady

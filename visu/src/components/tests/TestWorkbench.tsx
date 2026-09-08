@@ -3,6 +3,7 @@ import {
   Activity, AlertTriangle, CheckCircle2, Copy, Database, FlaskConical,
   Play, Plus, Save, Server, Square, Trash2, X,
 } from 'lucide-react';
+import { gatewayApiUrl } from '../../api/gateway';
 
 type Slot = { content: number; productType: number };
 type Machine = { state: number; productType: number };
@@ -80,7 +81,7 @@ const fresh = (): Scenario => ({
 const clone = <T,>(value: T): T => structuredClone(value);
 
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(path, {
+  const response = await fetch(gatewayApiUrl(path), {
     ...options,
     headers: options?.body ? { 'Content-Type': 'application/json', ...options.headers } : options?.headers,
   });

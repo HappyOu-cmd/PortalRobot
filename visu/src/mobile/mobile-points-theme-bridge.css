@@ -1,0 +1,7 @@
+/* Global HMI theme uses a `font` shorthand on buttons. Keep the approved
+   mobile control typography authoritative without changing desktop styles. */
+.mobile-points .mobile-points__button,
+.mobile-points-dialog .mobile-points__button {
+  font-weight: 600;
+  line-height: 1.4;
+}

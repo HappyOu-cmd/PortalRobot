@@ -1,12 +1,10 @@
 {attribute 'qualified_only'}
 VAR_GLOBAL CONSTANT
-	MagazineCount : INT := 2; // Два независимых индексных магазина
-	MagazineZone1Slots : SINT := 120; // 12 рядов загрузки x 10 столбцов
-	MagazineZone2Slots : SINT := 120; // 12 рабочих рядов x 10 столбцов
-	MagazineZone3Slots : SINT := 60; // 6 выходных рядов x 10 столбцов
-	// Рабочий контракт робота использует только Zone 2; SINT#120 остаётся допустимым.
+	MagazineCount : INT := 2; // Два независимых статичных магазина
+	MagazineRows : UINT := 12; // Фиксированная матрица статичной кассеты
+	MagazineColumns : UINT := 10;
+	MagazineSlots : SINT := 120; // Одна кассета 12 x 10 в каждом магазине
 	NumberDetail : SINT := 120;
-	lrMagazineIndexDistance : LREAL := 720.0; // 12 рядов по 60 мм
 END_VAR
 
 VAR_GLOBAL
@@ -26,6 +24,7 @@ VAR_GLOBAL
 	lrSafetyHomeToleranceX : LREAL := 5.0;
 	lrSafetyHomeToleranceY : LREAL := 5.0;
 	lrSafetyHomeToleranceZ : LREAL := 5.0;
+	rPointCheckSpeedPercent : REAL := 10.0; // Скорость проверки точки с телефона
 	// Допуск контроля неизменности позы после штатной остановки защищает от
 	// дрожания обратной связи, но фиксирует последующее ручное перемещение.
 	lrStoppedPoseTolerance : LREAL := 1.0;

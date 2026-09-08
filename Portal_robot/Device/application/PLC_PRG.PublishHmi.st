@@ -22,26 +22,38 @@ GVL_HMI.lrSafetyHomeToleranceY := GVL_CELL_SETTINGS.lrSafetyHomeToleranceY;
 GVL_HMI.lrSafetyHomeToleranceZ := GVL_CELL_SETTINGS.lrSafetyHomeToleranceZ;
 GVL_HMI.stCellMachineTimeouts := GVL_CELL_SETTINGS.stMachineTimeouts;
 GVL_HMI.xCellSettingsChangeAllowed := GVL_CELL_SETTINGS.xCellSettingsChangeAllowed;
+GVL_HMI.rPointCheckSpeedPercent := GVL_CELL_SETTINGS.rPointCheckSpeedPercent;
+GVL_HMI.xPointCheckActive := xPointCheckActive;
+IF xPointCheckActive THEN
+	GVL_HMI.rPointCheckAppliedSpeedPercent := rPointCheckLatchedSpeed;
+ELSE
+	GVL_HMI.rPointCheckAppliedSpeedPercent := GVL_CELL_SETTINGS.rPointCheckSpeedPercent;
+END_IF;
 GVL_HMI.xPointTableReady := xPointTableReady;
-FOR uiPointEditorIndex := UINT#1 TO INT_TO_UINT(GVL_POINT.iEditablePointCount) DO
-	GVL_HMI.astPointEditorPoints[uiPointEditorIndex] :=
-		GVL_POINT.astRetainPoints[uiPointEditorIndex];
-END_FOR;
+GVL_HMI.astPointEditorPoints[1] := GVL_POINT.Points[E_POINT_NAME.MACHINE_1_ABOVE];
+GVL_HMI.astPointEditorPoints[2] := GVL_POINT.Points[E_POINT_NAME.MACHINE_1_CHUCK_APROACH];
+GVL_HMI.astPointEditorPoints[3] := GVL_POINT.Points[E_POINT_NAME.MACHINE_1_CHUCK_POSITION];
+GVL_HMI.astPointEditorPoints[4] := GVL_POINT.Points[E_POINT_NAME.MACHINE_2_ABOVE];
+GVL_HMI.astPointEditorPoints[5] := GVL_POINT.Points[E_POINT_NAME.MACHINE_2_CHUCK_APROACH];
+GVL_HMI.astPointEditorPoints[6] := GVL_POINT.Points[E_POINT_NAME.MACHINE_2_CHUCK_POSITION];
+GVL_HMI.astPointEditorPoints[7] := GVL_POINT.Points[E_POINT_NAME.MACHINE_3_ABOVE];
+GVL_HMI.astPointEditorPoints[8] := GVL_POINT.Points[E_POINT_NAME.MACHINE_3_CHUCK_APROACH];
+GVL_HMI.astPointEditorPoints[9] := GVL_POINT.Points[E_POINT_NAME.MACHINE_3_CHUCK_POSITION];
+GVL_HMI.astPointEditorPoints[10] := GVL_POINT.Points[E_POINT_NAME.HOME_SAFETY];
+GVL_HMI.astPointEditorPoints[11] := GVL_POINT.Points[E_POINT_NAME.MAGAZINE_1_DETAIL];
+GVL_HMI.astPointEditorPoints[12] := GVL_POINT.Points[E_POINT_NAME.MAGAZINE_2_DETAIL];
 GVL_HMI.auiPointEditorPointId[1] := TO_UINT(E_POINT_NAME.MACHINE_1_ABOVE);
-GVL_HMI.auiPointEditorPointId[2] := TO_UINT(E_POINT_NAME.MACHINE_1_INSIDE);
-GVL_HMI.auiPointEditorPointId[3] := TO_UINT(E_POINT_NAME.MACHINE_1_CHUCK_APROACH);
-GVL_HMI.auiPointEditorPointId[4] := TO_UINT(E_POINT_NAME.MACHINE_1_CHUCK_POSITION);
-GVL_HMI.auiPointEditorPointId[5] := TO_UINT(E_POINT_NAME.MACHINE_2_ABOVE);
-GVL_HMI.auiPointEditorPointId[6] := TO_UINT(E_POINT_NAME.MACHINE_2_INSIDE);
-GVL_HMI.auiPointEditorPointId[7] := TO_UINT(E_POINT_NAME.MACHINE_2_CHUCK_APROACH);
-GVL_HMI.auiPointEditorPointId[8] := TO_UINT(E_POINT_NAME.MACHINE_2_CHUCK_POSITION);
-GVL_HMI.auiPointEditorPointId[9] := TO_UINT(E_POINT_NAME.MACHINE_3_ABOVE);
-GVL_HMI.auiPointEditorPointId[10] := TO_UINT(E_POINT_NAME.MACHINE_3_INSIDE);
-GVL_HMI.auiPointEditorPointId[11] := TO_UINT(E_POINT_NAME.MACHINE_3_CHUCK_APROACH);
-GVL_HMI.auiPointEditorPointId[12] := TO_UINT(E_POINT_NAME.MACHINE_3_CHUCK_POSITION);
-GVL_HMI.auiPointEditorPointId[13] := TO_UINT(E_POINT_NAME.HOME_SAFETY);
-GVL_HMI.auiPointEditorPointId[14] := TO_UINT(E_POINT_NAME.MAGAZINE_1_DETAIL);
-GVL_HMI.auiPointEditorPointId[15] := TO_UINT(E_POINT_NAME.MAGAZINE_2_DETAIL);
+GVL_HMI.auiPointEditorPointId[2] := TO_UINT(E_POINT_NAME.MACHINE_1_CHUCK_APROACH);
+GVL_HMI.auiPointEditorPointId[3] := TO_UINT(E_POINT_NAME.MACHINE_1_CHUCK_POSITION);
+GVL_HMI.auiPointEditorPointId[4] := TO_UINT(E_POINT_NAME.MACHINE_2_ABOVE);
+GVL_HMI.auiPointEditorPointId[5] := TO_UINT(E_POINT_NAME.MACHINE_2_CHUCK_APROACH);
+GVL_HMI.auiPointEditorPointId[6] := TO_UINT(E_POINT_NAME.MACHINE_2_CHUCK_POSITION);
+GVL_HMI.auiPointEditorPointId[7] := TO_UINT(E_POINT_NAME.MACHINE_3_ABOVE);
+GVL_HMI.auiPointEditorPointId[8] := TO_UINT(E_POINT_NAME.MACHINE_3_CHUCK_APROACH);
+GVL_HMI.auiPointEditorPointId[9] := TO_UINT(E_POINT_NAME.MACHINE_3_CHUCK_POSITION);
+GVL_HMI.auiPointEditorPointId[10] := TO_UINT(E_POINT_NAME.HOME_SAFETY);
+GVL_HMI.auiPointEditorPointId[11] := TO_UINT(E_POINT_NAME.MAGAZINE_1_DETAIL);
+GVL_HMI.auiPointEditorPointId[12] := TO_UINT(E_POINT_NAME.MAGAZINE_2_DETAIL);
 GVL_HMI.xModbusMode := GVL_ROBOT_MODBUS.xModeActive;
 GVL_HMI.xRobotModeChangeAllowed := GVL_ROBOT_MODBUS.xRobotModeChangeAllowed;
 GVL_HMI.xModbusSettingsChangeAllowed := GVL_ROBOT_MODBUS.xSettingsChangeAllowed;
@@ -149,9 +161,6 @@ FOR uiMagazine := UINT#1 TO UINT#2 DO
 	GVL_HMI.astMagazineDiag[uiMagazine] := GVL_MAGAZINE.astDiag[uiMagazine];
 	GVL_HMI.astMagazineError[uiMagazine] := GVL_MAGAZINE.astError[uiMagazine];
 	GVL_HMI.astMagazineInventory[uiMagazine] := GVL_DETAIL.astMagazine[uiMagazine];
-	GVL_HMI.astMagazineAxisStatus[uiMagazine] := GVL_MAGAZINE_AXIS.astAxis[uiMagazine].Status;
-	GVL_HMI.astMagazineAxisDiag[uiMagazine] := GVL_MAGAZINE_AXIS.astAxis[uiMagazine].Diag;
-	GVL_HMI.astMagazineAxisError[uiMagazine] := GVL_MAGAZINE_AXIS.astAxis[uiMagazine].Error;
 END_FOR;
 GVL_HMI.stAlarmStatus := GVL_ALARM.Status;
 GVL_HMI.astAlarmEvent := GVL_ALARM.Events;
@@ -193,5 +202,5 @@ GVL_HMI.astMachineSimError[2] := MACHINE_2_SIM.Error;
 GVL_HMI.astMachineSimError[3] := MACHINE_3_SIM.Error;
 
 FOR iDetail := 1 TO GVL_CELL_SETTINGS.NumberDetail DO
-	GVL_HMI.astMagazineSlot[iDetail] := GVL_DETAIL.astMagazine[1].aZone2[iDetail];
+	GVL_HMI.astMagazineSlot[iDetail] := GVL_DETAIL.astMagazine[1].aSlots[iDetail];
 END_FOR;

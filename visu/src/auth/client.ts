@@ -39,7 +39,7 @@ export class AuthApiError extends Error {
 }
 
 async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, {
+  const response = await fetch(gatewayApiUrl(path), {
     credentials: 'same-origin',
     ...options,
     headers: { Accept: 'application/json', ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...options.headers },
@@ -61,3 +61,4 @@ export const authApi = {
   updateUser: (id: number, draft: Partial<UserDraft>) => api<AppUser>(`/api/users/${id}`, { method: 'PUT', body: JSON.stringify(draft) }),
   deleteUser: (id: number) => api<{ ok: boolean }>(`/api/users/${id}`, { method: 'DELETE' }),
 };
+import { gatewayApiUrl } from '../api/gateway';

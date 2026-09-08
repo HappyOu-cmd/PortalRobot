@@ -171,30 +171,30 @@ export function CellSettingsPanel({ online, modbusMode, modbus, testEnvironment,
 		<div className="settings-topic-viewport cell-settings-topic-viewport">
 		<div className={`settings-topic-content cell-settings-topic-content ${topicDirection > 0 ? 'from-right' : 'from-left'}`} id="cell-settings-topic-panel" role="tabpanel" key={activeTopic}>
 		{activeTopic === 'cell' && <>
-		<section className="cell-config-section test-environment-settings">
+      <section className="cell-config-section test-environment-settings">
 			<div className="cell-config-title"><Boxes /><div><h3>Среда выполнения</h3></div></div>
-			<div className="cell-settings-mode-switch three" role="group" aria-label="Тестовая среда">
-				{TEST_ENVIRONMENT_LABELS.map((label, value) => <button key={label} type="button" className={testEnvironment.applied === value ? 'active' : ''} disabled={!online || !testEnvironment.changeAllowed || testEnvironment.applied === value} onClick={() => onTestEnvironmentChange(value)}>{label}</button>)}
-			</div>
+          <div className="cell-settings-mode-switch three" role="group" aria-label="Тестовая среда">
+            {TEST_ENVIRONMENT_LABELS.map((label, value) => <button key={label} type="button" className={testEnvironment.applied === value ? 'active' : ''} disabled={!online || !testEnvironment.changeAllowed || testEnvironment.applied === value} onClick={() => onTestEnvironmentChange(value)}>{label}</button>)}
+          </div>
 			<ModeApplicationStatus requested={requestedEnvironment} applied={appliedEnvironment} />
 			{testEnvironment.rejectReason > 0 && <p className="panel-note warning">PLC отклонил переключение: {TEST_REJECT_REASONS[testEnvironment.rejectReason] ?? `код ${testEnvironment.rejectReason}`}.</p>}
 		</section>
 		<section className="simulation-acceleration-settings">
 			<h3>Ускорение симуляции</h3>
-			<label className={`toggle-row ${(!online || modbusMode || !accelerationAllowed) ? 'disabled' : ''}`}>
-				<span>Разрешить ускорение</span>
-				<input disabled={!online || modbusMode || !accelerationAllowed} type="checkbox" checked={accelerationEnabled} onChange={(event) => onAccelerationChange(event.target.checked)} />
-				<i />
-			</label>
+          <label className={`toggle-row ${(!online || modbusMode || !accelerationAllowed) ? 'disabled' : ''}`}>
+            <span>Разрешить ускорение</span>
+            <input disabled={!online || modbusMode || !accelerationAllowed} type="checkbox" checked={accelerationEnabled} onChange={(event) => onAccelerationChange(event.target.checked)} />
+            <i />
+          </label>
 			<p className={`simulation-acceleration-status ${accelerationActive ? 'active' : ''}`}>{accelerationActive ? 'Ускорение применено к симуляции.' : 'Ускорение выключено.'}</p>
 		</section>
 		</>}
 		{activeTopic === 'robot' && <section className="cell-config-section robot-interface-settings">
 			<div className="cell-config-title"><EthernetPort /><div><h3>Источник управления роботом</h3></div></div>
-			<div className="cell-settings-mode-switch" role="group" aria-label="Источник управления роботом">
-				<button type="button" className={!modbusMode ? 'active' : ''} disabled={!online || !modbus.modeChangeAllowed || !modbusMode} onClick={() => onModeChange(false)}>SoftMotion</button>
-				<button type="button" className={modbusMode ? 'active' : ''} disabled={!online || !modbus.modeChangeAllowed || modbusMode} onClick={() => onModeChange(true)}>Modbus TCP</button>
-			</div>
+          <div className="cell-settings-mode-switch" role="group" aria-label="Источник управления роботом">
+            <button type="button" className={!modbusMode ? 'active' : ''} disabled={!online || !modbus.modeChangeAllowed || !modbusMode} onClick={() => onModeChange(false)}>SoftMotion</button>
+            <button type="button" className={modbusMode ? 'active' : ''} disabled={!online || !modbus.modeChangeAllowed || modbusMode} onClick={() => onModeChange(true)}>Modbus TCP</button>
+          </div>
 			<ModeApplicationStatus requested={requestedRobotMode} applied={appliedRobotMode} />
 			<p className={`cell-settings-access ${modbus.modeChangeAllowed ? 'allowed' : ''}`}>{!online ? 'Нет связи с PLC.' : modbus.modeChangeAllowed ? 'Переключение разрешено PLC.' : 'Для переключения остановите ячейку, робот и технологические операции.'}</p>
 			<div className="cell-settings-grid modbus-grid">
@@ -218,6 +218,11 @@ export function CellSettingsPanel({ online, modbusMode, modbus, testEnvironment,
 			{(modbus.transportError > 0 || modbus.resultCode > 0) && <p className="panel-note warning">Ошибка транспорта: {modbus.transportError}; результат команды: {modbus.resultCode}.</p>}
 		</section>}
 		{activeTopic === 'safety' && <section className="cell-config-section">
+			<div className="cell-config-title"><MapPin /><div><h3>Проверка инженерных точек</h3></div></div>
+			<div className="cell-settings-grid">
+				{field('Скорость проверки', 'cell.settings.pointCheckSpeed', settings.pointCheckSpeedPercent, '%', 0.1, 100, 0.1)}
+			</div>
+			<p className="panel-note">Применяется только при проверке сохранённой точки из мобильного редактора.</p>
 			<div className="cell-config-title"><MapPin /><div><h3>Точка HOME_SAFETY</h3></div></div>
 			<p className="panel-note">Координаты и скорость HOME_SAFETY теперь изменяются только в редакторе фиксированных точек SoftMotion.</p>
 			<div className="point-state"><span>Подтверждённое значение PLC</span><strong>X {settings.safetyHome.x.toFixed(1)} · Y {settings.safetyHome.y.toFixed(1)} · Z {settings.safetyHome.z.toFixed(1)} мм · скорость {settings.safetyHome.speedFactor.toFixed(2)}</strong></div>
@@ -244,9 +249,9 @@ export function CellSettingsPanel({ online, modbusMode, modbus, testEnvironment,
 		{activeTopic === 'products' && <>
 		<section className="cell-config-section product-type-count-settings">
 			<div className="cell-config-title"><Boxes /><div><h3>Типы изделий на ячейке</h3></div></div>
-			<div className="robot-mode-selector three" role="group" aria-label="Количество типов изделий">
-				{[1, 2, 3].map((count) => <button key={count} type="button" className={`${typeCount === count ? 'active' : ''} ${typeCountAllowed ? '' : 'command-unavailable'}`} disabled={!online || typeCount === count} aria-disabled={!typeCountAllowed} onClick={() => onTypeCountChange(count)}>{count} {count === 1 ? 'тип' : count < 5 ? 'типа' : 'типов'}</button>)}
-			</div>
+          <div className="robot-mode-selector three" role="group" aria-label="Количество типов изделий">
+            {[1, 2, 3].map((count) => <button key={count} type="button" className={`${typeCount === count ? 'active' : ''} ${typeCountAllowed ? '' : 'command-unavailable'}`} disabled={!online || typeCount === count} aria-disabled={!typeCountAllowed} onClick={() => onTypeCountChange(count)}>{count} {count === 1 ? 'тип' : count < 5 ? 'типа' : 'типов'}</button>)}
+          </div>
 			<p className={`cell-settings-access ${typeCountAllowed && magazineConfigAllowed ? 'allowed' : ''}`}>{!online ? 'Нет связи с PLC.' : typeCountAllowed && magazineConfigAllowed ? 'Изменение конфигурации разрешено PLC.' : 'Для изменения остановите ячейку и магазины.'}</p>
 		</section>
 		<section className={`multi-type-validation ${configurationValid ? 'valid' : 'invalid'}`}>

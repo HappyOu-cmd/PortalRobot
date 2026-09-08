@@ -18,6 +18,10 @@ interface GripperRig {
 const SWAP_AXIS = new THREE.Vector3(-1, -1, 0).normalize();
 const GRIPPER_BLANK_ROTATION = new THREE.Quaternion();
 const GRIPPER_DETAIL_ROTATION = new THREE.Quaternion().setFromAxisAngle(SWAP_AXIS, Math.PI);
+const GRIPPER_1_ROTATION = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI);
+// The second head must already include the swap rotation. This makes both complete
+// head poses (including finger depth) exchange exactly when the pivot turns 180°.
+const GRIPPER_2_ROTATION = GRIPPER_DETAIL_ROTATION.clone().multiply(GRIPPER_1_ROTATION);
 const GRIPPER_SCALE = 0.68;
 
 export interface PortalRig {
@@ -147,7 +151,7 @@ function makeGripperHead(name: string, color: number): {
 
 function createBlankPayload(geometry: PartGeometryLayout): THREE.Group {
   const root = new THREE.Group();
-  const body = cylinder('blank_payload', mm(geometry.blankDiameter) / 2, mm(geometry.blankLength), COLORS.blank, new THREE.Vector3());
+  const body = cylinder('blank_payload', mm(geometry.diameter) / 2, mm(geometry.length), COLORS.blank, new THREE.Vector3());
   body.rotation.z = Math.PI / 2;
   root.add(body);
   return root;
@@ -155,11 +159,9 @@ function createBlankPayload(geometry: PartGeometryLayout): THREE.Group {
 
 function createDetailPayload(geometry: PartGeometryLayout): THREE.Group {
   const root = new THREE.Group();
-  const body = cylinder('detail_payload', mm(geometry.detailBodyDiameter) / 2, mm(geometry.detailBodyLength), COLORS.detail, new THREE.Vector3());
+  const body = cylinder('detail_payload', mm(geometry.diameter) / 2, mm(geometry.length), COLORS.detail, new THREE.Vector3());
   body.rotation.z = Math.PI / 2;
-  const shoulder = cylinder('detail_shoulder', mm(geometry.detailShoulderDiameter) / 2, mm(geometry.detailShoulderLength), 0x67c092, new THREE.Vector3(mm(geometry.detailShoulderOffset), 0, 0));
-  shoulder.rotation.z = Math.PI / 2;
-  root.add(body, shoulder);
+  root.add(body);
   return root;
 }
 
@@ -178,7 +180,7 @@ function applyPayloadPose(payload: THREE.Object3D, pose: GripperPayloadPoseLayou
 
 function createDualGripper(
   geometry: PartGeometryLayout,
-  poses: CellLayout['gripperPayloadPoses'],
+  pose: CellLayout['gripperPayloadPose'],
 ): GripperRig {
   const pivot = new THREE.Group();
   pivot.name = 'dual_gripper';
@@ -188,19 +190,19 @@ function createDualGripper(
   pivot.add(hub);
 
   const first = makeGripperHead('gripper_1', COLORS.blueDark);
-  first.root.rotation.z = Math.PI;
+  first.root.quaternion.copy(GRIPPER_1_ROTATION);
   pivot.add(first.root);
   const second = makeGripperHead('gripper_2', 0x526573);
-  second.root.rotation.z = -Math.PI / 2;
+  second.root.quaternion.copy(GRIPPER_2_ROTATION);
   pivot.add(second.root);
 
   const blank = createBlankPayload(geometry);
   blank.scale.setScalar(1 / GRIPPER_SCALE);
-  applyPayloadPose(blank, poses.blank);
+  applyPayloadPose(blank, pose);
   first.payloadMount.add(blank);
   const detail = createDetailPayload(geometry);
   detail.scale.setScalar(1 / GRIPPER_SCALE);
-  applyPayloadPose(detail, poses.detail);
+  applyPayloadPose(detail, pose);
   second.payloadMount.add(detail);
 
   pivot.scale.setScalar(GRIPPER_SCALE);
@@ -275,7 +277,7 @@ export function createPortal(layout: CellLayout): PortalRig {
 
   const gripperMount = new THREE.Group();
   gripperMount.position.y = -baseLength;
-  const gripper = createDualGripper(layout.partGeometry, layout.gripperPayloadPoses);
+  const gripper = createDualGripper(layout.partGeometry, layout.gripperPayloadPose);
   gripperMount.add(gripper.pivot);
   zMount.add(gripperMount);
 
@@ -343,8 +345,9 @@ export function updatePortalRig(
   rig.gripper.grip1Value = damp(rig.gripper.grip1Value, state.gripper1Closed ? 1 : 0, mechanismResponse, dt);
   rig.gripper.grip2Value = damp(rig.gripper.grip2Value, state.gripper2Closed ? 1 : 0, mechanismResponse, dt);
   const fingerHalfWidth = 0.0175;
-  updateFingerPair(rig.gripper.fingers1, rig.gripper.grip1Value, (mm(layout.partGeometry.blankDiameter) / 2) / GRIPPER_SCALE + fingerHalfWidth);
-  updateFingerPair(rig.gripper.fingers2, rig.gripper.grip2Value, (mm(layout.partGeometry.detailBodyDiameter) / 2) / GRIPPER_SCALE + fingerHalfWidth);
+  const closedGap = (mm(layout.partGeometry.diameter) / 2) / GRIPPER_SCALE + fingerHalfWidth;
+  updateFingerPair(rig.gripper.fingers1, rig.gripper.grip1Value, closedGap);
+  updateFingerPair(rig.gripper.fingers2, rig.gripper.grip2Value, closedGap);
   rig.gripper.blank.visible = state.gripper1Closed;
   rig.gripper.detail.visible = state.gripper2Closed;
   const blankMaterials = state.blankProductType >= 1 && state.blankProductType <= 3

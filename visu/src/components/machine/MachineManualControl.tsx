@@ -88,7 +88,7 @@ export function MachineManualControlMenu({
         <LockKeyhole /><span>{mechanism === 'chuck' ? 'Зажать' : 'Закрыть'}</span>
       </button>
     </div>
-    {!machine.manualControlAllowed && usePlcData && <p><ShieldAlert />Включите ручной режим и исключите станок из автоматической обработки</p>}
+    {!machine.manualControlAllowed && !machine.manualHatchOpenAllowed && usePlcData && <p><ShieldAlert />Включите ручной режим и исключите станок из автоматической обработки</p>}
   </aside>;
 }
 

@@ -138,37 +138,22 @@ IF rtTestScenarioApply.Q THEN
 		GVL_HMI.uiTestScenarioResult := UINT#2;
 	ELSE
 		FOR uiTestIndex := UINT#1 TO UINT#120 DO
-			// Сценарий задаёт Zone 2 магазина 1. Все остальные зоны
-			// очищаются, чтобы изделия не перетекали между тестами.
-			GVL_DETAIL.astMagazine[1].aZone1[uiTestIndex].xInPosition := FALSE;
-			GVL_DETAIL.astMagazine[1].aZone1[uiTestIndex].eDetailType := E_DETAIL_TYPE.NONE;
-			GVL_DETAIL.astMagazine[1].aZone1[uiTestIndex].uiProductType := UINT#0;
-			GVL_DETAIL.astMagazine[2].aZone1[uiTestIndex].xInPosition := FALSE;
-			GVL_DETAIL.astMagazine[2].aZone1[uiTestIndex].eDetailType := E_DETAIL_TYPE.NONE;
-			GVL_DETAIL.astMagazine[2].aZone1[uiTestIndex].uiProductType := UINT#0;
-			GVL_DETAIL.astMagazine[2].aZone2[uiTestIndex].xInPosition := FALSE;
-			GVL_DETAIL.astMagazine[2].aZone2[uiTestIndex].eDetailType := E_DETAIL_TYPE.NONE;
-			GVL_DETAIL.astMagazine[2].aZone2[uiTestIndex].uiProductType := UINT#0;
-			IF uiTestIndex <= UINT#60 THEN
-				GVL_DETAIL.astMagazine[1].aZone3[uiTestIndex].xInPosition := FALSE;
-				GVL_DETAIL.astMagazine[1].aZone3[uiTestIndex].eDetailType := E_DETAIL_TYPE.NONE;
-				GVL_DETAIL.astMagazine[1].aZone3[uiTestIndex].uiProductType := UINT#0;
-				GVL_DETAIL.astMagazine[2].aZone3[uiTestIndex].xInPosition := FALSE;
-				GVL_DETAIL.astMagazine[2].aZone3[uiTestIndex].eDetailType := E_DETAIL_TYPE.NONE;
-				GVL_DETAIL.astMagazine[2].aZone3[uiTestIndex].uiProductType := UINT#0;
-			END_IF;
-			GVL_DETAIL.astMagazine[1].aZone2[uiTestIndex].xInPosition :=
+			// Сценарий задаёт единственную кассету магазина 1; второй магазин пуст.
+			GVL_DETAIL.astMagazine[2].aSlots[uiTestIndex].xInPosition := FALSE;
+			GVL_DETAIL.astMagazine[2].aSlots[uiTestIndex].eDetailType := E_DETAIL_TYPE.NONE;
+			GVL_DETAIL.astMagazine[2].aSlots[uiTestIndex].uiProductType := UINT#0;
+			GVL_DETAIL.astMagazine[1].aSlots[uiTestIndex].xInPosition :=
 				GVL_HMI.stTestScenario.auiSlotContent[uiTestIndex] <> UINT#0;
 			CASE GVL_HMI.stTestScenario.auiSlotContent[uiTestIndex] OF
-				UINT#1: GVL_DETAIL.astMagazine[1].aZone2[uiTestIndex].eDetailType := E_DETAIL_TYPE.BLANK;
-				UINT#2: GVL_DETAIL.astMagazine[1].aZone2[uiTestIndex].eDetailType := E_DETAIL_TYPE.DETAIL;
+				UINT#1: GVL_DETAIL.astMagazine[1].aSlots[uiTestIndex].eDetailType := E_DETAIL_TYPE.BLANK;
+				UINT#2: GVL_DETAIL.astMagazine[1].aSlots[uiTestIndex].eDetailType := E_DETAIL_TYPE.DETAIL;
 			ELSE
-				GVL_DETAIL.astMagazine[1].aZone2[uiTestIndex].eDetailType := E_DETAIL_TYPE.NONE;
+				GVL_DETAIL.astMagazine[1].aSlots[uiTestIndex].eDetailType := E_DETAIL_TYPE.NONE;
 			END_CASE;
 			IF GVL_HMI.stTestScenario.auiSlotContent[uiTestIndex] = UINT#0 THEN
-				GVL_DETAIL.astMagazine[1].aZone2[uiTestIndex].uiProductType := UINT#0;
+				GVL_DETAIL.astMagazine[1].aSlots[uiTestIndex].uiProductType := UINT#0;
 			ELSE
-				GVL_DETAIL.astMagazine[1].aZone2[uiTestIndex].uiProductType :=
+				GVL_DETAIL.astMagazine[1].aSlots[uiTestIndex].uiProductType :=
 					GVL_HMI.stTestScenario.auiSlotType[uiTestIndex];
 			END_IF;
 		END_FOR;

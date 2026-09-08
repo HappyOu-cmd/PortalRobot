@@ -42,6 +42,8 @@ VAR_INPUT
 	xDriveError         : BOOL; // Активна ошибка оси или группы осей
 	xMotionBusy         : BOOL; // Одна из осей выполняет движение
 	xSingleAxisMotionBusy : BOOL; // Один из FB_AXIS владеет осью; групповое движение запускать нельзя
+	xPointCheckActive : BOOL; // Текущая команда принадлежит проверке сохранённой точки
+	rPointCheckSpeedPercent : REAL; // Фактическая скорость проверки 0.1..100 %
 	FaultRequest        : ST_ROBOT_FAULT_REQUEST; // Единый контракт диагностической инъекции
 	tGripper1OpenTime   : TIME := T#500MS; // Время открытия первого захвата в модели
 	tGripper1CloseTime  : TIME := T#500MS; // Время закрытия первого захвата в модели
@@ -94,6 +96,7 @@ VAR
 	xResetAccepted        : BOOL; // Общий сброс принят владельцем робота
 	xExternalResetPending : BOOL; // Удерживает асинхронный Reset до подтверждения SC-500
 	xExternalResetIssued  : BOOL; // Reset хотя бы один цикл был передан Modbus-адаптеру
+	xSoftMotionResetPending : BOOL; // Запрос сброса робота ждёт завершения MC_GroupReset
 	xModbusCommandStarted : BOOL; // Текущая команда получила собственную активную транзакцию
 	tonModbusStartTimeout : TON; // Защита от вечного ожидания приёма команды адаптером
 	fbRobotFaultInjector  : FB_ROBOT_FAULT_INJECTOR; // Безопасная недопустимая команда робота
@@ -278,6 +281,16 @@ xResetAllowed := xHmiPermit
 	AND (xMode OR NOT fbGripper.Status.xError
 		OR FaultStatus.stGripper.xResetAllowed);
 xResetAccepted := xReset AND xResetAllowed;
+// Общий Reset запускает Motion-сброс раньше FB_ROBOT. Если группа была в
+// ErrorStop, одноцикловый импульс уже закончится к моменту её восстановления;
+// защёлкиваем намерение оператора до исчезновения первичной Motion-ошибки.
+IF xMode THEN
+	xSoftMotionResetPending := FALSE;
+ELSIF xResetAccepted
+AND (eState = E_ROBOT_STATE.ERROR)
+AND (xDriveError OR stMotionManager.Status.xError) THEN
+	xSoftMotionResetPending := TRUE;
+END_IF;
 IF xMode AND xResetAccepted THEN
 	xExternalResetPending := TRUE;
 	xExternalResetIssued := FALSE;
@@ -589,7 +602,7 @@ CASE eState OF
 		// В Modbus-режиме входной Reset только защёлкивает запрос для адаптера.
 		// Локальную ошибку можно снять лишь после подтверждённого исчезновения
 		// внешней аварии; иначе xExternalResetPending очистится до записи 1004.
-		IF ((NOT xMode AND xResetAccepted)
+		IF ((NOT xMode AND (xResetAccepted OR xSoftMotionResetPending))
 			OR (xMode
 				AND xExternalResetPending
 				AND xExternalResetIssued
@@ -610,6 +623,7 @@ CASE eState OF
             Status.xError := FALSE;
 			xExternalResetPending := FALSE;
 			xExternalResetIssued := FALSE;
+			xSoftMotionResetPending := FALSE;
 			xModbusCommandStarted := FALSE;
 			xActiveManualGripper := FALSE;
 			xEquipmentStopLatched := FALSE;
@@ -647,6 +661,8 @@ fbMotionManager(
     stPoint := stPoint,
     xReset := NOT xMode AND xResetAccepted,
 	FaultRequest := FaultRequest.stPoint,
+	xSpeedFactorOverride := xPointCheckActive,
+	lrSpeedFactorOverride := REAL_TO_LREAL(rPointCheckSpeedPercent) / 100.0,
     stMotionManager := stMotionManager,
     GroupData := GroupData,
     stPointManager := stPointManager
@@ -694,6 +710,7 @@ IF xTestInitialize THEN
 	xTestDetailPayloadPending := auiTestGripperContent[2] = UINT#2;
 	uiRobotMagazineContext := UINT#0;
 	xEquipmentStopLatched := FALSE;
+	xSoftMotionResetPending := FALSE;
 END_IF;
 
 

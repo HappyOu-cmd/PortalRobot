@@ -43,10 +43,42 @@ function isScrollableAndVisible(element: HTMLElement) {
   return (
     rect.width >= 96
     && rect.height >= 112
+    && rect.right > 0
+    && rect.bottom > 0
+    && rect.left < window.innerWidth
+    && rect.top < window.innerHeight
     && style.visibility !== 'hidden'
     && style.display !== 'none'
+    && style.opacity !== '0'
+    && element.dataset.touchScrollControls !== 'off'
     && element.scrollHeight - element.clientHeight > SCROLL_EPSILON
   );
+}
+
+function visibleModalScope() {
+  return Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"][aria-modal="true"]'))
+    .filter((element) => {
+      const rect = element.getBoundingClientRect();
+      const style = window.getComputedStyle(element);
+      return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+    })
+    .at(-1) ?? null;
+}
+
+function selectScrollOwners(elements: HTMLElement[]) {
+  const modal = visibleModalScope();
+  const scoped = modal
+    ? elements.filter((element) => element === modal || modal.contains(element))
+    : elements;
+
+  // When a scrollable surface contains another scrollable surface, only the
+  // deepest one owns touch arrows. Native wheel/drag scrolling remains on the
+  // ancestor, but duplicate arrow pairs no longer pile up at the same edge.
+  return scoped.filter((element) => !scoped.some((descendant) => (
+    descendant !== element
+    && element.contains(descendant)
+    && descendant.dataset.touchScrollControls !== 'off'
+  )));
 }
 
 export function TouchScrollControls() {
@@ -56,8 +88,9 @@ export function TouchScrollControls() {
   const animationFrameRef = useRef<number | null>(null);
 
   const refresh = useCallback(() => {
-    const nextTargets = Array.from(document.querySelectorAll<HTMLElement>(TOUCH_SCROLL_SELECTOR))
-      .filter(isScrollableAndVisible)
+    const candidates = Array.from(document.querySelectorAll<HTMLElement>(TOUCH_SCROLL_SELECTOR))
+      .filter(isScrollableAndVisible);
+    const nextTargets = selectScrollOwners(candidates)
       .map((element) => {
         let id = targetIdsRef.current.get(element);
         if (id === undefined) {
@@ -73,9 +106,9 @@ export function TouchScrollControls() {
           id,
           element,
           label: element.getAttribute('aria-label') ?? 'область',
-          top: Math.round(Math.max(8, rect.top + 8)),
-          bottom: Math.round(Math.max(8, rect.bottom - 52)),
-          left: Math.round(Math.max(8, rect.right - 52)),
+          top: Math.round(Math.max(8, Math.min(window.innerHeight - 52, rect.top + 8))),
+          bottom: Math.round(Math.max(8, Math.min(window.innerHeight - 52, rect.bottom - 52))),
+          left: Math.round(Math.max(8, Math.min(window.innerWidth - 52, rect.right - 52))),
           canScrollUp: element.scrollTop > SCROLL_EPSILON,
           canScrollDown: element.scrollTop < maxScrollTop - SCROLL_EPSILON,
         };
@@ -137,28 +170,26 @@ export function TouchScrollControls() {
   return createPortal(
     <div className="touch-scroll-controls-layer">
       {targets.flatMap((target) => [
-        <button
+        target.canScrollUp ? <button
           key={`${target.id}-up`}
           className="touch-scroll-control"
           type="button"
           style={{ top: target.top, left: target.left }}
           aria-label={`Прокрутить вверх: ${target.label}`}
-          disabled={!target.canScrollUp}
           onClick={() => scroll(target, -1)}
         >
           <ChevronUp aria-hidden="true" />
-        </button>,
-        <button
+        </button> : null,
+        target.canScrollDown ? <button
           key={`${target.id}-down`}
           className="touch-scroll-control"
           type="button"
           style={{ top: target.bottom, left: target.left }}
           aria-label={`Прокрутить вниз: ${target.label}`}
-          disabled={!target.canScrollDown}
           onClick={() => scroll(target, 1)}
         >
           <ChevronDown aria-hidden="true" />
-        </button>,
+        </button> : null,
       ])}
     </div>,
     document.body,

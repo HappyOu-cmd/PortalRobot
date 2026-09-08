@@ -250,33 +250,38 @@ export class AuthStore {
     return publicUser(row);
   }
 
-  login(username, password) {
+  authenticate(username, password) {
     const normalizedUsername = normalizeUsername(username);
     const row = this.db.prepare('SELECT * FROM app_user WHERE username = ?').get(normalizedUsername);
     if (!row || !Boolean(row.enabled) || !passwordMatches(password, row.password_salt, row.password_hash)) {
       throw new AuthStoreError('Неверный логин или пароль', 401, 'INVALID_CREDENTIALS');
     }
+    return publicUser(row);
+  }
+
+  login(username, password) {
+    const user = this.authenticate(username, password);
     const now = this.now();
-    this.db.prepare('UPDATE app_user SET last_login_at = ?, updated_at = ? WHERE id = ?').run(now, now, row.id);
+    this.db.prepare('UPDATE app_user SET last_login_at = ?, updated_at = ? WHERE id = ?').run(now, now, user.id);
     const token = randomBytes(32).toString('base64url');
     this.db.prepare(`INSERT INTO auth_session (token_hash, user_id, created_at, last_seen_at, expires_at)
       VALUES (?, ?, ?, ?, ?)`)
-      .run(sessionHash(token), row.id, now, now, now + this.sessionTtlMs);
-    return { token, user: this.getUser(row.id), expiresAt: now + this.sessionTtlMs };
+      .run(sessionHash(token), user.id, now, now, now + this.sessionTtlMs);
+    return { token, user: this.getUser(user.id), createdAt: now, expiresAt: now + this.sessionTtlMs };
   }
 
   getSession(token) {
     if (!token) return null;
     const now = this.now();
     this.db.prepare('DELETE FROM auth_session WHERE expires_at <= ?').run(now);
-    const row = this.db.prepare(`SELECT s.token_hash, s.expires_at, u.* FROM auth_session s
+    const row = this.db.prepare(`SELECT s.token_hash, s.expires_at, s.created_at AS session_created_at, u.* FROM auth_session s
       JOIN app_user u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?`).get(sessionHash(token), now);
     if (!row || !Boolean(row.enabled)) {
       if (row) this.db.prepare('DELETE FROM auth_session WHERE token_hash = ?').run(row.token_hash);
       return null;
     }
     this.db.prepare('UPDATE auth_session SET last_seen_at = ? WHERE token_hash = ?').run(now, row.token_hash);
-    return { user: publicUser(row), expiresAt: Number(row.expires_at) };
+    return { user: publicUser(row), createdAt: Number(row.session_created_at), expiresAt: Number(row.expires_at) };
   }
 
   logout(token) {

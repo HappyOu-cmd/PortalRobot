@@ -4,6 +4,7 @@ import {
   RefreshCw, Search, SlidersHorizontal, UserRound, X,
 } from 'lucide-react';
 import { formatAlarmJournalMessage, type CellLogActor, type CellLogEvent } from '../plc/client';
+import { gatewayApiUrl } from '../api/gateway';
 
 const SOURCES = [
   [1, 'Станок 1'], [2, 'Станок 2'], [3, 'Станок 3'], [4, 'Магазин'],
@@ -134,7 +135,7 @@ export function CellEventLog({ liveEvent, online, onClose, className }: {
 
   useEffect(() => {
     const controller = new AbortController();
-    void fetch('/api/cell-event-actors', { signal: controller.signal }).then(async (response) => {
+    void fetch(gatewayApiUrl('/api/cell-event-actors'), { signal: controller.signal }).then(async (response) => {
       if (!response.ok) throw new Error(await errorText(response));
       return response.json() as Promise<CellLogActor[]>;
     }).then(setActors).catch((error) => {
@@ -186,7 +187,7 @@ export function CellEventLog({ liveEvent, online, onClose, className }: {
     setPendingLive(0);
     setScrollTop(0);
     if (tableRef.current) tableRef.current.scrollTop = 0;
-    void fetch(`/api/cell-events?${baseQuery}`, { signal: controller.signal }).then(async (response) => {
+    void fetch(gatewayApiUrl(`/api/cell-events?${baseQuery}`), { signal: controller.signal }).then(async (response) => {
       if (!response.ok) throw new Error(await errorText(response));
       return response.json() as Promise<CellEventPage>;
     }).then((page) => {
@@ -215,7 +216,7 @@ export function CellEventLog({ liveEvent, online, onClose, className }: {
     const parameters = new URLSearchParams(baseQuery);
     parameters.set('cursor', nextCursor);
     try {
-      const response = await fetch(`/api/cell-events?${parameters}`);
+      const response = await fetch(gatewayApiUrl(`/api/cell-events?${parameters}`));
       if (!response.ok) throw new Error(await errorText(response));
       const page = await response.json() as CellEventPage;
       if (activeQueryRef.current !== baseQuery) return;

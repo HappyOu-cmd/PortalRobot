@@ -67,17 +67,19 @@ function createObstacles(layout: CellLayout): Obstacle[] {
     minZ: -mm(position.y + layout.machine.sizeY) - clearance,
     maxZ: -mm(position.y) + clearance,
   }));
-  const conveyors = layout.indexedConveyors.map((config) => {
-    const depth = config.zoneRowsY.reduce((sum, rows) => sum + rows, 0) * config.pitchY;
-    const halfWidth = config.slatWidthX / 2;
+  const maxPartDiameter = layout.partGeometry.diameter;
+  const staticMagazines = layout.staticMagazines.map((config) => {
+    const halfWidth = ((10 - 1) * config.pitchX + maxPartDiameter + 150) / 2;
+    const frontMargin = maxPartDiameter / 2 + 75;
+    const depth = (12 - 1) * config.pitchY + maxPartDiameter / 2 + 75;
     return {
       minX: mm(config.position.x - halfWidth) - clearance,
       maxX: mm(config.position.x + halfWidth) + clearance,
       minZ: -mm(config.position.y + depth) - clearance,
-      maxZ: -mm(config.position.y) + clearance,
+      maxZ: -mm(config.position.y - frontMargin) + clearance,
     };
   });
-  return [...machines, ...conveyors];
+  return [...machines, ...staticMagazines];
 }
 
 function addMesh(

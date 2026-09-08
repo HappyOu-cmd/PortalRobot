@@ -84,6 +84,15 @@ FOR uiMachine := 1 TO 3 DO
 END_FOR;
 xMotionBusy := xMotionBusy OR (uiManualAxisOwner > UINT#0);
 
+rRobotManualEffectiveSpeedPercent := GVL_HMI.rRobotManualSpeedPercent;
+IF xMobileMotionLeaseActive THEN
+	// Последний рубеж лимита находится в PLC, а не в браузере или gateway.
+	rRobotManualEffectiveSpeedPercent := MIN(
+		rRobotManualEffectiveSpeedPercent,
+		rMobileMotionSpeedLimitPercent
+	);
+END_IF;
+
 GVL_HMI.stRobotHmiStatus.xDrivesPowered := xDrivesPowered;
 GVL_HMI.stRobotHmiStatus.xDrivesOff := xDrivesOff;
 GVL_HMI.stRobotHmiStatus.xPowerTransitionActive := xPowerTransitionActive;
@@ -209,18 +218,18 @@ GVL_AXIS.arrAxis[2].Command.xDisable := GVL_AXIS.arrAxis[1].Command.xDisable;
 GVL_AXIS.arrAxis[3].Command.xDisable := GVL_AXIS.arrAxis[1].Command.xDisable;
 
 // Stop получает только текущий владелец движения: одна ось либо координатная группа.
-GVL_AXIS.arrAxis[1].Command.xStop := xHmiStopAccepted
-	AND NOT GVL_HMI.xModbusMode
+GVL_AXIS.arrAxis[1].Command.xStop := ((xHmiStopAccepted AND NOT GVL_HMI.xModbusMode)
+	OR xMobileMotionStopRequest)
 	AND NOT xGroupMotionBusy AND (uiManualAxisOwner = UINT#1);
-GVL_AXIS.arrAxis[2].Command.xStop := xHmiStopAccepted
-	AND NOT GVL_HMI.xModbusMode
+GVL_AXIS.arrAxis[2].Command.xStop := ((xHmiStopAccepted AND NOT GVL_HMI.xModbusMode)
+	OR xMobileMotionStopRequest)
 	AND NOT xGroupMotionBusy AND (uiManualAxisOwner = UINT#2);
-GVL_AXIS.arrAxis[3].Command.xStop := xHmiStopAccepted
-	AND NOT GVL_HMI.xModbusMode
+GVL_AXIS.arrAxis[3].Command.xStop := ((xHmiStopAccepted AND NOT GVL_HMI.xModbusMode)
+	OR xMobileMotionStopRequest)
 	AND NOT xGroupMotionBusy AND (uiManualAxisOwner = UINT#3);
 GVL_AXIS_GROUP.AxisGroup.Command.xStopCmd :=
 	NOT GVL_HMI.xModbusMode
-	AND (xHmiStopAccepted OR xRobotProgramStopRequest) AND xGroupMotionBusy;
+	AND (xHmiStopAccepted OR xRobotProgramStopRequest OR xPointCheckStopRequest OR xPointCheckStopping) AND xGroupMotionBusy;
 
 // Из новых запросов также выбирается только одна ось. Если движение уже идёт,
 // запрос другой оси будет отклонён ниже без передачи в FB_AXIS.
@@ -328,7 +337,7 @@ FOR uiMachine := 1 TO 3 DO
 	// Для JOG и одиночных перемещений коэффициент применяется непосредственно
 	// к входу Velocity соответствующего Motion FB.
 	alrRobotJogVelocity[uiMachine] := alrRobotManualRatedVelocity[uiMachine]
-		* REAL_TO_LREAL(GVL_HMI.rRobotManualSpeedPercent) / 100.0;
+		* REAL_TO_LREAL(rRobotManualEffectiveSpeedPercent) / 100.0;
 
 	GVL_AXIS.arrAxis[uiMachine].Command.xJogPositive := FALSE;
 	GVL_AXIS.arrAxis[uiMachine].Command.xJogNegative := FALSE;
@@ -343,6 +352,7 @@ FOR uiMachine := 1 TO 3 DO
 	GVL_AXIS.arrAxis[uiMachine].MotionParam.lrJerk := alrRobotRatedJerk[uiMachine];
 
 	axManualAxisBaseAllowed[uiMachine] := xRobotHmiPermit
+		AND NOT xPointCheckActive
 		AND xHmiConnectionAlive
 		AND NOT GVL_HMI.xModbusMode
 		AND (NOT GVL_CELL_CONTROL.xGlobalError OR xManualRecoveryActive)
@@ -529,11 +539,17 @@ GVL_CELL_SETTINGS.xSimulationAccelerationError := FALSE;
 xDrivesPowered := GVL_AXIS.arrAxis[1].Status.xPowered
 	AND GVL_AXIS.arrAxis[2].Status.xPowered
 	AND GVL_AXIS.arrAxis[3].Status.xPowered;
+lrGroupVelocityOverride := REAL_TO_LREAL(GVL_HMI.rRobotManualSpeedPercent) / 100.0;
+IF xPointCheckActive THEN
+	// Скорость проверки уже применяется FB_MOTION_MANAGER как VelFactor.
+	// Глобальный override оставляем 100 %, иначе процент умножится сам на себя.
+	lrGroupVelocityOverride := 1.0;
+END_IF;
 GROUP_XYZ(
 	FaultRequest := stAxisGroupFaultRequest,
 	xResetPermit := xRobotHmiPermit,
 	xAxesPowered := xDrivesPowered,
-	lrVelocityOverride := REAL_TO_LREAL(GVL_HMI.rRobotManualSpeedPercent) / 100.0,
+	lrVelocityOverride := lrGroupVelocityOverride,
 	AxisGroup := AXIS_GROUP_XYZ,
 	GroupData := GVL_AXIS_GROUP.AxisGroup
 );
@@ -661,7 +677,7 @@ FOR uiMachine := 1 TO 3 DO
 		OR GVL_AXIS.arrAxis[uiMachine].Status.xLogicalError;
 	GVL_HMI.astAxisHmiStatus[uiMachine].xHomed := GVL_AXIS.arrAxis[uiMachine].Status.xHomed;
 	GVL_HMI.astAxisHmiStatus[uiMachine].lrCommandVelocity := alrRobotManualRatedVelocity[uiMachine]
-		* REAL_TO_LREAL(GVL_HMI.rRobotManualSpeedPercent) / 100.0;
+		* REAL_TO_LREAL(rRobotManualEffectiveSpeedPercent) / 100.0;
 	GVL_HMI.astAxisHmiStatus[uiMachine].lrMaxVelocity := alrRobotManualRatedVelocity[uiMachine];
 	GVL_HMI.astAxisHmiStatus[uiMachine].eState := GVL_AXIS.arrAxis[uiMachine].Diag.iStep;
 
@@ -743,6 +759,16 @@ FOR uiMachine := 1 TO 3 DO
 		GVL_HMI.astAxisHmiStatus[uiMachine].eRejectReason := E_HMI_MANUAL_REJECT.ROBOT_BUSY;
 	ELSIF xMotionBusy AND (uiManualAxisOwner <> uiMachine) THEN
 		GVL_HMI.astAxisHmiStatus[uiMachine].eRejectReason := E_HMI_MANUAL_REJECT.AXIS_BUSY;
+	ELSIF (GVL_AXIS_GROUP.AxisGroup.Diag.iStep <> E_AXIS_GROUP_STATE.READY) THEN
+		GVL_HMI.astAxisHmiStatus[uiMachine].eRejectReason := E_HMI_MANUAL_REJECT.MOTION_NOT_READY;
+	ELSIF NOT (
+		((GVL_AXIS.arrAxis[uiMachine].Diag.iStep = E_AXIS_STATE.READY)
+			AND GVL_AXIS.arrAxis[uiMachine].Status.xCanStartMotion)
+		OR ((uiManualAxisOwner = uiMachine)
+			AND ((GVL_AXIS.arrAxis[uiMachine].Diag.iStep = E_AXIS_STATE.JOGGING)
+				OR (GVL_AXIS.arrAxis[uiMachine].Diag.iStep = E_AXIS_STATE.JOG_DECELERATING)))
+	) THEN
+		GVL_HMI.astAxisHmiStatus[uiMachine].eRejectReason := E_HMI_MANUAL_REJECT.MOTION_NOT_READY;
 	ELSIF NOT GVL_HMI.xRobotContinuousMode
 	AND NOT GVL_HMI.astAxisHmiStatus[uiMachine].xHomed THEN
 		GVL_HMI.astAxisHmiStatus[uiMachine].eRejectReason := E_HMI_MANUAL_REJECT.AXIS_NOT_HOMED;
@@ -752,6 +778,17 @@ FOR uiMachine := 1 TO 3 DO
 		GVL_HMI.astAxisHmiStatus[uiMachine].eRejectReason := E_HMI_MANUAL_REJECT.NONE;
 	END_IF;
 END_FOR;
+
+// PLC хранит владельца до фактического окончания торможения. Только после этого
+// следующая мобильная аренда сможет получить новый фронт xMobileMotionActive.
+IF xMobileMotionLeaseActive
+AND NOT GVL_HMI.xMobileMotionActive
+AND NOT xMotionBusy THEN
+	xMobileMotionLeaseActive := FALSE;
+	xMobileMotionStopRequest := FALSE;
+	xMobileMotionConnectionAlive := FALSE;
+	GVL_HMI.xMobileMotionLeaseAlive := FALSE;
+END_IF;
 
 GVL_CELL_SETTINGS.xSimulationAccelerationChangeAllowed :=
 	NOT GVL_CELL_MANAGER.Status.xRunning

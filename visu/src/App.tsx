@@ -9,10 +9,10 @@ import timelineIcon from '@iconify-icons/material-symbols/timeline';
 import { Icon } from '@iconify/react';
 import {
   cloneElement, isValidElement, useEffect, useMemo, useRef, useState,
-  type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactElement, type ReactNode, type RefObject,
+  type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactElement, type ReactNode, type RefObject,
 } from 'react';
 import {
-  Activity, AlertCircle, ArrowRight, Bot, Box, Boxes, CheckCircle2, ChevronLeft, ChevronRight,
+  Activity, AlertCircle, Bot, Box, Boxes, CheckCircle2, ChevronLeft, ChevronRight,
   ChevronDown, Clock3, Cylinder, Disc3, DoorOpen, Factory, Home, BarChart3,
   Eye, EyeOff, FlaskConical, Gauge, Grid2X2, LoaderCircle, LockKeyhole, Menu, Power, PackageOpen, PackagePlus, RotateCcw, Settings,
   ShieldAlert, ShieldCheck, Trash2, TriangleAlert, UnlockKeyhole, UserRound, UsersRound, X,
@@ -22,6 +22,8 @@ import { CellViewport } from './components/CellViewport';
 import { EquipmentLoadPanel } from './components/EquipmentLoadPanel';
 import { LatestEventNotification } from './components/LatestEventNotification';
 import { RobotExtendedPanel } from './components/RobotExtendedPanel';
+import { RobotQuickControlMenu, type RobotQuickControl } from './components/RobotQuickControlMenu';
+import { currentRobotPointLabel } from './components/robotManualControl';
 import { RobotSpeedEditor, normalizeRobotSpeed } from './components/RobotSpeedEditor';
 import { FaultInjectionPanel } from './components/faultSimulation/FaultInjectionPanel';
 import { SimulationSettingsPanel } from './components/faultSimulation/SimulationSettingsPanel';
@@ -46,6 +48,7 @@ import { StatisticsPanel, StatisticsSettingsPanel } from './statistics/Statistic
 import { statisticsApi, type StatisticsSummary } from './statistics/client';
 import { RingStat } from './components/magazine/RingStat';
 import { Indicator } from './components/ui/Indicator';
+import { SegmentedControl } from './components/ui/ControlPrimitives';
 import { TouchScrollControls } from './components/ui/TouchScrollControls';
 import { VercelTabs } from './components/ui/VercelTabs';
 import portalRobotLogo from './assets/branding/portal-robot-logo.png';
@@ -77,9 +80,6 @@ import {
 import type {
   CellLayout,
   CellState,
-  IndexedConveyorTestCommand,
-  IndexedConveyorTestCommandType,
-  IndexedConveyorTestStatus,
   PartMaterialLayout,
   ProductType,
   RobotCoordinateFrame,
@@ -90,6 +90,7 @@ import {
   ALARM_EFFECT_LABELS, ALARM_SOURCE_LABELS,
   type CellLogEvent, type PlcAlarmEvent, type PlcAlarmSource, type PlcCommand, type PlcConnectionInfo, type PlcRuntimeInfo,
 } from './plc/client';
+import { pointBackupApi } from './points/client';
 
 type Page = 'monitoring' | 'machines' | 'robot' | 'magazine' | 'manual' | 'injections' | 'events' | 'alarms' | 'tests' | 'settings' | 'cell-settings' | 'simulation-settings' | 'users' | 'statistics' | 'statistics-settings';
 type BottomSection = 'cell' | 'machines' | 'robot' | 'magazine' | 'cyclogram';
@@ -105,7 +106,7 @@ const BOTTOM_NAV_ITEMS = [
   { key: 'cell' as const, label: 'Ячейка', icon: conveyorBeltOutlineIcon, sources: ['cell'] as PlcAlarmSource[] },
   { key: 'machines' as const, label: 'Станки', icon: microwaveGenOutlineIcon, sources: ['machine-1', 'machine-2', 'machine-3'] as PlcAlarmSource[] },
   { key: 'robot' as const, label: 'Робот', icon: robotIndustrialOutlineIcon, sources: ['robot', 'axis-x', 'axis-y', 'axis-z', 'axis-group', 'motion-manager', 'point-manager'] as PlcAlarmSource[] },
-  { key: 'magazine' as const, label: 'Магазины', icon: viewGridOutlineIcon, sources: ['magazine-1', 'magazine-2', 'magazine-axis-1', 'magazine-axis-2'] as PlcAlarmSource[] },
+  { key: 'magazine' as const, label: 'Магазины', icon: viewGridOutlineIcon, sources: ['magazine-1', 'magazine-2'] as PlcAlarmSource[] },
   { key: 'cyclogram' as const, label: 'Циклограмма', icon: timelineIcon, sources: [] as PlcAlarmSource[] },
 ];
 const SETTINGS_TOPICS = [
@@ -138,6 +139,7 @@ const FAST_PLC_UI_SYMBOLS = new Set([
   'stCellStatus.xStartCheckNoBlockingError',
   'stCellStatus.xStartCheckRobotInterfaceReady',
   'stCellStatus.xStartCheckConfigurationValid',
+  'stCellStatus.xStartCheckPointsConfigured',
   'stCellStatus.xStartCheckDrivesReady',
   'stCellStatus.xStartCheckRobotReady',
   'stCellStatus.xStartCheckMagazineReady',
@@ -336,7 +338,35 @@ const distributeProductTypes = (activeCount: number, machineTypes: ProductType[]
   });
   return result;
 };
-const LAYOUT_STORAGE_KEY = 'portal-robot.visualization-layout.v1';
+const LAYOUT_STORAGE_KEY = 'portal-robot.visualization-layout.v3';
+const LAYOUT_REPAIR_STORAGE_KEY = 'portal-robot.visualization-layout.repair-default-reset-2026-09-08';
+const LEGACY_LAYOUT_STORAGE_KEYS = [
+  'portal-robot.visualization-layout.v2',
+  'portal-robot.visualization-layout.v1',
+] as const;
+type StoredLayout = Partial<CellLayout> & {
+  partGeometry?: Partial<CellLayout['partGeometry']> & {
+    blankDiameter?: number;
+    blankLength?: number;
+  };
+  gripperPayloadPoses?: {
+    blank?: CellLayout['gripperPayloadPose'];
+    detail?: CellLayout['gripperPayloadPose'];
+  };
+};
+const isAccidentallyResetLayout = (layout: StoredLayout): boolean => (
+  layout.coordinate?.origin?.y === 0
+  && layout.coordinate.origin.z === 0
+  && layout.machine?.sizeX === 2806.7
+  && layout.machine.sizeZ === 1873.6
+  && layout.portal?.position?.x === 300
+  && layout.portal.position.y === 1050
+  && layout.portal.lengthX === 12000
+  && layout.portal.widthY === 1350
+  && layout.portal.frameBottomZ === 2250
+  && layout.staticMagazines?.[0]?.position.x === 8500
+  && layout.staticMagazines?.[1]?.position.x === 10500
+);
 const FONT_PRESET_STORAGE_KEY = 'portal-robot.font-preset.v1';
 const FONT_PRESET_OPTIONS: { value: FontPreset; label: string; description: string }[] = [
   { value: 'apple', label: 'Apple', description: 'SF Pro-подобный системный стек' },
@@ -355,6 +385,7 @@ const INITIAL_RUNTIME: PlcRuntimeInfo = {
   robotReady: false, magazineReady: false, safetyHomeRequired: false, robotAtSafetyHome: false,
   cellSettings: {
     changeAllowed: false,
+    pointCheckSpeedPercent: 10,
     safetyHome: { x: 0, y: 0, z: 0, speedFactor: 0.2, toleranceX: 5, toleranceY: 5, toleranceZ: 5 },
     timeouts: { robotMove: 60, robotAction: 10, robotRelease: 5, doorOpen: 10, doorClose: 10, chuckOpen: 10, chuckClose: 10, cycleStart: 10 },
   },
@@ -364,8 +395,8 @@ const INITIAL_RUNTIME: PlcRuntimeInfo = {
   },
   startReadiness: {
     cellIdle: false, automaticMode: false, noBlockingError: false,
-    configurationValid: false, drivesReady: false, robotReady: false, magazineReady: false,
-    taskAvailable: false, safetyHome: false, robotInterfaceReady: false, met: 0, total: 10,
+    configurationValid: false, pointsConfigured: false, drivesReady: false, robotReady: false, magazineReady: false,
+    taskAvailable: false, safetyHome: false, robotInterfaceReady: false, met: 0, total: 11,
   },
   readyMachines: 0, manualMode: false,
   selectedMachine: 0,
@@ -422,7 +453,7 @@ const INITIAL_RUNTIME: PlcRuntimeInfo = {
     commandBusy: false, activeAction: 0, activePoint: 0, rejectCode: 1, rejectReason: 'Ожидание данных PLC',
   },
   pointEditor: {
-    points: Array.from({ length: 15 }, (_, offset) => ({
+    points: Array.from({ length: 12 }, (_, offset) => ({
       index: offset + 1, pointId: 0, x: 0, y: 0, z: 0, speedFactor: 0, configured: false,
     })),
     captureAllowed: false, saveAllowed: false, tableReady: false,
@@ -440,7 +471,6 @@ type QuickStatusTone = 'gray' | 'green' | 'blue' | 'amber' | 'red';
 
 function QuickStatusCard({
   icon: IconComponent,
-  eyebrow,
   title,
   status,
   tone,
@@ -452,14 +482,13 @@ function QuickStatusCard({
   ariaControls,
 }: {
   icon: LucideIcon;
-  eyebrow: string;
   title: string;
   status: ReactNode;
   tone: QuickStatusTone;
   detail?: ReactNode;
   className?: string;
   interactive?: boolean;
-  onClick?: () => void;
+  onClick?: (event: ReactMouseEvent<HTMLButtonElement>) => void;
   ariaExpanded?: boolean;
   ariaControls?: string;
 }) {
@@ -469,7 +498,6 @@ function QuickStatusCard({
     <div className="quick-status-card__heading">
       <span className="quick-status-card__icon"><IconComponent aria-hidden="true" /></span>
       <span className="quick-status-card__copy">
-        <small>{eyebrow}</small>
         <strong>{title}</strong>
       </span>
     </div>
@@ -485,6 +513,35 @@ function QuickStatusCard({
   }
 
   return <article className={cardClassName}>{content}</article>;
+}
+
+function ExtendedControlIcon() {
+  return (
+    <svg
+      className="extended-control__icon"
+      aria-hidden="true"
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth="1.5"
+    >
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 5.25h16.5m-16.5 4.5h16.5m-16.5 4.5h16.5m-16.5 4.5h16.5" />
+    </svg>
+  );
+}
+
+function ExtendedControlButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      className="extended-control extended-control--icon"
+      type="button"
+      onClick={onClick}
+      title="Расширенное управление"
+      aria-label="Расширенное управление"
+    >
+      <ExtendedControlIcon />
+    </button>
+  );
 }
 
 function CellQuickPanel({ running, stopPending, online, globalError, readyToStart, startAllowed, stopAllowed,
@@ -536,6 +593,7 @@ function CellQuickPanel({ running, stopPending, online, globalError, readyToStar
     { key: 'errors', ready: startReadiness.noBlockingError, title: 'Блокирующие аварии', done: 'Активных блокировок нет', blocked: 'Обнаружена активная блокирующая авария' },
     { key: 'interface', ready: startReadiness.robotInterfaceReady, title: 'Интерфейс робота', done: 'Выбранный интерфейс готов', blocked: 'Интерфейс робота не подтвердил готовность' },
     { key: 'config', ready: startReadiness.configurationValid, title: 'Конфигурация типов', done: 'Конфигурация корректна', blocked: 'Конфигурация продукции некорректна' },
+    { key: 'points', ready: startReadiness.pointsConfigured, title: 'Инженерные точки', done: 'Все 12 точек настроены', blocked: 'Настроены не все 12 обязательных точек робота' },
     { key: 'drives', ready: startReadiness.drivesReady, title: 'Приводы и группа осей', done: 'Готовы к движению', blocked: 'Приводы или группа осей не готовы' },
     { key: 'robot', ready: startReadiness.robotReady, title: 'Робот', done: 'Готов принять команду', blocked: 'Робот занят, в ошибке или захваты конфликтуют' },
     { key: 'magazine', ready: startReadiness.magazineReady, title: 'Магазин', done: 'Готов к операции', blocked: 'Магазин выключен, занят или находится в ошибке' },
@@ -611,13 +669,20 @@ function CellQuickPanel({ running, stopPending, online, globalError, readyToStar
             </section>
           </aside>}
         </div>
-        <div className="cell-mode-switch" aria-label="Режим работы линии">
-          <button className={`${manualMode ? 'active manual ' : ''}${manualAllowed ? '' : 'command-unavailable'}`.trim()} type="button" disabled={!online} aria-disabled={!manualAllowed} onClick={() => onModeChange(true)}>Ручной</button>
-          <button className={`${!manualMode ? 'active auto ' : ''}${automaticAllowed ? '' : 'command-unavailable'}`.trim()} type="button" disabled={!online} aria-disabled={!automaticAllowed} onClick={() => onModeChange(false)}>Автомат</button>
-        </div>
+        <SegmentedControl
+          className={`cell-mode-switch ${manualMode ? 'is-manual' : 'is-automatic'}`}
+          value={manualMode ? 'manual' : 'automatic'}
+          options={[
+            { value: 'manual', label: 'Ручной', className: `manual${manualAllowed ? '' : ' command-unavailable'}`, ariaDisabled: !manualAllowed },
+            { value: 'automatic', label: 'Автомат', className: `auto${automaticAllowed ? '' : ' command-unavailable'}`, ariaDisabled: !automaticAllowed },
+          ]}
+          disabled={!online}
+          onChange={(value) => onModeChange(value === 'manual')}
+          ariaLabel="Режим работы линии"
+        />
       </div>
       <div className="quick-panel-header-actions">
-        <button className="extended-control" type="button" onClick={onExtended}>Расширенное управление <ArrowRight size={19} /></button>
+        <ExtendedControlButton onClick={onExtended} />
         <button className="quick-panel-close" type="button" onClick={onClose} title="Закрыть меню"><X /></button>
       </div>
     </header>
@@ -628,25 +693,30 @@ function CellQuickPanel({ running, stopPending, online, globalError, readyToStar
         </button>
       </div>
       <div className="cell-quick-statuses">
-        <QuickStatusCard icon={Bot} eyebrow="Оборудование" title="Робот" status={robotReady ? 'Готов' : 'Не готов'} tone={robotReady ? 'green' : 'red'} />
-        <QuickStatusCard icon={Factory} eyebrow="Группа" title="Станки" status={machinesStatus} tone={machinesTone} detail={`${readyMachines} / 3`} />
-        <QuickStatusCard icon={Boxes} eyebrow="Логистика" title="Магазины" status={magazineReady ? 'Готовы' : 'Не готовы'} tone={magazineReady ? 'green' : 'red'} />
+        <QuickStatusCard icon={Bot} title="Робот" status={robotReady ? 'Готов' : 'Не готов'} tone={robotReady ? 'green' : 'red'} />
+        <QuickStatusCard icon={Factory} title="Станки" status={machinesStatus} tone={machinesTone} detail={`${readyMachines} / 3`} />
+        <QuickStatusCard icon={Boxes} title="Магазины" status={magazineReady ? 'Готовы' : 'Не готовы'} tone={magazineReady ? 'green' : 'red'} />
       </div>
     </div>
   </section>;
 }
 
-function RobotQuickPanel({ robot, robotManual, robotModbus, modbusMode, speedOverridePercent, step, online, globalError, robotReady,
-  onToggleDrives, onStop, onSpeedOverrideChange, onExtended, onClose, className }: {
+function RobotQuickPanel({ robot, magazines, robotManual, robotModbus, axisManual, modbusMode, continuousMode, manualStep, speedOverridePercent, step, online, globalError, robotReady,
+  onSend, onToggleDrives, onStop, onSpeedOverrideChange, onExtended, onClose, className }: {
   robot: CellState['robot'];
+  magazines: CellState['magazines'];
   robotManual: PlcRuntimeInfo['robotManual'];
   robotModbus: PlcRuntimeInfo['robotModbus'];
+  axisManual: PlcRuntimeInfo['axisManual'];
   modbusMode: boolean;
+  continuousMode: boolean;
+  manualStep: number;
   speedOverridePercent: number;
   step: string;
   online: boolean;
   globalError: boolean;
   robotReady: boolean;
+  onSend: (command: PlcCommand) => void;
   onToggleDrives: () => void;
   onStop: () => void;
   onSpeedOverrideChange: (value: number) => void;
@@ -654,6 +724,21 @@ function RobotQuickPanel({ robot, robotManual, robotModbus, modbusMode, speedOve
   onClose: () => void;
   className?: string;
 }) {
+  const [control, setControl] = useState<RobotQuickControl>('position');
+  const [controlOpen, setControlOpen] = useState(false);
+  const controlTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const triggerProps = (target: RobotQuickControl) => ({
+    interactive: true,
+    ariaExpanded: controlOpen && control === target,
+    ariaControls: 'robot-quick-control-menu',
+    onClick: (event: ReactMouseEvent<HTMLButtonElement>) => {
+      controlTriggerRef.current = event.currentTarget;
+      setControl(target);
+      setControlOpen(!controlOpen || control !== target);
+    },
+  });
+  const triggerClass = (target: RobotQuickControl) => `robot-control-trigger${controlOpen && control === target ? ' active' : ''}`;
+  const currentPoint = currentRobotPointLabel(robot.currentPoint, online);
   const normalizedSpeed = normalizeRobotSpeed(speedOverridePercent);
   const hasError = globalError || robot.error || (modbusMode && robotModbus.error);
   const drivesActive = !robotManual.drivesOff;
@@ -701,7 +786,10 @@ function RobotQuickPanel({ robot, robotManual, robotModbus, modbusMode, speedOve
         <h2>Робот</h2>
         <p><Indicator active={stateTone !== 'gray'} tone={stateTone === 'gray' ? 'blue' : stateTone} />{stateText}</p>
       </div>
-      <div className="robot-step-summary"><span>Текущий шаг</span><strong>{step || stateText}</strong></div>
+      <div className="robot-progress-summary">
+        <div className="robot-step-summary"><span>Текущий шаг</span><strong title={step || stateText}>{step || stateText}</strong></div>
+        <div className="robot-step-summary robot-current-point"><span>Текущая точка</span><strong title={currentPoint}>{online && robot.currentPoint === 17 ? 'HOME_SAFETY' : currentPoint}</strong></div>
+      </div>
       <div className="quick-panel-header-actions">
         {!modbusMode && <details className="robot-quick-speed-menu">
           <summary title="Общая скорость робота" aria-label={`Общая скорость робота ${normalizedSpeed.toFixed(1)} процента`}>
@@ -711,7 +799,7 @@ function RobotQuickPanel({ robot, robotManual, robotModbus, modbusMode, speedOve
             <RobotSpeedEditor value={normalizedSpeed} online={online} onChange={onSpeedOverrideChange} compact />
           </div>
         </details>}
-        <button className="extended-control" type="button" onClick={onExtended}>Расширенное управление <ArrowRight size={19} /></button>
+        <ExtendedControlButton onClick={onExtended} />
         <button className="quick-panel-close" type="button" onClick={onClose} title="Закрыть меню"><X /></button>
       </div>
     </header>
@@ -735,24 +823,23 @@ function RobotQuickPanel({ robot, robotManual, robotModbus, modbusMode, speedOve
         </div>
       </div>
       <div className="robot-quick-status-grid">
-        <QuickStatusCard icon={Activity} eyebrow="Координаты" title="Позиция" status={`X ${Math.round(robot.x)} · Y ${Math.round(robot.y)} · Z ${Math.round(robot.z)}`} tone={online ? 'blue' : 'gray'} className="robot-position" />
-        <QuickStatusCard icon={Box} eyebrow="Инструмент" title="Захват 1" status={<>{gripper1}{robot.gripper1Closed && robot.blankProductType > 0 && <ProductTypeBadge type={robot.blankProductType as ProductType} />}</>} tone={gripper1Tone} className={robot.gripper1Closed ? 'holding-blank' : ''} />
-        <QuickStatusCard icon={Box} eyebrow="Инструмент" title="Захват 2" status={<>{gripper2}{robot.gripper2Closed && robot.detailProductType > 0 && <ProductTypeBadge type={robot.detailProductType as ProductType} />}</>} tone={gripper2Tone} className={robot.gripper2Closed ? 'holding-detail' : ''} />
-        <QuickStatusCard icon={RotateCcw} eyebrow="Положение" title="Поворот" status={orientation} tone={orientationTone} />
+        <QuickStatusCard {...triggerProps('position')} icon={Activity} title="Позиция" status={`X ${Math.round(robot.x)} · Y ${Math.round(robot.y)} · Z ${Math.round(robot.z)}`} tone={online ? 'blue' : 'gray'} className={`robot-position ${triggerClass('position')}`} />
+        <QuickStatusCard {...triggerProps('gripper1')} icon={Box} title="Захват 1" status={<>{gripper1}{robot.gripper1Closed && robot.blankProductType > 0 && <ProductTypeBadge type={robot.blankProductType as ProductType} />}</>} tone={gripper1Tone} className={`${triggerClass('gripper1')} ${robot.gripper1Closed ? 'holding-blank' : ''}`} />
+        <QuickStatusCard {...triggerProps('gripper2')} icon={Box} title="Захват 2" status={<>{gripper2}{robot.gripper2Closed && robot.detailProductType > 0 && <ProductTypeBadge type={robot.detailProductType as ProductType} />}</>} tone={gripper2Tone} className={`${triggerClass('gripper2')} ${robot.gripper2Closed ? 'holding-detail' : ''}`} />
+        <QuickStatusCard {...triggerProps('rotation')} icon={RotateCcw} title="Поворот" status={orientation} tone={orientationTone} className={triggerClass('rotation')} />
       </div>
     </div>
+    <RobotQuickControlMenu control={control} open={controlOpen} robot={robot} magazines={magazines} manual={robotManual} axisManual={axisManual} continuousMode={continuousMode} manualStep={manualStep} speedOverridePercent={normalizedSpeed} modbusMode={modbusMode} online={online} triggerRef={controlTriggerRef} onOpenChange={setControlOpen} onSend={onSend} />
   </section>;
 }
 
-function MagazineQuickPanel({ magazines, selectedIndex, onSelect, matrixOpen, onMatrixToggle, onToggleEnabled, onDriveOpen, onIndex, onFill, onClear, onExtended, onClose, className }: {
+function MagazineQuickPanel({ magazines, selectedIndex, onSelect, matrixOpen, onMatrixToggle, onToggleEnabled, onFill, onClear, onExtended, onClose, className }: {
   magazines: CellState['magazines'];
   selectedIndex: number;
   onSelect: (index: number) => void;
   matrixOpen: boolean;
   onMatrixToggle: () => void;
   onToggleEnabled: () => void;
-  onDriveOpen: () => void;
-  onIndex: () => void;
   onFill: () => void;
   onClear: () => void;
   onExtended: () => void;
@@ -761,7 +848,7 @@ function MagazineQuickPanel({ magazines, selectedIndex, onSelect, matrixOpen, on
 }) {
   const magazine = magazines[selectedIndex];
   const state = magazine.state;
-  const slots = magazine.zones[1];
+  const slots = magazine.slots;
   const total = Math.min(slots.length, Math.max(0, state.rows * state.columns));
   const activeSlots = slots.slice(0, total);
   const blanks = activeSlots.filter((slot) => slot === 'blank').length;
@@ -776,10 +863,7 @@ function MagazineQuickPanel({ magazines, selectedIndex, onSelect, matrixOpen, on
   const toggleAllowed = state.enabled || state.enableSequenceAllowed;
   const blanksTone: QuickStatusTone = blanks > 0 ? 'blue' : 'gray';
   const detailsTone: QuickStatusTone = details > 0 ? 'green' : 'gray';
-  const capacityTone: QuickStatusTone = total > 0 ? 'blue' : 'gray';
   const emptyTone: QuickStatusTone = empty > 0 ? 'green' : 'gray';
-  const driveTone: QuickStatusTone = state.powered && state.homed ? 'green' : state.powered ? 'amber' : 'gray';
-  const driveStatus = state.powered ? state.homed ? 'Готов к работе' : 'Требуется Home' : 'Питание выключено';
 
   return <section className={`magazine-quick-panel tone-${statusTone} ${className ?? ''}`} aria-label="Управление магазином">
     <SheetGrip onClose={onClose} />
@@ -787,51 +871,46 @@ function MagazineQuickPanel({ magazines, selectedIndex, onSelect, matrixOpen, on
       <div className="magazine-quick-summary">
         <h2>Магазин {selectedIndex + 1}</h2>
         <p><Indicator active={statusTone !== 'gray'} tone={statusTone === 'gray' ? 'blue' : statusTone} />{statusText}</p>
+        <div className="magazine-quick-mini-actions" aria-label="Команды кассеты">
+          <button className={`magazine-mini-command ${state.fillAllowed ? '' : 'command-unavailable'}`} type="button" onClick={onFill} aria-disabled={!state.fillAllowed} title="Заполнить кассету">
+            <PackagePlus aria-hidden="true" /><span>Заполнить</span>
+          </button>
+          <button className={`magazine-mini-command ${state.clearAllowed ? '' : 'command-unavailable'}`} type="button" onClick={onClear} aria-disabled={!state.clearAllowed} title="Очистить кассету">
+            <Trash2 aria-hidden="true" /><span>Очистить</span>
+          </button>
+        </div>
       </div>
       <nav className="machine-quick-tabs magazine-quick-tabs" aria-label="Выбор магазина">
         {magazines.map((_, index) => <button className={index === selectedIndex ? 'active' : ''} type="button" key={index} onClick={() => onSelect(index)}>Магазин {index + 1}</button>)}
       </nav>
-      <div className="magazine-quick-actions">
-        <button className={`magazine-quick-power ${state.enabled ? 'enabled' : state.enableSequenceAllowed ? 'ready' : ''} ${toggleAllowed ? '' : 'command-unavailable'}`} type="button" onClick={onToggleEnabled} aria-disabled={!toggleAllowed}>
-          <Power /><span>{powerText}</span>
-        </button>
-        <button className={`primary ${state.indexAllowed ? '' : 'command-unavailable'}`} type="button" onClick={onIndex} aria-disabled={!state.indexAllowed}><ArrowRight /><span>{state.indexing ? 'Перемещение…' : 'В рабочую зону'}</span></button>
-        <button className={state.fillAllowed ? '' : 'command-unavailable'} type="button" onClick={onFill} aria-disabled={!state.fillAllowed}><PackagePlus /><span>Заполнить зону загрузки</span></button>
-        <button className={state.clearAllowed ? '' : 'command-unavailable'} type="button" onClick={onClear} aria-disabled={!state.clearAllowed}><Trash2 /><span>Очистить зону загрузки</span></button>
-      </div>
       <div className="quick-panel-header-actions">
-        <button className="extended-control" type="button" onClick={onExtended}>Расширенное управление <ArrowRight size={19} /></button>
+        <ExtendedControlButton onClick={onExtended} />
         <button className="quick-panel-close" type="button" onClick={onClose} title="Закрыть меню"><X /></button>
       </div>
     </header>
-    <div className="magazine-quick-status-grid">
-      <QuickStatusCard icon={Box} eyebrow="Зона загрузки" title="Заготовки" status={blanks > 0 ? 'В наличии' : 'Нет заготовок'} tone={blanksTone} detail={blanks} />
-      <QuickStatusCard icon={Settings} eyebrow="Зона выгрузки" title="Детали" status={details > 0 ? 'В наличии' : 'Нет деталей'} tone={detailsTone} detail={details} />
-      <QuickStatusCard icon={Grid2X2} eyebrow="Вместимость" title="Рабочая зона" status={total > 0 ? 'Ячейки доступны' : 'Нет ячеек'} tone={capacityTone} detail={total} />
-      <QuickStatusCard icon={PackagePlus} eyebrow="Резерв" title="Свободно" status={empty > 0 ? 'Есть свободные места' : 'Нет свободных мест'} tone={emptyTone} detail={empty} />
-      <QuickStatusCard
-        icon={Boxes}
-        eyebrow="Конфигурация"
-        title="Матрица"
-        status={matrixOpen ? 'Открыта' : 'Открыть'}
-        tone="blue"
-        detail={`${state.columns} × ${state.rows}`}
-        className={`magazine-matrix-trigger ${matrixOpen ? 'active' : ''}`}
-        interactive
-        ariaExpanded={matrixOpen}
-        ariaControls={QUICK_MAGAZINE_MATRIX_ID}
-        onClick={onMatrixToggle}
-      />
-      <QuickStatusCard
-        icon={Power}
-        eyebrow="Механизм"
-        title="Привод / Home"
-        status={driveStatus}
-        tone={driveTone}
-        className="magazine-drive-trigger"
-        interactive
-        onClick={onDriveOpen}
-      />
+    <div className="magazine-quick-content-row">
+      <div className="magazine-quick-command-row">
+        <button className={`magazine-quick-power ${state.enabled ? 'enabled' : state.enableSequenceAllowed ? 'ready' : ''} ${toggleAllowed ? '' : 'command-unavailable'}`} type="button" onClick={onToggleEnabled} aria-disabled={!toggleAllowed}>
+          <Power /><span>{powerText}</span>
+        </button>
+      </div>
+      <div className="magazine-quick-status-grid">
+        <QuickStatusCard icon={Box} title="Заготовки" status={blanks > 0 ? 'В наличии' : 'Нет заготовок'} tone={blanksTone} detail={blanks} />
+        <QuickStatusCard icon={Settings} title="Детали" status={details > 0 ? 'В наличии' : 'Нет деталей'} tone={detailsTone} detail={details} />
+        <QuickStatusCard icon={PackagePlus} title="Свободно" status={empty > 0 ? 'Есть свободные места' : 'Нет свободных мест'} tone={emptyTone} detail={empty} />
+        <QuickStatusCard
+          icon={Boxes}
+          title="Матрица"
+          status={matrixOpen ? 'Открыта' : 'Открыть'}
+          tone="blue"
+          detail={`${state.columns} × ${state.rows}`}
+          className={`magazine-matrix-trigger ${matrixOpen ? 'active' : ''}`}
+          interactive
+          ariaExpanded={matrixOpen}
+          ariaControls={QUICK_MAGAZINE_MATRIX_ID}
+          onClick={onMatrixToggle}
+        />
+      </div>
     </div>
   </section>;
 }
@@ -896,7 +975,7 @@ function MachinesQuickPanel({ machines, selectedIndex, activeMechanism, usePlcDa
         {machines.map((_, index) => <button className={index === selectedIndex ? 'active' : ''} type="button" key={index} onClick={() => onSelect(index)}>Станок {index + 1}</button>)}
       </nav>
       <div className="quick-panel-header-actions">
-        <button className="extended-control" type="button" onClick={() => onExtended(selectedIndex)}>Расширенное управление <ArrowRight size={19} /></button>
+        <ExtendedControlButton onClick={() => onExtended(selectedIndex)} />
         <button className="quick-panel-close" type="button" onClick={onClose} title="Закрыть меню"><X /></button>
       </div>
     </header>
@@ -907,10 +986,10 @@ function MachinesQuickPanel({ machines, selectedIndex, activeMechanism, usePlcDa
         </button>
       </div>
       <div className="machine-quick-status-grid">
-        <QuickStatusCard icon={DoorOpen} eyebrow="Механика" title="Дверь" status={doorText} tone={doorTone} className={activeMechanism === 'door' ? 'machine-mechanism-trigger active' : 'machine-mechanism-trigger'} interactive ariaExpanded={activeMechanism === 'door'} onClick={() => onMechanismSelect(activeMechanism === 'door' ? null : 'door')} />
-        <QuickStatusCard icon={PackageOpen} eyebrow="Механика" title="Люк" status={hatchText} tone={hatchTone} className={activeMechanism === 'hatch' ? 'machine-mechanism-trigger active' : 'machine-mechanism-trigger'} interactive ariaExpanded={activeMechanism === 'hatch'} onClick={() => onMechanismSelect(activeMechanism === 'hatch' ? null : 'hatch')} />
-        <QuickStatusCard icon={Disc3} eyebrow="Оснастка" title="Патрон" status={chuckText} tone={chuckTone} className={activeMechanism === 'chuck' ? 'machine-mechanism-trigger active' : 'machine-mechanism-trigger'} interactive ariaExpanded={activeMechanism === 'chuck'} onClick={() => onMechanismSelect(activeMechanism === 'chuck' ? null : 'chuck')} />
-        <QuickStatusCard icon={Box} eyebrow="Изделие" title="Обработка" status={product.text} tone={productTone} className={`machine-product ${product.kind}`} />
+        <QuickStatusCard icon={DoorOpen} title="Дверь" status={doorText} tone={doorTone} className={activeMechanism === 'door' ? 'machine-mechanism-trigger active' : 'machine-mechanism-trigger'} interactive ariaExpanded={activeMechanism === 'door'} onClick={() => onMechanismSelect(activeMechanism === 'door' ? null : 'door')} />
+        <QuickStatusCard icon={PackageOpen} title="Люк" status={hatchText} tone={hatchTone} className={activeMechanism === 'hatch' ? 'machine-mechanism-trigger active' : 'machine-mechanism-trigger'} interactive ariaExpanded={activeMechanism === 'hatch'} onClick={() => onMechanismSelect(activeMechanism === 'hatch' ? null : 'hatch')} />
+        <QuickStatusCard icon={Disc3} title="Патрон" status={chuckText} tone={chuckTone} className={activeMechanism === 'chuck' ? 'machine-mechanism-trigger active' : 'machine-mechanism-trigger'} interactive ariaExpanded={activeMechanism === 'chuck'} onClick={() => onMechanismSelect(activeMechanism === 'chuck' ? null : 'chuck')} />
+        <QuickStatusCard icon={Box} title="Обработка" status={product.text} tone={productTone} className={`machine-product ${product.kind}`} />
       </div>
     </div>
     {activeMechanism && <MachineManualControlMenu machineIndex={selectedIndex} machine={machine} mechanism={activeMechanism} usePlcData={usePlcData} onRequest={onMechanismRequest} onClose={() => onMechanismSelect(null)} />}
@@ -940,8 +1019,14 @@ function robotOverviewStatus(state: CellState, runtime: PlcRuntimeInfo, connecte
   if (state.robot.error) return { text: 'Авария', tone: 'red' };
   if (runtime.globalError) return { text: 'Остановлен общей аварией', tone: 'red' };
   if (!dataActive) return { text: state.robot.busy ? 'Локальная модель · движение' : 'Локальная модель', tone: 'amber' };
-  if (!runtime.drivesReady) return { text: 'Приводы выключены', tone: 'gray' };
-  if (state.robot.busy) return { text: runtime.robotStep, tone: 'blue' };
+  // xDrivesReady includes "axis can start a new motion", so it legitimately
+  // becomes FALSE while JOG is running. Power state must come from the actual
+  // drive feedback, otherwise the overview lies exactly during movement.
+  if (runtime.robotManual.drivesOff) return { text: 'Приводы выключены', tone: 'gray' };
+  if (!runtime.robotManual.drivesPowered) return { text: 'Приводы не готовы', tone: 'amber' };
+  if (state.robot.busy || runtime.axisManual.some((axis) => axis.busy)) {
+    return { text: 'Перемещается', tone: 'blue' };
+  }
   if (runtime.robotReady) return { text: 'Готов', tone: 'green' };
   if (runtime.robotStateCode === 5) return { text: 'Ожидает команду Modbus', tone: 'amber' };
   return { text: runtime.robotStep || 'Ожидает команду', tone: 'amber' };
@@ -1215,8 +1300,22 @@ function AlarmScreen({ events, online, resetAllowed, onResetWarnings, onResetAla
 function loadLayout(): CellLayout {
   const fallback = cloneLayout();
   try {
-    const saved = JSON.parse(localStorage.getItem(LAYOUT_STORAGE_KEY) ?? '{}') as Partial<CellLayout> & { indexedConveyor?: CellLayout['indexedConveyors'][number] };
-    const savedConveyors = saved.indexedConveyors ?? (saved.indexedConveyor ? [saved.indexedConveyor, fallback.indexedConveyors[1]] : fallback.indexedConveyors);
+    const currentRaw = localStorage.getItem(LAYOUT_STORAGE_KEY);
+    const legacyRaw = LEGACY_LAYOUT_STORAGE_KEYS
+      .map((key) => localStorage.getItem(key))
+      .find((value): value is string => value !== null);
+    const parsed = JSON.parse(currentRaw ?? legacyRaw ?? '{}') as StoredLayout;
+    const repairPending = localStorage.getItem(LAYOUT_REPAIR_STORAGE_KEY) !== 'done';
+    const saved = repairPending && isAccidentallyResetLayout(parsed) ? {} : parsed;
+    const savedGeometry = saved.partGeometry;
+    const legacyPayloadPoses = saved.gripperPayloadPoses;
+    const legacyPose = legacyPayloadPoses?.blank ?? legacyPayloadPoses?.detail;
+    const diameter = savedGeometry?.diameter ?? savedGeometry?.blankDiameter ?? fallback.partGeometry.diameter;
+    const length = savedGeometry?.length ?? savedGeometry?.blankLength ?? fallback.partGeometry.length;
+    const pose = saved.gripperPayloadPose ?? legacyPose ?? fallback.gripperPayloadPose;
+    const savedStaticMagazines = saved.staticMagazines?.length === fallback.staticMagazines.length
+      ? saved.staticMagazines
+      : undefined;
     return {
       ...fallback,
       ...saved,
@@ -1225,26 +1324,23 @@ function loadLayout(): CellLayout {
       machine: { ...fallback.machine, ...saved.machine, machines: saved.machine?.machines ?? fallback.machine.machines },
       portal: { ...fallback.portal, ...saved.portal },
       robot: { ...fallback.robot, ...saved.robot },
-      partGeometry: { ...fallback.partGeometry, ...saved.partGeometry },
+      partGeometry: { diameter, length },
       productPartMaterials: fallback.productPartMaterials.map((materials, index) => ({
         blank: { ...materials.blank, ...saved.productPartMaterials?.[index]?.blank },
         detail: { ...materials.detail, ...saved.productPartMaterials?.[index]?.detail },
       })) as CellLayout['productPartMaterials'],
-      gripperPayloadPoses: {
-        blank: {
-          offset: { ...fallback.gripperPayloadPoses.blank.offset, ...saved.gripperPayloadPoses?.blank?.offset },
-          rotationDeg: { ...fallback.gripperPayloadPoses.blank.rotationDeg, ...saved.gripperPayloadPoses?.blank?.rotationDeg },
-        },
-        detail: {
-          offset: { ...fallback.gripperPayloadPoses.detail.offset, ...saved.gripperPayloadPoses?.detail?.offset },
-          rotationDeg: { ...fallback.gripperPayloadPoses.detail.rotationDeg, ...saved.gripperPayloadPoses?.detail?.rotationDeg },
-        },
+      gripperPayloadPose: {
+        offset: { ...fallback.gripperPayloadPose.offset, ...pose.offset },
+        rotationDeg: { ...fallback.gripperPayloadPose.rotationDeg, ...pose.rotationDeg },
       },
-      indexedConveyors: fallback.indexedConveyors.map((conveyor, index) => ({
-        ...conveyor,
-        ...savedConveyors[index],
-        position: { ...conveyor.position, ...savedConveyors[index]?.position },
-      })) as CellLayout['indexedConveyors'],
+      staticMagazines: fallback.staticMagazines.map((magazine, index) => ({
+        ...magazine,
+        ...savedStaticMagazines?.[index],
+        position: {
+          ...magazine.position,
+          ...savedStaticMagazines?.[index]?.position,
+        },
+      })),
       animation: { ...fallback.animation, ...saved.animation },
     };
   } catch {
@@ -1324,7 +1420,7 @@ function createSceneActivity(
       : []
   ));
   const activeMagazines = state.magazines.flatMap((magazine, index) => (
-    magazine.state.busy || magazine.state.indexing || magazine.state.actualOperation !== 'NONE'
+    magazine.state.busy || magazine.state.actualOperation !== 'NONE'
       ? [index]
       : []
   ));
@@ -1518,127 +1614,73 @@ function MagazineScreen({ magazine, magazineNumber, step, typeCount, onClose, on
   onCommand: (action: string) => void;
   onFill: () => void;
   onClear: () => void;
-  onSlotApply: (index: number, content: SlotType, productType: ProductType, zone: 1 | 2) => void;
+  onSlotApply: (index: number, content: SlotType, productType: ProductType) => void;
   onSetting: (command: string, key: keyof CellState['magazines'][number]['state'], value: number) => void;
   className?: string;
 }) {
-  const [zone, setZone] = useState<1 | 2>(1);
   const [editContent, setEditContent] = useState<SlotType>('blank');
   const [editProductType, setEditProductType] = useState<ProductType>(1);
   useEffect(() => {
     if (editProductType > typeCount) setEditProductType(1);
   }, [editProductType, typeCount]);
   const state = magazine.state;
-  const slots = magazine.zones[zone - 1];
-  const productTypes = magazine.zoneProductTypes[zone - 1];
+  const slots = magazine.slots;
+  const productTypes = magazine.productTypes;
   const activeCount = Math.min(slots.length, state.rows * state.columns);
   const activeSlots = slots.slice(0, activeCount);
   const blanks = activeSlots.filter((slot) => slot === 'blank').length;
   const details = activeSlots.filter((slot) => slot === 'detail').length;
   const empty = activeCount - blanks - details;
-  const statusText = state.error || state.axisError ? 'Авария магазина' : state.indexing ? 'Индексирование' : state.disablePending ? 'Отключение после операции' : state.enabled ? 'Магазин включён' : 'Магазин отключён';
+  const statusText = state.error ? 'Авария магазина' : state.disablePending ? 'Отключение после выхода робота' : state.enabled ? 'Магазин включён' : 'Магазин отключён';
   const operationText = { NONE: 'Нет операции', PUT: 'Приём детали', TAKE: 'Выдача заготовки', CHANGE: 'Смена детали', RETURN_BLANK: 'Возврат заготовки' }[state.actualOperation];
-  const setting = (label: string, command: string, key: keyof typeof state, min: number, max: number, stepValue = 1) => <label className="magazine-setting"><span>{label}</span><input type="number" value={state[key] as number} min={min} max={max} step={stepValue} disabled={state.busy || state.indexing} onChange={(event) => onSetting(command, key, Number(event.target.value))} /></label>;
+  const setting = (label: string, command: string, key: keyof typeof state, min: number, max: number, stepValue = 1, allowed = state.editAllowed) => <label className="magazine-setting"><span>{label}</span><input type="number" value={state[key] as number} min={min} max={max} step={stepValue} disabled={!allowed} onChange={(event) => onSetting(command, key, Number(event.target.value))} /></label>;
   return <section className={`magazine-screen ${className ?? ''}`} onPointerDown={(event) => event.stopPropagation()}>
-    <header className="magazine-screen-head"><div><span>ОБОРУДОВАНИЕ · МАГАЗИН {magazineNumber}</span><h2>Расширенное управление магазином</h2><p><Indicator active={state.enabled && !state.error} tone={state.error || state.axisError ? 'red' : state.indexing || state.disablePending ? 'amber' : 'green'} />{statusText}</p></div><button type="button" onClick={onClose} title="Закрыть"><X /></button></header>
+    <header className="magazine-screen-head"><div><span>ОБОРУДОВАНИЕ · МАГАЗИН {magazineNumber}</span><h2>Расширенное управление магазином</h2><p><Indicator active={state.enabled && !state.error} tone={state.error ? 'red' : state.disablePending ? 'amber' : 'green'} />{statusText}</p></div><button type="button" onClick={onClose} title="Закрыть"><X /></button></header>
     <div className="magazine-command-row">
       <button className={`magazine-power ${state.enabled ? 'enabled' : state.enableSequenceAllowed ? 'ready' : ''} ${(state.enabled || state.enableSequenceAllowed) ? '' : 'command-unavailable'}`} type="button" onClick={onToggleEnabled} aria-disabled={!(state.enabled || state.enableSequenceAllowed)}><Power /><span>{state.enabled ? 'Выключить магазин' : 'Включить магазин'}</span></button>
-      <button className={state.indexAllowed ? 'primary' : 'command-unavailable'} type="button" onClick={() => onCommand('index')} aria-disabled={!state.indexAllowed}><ArrowRight /><span>В рабочую зону</span></button>
       <button type="button" onClick={() => onCommand('stop')}><AlertCircle /><span>Стоп</span></button>
       <button type="button" onClick={() => onCommand('reset')}><RotateCcw /><span>Сброс</span></button>
-      <button className={state.fillAllowed ? '' : 'command-unavailable'} type="button" onClick={onFill} aria-disabled={!state.fillAllowed}><PackagePlus /><span>Заполнить зону загрузки</span></button>
-      <button className={`clear ${state.clearAllowed ? '' : 'command-unavailable'}`} type="button" onClick={onClear} aria-disabled={!state.clearAllowed}><Trash2 /><span>Очистить зону загрузки</span></button>
+      <button className={state.fillAllowed ? '' : 'command-unavailable'} type="button" onClick={onFill} aria-disabled={!state.fillAllowed}><PackagePlus /><span>Заполнить кассету</span></button>
+      <button className={`clear ${state.clearAllowed ? '' : 'command-unavailable'}`} type="button" onClick={onClear} aria-disabled={!state.clearAllowed}><Trash2 /><span>Очистить кассету</span></button>
     </div>
     <div className="magazine-screen-grid">
-      <section className="magazine-map-panel"><div className="magazine-section-head"><div><span>СОДЕРЖИМОЕ</span><h3>{zone === 1 ? 'Зона загрузки' : 'Зона работы'} · {state.columns} × {state.rows}</h3></div><div className="magazine-edit-mode"><button className={zone === 1 ? 'active' : ''} type="button" onClick={() => setZone(1)}>Зона загрузки</button><button className={zone === 2 ? 'active' : ''} type="button" onClick={() => setZone(2)}>Зона работы</button></div></div><div className="magazine-slot-editor"><div><span>Записывать в слот</span><div className="magazine-content-selector"><button className={editContent === 'empty' ? 'active' : ''} type="button" onClick={() => setEditContent('empty')}>Пусто</button><button className={editContent === 'blank' ? 'active' : ''} type="button" onClick={() => setEditContent('blank')}>Заготовка</button><button className={editContent === 'detail' ? 'active' : ''} type="button" onClick={() => setEditContent('detail')}>Изделие</button></div></div><ProductTypeSelector label="Тип изделия" value={editProductType} count={typeCount} disabled={editContent === 'empty'} onChange={setEditProductType} /></div><div className="magazine-map"><MagazineMatrix slots={slots} productTypes={productTypes} columns={state.columns} activeCount={activeCount} onSlotClick={(zone === 1 ? state.zone1EditAllowed : state.zone2EditAllowed) ? (index) => onSlotApply(index, editContent, editProductType, zone) : undefined} /></div><div className="magazine-map-footer"><span><i className="slot blank" />Заготовки <b>{blanks}</b></span><span><i className="slot detail" />Детали <b>{details}</b></span><span><i className="slot empty" />Пусто <b>{empty}</b></span><strong>{(zone === 1 ? state.zone1EditAllowed : state.zone2EditAllowed) ? 'Редактирование разрешено' : 'PLC сейчас запрещает изменение'}</strong></div></section>
+      <section className="magazine-map-panel"><div className="magazine-section-head"><div><span>СОДЕРЖИМОЕ</span><h3>Кассета · {state.columns} × {state.rows}</h3></div></div><div className="magazine-slot-editor"><div><span>Записывать в слот</span><div className="magazine-content-selector"><button className={editContent === 'empty' ? 'active' : ''} type="button" onClick={() => setEditContent('empty')}>Пусто</button><button className={editContent === 'blank' ? 'active' : ''} type="button" onClick={() => setEditContent('blank')}>Заготовка</button><button className={editContent === 'detail' ? 'active' : ''} type="button" onClick={() => setEditContent('detail')}>Изделие</button></div></div><ProductTypeSelector label="Тип изделия" value={editProductType} count={typeCount} disabled={editContent === 'empty' || !state.editAllowed} onChange={setEditProductType} /></div><div className="magazine-map"><MagazineMatrix slots={slots} productTypes={productTypes} columns={state.columns} activeCount={activeCount} onSlotClick={state.editAllowed ? (index) => onSlotApply(index, editContent, editProductType) : undefined} /></div><div className="magazine-map-footer"><span><i className="slot blank" />Заготовки <b>{blanks}</b></span><span><i className="slot detail" />Детали <b>{details}</b></span><span><i className="slot empty" />Пусто <b>{empty}</b></span><strong>{state.editAllowed ? 'Редактирование разрешено' : 'Редактирование доступно только при выключенном магазине'}</strong></div></section>
       <aside className="magazine-side-column">
-        <section className="magazine-diagnostics"><div className="magazine-section-head"><div><span>ДИАГНОСТИКА</span><h3>{step}</h3></div></div><div className="diagnostic-list"><span>Привод <b>{state.powered ? 'Включён' : 'Выключен'}</b></span><span>Home <b>{state.homed ? 'Найден' : 'Не найден'}</b></span><span>Позиция <b>{state.axisPosition.toFixed(1)} мм</b></span><span>Карта позиции <b>{state.positionValid ? 'Согласована' : 'Недостоверна'}</b></span><span>Текущая операция <b>{operationText}</b></span><span>TAKE / PUT / CHANGE <b>{state.canTake ? 'Да' : 'Нет'} / {state.canPut ? 'Да' : 'Нет'} / {state.canChange ? 'Да' : 'Нет'}</b></span></div>{(state.recoveryRequired || state.inventoryVerificationRequired || state.contentRecoveryActive) && <div className="magazine-recovery-actions"><div className="magazine-warning"><AlertCircle /><span>{state.contentRecoveryActive ? 'Сверьте зону загрузки и зону работы с физическим магазином' : state.inventoryVerificationRequired ? 'После ошибки робота требуется сверка содержимого' : 'Требуется Home и сверка зон'}</span></div>{!state.contentRecoveryActive && <button className={state.contentRecoveryAllowed ? 'primary' : 'command-unavailable'} type="button" aria-disabled={!state.contentRecoveryAllowed} onClick={() => state.contentRecoveryAllowed && onCommand('startContentRecovery')}>Начать восстановление</button>}{state.contentRecoveryActive && <><button type="button" onClick={() => onCommand('clearRecoveryZones')}><Trash2 />Очистить все зоны</button><button className="primary" type="button" onClick={() => onCommand('confirmRecovery')}><CheckCircle2 />Содержимое соответствует</button></>}</div>}{state.activeErrors.length ? <div className="magazine-error"><AlertCircle /><span>{state.activeErrors[0]}</span></div> : <div className="magazine-ok"><CheckCircle2 /><span>{state.axisStep || 'Активных ошибок нет'}</span></div>}</section>
-        <section className="magazine-settings"><div className="magazine-section-head"><div><span>НАСТРОЙКИ</span><h3>Рабочая геометрия</h3></div><Settings /></div><div className="magazine-settings-grid">{setting('Шаг по X, мм', 'magazine.pitchX', 'pitchX', 1, 5000, 0.1)}{setting('Шаг по Y, мм', 'magazine.pitchY', 'pitchY', 1, 5000, 0.1)}{setting('Safe Z, мм', 'magazine.safeAbove', 'safeAbove', -10000, 10000, 0.1)}{setting('Change Z, мм', 'magazine.safeInside', 'safeInside', -10000, 10000, 0.1)}</div></section>
+        <section className="magazine-diagnostics"><div className="magazine-section-head"><div><span>ДИАГНОСТИКА</span><h3>{step}</h3></div></div><div className="diagnostic-list"><span>Текущая операция <b>{operationText}</b></span><span>TAKE / PUT / CHANGE <b>{state.canTake ? 'Да' : 'Нет'} / {state.canPut ? 'Да' : 'Нет'} / {state.canChange ? 'Да' : 'Нет'}</b></span><span>Робот готов к магазину <b>{state.enableCheckRobotReady ? 'Да' : 'Нет'}</b></span><span>Геометрия кассеты <b>{state.enableCheckGeometry ? 'Настроена' : 'Некорректна'}</b></span></div>{state.activeErrors.length ? <div className="magazine-error"><AlertCircle /><span>{state.activeErrors[0]}</span></div> : <div className="magazine-ok"><CheckCircle2 /><span>Активных ошибок нет</span></div>}</section>
+        <section className="magazine-settings"><div className="magazine-section-head"><div><span>НАСТРОЙКИ</span><h3>Рабочая геометрия</h3></div><Settings /></div><div className="magazine-settings-grid">{setting('Шаг по X, мм', 'magazine.pitchX', 'pitchX', 1, 5000, 0.1, state.pitchEditAllowed)}{setting('Шаг по Y, мм', 'magazine.pitchY', 'pitchY', 1, 5000, 0.1, state.pitchEditAllowed)}{setting('Safe Z, мм', 'magazine.safeAbove', 'safeAbove', -10000, 10000, 0.1)}{setting('Change Z, мм', 'magazine.safeInside', 'safeInside', -10000, 10000, 0.1)}</div></section>
       </aside>
     </div>
   </section>;
 }
 
-function MagazineHomeConfirmation({ magazineNumber, onConfirm, onCancel }: { magazineNumber: number; onConfirm: () => void; onCancel: () => void }) {
-  return <div className="confirmation-overlay magazine-home-confirmation" role="dialog" aria-modal="true" aria-label={`Поиск домашней позиции магазина ${magazineNumber}`} onPointerDown={(event) => event.stopPropagation()}>
-    <section>
-      <div className="confirmation-warning-icon"><TriangleAlert /></div>
-      <span>ПЕРЕМЕЩЕНИЕ ОБОРУДОВАНИЯ</span>
-      <h2>Поиск Home магазина {magazineNumber}</h2>
-      <p>Во время поиска домашней позиции конвейер начнёт движение. Загруженные изделия могут опрокинуться и упасть на нижний конвейер. Убедитесь, что зона движения свободна.</p>
-      <div><button type="button" onClick={onCancel}>Отмена</button><button className="primary" type="button" onClick={onConfirm}><Home />Начать поиск Home</button></div>
-    </section>
-  </div>;
-}
-
-function MagazineReadinessDialog({ magazineNumber, state, onClose, onDrive, onRecovery }: {
+function MagazineReadinessDialog({ magazineNumber, state, onClose }: {
   magazineNumber: number;
   state: CellState['magazines'][number]['state'];
   onClose: () => void;
-  onDrive: () => void;
-  onRecovery: () => void;
 }) {
   const checks: Array<[string, boolean, string]> = [
-    ['Питание привода', state.enableCheckPowered, 'Включите привод в меню «Привод / Home»'],
-    ['Домашняя позиция', state.enableCheckHomed, 'Выполните Home отдельной командой'],
-    ['Позиция и карта зон согласованы', state.enableCheckPositionValid, 'Требуется Home и сверка содержимого'],
-    ['Магазин неподвижен и выключен', state.enableCheckStationary, 'Дождитесь остановки и технологического отключения'],
-    ['Нет активных ошибок', state.enableCheckNoError, 'Устраните ошибку и выполните Reset'],
+    ['Робот готов работать с магазином', state.enableCheckRobotReady, 'Проверьте интерфейс робота, таблицу точек и ошибки робота'],
     ['Робот освободил магазин', state.enableCheckRobotReleased, 'Дождитесь выхода робота из магазина'],
-    ['Зона работы позволяет выполнить операцию', state.enableCheckContent, 'Исправьте зону работы или переместите загруженную зону загрузки'],
-    ['Содержимое подтверждено', state.enableCheckInventoryVerified, 'Запустите восстановление и сверьте зону загрузки / зону работы'],
+    ['Нет активных ошибок', state.enableCheckNoError, 'Устраните ошибку и выполните Reset'],
+    ['Содержимое позволяет выполнить операцию', state.enableCheckContent, 'Заполните или отредактируйте кассету'],
+    ['Геометрия кассеты настроена', state.enableCheckGeometry, 'Проверьте размеры матрицы и шаг между слотами'],
   ];
   const readyCount = checks.filter(([, ready]) => ready).length;
   return <div className="confirmation-overlay magazine-readiness-overlay" role="dialog" aria-modal="true" aria-label={`Готовность магазина ${magazineNumber}`} onPointerDown={(event) => event.stopPropagation()}>
     <section className="magazine-readiness-card">
       <header><div><span>ВВОД В АВТОМАТ</span><h2>Магазин {magazineNumber}</h2><p>{readyCount} из {checks.length} условий выполнено</p></div><button type="button" onClick={onClose}><X /></button></header>
       <div className="magazine-readiness-list">{checks.map(([title, ready, hint]) => <div className={ready ? 'ready' : 'blocked'} key={title}>{ready ? <CheckCircle2 /> : <AlertCircle />}<span><strong>{title}</strong><small>{ready ? 'Готово' : hint}</small></span></div>)}</div>
-      <footer>
-        <button type="button" onClick={onDrive}><Power />Привод / Home</button>
-        {(state.contentRecoveryAllowed || state.contentRecoveryActive || state.inventoryVerificationRequired || state.recoveryRequired) && <button type="button" onClick={onRecovery}><Grid2X2 />Сверить содержимое</button>}
-        <button className="primary" type="button" onClick={onClose}>Закрыть</button>
-      </footer>
-    </section>
-  </div>;
-}
-
-function MagazineDriveDialog({ magazineNumber, state, onClose, onCommand, onHome, onJog }: {
-  magazineNumber: number;
-  state: CellState['magazines'][number]['state'];
-  onClose: () => void;
-  onCommand: (action: string) => void;
-  onHome: () => void;
-  onJog: (direction: 'jogPositive' | 'jogNegative', active: boolean) => void;
-}) {
-  const homeAllowed = state.powered && !state.enabled && !state.busy && !state.axisError;
-  const jogButton = (direction: 'jogPositive' | 'jogNegative', label: string, allowed: boolean) => <button
-    className={`magazine-jog-button ${allowed ? '' : 'command-unavailable'}`}
-    type="button"
-    aria-disabled={!allowed}
-    onPointerDown={(event) => { if (!allowed) return; event.currentTarget.setPointerCapture(event.pointerId); onJog(direction, true); }}
-    onPointerUp={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); onJog(direction, false); }}
-    onPointerCancel={() => onJog(direction, false)}
-    onLostPointerCapture={() => onJog(direction, false)}
-  ><ChevronRight className={direction === 'jogNegative' ? 'reverse' : ''} />{label}<small>Удерживать</small></button>;
-  return <div className="confirmation-overlay magazine-drive-overlay" role="dialog" aria-modal="true" aria-label={`Привод магазина ${magazineNumber}`} onPointerDown={(event) => event.stopPropagation()}>
-    <section className="magazine-drive-card">
-      <header><div><span>МАГАЗИН {magazineNumber}</span><h2>Привод и домашняя позиция</h2></div><button type="button" onClick={onClose}><X /></button></header>
-      <div className="magazine-drive-status"><div><Power /><span>Питание</span><strong>{state.powered ? 'Включено' : 'Выключено'}</strong></div><div><Home /><span>Home</span><strong>{state.homed ? 'Найден' : 'Не найден'}</strong></div><div><Activity /><span>Позиция</span><strong>{state.axisPosition.toFixed(1)} мм</strong></div></div>
-      {state.enabled && <div className="magazine-warning"><LockKeyhole /><span>Сначала выключите магазин из автоматической работы</span></div>}
-      <div className="magazine-drive-actions">
-        <button className={state.powerAllowed ? '' : 'command-unavailable'} type="button" aria-disabled={!state.powerAllowed} onClick={() => state.powerAllowed && onCommand(state.powered ? 'powerOff' : 'powerOn')}><Power />{state.powered ? 'Отключить привод' : 'Включить привод'}</button>
-        <button className={homeAllowed ? '' : 'command-unavailable'} type="button" aria-disabled={!homeAllowed} onClick={() => homeAllowed && onHome()}><Home />Найти Home</button>
-        <button type="button" onClick={() => onCommand('stop')}><AlertCircle />Стоп</button>
-        <button type="button" onClick={() => onCommand('reset')}><RotateCcw />Сброс</button>
-      </div>
-      <div className="magazine-jog-row">{jogButton('jogNegative', 'Назад', state.jogNegativeAllowed)}{jogButton('jogPositive', 'Вперёд', state.jogPositiveAllowed)}</div>
-      <p>Любой JOG очищает логическую карту зон. После ручного движения обязательны Home и сверка содержимого.</p>
+      <footer><button className="primary" type="button" onClick={onClose}>Закрыть</button></footer>
     </section>
   </div>;
 }
 
 function Toggle({ checked, label, onChange, disabled = false }: { checked: boolean; label: string; onChange: (value: boolean) => void; disabled?: boolean }) {
-  return <label className={`toggle-row ${disabled ? 'disabled' : ''}`}><span>{label}</span><input type="checkbox" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} /><i /></label>;
+  return <label className={`toggle-row ${disabled ? 'disabled' : ''}`}>
+    <span>{label}</span>
+    <input type="checkbox" checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} />
+    <i />
+  </label>;
 }
 
 function NumberField({ label, value, unit = 'мм', min = -3000, max = 18000, step = 10, labelPosition = 'inline', onChange }: {
@@ -1706,7 +1748,9 @@ function SettingsPanel({ layout, setLayout, fontPreset, onFontPreset, easterEggM
   const change = (edit: (draft: CellLayout) => void) => { const next = structuredClone(layout); edit(next); setLayout(next); };
   const changeDrift = (edit: (draft: DriftSettings) => void) => { const next = structuredClone(driftSettings); edit(next); onDriftSettings(normalizeDriftSettings(next)); };
   const toggleVisualEffect = (key: keyof VisualEffectSettings) => onVisualEffectsChange({ ...visualEffects, [key]: !visualEffects[key] });
-  const maxPartDiameter = Math.max(10, Math.min(...layout.indexedConveyors.flatMap((conveyor) => [conveyor.pitchX, conveyor.pitchY])) - 6);
+  const magazinePitches = layout.staticMagazines.flatMap((magazine) => [magazine.pitchX, magazine.pitchY]);
+  const maxPartDiameter = Math.max(10, Math.min(...magazinePitches) - 6);
+  const requiredStaticMagazinePitch = Math.ceil(layout.partGeometry.diameter + 6);
   const activeTopicIndex = SETTINGS_TOPICS.findIndex((topic) => topic.id === activeTopic);
   const selectTopic = (topic: SettingsTopic) => {
     const nextIndex = SETTINGS_TOPICS.findIndex((item) => item.id === topic);
@@ -1775,23 +1819,14 @@ function SettingsPanel({ layout, setLayout, fontPreset, onFontPreset, easterEggM
         <NumberField label="Ход двери" labelPosition="above" value={layout.machine.doorTravel} min={100} max={2500} onChange={(v) => change((d) => { d.machine.doorTravel = v; })} />
       </div>{layout.machine.machines.map((machine, index) => <div className="position-row" key={index}><b>Станок {index + 1}</b><NumberField label="Позиция X" labelPosition="above" value={machine.position.x} onChange={(v) => change((d) => { d.machine.machines[index].position.x = v; })} /><NumberField label="Позиция Y" labelPosition="above" value={machine.position.y} onChange={(v) => change((d) => { d.machine.machines[index].position.y = v; })} /></div>)}</section>}
       {activeTopic === 'product' && <section className="part-visual-settings"><h3>Единая геометрия изделия</h3><div className="field-grid">
-        <NumberField label="Заготовка · диаметр" labelPosition="above" value={layout.partGeometry.blankDiameter} min={10} max={maxPartDiameter} step={1} onChange={(v) => change((d) => { d.partGeometry.blankDiameter = Math.min(maxPartDiameter, Math.max(10, v)); })} />
-        <NumberField label="Заготовка · длина" labelPosition="above" value={layout.partGeometry.blankLength} min={10} max={250} step={1} onChange={(v) => change((d) => { d.partGeometry.blankLength = Math.min(250, Math.max(10, v)); })} />
-        <NumberField label="Деталь · диаметр корпуса" labelPosition="above" value={layout.partGeometry.detailBodyDiameter} min={10} max={maxPartDiameter} step={1} onChange={(v) => change((d) => { d.partGeometry.detailBodyDiameter = Math.min(maxPartDiameter, Math.max(10, v)); })} />
-        <NumberField label="Деталь · длина корпуса" labelPosition="above" value={layout.partGeometry.detailBodyLength} min={10} max={250} step={1} onChange={(v) => change((d) => { d.partGeometry.detailBodyLength = Math.min(250, Math.max(10, v)); })} />
-        <NumberField label="Буртик · диаметр" labelPosition="above" value={layout.partGeometry.detailShoulderDiameter} min={10} max={maxPartDiameter} step={1} onChange={(v) => change((d) => { d.partGeometry.detailShoulderDiameter = Math.min(maxPartDiameter, Math.max(10, v)); })} />
-        <NumberField label="Буртик · длина" labelPosition="above" value={layout.partGeometry.detailShoulderLength} min={5} max={150} step={1} onChange={(v) => change((d) => { d.partGeometry.detailShoulderLength = Math.min(150, Math.max(5, v)); })} />
-        <NumberField label="Буртик · смещение" labelPosition="above" value={layout.partGeometry.detailShoulderOffset} min={-125} max={125} step={1} onChange={(v) => change((d) => { d.partGeometry.detailShoulderOffset = Math.min(125, Math.max(-125, v)); })} />
+        <NumberField label="Диаметр изделия" labelPosition="above" value={layout.partGeometry.diameter} min={10} max={maxPartDiameter} step={1} onChange={(v) => change((d) => { d.partGeometry.diameter = Math.min(maxPartDiameter, Math.max(10, v)); })} />
+        <NumberField label="Длина изделия" labelPosition="above" value={layout.partGeometry.length} min={10} max={250} step={1} onChange={(v) => change((d) => { d.partGeometry.length = Math.min(250, Math.max(10, v)); })} />
       </div></section>}
-      {activeTopic === 'product' && <section className="part-visual-settings"><h3>Положение изделия в захвате</h3><div className="payload-pose-list">{(['blank', 'detail'] as const).map((kind) => {
-        const pose = layout.gripperPayloadPoses[kind];
-        const title = kind === 'blank' ? 'Заготовка' : 'Деталь';
-        return <div className="payload-pose-editor" key={kind}>
-          <strong>{title}</strong>
-          <PoseVectorField label="Смещение" unit="мм" value={pose.offset} min={-200} max={200} onChange={(axis, value) => change((d) => { d.gripperPayloadPoses[kind].offset[axis] = value; })} />
-          <PoseVectorField label="Поворот" unit="градусы" value={pose.rotationDeg} min={-180} max={180} onChange={(axis, value) => change((d) => { d.gripperPayloadPoses[kind].rotationDeg[axis] = value; })} />
-        </div>;
-      })}</div></section>}
+      {activeTopic === 'product' && <section className="part-visual-settings"><h3>Положение изделия в захвате</h3><div className="payload-pose-list"><div className="payload-pose-editor">
+        <strong>Изделие</strong>
+        <PoseVectorField label="Смещение изделия" unit="мм" value={layout.gripperPayloadPose.offset} min={-200} max={200} onChange={(axis, value) => change((d) => { d.gripperPayloadPose.offset[axis] = value; })} />
+        <PoseVectorField label="Поворот изделия" unit="градусы" value={layout.gripperPayloadPose.rotationDeg} min={-180} max={180} onChange={(axis, value) => { change((d) => { d.gripperPayloadPose.rotationDeg[axis] = value; }); }} />
+      </div></div></section>}
       {activeTopic === 'product' && <section className="part-palette-settings"><h3>Палитра изделий · 6 материалов</h3><div className="part-material-grid">
         {layout.productPartMaterials.flatMap((materials, index) => ([
           <PartMaterialField key={`${index}-blank`} label={`Тип ${index + 1} · заготовка`} value={materials.blank} onChange={(value) => change((d) => { d.productPartMaterials[index].blank = value; })} />,
@@ -1805,12 +1840,16 @@ function SettingsPanel({ layout, setLayout, fontPreset, onFontPreset, easterEggM
         <NumberField label="Ширина Y" labelPosition="above" value={layout.portal.widthY} min={800} max={4000} onChange={(v) => change((d) => { d.portal.widthY = v; })} />
         <NumberField label="Низ рамы Z" labelPosition="above" value={layout.portal.frameBottomZ} min={1200} max={4000} onChange={(v) => change((d) => { d.portal.frameBottomZ = v; })} />
       </div></section>}
-      {activeTopic === 'equipment' && layout.indexedConveyors.map((conveyor, index) => <section key={index}><h3>Индексный магазин {index + 1} · 30 × 10</h3><div className="field-grid">
-        <NumberField label="Позиция X" labelPosition="above" value={conveyor.position.x} min={0} max={15000} onChange={(v) => change((d) => { d.indexedConveyors[index].position.x = v; })} />
-        <NumberField label="Позиция Y" labelPosition="above" value={conveyor.position.y} min={0} max={5000} onChange={(v) => change((d) => { d.indexedConveyors[index].position.y = v; })} />
-        <NumberField label="Рабочая высота Z" labelPosition="above" value={conveyor.workingHeight} min={400} max={1800} onChange={(v) => change((d) => { d.indexedConveyors[index].workingHeight = v; })} />
-        <NumberField label="Радиус ролика" labelPosition="above" value={conveyor.rollerRadius} min={40} max={250} step={0.5} onChange={(v) => change((d) => { d.indexedConveyors[index].rollerRadius = v; })} />
-      </div></section>)}
+      {activeTopic === 'equipment' && layout.staticMagazines.map((magazine, index) => <section key={`static-${index}`}><h3>Статичный магазин {index + 1} · 12 × 10</h3>
+        <p>Одна неподвижно установленная кассета с единой матрицей на 120 изделий. Диаметр и глубина гнёзд автоматически подстраиваются под геометрию изделия; приводов у магазина нет.</p>
+        <div className="field-grid">
+          <NumberField label="Позиция X" labelPosition="above" value={magazine.position.x} min={0} max={15000} onChange={(v) => change((d) => { d.staticMagazines[index].position.x = v; })} />
+          <NumberField label="Позиция Y" labelPosition="above" value={magazine.position.y} min={0} max={5000} onChange={(v) => change((d) => { d.staticMagazines[index].position.y = v; })} />
+          <NumberField label="Рабочая высота Z" labelPosition="above" value={magazine.workingHeight} min={400} max={1800} onChange={(v) => change((d) => { d.staticMagazines[index].workingHeight = v; })} />
+          <NumberField label="Шаг изделий X" labelPosition="above" value={magazine.pitchX} min={requiredStaticMagazinePitch} max={200} onChange={(v) => change((d) => { d.staticMagazines[index].pitchX = Math.max(requiredStaticMagazinePitch, v); })} />
+          <NumberField label="Шаг изделий Y" labelPosition="above" value={magazine.pitchY} min={requiredStaticMagazinePitch} max={200} onChange={(v) => change((d) => { d.staticMagazines[index].pitchY = Math.max(requiredStaticMagazinePitch, v); })} />
+        </div>
+      </section>)}
       {activeTopic === 'equipment' && <div className="panel-actions"><button onClick={() => setLayout(cloneLayout())}><RotateCcw size={16} />Сбросить геометрию</button></div>}
         </div>
       </div>
@@ -1818,10 +1857,8 @@ function SettingsPanel({ layout, setLayout, fontPreset, onFontPreset, easterEggM
   );
 }
 
-function ManualPanel({ state, layout, setState, machineIndex, setMachineIndex, conveyorTestStatuses, onConveyorTest, onClose, plcDataEnabled, onPlcDataChange, className }: {
+function ManualPanel({ state, layout, setState, machineIndex, setMachineIndex, onClose, plcDataEnabled, onPlcDataChange, className }: {
   state: CellState; layout: CellLayout; setState: (state: CellState) => void; machineIndex: number; setMachineIndex: (index: number) => void; onClose: () => void;
-  conveyorTestStatuses: [IndexedConveyorTestStatus, IndexedConveyorTestStatus];
-  onConveyorTest: (magazineId: 1 | 2, command: IndexedConveyorTestCommandType) => void;
   plcDataEnabled: boolean; onPlcDataChange: (enabled: boolean) => void; className?: string;
 }) {
   const [manualMagazine, setManualMagazine] = useState(0);
@@ -1860,10 +1897,8 @@ function ManualPanel({ state, layout, setState, machineIndex, setMachineIndex, c
           <Toggle label="Патрон открыт" checked={state.machines[machineIndex].chuckOpen} disabled={plcDataEnabled} onChange={(v) => updateMachine({ chuckOpen: v, chuckClosed: !v })} />
           <Toggle label="Изделие в патроне" checked={state.machines[machineIndex].partPresent} disabled={plcDataEnabled} onChange={(v) => updateMachine({ partPresent: v, partState: v ? 'LOADED' : 'EMPTY', partType: v ? 'BLANK' : 'UNKNOWN' })} />
         </section>}
-        {activeManualTopic === 'magazines' && <section><h3>Локальная проверка магазинов Three.js</h3><div className="segmented">{state.magazines.map((_, index) => <button key={index} className={manualMagazine === index ? 'active' : ''} onClick={() => setManualMagazine(index)}>Магазин {index + 1}</button>)}</div>
-          <div className="conveyor-test-status"><span><i className={conveyorTestStatuses[manualMagazine].moving ? 'moving' : ''} />{conveyorTestStatuses[manualMagazine].moving ? 'Выполняется перемещение' : 'Ожидание команды'}</span><b>Позиция: +{conveyorTestStatuses[manualMagazine].positionRows} рядов</b><b>Изделия: {conveyorTestStatuses[manualMagazine].loadedSlots}</b></div>
-          <div className="conveyor-test-actions"><button disabled={conveyorTestStatuses[manualMagazine].moving} onClick={() => onConveyorTest((manualMagazine + 1) as 1 | 2, 'fill')}><PackagePlus size={17} />Заполнить зону загрузки</button><button className="primary" disabled={conveyorTestStatuses[manualMagazine].moving} onClick={() => onConveyorTest((manualMagazine + 1) as 1 | 2, 'move')}><ArrowRight size={17} />Переместить 12 рядов</button><button disabled={conveyorTestStatuses[manualMagazine].moving || conveyorTestStatuses[manualMagazine].loadedSlots === 0} onClick={() => onConveyorTest((manualMagazine + 1) as 1 | 2, 'clear')}><Trash2 size={17} />Очистить</button><button onClick={() => onConveyorTest((manualMagazine + 1) as 1 | 2, 'reset')}><RotateCcw size={17} />Сбросить</button></div>
-          <MagazineMatrix slots={state.magazines[manualMagazine].zones[0]} columns={10} onSlotClick={plcDataEnabled ? undefined : (index) => { const values: SlotType[] = ['empty', 'blank', 'detail']; const magazines = structuredClone(state.magazines); const slots = magazines[manualMagazine].zones[0]; slots[index] = values[(values.indexOf(slots[index]) + 1) % values.length]; setState({ ...state, magazines }); }} />
+        {activeManualTopic === 'magazines' && <section><h3>Локальная проверка статичных магазинов</h3><div className="segmented">{state.magazines.map((_, index) => <button key={index} className={manualMagazine === index ? 'active' : ''} onClick={() => setManualMagazine(index)}>Магазин {index + 1}</button>)}</div>
+          <MagazineMatrix slots={state.magazines[manualMagazine].slots} columns={10} onSlotClick={plcDataEnabled ? undefined : (index) => { const values: SlotType[] = ['empty', 'blank', 'detail']; const magazines = structuredClone(state.magazines); const slots = magazines[manualMagazine].slots; slots[index] = values[(values.indexOf(slots[index]) + 1) % values.length]; setState({ ...state, magazines }); }} />
         </section>}
       </div>
     </div>
@@ -1881,7 +1916,6 @@ export function App() {
   const [page, setPage] = useState<Page>('monitoring');
   const [bottomSection, setBottomSection] = useState<BottomSection | null>(null);
   const [matrixQuickOpen, setMatrixQuickOpen] = useState(false);
-  const [quickMatrixZone, setQuickMatrixZone] = useState<1 | 2>(1);
   const [profileOpen, setProfileOpen] = useState(false);
   const [authUser, setAuthUser] = useState<AppUser | null>(null);
   const [shiftSummary, setShiftSummary] = useState<StatisticsSummary | null>(null);
@@ -1895,9 +1929,7 @@ export function App() {
   const [topMenuSection, setTopMenuSection] = useState<TopMenuSection>('root');
   const [selectedMachine, setSelectedMachine] = useState<number | null>(null);
   const [selectedMagazine, setSelectedMagazine] = useState(0);
-  const [magazineHomeConfirmation, setMagazineHomeConfirmation] = useState<number | null>(null);
   const [magazineReadinessOpen, setMagazineReadinessOpen] = useState<number | null>(null);
-  const [magazineDriveMenuOpen, setMagazineDriveMenuOpen] = useState<number | null>(null);
   const [confirmationMachine, setConfirmationMachine] = useState<number | null>(null);
   const [confirmationEntered, setConfirmationEntered] = useState(false);
   const [machineMechanism, setMachineMechanism] = useState<MachineMechanism | null>(null);
@@ -1915,17 +1947,6 @@ export function App() {
   const [latestEventVisible, setLatestEventVisible] = useState(false);
   const [equipmentStatusVisible, setEquipmentStatusVisible] = useState(true);
   const [operatorMetricsVisible, setOperatorMetricsVisible] = useState(true);
-  const [indexedConveyorTest, setIndexedConveyorTest] = useState<IndexedConveyorTestCommand>({ id: 0, type: 'none', magazineId: 1 });
-  const emptyConveyorTestStatus: IndexedConveyorTestStatus = {
-    moving: false,
-    positionRows: 0,
-    loadedSlots: 0,
-    homed: true,
-  };
-  const [indexedConveyorTestStatuses, setIndexedConveyorTestStatuses] = useState<[IndexedConveyorTestStatus, IndexedConveyorTestStatus]>([
-    emptyConveyorTestStatus,
-    { ...emptyConveyorTestStatus },
-  ]);
   const workspacePointerRef = useRef<{ pointerId: number; x: number; y: number; eligible: boolean } | null>(null);
   const refreshShiftSummaryRef = useRef<(() => void) | null>(null);
   const plcDataEnabledRef = useRef(true);
@@ -2064,17 +2085,6 @@ export function App() {
     if (rejectGuestAction()) return;
     if (usePlcData) sendPlcCommand({ command: `magazine.${action}`, magazine: index + 1, ...(value === undefined ? {} : { value }) });
   };
-  const controlMagazineDrive = (index: number, action: string, value?: boolean) => {
-    if (rejectGuestAction()) return;
-    if (usePlcData) {
-      sendMagazineCommand(index, action, value);
-      return;
-    }
-    if (action === 'powerOn') updateMagazineState(index, { powered: true, axisStep: 'Привод включён' });
-    if (action === 'powerOff') updateMagazineState(index, { powered: false, homed: false, positionValid: false, axisStep: 'Привод выключен' });
-    if (action === 'home') updateMagazineState(index, { homed: true, positionValid: true, recoveryRequired: false, axisStep: 'Home найден' });
-    if ((action === 'jogPositive' || action === 'jogNegative') && value) updateMagazineState(index, { homed: false, positionValid: false, recoveryRequired: true, axisStep: 'Ручное движение' });
-  };
   const toggleMagazineEnabled = (index = selectedMagazine) => {
     if (rejectGuestAction()) return;
     const state = cellState.magazines[index].state;
@@ -2084,7 +2094,7 @@ export function App() {
         return;
       }
       if (usePlcData) sendMagazineCommand(index, 'enable');
-      else updateMagazineState(index, { enabled: true, ready: true, axisStep: 'Готов к работе' });
+      else updateMagazineState(index, { enabled: true, ready: true });
       return;
     }
     if (!usePlcData) {
@@ -2097,59 +2107,59 @@ export function App() {
     if (rejectGuestAction()) return;
     const state = cellState.magazines[index].state;
     if (usePlcData) {
-      sendMagazineCommand(index, 'fillZone1');
+      sendMagazineCommand(index, 'fill');
       return;
     }
-    if (!state.zone1EditAllowed) return;
+    if (!state.editAllowed) return;
     setCellState((current) => {
       const magazines = structuredClone(current.magazines);
-      magazines[index].zones[0] = magazines[index].zones[0].map(() => 'blank');
+      magazines[index].slots = magazines[index].slots.map(() => 'blank');
       return { ...current, magazines };
     });
   };
   const clearMagazine = (index = selectedMagazine) => {
     if (rejectGuestAction()) return;
     if (usePlcData) {
-      sendMagazineCommand(index, 'clearZone1');
+      sendMagazineCommand(index, 'clear');
       return;
     }
-    if (!cellState.magazines[index].state.zone1EditAllowed) return;
+    if (!cellState.magazines[index].state.editAllowed) return;
     setCellState((current) => {
       const magazines = structuredClone(current.magazines);
-      magazines[index].zones[0] = magazines[index].zones[0].map(() => 'empty');
+      magazines[index].slots = magazines[index].slots.map(() => 'empty');
       return { ...current, magazines };
     });
   };
-  const cycleMagazineSlot = (slotIndex: number, index = selectedMagazine, zone: 1 | 2 = 1) => {
+  const cycleMagazineSlot = (slotIndex: number, index = selectedMagazine) => {
     if (rejectGuestAction()) return;
     const magazine = cellState.magazines[index];
-    const current = magazine.zones[zone - 1][slotIndex];
+    const current = magazine.slots[slotIndex];
     const next: SlotType = current === 'empty' ? 'blank' : current === 'blank' ? 'detail' : 'empty';
-    const productType = magazine.zoneProductTypes[zone - 1][slotIndex] ?? 1;
+    const productType = magazine.productTypes[slotIndex] ?? 1;
     if (usePlcData) {
-      sendPlcCommand({ command: 'magazine.setSlot', magazine: index + 1, zone, slot: slotIndex + 1, content: next === 'empty' ? 0 : next === 'blank' ? 1 : 2, productType });
+      sendPlcCommand({ command: 'magazine.setSlot', magazine: index + 1, slot: slotIndex + 1, content: next === 'empty' ? 0 : next === 'blank' ? 1 : 2, productType });
       return;
     }
-    if ((zone === 1 && !magazine.state.zone1EditAllowed) || (zone === 2 && !magazine.state.zone2EditAllowed)) return;
+    if (!magazine.state.editAllowed) return;
     setCellState((current) => {
       const magazines = structuredClone(current.magazines);
-      const slots = magazines[index].zones[zone - 1];
+      const slots = magazines[index].slots;
       slots[slotIndex] = next;
       return { ...current, magazines };
     });
   };
-  const applyMagazineSlot = (slotIndex: number, content: SlotType, productType: ProductType, index = selectedMagazine, zone: 1 | 2 = 1) => {
+  const applyMagazineSlot = (slotIndex: number, content: SlotType, productType: ProductType, index = selectedMagazine) => {
     if (rejectGuestAction()) return;
     const state = cellState.magazines[index].state;
-    if ((zone === 1 && !state.zone1EditAllowed) || (zone === 2 && !state.zone2EditAllowed)) return;
+    if (!state.editAllowed) return;
     if (usePlcData) {
-      sendPlcCommand({ command: 'magazine.setSlot', magazine: index + 1, zone, slot: slotIndex + 1, content: content === 'empty' ? 0 : content === 'blank' ? 1 : 2, productType });
+      sendPlcCommand({ command: 'magazine.setSlot', magazine: index + 1, slot: slotIndex + 1, content: content === 'empty' ? 0 : content === 'blank' ? 1 : 2, productType });
       return;
     }
     setCellState((current) => {
       const magazines = structuredClone(current.magazines);
-      magazines[index].zones[zone - 1][slotIndex] = content;
-      magazines[index].zoneProductTypes[zone - 1][slotIndex] = productType;
+      magazines[index].slots[slotIndex] = content;
+      magazines[index].productTypes[slotIndex] = productType;
       return { ...current, magazines };
     });
   };
@@ -2164,7 +2174,14 @@ export function App() {
   const updateMagazineSetting = (command: string, key: keyof CellState['magazines'][number]['state'], value: number) => {
     if (rejectGuestAction()) return;
     if (!Number.isFinite(value)) return;
-    updateMagazineState(selectedMagazine, { [key]: value });
+    if (!cellState.magazines[selectedMagazine].state.editAllowed) return;
+    if (key === 'pitchX' || key === 'pitchY') {
+      if (!cellState.magazines[selectedMagazine].state.pitchEditAllowed) return;
+      updateMagazineState(0, { [key]: value });
+      updateMagazineState(1, { [key]: value });
+    } else {
+      updateMagazineState(selectedMagazine, { [key]: value });
+    }
     if (usePlcData) sendPlcCommand({ command, magazine: selectedMagazine + 1, value });
   };
   const toggleMachineEnabled = (index: number) => {
@@ -2363,6 +2380,9 @@ export function App() {
 
   useEffect(() => {
     localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(layout));
+    if (localStorage.getItem(LAYOUT_REPAIR_STORAGE_KEY) !== 'done') {
+      localStorage.setItem(LAYOUT_REPAIR_STORAGE_KEY, 'done');
+    }
     const limits = getRobotTravelLimits(layout);
     setCellState((current) => {
       const robot = {
@@ -2462,7 +2482,7 @@ export function App() {
   const plcAlarmEvents = usePlcData ? plcRuntime.alarmEvents : [];
   const activeAlarmEvents = plcAlarmEvents.filter((event) => event.active);
   const activeAlarms = usePlcData ? plcRuntime.activeAlarmCount : fallbackMachineAlarmIndexes.length
-    + cellState.magazines.filter((magazine) => magazine.state.error || magazine.state.axisError || magazine.state.activeErrors.length > 0).length
+    + cellState.magazines.filter((magazine) => magazine.state.error || magazine.state.activeErrors.length > 0).length
     + (displayedGlobalError && fallbackMachineAlarmIndexes.length === 0 && !cellState.magazines.some((magazine) => magazine.state.error) ? 1 : 0);
   const activeWarnings = usePlcData ? plcRuntime.activeWarningCount : 0;
   const alarmCount = activeAlarms + activeWarnings;
@@ -2787,9 +2807,6 @@ export function App() {
         cameraPreset="front"
         onMachineSelect={() => {}}
         onMagazineSelect={(magazineId) => { setSelectedMagazine(magazineId - 1); selectBottomSection('magazine'); }}
-        indexedConveyorTest={indexedConveyorTest}
-        onIndexedConveyorTestStatus={(magazineId, status) => setIndexedConveyorTestStatuses((current) => current.map((item, index) => index === magazineId - 1 ? status : item) as [IndexedConveyorTestStatus, IndexedConveyorTestStatus])}
-        syncMagazineInventory={usePlcData}
         easterEggMode={easterEggMode}
         easterEggRevision={easterEggRevision}
         driftSettings={driftSettings}
@@ -2797,21 +2814,10 @@ export function App() {
         sceneActivity={sceneActivity}
         focusTarget={sceneFocusTarget}
       />
-      <AnimatedPresence open={magazineHomeConfirmation !== null}>{magazineHomeConfirmation !== null && <MagazineHomeConfirmation magazineNumber={magazineHomeConfirmation + 1} onConfirm={() => { controlMagazineDrive(magazineHomeConfirmation, 'home'); setMagazineHomeConfirmation(null); }} onCancel={() => setMagazineHomeConfirmation(null)} />}</AnimatedPresence>
       <AnimatedPresence open={magazineReadinessOpen !== null}>{magazineReadinessOpen !== null && <MagazineReadinessDialog
         magazineNumber={magazineReadinessOpen + 1}
         state={cellState.magazines[magazineReadinessOpen].state}
         onClose={() => setMagazineReadinessOpen(null)}
-        onDrive={() => { setMagazineDriveMenuOpen(magazineReadinessOpen); setMagazineReadinessOpen(null); }}
-        onRecovery={() => { const index = magazineReadinessOpen; if (cellState.magazines[index].state.contentRecoveryAllowed) sendMagazineCommand(index, 'startContentRecovery'); setSelectedMagazine(index); setPage('magazine'); setMagazineReadinessOpen(null); setBottomSection(null); }}
-      />}</AnimatedPresence>
-      <AnimatedPresence open={magazineDriveMenuOpen !== null}>{magazineDriveMenuOpen !== null && <MagazineDriveDialog
-        magazineNumber={magazineDriveMenuOpen + 1}
-        state={cellState.magazines[magazineDriveMenuOpen].state}
-        onClose={() => { controlMagazineDrive(magazineDriveMenuOpen, 'jogPositive', false); controlMagazineDrive(magazineDriveMenuOpen, 'jogNegative', false); setMagazineDriveMenuOpen(null); }}
-        onCommand={(action) => controlMagazineDrive(magazineDriveMenuOpen, action)}
-        onHome={() => { setMagazineHomeConfirmation(magazineDriveMenuOpen); setMagazineDriveMenuOpen(null); }}
-        onJog={(direction, active) => controlMagazineDrive(magazineDriveMenuOpen, direction, active)}
       />}</AnimatedPresence>
       <AnimatedPresence open={page === 'monitoring' && bottomSection === 'cyclogram'}>
         <EquipmentLoadPanel values={plcRuntime.equipmentLoad} />
@@ -2819,17 +2825,13 @@ export function App() {
       <AnimatedPresence open={page === 'monitoring' && bottomSection === 'magazine' && matrixQuickOpen}>
         <MagazineMatrixCard
           id={QUICK_MAGAZINE_MATRIX_ID}
-          slots={cellState.magazines[selectedMagazine].zones[quickMatrixZone - 1]}
+          slots={cellState.magazines[selectedMagazine].slots}
           columns={cellState.magazines[selectedMagazine].state.columns}
           rows={cellState.magazines[selectedMagazine].state.rows}
-          productTypes={cellState.magazines[selectedMagazine].zoneProductTypes[quickMatrixZone - 1]}
+          productTypes={cellState.magazines[selectedMagazine].productTypes}
           magazineNumber={selectedMagazine + 1}
-          zone={quickMatrixZone}
-          onZoneChange={setQuickMatrixZone}
-          onSlotClick={(quickMatrixZone === 1
-            ? cellState.magazines[selectedMagazine].state.zone1EditAllowed
-            : cellState.magazines[selectedMagazine].state.zone2EditAllowed)
-            ? (index) => cycleMagazineSlot(index, selectedMagazine, quickMatrixZone)
+          onSlotClick={cellState.magazines[selectedMagazine].state.editAllowed
+            ? (index) => cycleMagazineSlot(index, selectedMagazine)
             : undefined}
         />
       </AnimatedPresence>
@@ -2857,12 +2859,12 @@ export function App() {
         onClose={() => setPage('monitoring')}
       /></AnimatedPresence>
       <AnimatedPresence open={page === 'cell-settings'}><CellSettingsPanel online={usePlcData} modbusMode={plcRuntime.modbusMode} modbus={plcRuntime.robotModbus} testEnvironment={plcRuntime.testEnvironment} configurationValid={plcRuntime.multiTypeConfigurationValid} typeCount={plcRuntime.multiTypeCount} typeCountAllowed={plcRuntime.multiTypeCountAllowed} magazineConfigAllowed={plcRuntime.multiTypeMagazineConfigAllowed} settings={plcRuntime.cellSettings} accelerationEnabled={simulationAccelerationEnabled} accelerationActive={simulationAccelerationActive} accelerationAllowed={simulationControlsAllowed} onModeChange={changeRobotControlMode} onTestEnvironmentChange={(value) => { sendPlcCommand({ command: 'test.environment.set', value }); }} onTypeCountChange={(value) => sendPlcCommand({ command: 'multi.typeCount', value })} onAutoDistribute={() => sendPlcCommand({ command: 'multi.autoDistribute' })} onModbusSettingChange={changeModbusSetting} onModbusApply={applyModbusSettings} onSettingChange={changeCellSetting} onAccelerationChange={changeSimulationAcceleration} onStatisticsSettings={() => setPage('statistics-settings')} onClose={() => setPage('monitoring')} /></AnimatedPresence>
-      <AnimatedPresence open={page === 'manual'}><ManualPanel state={cellState} layout={layout} setState={setCellState} machineIndex={manualMachine} setMachineIndex={setManualMachine} conveyorTestStatuses={indexedConveyorTestStatuses} onConveyorTest={(magazineId, type) => setIndexedConveyorTest((current) => ({ id: current.id + 1, type, magazineId }))} onClose={() => setPage('monitoring')} plcDataEnabled={plcDataEnabled} onPlcDataChange={changePlcDataSource} /></AnimatedPresence>
+      <AnimatedPresence open={page === 'manual'}><ManualPanel state={cellState} layout={layout} setState={setCellState} machineIndex={manualMachine} setMachineIndex={setManualMachine} onClose={() => setPage('monitoring')} plcDataEnabled={plcDataEnabled} onPlcDataChange={changePlcDataSource} /></AnimatedPresence>
       <AnimatedPresence open={page === 'injections'}><FaultInjectionPanel values={faultSimulationValues} online={isPlcOnline} send={sendPlcCommand} onClose={() => setPage('monitoring')} /></AnimatedPresence>
       <AnimatedPresence open={page === 'simulation-settings'}><SimulationSettingsPanel values={faultSimulationValues} online={isPlcOnline} send={sendPlcCommand} onClose={() => setPage('monitoring')} /></AnimatedPresence>
-      <AnimatedPresence open={page === 'robot'}><RobotExtendedPanel robot={cellState.robot} magazines={cellState.magazines} runtime={plcRuntime} online={usePlcData} editorEditable={Boolean(authUser)} onSend={sendPlcCommand} onClose={() => setPage('monitoring')} /></AnimatedPresence>
+      <AnimatedPresence open={page === 'robot'}><RobotExtendedPanel robot={cellState.robot} magazines={cellState.magazines} runtime={plcRuntime} online={usePlcData} editorEditable={Boolean(authUser)} onListPointBackups={pointBackupApi.list} onExportPointBackup={pointBackupApi.exportCurrent} onPreparePointImport={pointBackupApi.prepareImport} onSend={sendPlcCommand} onClose={() => setPage('monitoring')} /></AnimatedPresence>
       <AnimatedPresence open={page === 'machines' && selectedMachine !== null}>{selectedMachine !== null && <MachinePanel index={selectedMachine} state={cellState.machines[selectedMachine]} multiTypeCount={plcRuntime.multiTypeCount} productTypeChangeAllowed={!usePlcData || plcRuntime.multiTypeMachineAllowed[selectedMachine]} onClose={closeMachinePanel} onToggleEnabled={() => toggleMachineEnabled(selectedMachine)} onCycleSettings={(useHmi, seconds) => updateCycleSettings(selectedMachine, useHmi, seconds)} onProductType={(type) => changeMachineProductType(selectedMachine, type)} />}</AnimatedPresence>
-      <AnimatedPresence open={page === 'magazine'}><MagazineScreen magazine={cellState.magazines[selectedMagazine]} magazineNumber={(selectedMagazine + 1) as 1 | 2} step={usePlcData ? plcRuntime.magazineSteps[selectedMagazine] : 'Локальная модель'} typeCount={plcRuntime.multiTypeCount} onClose={() => setPage('monitoring')} onToggleEnabled={() => toggleMagazineEnabled(selectedMagazine)} onCommand={(action) => sendMagazineCommand(selectedMagazine, action)} onFill={() => fillMagazine(selectedMagazine)} onClear={() => clearMagazine(selectedMagazine)} onSlotApply={(index, content, productType, zone) => applyMagazineSlot(index, content, productType, selectedMagazine, zone)} onSetting={updateMagazineSetting} /></AnimatedPresence>
+      <AnimatedPresence open={page === 'magazine'}><MagazineScreen magazine={cellState.magazines[selectedMagazine]} magazineNumber={(selectedMagazine + 1) as 1 | 2} step={usePlcData ? plcRuntime.magazineSteps[selectedMagazine] : 'Локальная модель'} typeCount={plcRuntime.multiTypeCount} onClose={() => setPage('monitoring')} onToggleEnabled={() => toggleMagazineEnabled(selectedMagazine)} onCommand={(action) => sendMagazineCommand(selectedMagazine, action)} onFill={() => fillMagazine(selectedMagazine)} onClear={() => clearMagazine(selectedMagazine)} onSlotApply={(index, content, productType) => applyMagazineSlot(index, content, productType, selectedMagazine)} onSetting={updateMagazineSetting} /></AnimatedPresence>
       <AnimatedPresence open={page === 'alarms'}><AlarmScreen events={plcAlarmEvents} online={isPlcOnline} resetAllowed={usePlcData && plcRuntime.cellResetAllowed} onResetWarnings={() => sendPlcCommand({ command: 'alarms.resetWarnings' })} onResetAlarms={resetCell} onClose={() => setPage('monitoring')} /></AnimatedPresence>
       <AnimatedPresence open={page === 'events'}><CellEventLog liveEvent={latestCellLogEvent} online={isPlcOnline} onClose={() => setPage('monitoring')} /></AnimatedPresence>
       <AnimatedPresence open={page === 'tests'}><TestWorkbench onSend={sendPlcCommand} onClose={() => setPage('monitoring')} /></AnimatedPresence>
@@ -2909,9 +2911,14 @@ export function App() {
         /></AnimatedPresence>
         <AnimatedPresence open={bottomSection === 'robot'}><RobotQuickPanel
           robot={cellState.robot}
+          magazines={cellState.magazines}
+          onSend={sendPlcCommand}
           robotManual={plcRuntime.robotManual}
           robotModbus={plcRuntime.robotModbus}
+          axisManual={plcRuntime.axisManual}
           modbusMode={plcRuntime.modbusMode}
+          continuousMode={plcRuntime.continuousMode}
+          manualStep={plcRuntime.manualStep}
           speedOverridePercent={plcRuntime.speedOverridePercent}
           step={usePlcData ? plcRuntime.robotStep : 'Локальная модель'}
           online={usePlcData}
@@ -2930,8 +2937,6 @@ export function App() {
           matrixOpen={matrixQuickOpen}
           onMatrixToggle={() => setMatrixQuickOpen((open) => !open)}
           onToggleEnabled={() => toggleMagazineEnabled(selectedMagazine)}
-          onDriveOpen={() => setMagazineDriveMenuOpen(selectedMagazine)}
-          onIndex={() => sendMagazineCommand(selectedMagazine, 'index')}
           onFill={() => fillMagazine(selectedMagazine)}
           onClear={() => clearMagazine(selectedMagazine)}
           onExtended={() => { setMatrixQuickOpen(false); setPage('magazine'); }}

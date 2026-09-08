@@ -14,10 +14,10 @@ TYPE_CONFIG(
 	xCellRunning := GVL_CELL_MANAGER.Status.xRunning,
 	xMotionBusy := xMotionBusy,
 	stRobotStatus := GVL_ROBOT.Status,
-	stMagazineStatus := GVL_MAGAZINE.astStatus[uiMagazine],
+	astMagazineStatus := GVL_MAGAZINE.astStatus,
 	astMachineStatus := GVL_MACHINE.Status,
-	uiRows := GVL_HMI.MagazineRows,
-	uiColumns := GVL_HMI.MagazineColumns,
+	uiRows := GVL_CELL_SETTINGS.MagazineRows,
+	uiColumns := GVL_CELL_SETTINGS.MagazineColumns,
 	Config => GVL_MULTI_TYPE.Config,
 	Status => GVL_MULTI_TYPE.ConfigStatus
 );
@@ -45,7 +45,8 @@ CELL_MANAGER(
 	lrSafetyHomeToleranceZ := GVL_CELL_SETTINGS.lrSafetyHomeToleranceZ,
 	lrStoppedPoseTolerance := GVL_CELL_SETTINGS.lrStoppedPoseTolerance,
 	Config := GVL_MULTI_TYPE.Config,
-	xConfigurationValid := GVL_MULTI_TYPE.ConfigStatus.xConfigurationValid AND xPointTableReady,
+	xConfigurationValid := GVL_MULTI_TYPE.ConfigStatus.xConfigurationValid,
+	xPointsConfigured := xPointTableReady,
 	stRobotStatus := GVL_ROBOT.Status,
 	astMagazineStatus := GVL_MAGAZINE.astStatus,
 	astMachineStatus := GVL_MACHINE.Status,

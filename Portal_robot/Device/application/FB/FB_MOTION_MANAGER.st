@@ -3,6 +3,8 @@ VAR_INPUT
 	stPoint : ARRAY [0..GVL_POINT.iPointNumber] OF ST_POINT; // Глобальная таблица точек
 	xReset  : BOOL; // Сброс ошибок менеджера движения
 	FaultRequest : ST_POINT_FAULT_REQUEST; // Диагностические ошибки проверки точки
+	xSpeedFactorOverride : BOOL; // Для отдельной проверки точки с телефона
+	lrSpeedFactorOverride : LREAL; // 0.001..1.0, применяется вместо SpeedFactor точки
 END_VAR
 VAR_OUTPUT
 	FaultStatus : ST_FAULT_INJECTION_STATUS; // Состояние инжектора проверки точки
@@ -133,7 +135,11 @@ CASE stMotionManager.Diag.eState OF
 		GroupData.MotionParam.lrX := curPoint.X;
 		GroupData.MotionParam.lrY := curPoint.Y;
 		GroupData.MotionParam.lrZ := curPoint.Z;
-		GroupData.MotionParam.VelFactor := curPoint.SpeedFactor;
+		IF xSpeedFactorOverride THEN
+			GroupData.MotionParam.VelFactor := LIMIT(0.001, lrSpeedFactorOverride, 1.0);
+		ELSE
+			GroupData.MotionParam.VelFactor := curPoint.SpeedFactor;
+		END_IF;
 		// SpeedFactor точки ограничивает только скорость. Ускорение, замедление и
 		// jerk остаются инженерными пределами и не ослабляют торможение робота.
 		GroupData.MotionParam.AccFactor := 1.0;

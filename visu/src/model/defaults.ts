@@ -1,5 +1,5 @@
 import type { CellLayout, CellState, MachineState, MagazineData, ProductType, SlotType } from './types';
-import { DEFAULT_PART_GEOMETRY, DEFAULT_PRODUCT_PART_MATERIALS } from './partGeometry';
+import { CELL_LAYOUT_PRESET } from '../config/cellLayoutPreset';
 
 const emptyMachine = (): MachineState => ({
   productType: 1,
@@ -49,8 +49,8 @@ const initialZoneProductTypes = (length: number): ProductType[] =>
   Array.from({ length }, (_, index) => (index % 3) + 1 as ProductType);
 
 const initialMagazine = (id: 1 | 2): MagazineData => ({
-  zones: [initialZone(120, id === 1), initialZone(120), initialZone(60)],
-  zoneProductTypes: [initialZoneProductTypes(120), initialZoneProductTypes(120), initialZoneProductTypes(60)],
+  slots: initialZone(120, id === 1),
+  productTypes: initialZoneProductTypes(120),
   state: {
     enabled: false,
     disablePending: false,
@@ -65,16 +65,15 @@ const initialMagazine = (id: 1 | 2): MagazineData => ({
     canEnable: true,
     powerAllowed: true,
     enableSequenceAllowed: true,
-    enableCheckPowered: false,
-    enableCheckHomed: false,
-    enableCheckPositionValid: true,
-    enableCheckStationary: true,
+    enableCheckRobotReady: true,
     enableCheckNoError: true,
     enableCheckRobotReleased: true,
     enableCheckContent: true,
-    enableCheckInventoryVerified: true,
+    enableCheckGeometry: true,
     fillAllowed: true,
     clearAllowed: true,
+    editAllowed: true,
+    pitchEditAllowed: true,
     currentBlank: 1,
     currentFreeSlot: 1,
     selectedBlank: 0,
@@ -86,118 +85,16 @@ const initialMagazine = (id: 1 | 2): MagazineData => ({
     pitchY: 60,
     safeAbove: 0,
     safeInside: 1400,
-    powered: false,
-    homed: false,
-    positionValid: true,
-    recoveryRequired: false,
-    indexAllowed: false,
-    zone1EditAllowed: true,
-    zone2EditAllowed: false,
-    jogPositiveAllowed: false,
-    jogNegativeAllowed: false,
-    contentRecoveryAllowed: false,
-    contentRecoveryActive: false,
-    inventoryVerificationRequired: false,
-    indexing: false,
-    indexDone: false,
-    axisError: false,
-    axisBusy: false,
-    axisDone: false,
-    axisPosition: 0,
-    axisStep: 'Привод выключен',
     activeErrors: [],
     lastErrors: [],
   },
 });
 
-export const DEFAULT_LAYOUT: CellLayout = {
-  coordinate: {
-    origin: { x: 0, y: 0, z: 0 },
-    direction: { x: 1, y: 1, z: 1 },
-  },
-  floor: { lengthX: 13200, widthY: 3900 },
-  machine: {
-    sizeX: 2806.7,
-    sizeY: 1670,
-    sizeZ: 1873.6,
-    doorTravel: 1120,
-    machines: [
-      { position: { x: 0, y: 1450, z: 0 } },
-      { position: { x: 4900, y: 1450, z: 0 } },
-      { position: { x: 9800, y: 1450, z: 0 } },
-    ],
-  },
-  portal: {
-    position: { x: 300, y: 1050, z: 0 },
-    lengthX: 12000,
-    widthY: 1350,
-    frameThicknessZ: 120,
-    frameDepthY: 110,
-    frameBottomZ: 2250,
-    supportSize: 180,
-    supportInsetX: 180,
-  },
-  robot: {
-    yBeamHeight: 190,
-    yBeamWidthX: 300,
-    zBaseLength: 520,
-    zColumnWidth: 120,
-  },
-  partGeometry: { ...DEFAULT_PART_GEOMETRY },
-  productPartMaterials: structuredClone(DEFAULT_PRODUCT_PART_MATERIALS),
-  gripperPayloadPoses: {
-    blank: {
-      offset: { x: 0, y: 0, z: 0 },
-      rotationDeg: { x: 0, y: 0, z: 0 },
-    },
-    detail: {
-      offset: { x: 0, y: 0, z: 0 },
-      rotationDeg: { x: 0, y: 0, z: 0 },
-    },
-  },
-  indexedConveyors: [{
-    position: { x: 8500, y: 80, z: 0 },
-    columnsX: 10,
-    zoneRowsY: [12, 12, 6],
-    pitchX: 60,
-    pitchY: 60,
-    slotDiameter: 42,
-    slatWidthX: 650,
-    slatThickness: 18,
-    rollerRadius: 95.5,
-    workingHeight: 820,
-    lowerBeltWidthX: 580,
-    lowerBeltHeight: 530,
-    lowerBeltSpeed: 550,
-    binWidthX: 800,
-    binLengthY: 650,
-    binHeight: 420,
-  }, {
-    position: { x: 10500, y: 80, z: 0 },
-    columnsX: 10,
-    zoneRowsY: [12, 12, 6],
-    pitchX: 60,
-    pitchY: 60,
-    slotDiameter: 42,
-    slatWidthX: 650,
-    slatThickness: 18,
-    rollerRadius: 95.5,
-    workingHeight: 820,
-    lowerBeltWidthX: 580,
-    lowerBeltHeight: 530,
-    lowerBeltSpeed: 550,
-    binWidthX: 800,
-    binLengthY: 650,
-    binHeight: 420,
-  }],
-  animation: {
-    motionResponse: 7,
-    mechanismResponse: 6,
-  },
-};
+export const DEFAULT_LAYOUT: CellLayout = structuredClone(CELL_LAYOUT_PRESET);
 
 export const DEFAULT_STATE: CellState = {
 	robot: {
+    currentPoint: 0,
     x: 6200,
     y: 675,
     z: 180,

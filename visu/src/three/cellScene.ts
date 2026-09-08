@@ -3,8 +3,6 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type {
   CellLayout,
   CellState,
-  IndexedConveyorTestCommand,
-  IndexedConveyorTestStatus,
   RobotCoordinateFrame,
 } from '../model/types';
 import { DEFAULT_DRIFT_SETTINGS, type DriftSettings, type DriftTelemetry, type EasterEggMode } from '../model/easterEggs';
@@ -17,8 +15,8 @@ import {
 } from '../model/visualEffects';
 import { EasterEggController } from './easterEggs';
 import { createMachine, disposeMachineRig, type MachineRig, updateMachineRig } from './machine';
-import { createIndexedConveyor, type IndexedConveyorRig, updateIndexedConveyorRig } from './indexedConveyor';
 import { createPortal, type PortalRig, updatePortalRig } from './portal';
+import { createStaticMagazine, type StaticMagazineRig, updateStaticMagazineRig } from './staticMagazine';
 import { OperationalEffects, type SceneEffectAnchors } from './OperationalEffects';
 import { COLORS, disposeObject, logicalPosition, material, mm } from './primitives';
 
@@ -63,19 +61,16 @@ export class CellScene {
   private cellRoot = new THREE.Group();
   private machineRigs: MachineRig[] = [];
   private portalRig?: PortalRig;
-  private indexedConveyorRigs: IndexedConveyorRig[] = [];
+  private staticMagazineRigs: StaticMagazineRig[] = [];
   private easterEggController?: EasterEggController;
   private easterEggMode: EasterEggMode = 'off';
   private easterEggRevision = 0;
-  private indexedConveyorTest: IndexedConveyorTestCommand = { id: 0, type: 'none', magazineId: 1 };
-  private indexedConveyorStatusKeys = ['', ''];
   private operationalEffects?: OperationalEffects;
   private state: CellState;
   private layout: CellLayout;
   private animationFrame = 0;
   private resizeObserver: ResizeObserver;
   private selectedMachine: number | null = null;
-  private syncMagazineInventory = true;
   private cameraPreset: CameraPreset = 'iso';
   private driftSettings: DriftSettings = DEFAULT_DRIFT_SETTINGS;
   private visualEffects: VisualEffectSettings = DEFAULT_VISUAL_EFFECT_SETTINGS;
@@ -98,7 +93,6 @@ export class CellScene {
     private readonly onMachineSelect: (index: number) => void,
     private readonly onMagazineSelect?: (magazineId: 1 | 2) => void,
     private readonly onAnchorsUpdate?: (anchors: EquipmentAnchors) => void,
-    private readonly onIndexedConveyorTestStatus?: (magazineId: 1 | 2, status: IndexedConveyorTestStatus) => void,
     private readonly onDriftTelemetry?: (telemetry: DriftTelemetry) => void,
   ) {
     this.layout = layout;
@@ -195,14 +189,13 @@ export class CellScene {
     this.machineRigs.forEach((rig) => this.cellRoot.add(rig.root));
     this.portalRig = createPortal(layout);
     this.cellRoot.add(this.portalRig.root);
-    this.indexedConveyorRigs = layout.indexedConveyors.map((config, index) => {
-      const rig = createIndexedConveyor(
+    this.staticMagazineRigs = layout.staticMagazines.map((config, index) => {
+      const rig = createStaticMagazine(
         config,
         layout.partGeometry,
         layout.productPartMaterials,
         (index + 1) as 1 | 2,
       );
-      rig.lastCommandId = this.indexedConveyorTest.id;
       this.cellRoot.add(rig.root);
       return rig;
     });
@@ -211,7 +204,11 @@ export class CellScene {
     this.cellRoot.add(this.easterEggController.root);
     this.effectAnchors = {
       machines: this.machineRigs.map(() => ({ ground: new THREE.Vector3(), service: new THREE.Vector3() })),
-      magazines: this.indexedConveyorRigs.map(() => ({ ground: new THREE.Vector3(), service: new THREE.Vector3() })),
+      magazines: this.staticMagazineRigs.map(() => ({
+        ground: new THREE.Vector3(),
+        service: new THREE.Vector3(),
+        operation: new THREE.Vector3(),
+      })),
       portal: { ground: new THREE.Vector3(), service: new THREE.Vector3() },
       cell: { center: new THREE.Vector3(), length: mm(layout.floor.lengthX), width: mm(layout.floor.widthY) },
     };
@@ -224,14 +221,6 @@ export class CellScene {
 
   setState(state: CellState): void {
     this.state = state;
-  }
-
-  setMagazineInventorySync(enabled: boolean): void {
-    this.syncMagazineInventory = enabled;
-  }
-
-  setIndexedConveyorTest(command: IndexedConveyorTestCommand): void {
-    this.indexedConveyorTest = command;
   }
 
   setEasterEgg(mode: EasterEggMode, revision = 0): void {
@@ -380,7 +369,7 @@ export class CellScene {
     this.raycaster.setFromCamera(this.pointer, this.camera);
     const roots = [
       ...this.machineRigs.map((rig) => rig.root),
-      ...this.indexedConveyorRigs.map((rig) => rig.root),
+      ...this.staticMagazineRigs.map((rig) => rig.root),
     ];
     const hit = this.raycaster.intersectObjects(roots, true)[0];
     let selected: THREE.Object3D | null = hit?.object ?? null;
@@ -408,18 +397,17 @@ export class CellScene {
   }
 
   private updateEquipmentAnchors(): void {
-    if (!this.onAnchorsUpdate || this.indexedConveyorRigs.length === 0) return;
+    if (!this.onAnchorsUpdate || this.staticMagazineRigs.length === 0) return;
     const machineWidth = mm(this.layout.machine.sizeX);
     const machines = this.machineRigs.map((rig) => this.projectAnchor(
       rig.root.localToWorld(new THREE.Vector3(machineWidth / 2, 0.03, 0.58)),
     ));
-    const magazines = this.indexedConveyorRigs.map((rig, index) => {
-      const config = this.layout.indexedConveyors[index];
-      const conveyorRows = config.zoneRowsY.reduce((sum, rows) => sum + rows, 0);
+    const magazines = this.staticMagazineRigs.map((rig, index) => {
+      const config = this.layout.staticMagazines[index];
       return this.projectAnchor(rig.root.localToWorld(new THREE.Vector3(
         0,
         mm(config.workingHeight) + 0.14,
-        -mm(conveyorRows * config.pitchY) / 2,
+        -mm((12 - 1) * config.pitchY) / 2,
       )));
     });
     this.onAnchorsUpdate({ machines, magazines });
@@ -432,17 +420,28 @@ export class CellScene {
     this.machineRigs.forEach((rig, index) => {
       const anchor = this.effectAnchors.machines[index];
       if (!anchor) return;
-      rig.root.localToWorld(anchor.ground.set(machineWidth / 2, 0.012, -machineDepth / 2));
+      if (rig.chuck) {
+        rig.chuck.getWorldPosition(anchor.ground);
+        anchor.ground.y = 0.012;
+      } else {
+        // Пока GLB не загрузился, используем положение патрона внутри габарита модели.
+        rig.root.localToWorld(anchor.ground.set(machineWidth * 0.3, 0.012, -machineDepth * 0.3));
+      }
       rig.root.localToWorld(anchor.service.set(machineWidth / 2, machineHeight * 0.46, -machineDepth * 0.04));
+      // Выделяем рабочую зону вокруг патрона, не захватывая стружкоотвод.
+      anchor.operationRadius = Math.min(machineWidth * 0.46, machineDepth * 0.78);
     });
-    this.indexedConveyorRigs.forEach((rig, index) => {
+    this.staticMagazineRigs.forEach((rig, index) => {
       const anchor = this.effectAnchors.magazines[index];
-      const config = this.layout.indexedConveyors[index];
+      const config = this.layout.staticMagazines[index];
       if (!anchor || !config) return;
-      const rows = config.zoneRowsY.reduce((sum, value) => sum + value, 0);
-      const centerZ = -mm(rows * config.pitchY) / 2;
+      const centerZ = -mm((12 - 1) * config.pitchY) / 2;
       rig.root.localToWorld(anchor.ground.set(0, 0.012, centerZ));
       rig.root.localToWorld(anchor.service.set(0, mm(config.workingHeight) + 0.12, centerZ));
+      // Для круга активной операции берём центр кассеты, а не проекцию на пол.
+      if (anchor.operation) {
+        rig.root.localToWorld(anchor.operation.set(0, mm(config.workingHeight), centerZ));
+      }
     });
     if (this.portalRig) {
       this.portalRig.gripperMount.getWorldPosition(this.effectAnchors.portal.service);
@@ -470,22 +469,8 @@ export class CellScene {
       const state = this.state.machines[index];
       if (state) updateMachineRig(rig, state, dt, this.layout);
     });
-    this.indexedConveyorRigs.forEach((rig, index) => {
-      const magazineId = (index + 1) as 1 | 2;
-      const command = this.indexedConveyorTest.magazineId === magazineId
-        ? this.indexedConveyorTest
-        : { ...this.indexedConveyorTest, type: 'none' as const };
-      const status = updateIndexedConveyorRig(
-        rig,
-        command,
-        dt,
-        this.syncMagazineInventory ? this.state.magazines[index] : undefined,
-      );
-      const statusKey = `${status.moving}:${status.positionRows}:${status.loadedSlots}:${status.homed}`;
-      if (statusKey !== this.indexedConveyorStatusKeys[index]) {
-        this.indexedConveyorStatusKeys[index] = statusKey;
-        this.onIndexedConveyorTestStatus?.(magazineId, status);
-      }
+    this.staticMagazineRigs.forEach((rig, index) => {
+      updateStaticMagazineRig(rig, this.state.magazines[index] ?? this.state.magazines[0]);
     });
     this.updateEffectAnchors();
     this.operationalEffects?.update(dt, this.sceneActivity, this.effectAnchors);

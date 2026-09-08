@@ -3,7 +3,7 @@ VAR_INPUT
 	FaultRequest : ST_AXIS_GROUP_FAULT_REQUEST; // Единый контракт диагностической инъекции
 	xResetPermit : BOOL; // Общий сброс разрешён ручным режимом и остановленной ячейкой
 	xAxesPowered : BOOL; // Питанием физических осей владеют FB_AXIS; группа только наблюдает готовность
-	lrVelocityOverride : LREAL; // Общий коэффициент только группового MOVE_DIRECT, 0.001..1.0
+	lrVelocityOverride : LREAL; // Live override скорости групповых движений, 0.001..1.0
 END_VAR
 VAR_OUTPUT
 	FaultStatus : ST_FAULT_INJECTION_STATUS; // Состояние инжектора для HMI
@@ -19,6 +19,7 @@ VAR
 	xStopCmd     : BOOL; // Выполняется остановка
 	xHaltCmd     : BOOL; // Выполняется плавная остановка
 	lrAppliedVelocityOverride : LREAL; // Коэффициент после защитного ограничения PLC
+	xVelocityOverrideEnable : BOOL; // Запись live override разрешена только в рабочих состояниях без MC_GroupStop
 	xFaultAllowed : BOOL; // Безопасные условия тестового запуска
 	
 	iPrevStep : E_AXIS_GROUP_STATE; // Предыдущий шаг автомата
@@ -41,6 +42,7 @@ VAR
 	fbGroupEnable  : MC_GroupEnable; // Включение группы
 	fbGroupDisable : MC_GroupDisable; // Отключение группы
 	fbGroupReset   : MC_GroupReset; // Сброс ошибок группы
+	fbGroupSetOverride : MC_GroupSetOverride; // Live override активного и следующего движения группы
 
 	
 	fbMoveDirect : MC_MoveDirectAbsolute; // Прямое абсолютное перемещение
@@ -91,6 +93,7 @@ VAR CONSTANT
 	MOTION_ERR_READ_GROUP_ERROR : DWORD := 1024; // Ошибка чтения кода ошибки группы
 	MOTION_ERR_GROUP_ERROR_STOP : DWORD := 2048; // Группа SoftMotion находится в ErrorStop
 	MOTION_ERR_SIMULATED        : DWORD := 4096; // Тестовая ошибка MC_MoveDirectAbsolute
+	MOTION_ERR_OVERRIDE         : DWORD := 8192; // Ошибка MC_GroupSetOverride; бит 1 сохранён за legacy POWER_ERROR
 
 	WRN_NO_POWER_PERMIT       : UINT := 1; // Нет разрешения питания
 	WRN_MOVE_COMMAND_CONFLICT : UINT := 2; // Одновременно заданы два типа движения
@@ -822,15 +825,36 @@ fbGroupReset(
     Execute   := xResetMC
 );
 
+// MC_GroupSetOverride меняет скорость уже активного движения. Вызов обязан
+// находиться перед Motion FB. Во время MC_GroupStop блок запрещён документацией:
+// последняя записанная величина сохраняется, а Stop выполняется со своей динамикой.
+xVelocityOverrideEnable := fbReadStatus.Valid
+	AND NOT fbReadStatus.GroupErrorStop
+	AND NOT xStopCmd
+	AND ((GroupData.Diag.iStep = E_AXIS_GROUP_STATE.READY)
+		OR (GroupData.Diag.iStep = E_AXIS_GROUP_STATE.MOVING_DIRECT)
+		OR (GroupData.Diag.iStep = E_AXIS_GROUP_STATE.MOVING_LINEAR));
+fbGroupSetOverride(
+	AxisGroup      := AxisGroup,
+	Enable         := xVelocityOverrideEnable,
+	VelFactor      := lrAppliedVelocityOverride,
+	AccFactor      := 1.0,
+	JerkFactor     := 1.0,
+	TorqueFactor   := 1.0,
+	PathVelFactor  := lrAppliedVelocityOverride,
+	PathAccFactor  := 1.0,
+	PathJerkFactor := 1.0
+);
+
 fbMoveDirect(
     AxisGroup   := AxisGroup,
     Execute     := xMoveDirect,
     Position    := GroupData.MotionParam.stTargetPos,
     CoordSystem := SMC_COORD_SYSTEM.MCS,
     BufferMode  := MC_BUFFER_MODE.Aborting,
-	// MOVE_DIRECT принадлежит группе: общий коэффициент умножается на коэффициент точки.
-	VelFactor   := MAX(0.001, MIN(1.0,
-		GroupData.MotionParam.VelFactor * lrAppliedVelocityOverride)),
+	// Коэффициент точки задаёт профиль команды, общий процент накладывается
+	// отдельно через MC_GroupSetOverride и потому здесь повторно не умножается.
+	VelFactor   := MAX(0.001, MIN(1.0, GroupData.MotionParam.VelFactor)),
     AccFactor   := GroupData.MotionParam.AccFactor,
     JerkFactor  := GroupData.MotionParam.JerkFactor
 );
@@ -932,6 +956,12 @@ IF fbFaultInjector.xError THEN
 		OR MOTION_ERR_SIMULATED;
 END_IF;
 
+IF fbGroupSetOverride.Error THEN
+	GroupData.Error.dwMotionErrorActive :=
+		GroupData.Error.dwMotionErrorActive
+		OR MOTION_ERR_OVERRIDE;
+END_IF;
+
 // Только ошибки, которых не было в предыдущем цикле.
 GroupData.Error.dwMotionErrorNew :=
     GroupData.Error.dwMotionErrorActive
@@ -1019,6 +1049,9 @@ IF fbReadError.Valid
 ELSIF (GroupData.Error.dwMotionErrorLatched AND MOTION_ERR_SIMULATED) <> DWORD#0 THEN
 	GroupData.Diag.udiActualErrorID := fbFaultInjector.udiErrorID;
 	GroupData.Diag.sErrorText := 'Simulated MC_MoveDirectAbsolute error';
+ELSIF fbGroupSetOverride.Error THEN
+	GroupData.Diag.udiActualErrorID := TO_UDINT(fbGroupSetOverride.ErrorID);
+	GroupData.Diag.sErrorText := 'MC_GroupSetOverride error';
 ELSIF fbGroupEnable.Error THEN
 	GroupData.Diag.udiActualErrorID := TO_UDINT(fbGroupEnable.ErrorID);
 	GroupData.Diag.sErrorText := 'MC_GroupEnable error';

@@ -7,8 +7,8 @@ TYPE E_ALARM_SOURCE :
 	MACHINE_3, // Станок 3
 	MAGAZINE_LOGIC_1, // Магазин 1; имя не конфликтует с SoftMotion-осью Magazine_1
 	MAGAZINE_LOGIC_2, // Магазин 2; имя не конфликтует с SoftMotion-осью Magazine_2
-	MAGAZINE_AXIS_1, // Сервопривод магазина 1
-	MAGAZINE_AXIS_2, // Сервопривод магазина 2
+	RESERVED_LEGACY_MAGAZINE_AXIS_1, // Код 7 сохранён только для старых записей журнала
+	RESERVED_LEGACY_MAGAZINE_AXIS_2, // Код 8 сохранён только для старых записей журнала
 	AXIS_X, // Ось X
 	AXIS_Y, // Ось Y
 	AXIS_Z, // Ось Z

@@ -5,6 +5,9 @@ import { COLORS } from './primitives';
 export interface SceneEffectAnchor {
   ground: THREE.Vector3;
   service: THREE.Vector3;
+  /** Точка визуального центра круга активной операции. */
+  operation?: THREE.Vector3;
+  operationRadius?: number;
 }
 
 export interface SceneEffectAnchors {
@@ -132,14 +135,22 @@ export class OperationalEffects {
     }
 
     const visibleKeys = new Set<string>();
-    activity.activeMagazines.forEach((index) => {
-      const target = { kind: 'magazine' as const, index };
+    const target = activity.operationTarget;
+    if (target) {
       const anchor = copyTargetAnchor(target, anchors);
-      if (!anchor) return;
-      const isTarget = activity.operationTarget?.kind === target.kind && activity.operationTarget.index === target.index;
-      this.updateMarker(this.operationMarkers.get(keyForTarget(target)), anchor, isTarget ? COLORS.blue : COLORS.amber, isTarget ? 1 : 0.55);
-      visibleKeys.add(keyForTarget(target));
-    });
+      if (anchor) {
+        const key = keyForTarget(target);
+        this.updateMarker(
+          this.operationMarkers.get(key),
+          anchor,
+          COLORS.blue,
+          1,
+          target.kind === 'machine' ? anchor.operationRadius : undefined,
+          target.kind === 'magazine' ? anchor.operation : undefined,
+        );
+        visibleKeys.add(key);
+      }
+    }
     this.operationMarkers.forEach((marker, key) => {
       if (!visibleKeys.has(key)) marker.root.visible = false;
     });
@@ -159,7 +170,6 @@ export class OperationalEffects {
         cellAlarm = true;
         return;
       }
-      if (target.kind === 'machine') return;
       const key = keyForTarget(target);
       const anchor = target.kind === 'portal'
         ? anchors.portal
@@ -167,7 +177,14 @@ export class OperationalEffects {
           ? copyTargetAnchor(target, anchors)
           : null;
       if (!anchor) return;
-      this.updateMarker(this.alarmMarkers.get(key), anchor, COLORS.red, 1.25);
+      this.updateMarker(
+        this.alarmMarkers.get(key),
+        anchor,
+        COLORS.red,
+        1.25,
+        target.kind === 'machine' ? anchor.operationRadius : undefined,
+        target.kind === 'magazine' ? anchor.operation : undefined,
+      );
       visibleKeys.add(key);
     });
     this.alarmMarkers.forEach((marker, key) => {
@@ -176,12 +193,19 @@ export class OperationalEffects {
     this.updateCellBoundary(cellAlarm, anchors.cell);
   }
 
-  private updateMarker(marker: GroundMarker | undefined, anchor: SceneEffectAnchor, color: number, intensity: number): void {
+  private updateMarker(
+    marker: GroundMarker | undefined,
+    anchor: SceneEffectAnchor,
+    color: number,
+    intensity: number,
+    outerRadius = 0.52,
+    position = anchor.ground,
+  ): void {
     if (!marker) return;
     marker.root.visible = true;
-    marker.root.position.copy(anchor.ground);
+    marker.root.position.copy(position);
     marker.root.position.y += 0.015;
-    marker.root.scale.set(1, 1, 1);
+    marker.root.scale.setScalar(outerRadius / 0.52);
     marker.core.material.color.setHex(color);
     marker.pulse.material.color.setHex(color);
     const wave = this.reducedMotion ? 0.35 : (Math.sin(this.time * 4.6) + 1) / 2;

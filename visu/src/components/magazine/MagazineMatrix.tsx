@@ -20,8 +20,6 @@ export interface MagazineMatrixCardProps {
   className?: string;
   productTypes?: ProductType[];
   magazineNumber?: number;
-  zone?: 1 | 2;
-  onZoneChange?: (zone: 1 | 2) => void;
 }
 
 const SLOT_LABELS: Record<SlotType, string> = {
@@ -65,8 +63,6 @@ export function MagazineMatrixCard({
   className,
   productTypes,
   magazineNumber,
-  zone = 1,
-  onZoneChange,
 }: MagazineMatrixCardProps) {
   const activeCount = Math.min(slots.length, Math.max(0, rows * columns));
   const activeSlots = slots.slice(0, activeCount);
@@ -81,7 +77,7 @@ export function MagazineMatrixCard({
     onPointerDown={(event) => event.stopPropagation()}
   >
     <header className="magazine-matrix-card-header">
-      <div><h2>Магазин {magazineNumber ?? ''}</h2>{onZoneChange && <nav className="magazine-matrix-card-tabs" aria-label="Зона магазина"><button className={zone === 1 ? 'active' : ''} type="button" onClick={() => onZoneChange(1)}>Зона загрузки</button><button className={zone === 2 ? 'active' : ''} type="button" onClick={() => onZoneChange(2)}>Зона работы</button></nav>}</div>
+      <div><h2>Магазин {magazineNumber ?? ''}</h2></div>
       <Icon icon={viewGridOutlineIcon} aria-hidden="true" />
     </header>
     <div className="magazine-matrix-card-stats" aria-label="Состав магазина">

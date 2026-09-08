@@ -9,6 +9,7 @@ VAR_INPUT
 	xGlobalError      : BOOL; // Глобальная ошибка ячейки
 	xManualMode       : BOOL; // Ручной режим: открытая операторская дверь не формирует аварию обслуживания
 	xAutomaticUseEnabled : BOOL; // Станок выбран для автоматической обработки
+	xRobotMotionBusy   : BOOL; // Группа/ось робота ещё движется или тормозит
 	xHmiOpenSafetyDoor  : BOOL; // Импульс ручного открытия операторской двери
 	xHmiCloseSafetyDoor : BOOL; // Импульс ручного закрытия операторской двери
 	xHmiOpenHatch       : BOOL; // Импульс ручного открытия роботного люка
@@ -31,6 +32,7 @@ VAR_INPUT
 	stUnloadRecipe    : ARRAY [0..40] OF ST_MACHINE_RECIPE; // Рецепт выгрузки детали
 	stPoints          : ST_MACHINE_POINTS; // Имена рабочих точек станка
 	stRobotStatus     : ST_ROBOT_STATUS; // Статусы робота
+	eRobotTargetPoint : E_POINT_NAME; // Защёлкнутая текущая цель робота
 	stMachineStatus   : ST_MACHINE_IO_STATUS; // Состояние исполнительных механизмов станка
 END_VAR
 VAR_OUTPUT
@@ -58,6 +60,7 @@ VAR
 	rtHmiCloseSafetyDoor     : R_TRIG; // Фронт ручного закрытия операторской двери
 	rtHmiOpenHatch           : R_TRIG; // Фронт ручного открытия люка
 	rtHmiCloseHatch          : R_TRIG; // Фронт ручного закрытия люка
+	rtDoorClosed             : R_TRIG; // Фронт подтверждённого закрытия роботного люка
 	rtHmiOpenChuck           : R_TRIG; // Фронт ручного разжима патрона
 	rtHmiCloseChuck          : R_TRIG; // Фронт ручного зажима патрона
 	ftChuckClamped          : F_TRIG; // Спад закрытия кулачков
@@ -82,8 +85,11 @@ VAR
 	xRobotInsideMachine     : BOOL; // Робот находится внутри рабочей зоны
 	xFaultContextCaptured   : BOOL; // Контекст робота зафиксирован при входе в ERROR
 	xRobotInsideAtFault     : BOOL; // Робот был в зоне станка при возникновении ошибки
+	xDoorRobotStopLatched  : BOOL; // Останов по люку удерживается до полной остановки Motion
 	xRobotStopRequired      : BOOL; // Итоговая реакция ROBOT_STOP, сформированная станком
 	xRobotResetDependencyReady : BOOL; // Каскадная ошибка робота может быть сброшена тем же импульсом
+	xDoorRobotRecoveryReady : BOOL; // Люк открыт либо робот уже вышел из рабочей зоны
+	xManualHatchRecoveryOpenAllowed : BOOL; // Разрешено открыть люк для безопасного восстановления
 	xSafetyDoorSafe        : BOOL; // Оба сигнала операторской двери непротиворечиво подтверждают закрытие
 	xManualControlAllowed  : BOOL; // Общие условия ручного управления механизмами
 	xManualSafetyDoorOpenAllowed  : BOOL;
@@ -192,6 +198,7 @@ rtHmiOpenSafetyDoor(CLK := xHmiOpenSafetyDoor);
 rtHmiCloseSafetyDoor(CLK := xHmiCloseSafetyDoor);
 rtHmiOpenHatch(CLK := xHmiOpenHatch);
 rtHmiCloseHatch(CLK := xHmiCloseHatch);
+rtDoorClosed(CLK := stMachineStatus.xDoorClosed);
 rtHmiOpenChuck(CLK := xHmiOpenChuck);
 rtHmiCloseChuck(CLK := xHmiCloseChuck);
 ftChuckClamped(CLK := stMachineStatus.xChuckClamped);
@@ -199,12 +206,22 @@ ftChuckClamped(CLK := stMachineStatus.xChuckClamped);
 xSafetyDoorSafe := stMachineStatus.xSafetyDoorClosed
 	AND NOT stMachineStatus.xSafetyDoorOpen;
 
+// Считаем робота находящимся в зоне также по активной цели: текущая точка
+// обновляется только после завершения движения и иначе пропускает закрытие
+// люка в последнем участке маршрута.
 xRobotInsideMachine := (eState = E_MACHINE_STATE.ROBOT_ACTION)
 	OR ((eState = E_MACHINE_STATE.ROBOT_MOVE)
 		AND (stRecipe[uiIndex].stPoint <> E_MACHINE_POINTS.ABOVE))
 	OR (stRobotStatus.eCurrentPoint = stPoints.eInside)
 	OR (stRobotStatus.eCurrentPoint = stPoints.eChuck)
-	OR (stRobotStatus.eCurrentPoint = stPoints.eChuckApproach);
+	OR (stRobotStatus.eCurrentPoint = stPoints.eChuckApproach)
+	OR (stRobotStatus.xBusy
+		AND ((eRobotTargetPoint = stPoints.eInside)
+			OR (eRobotTargetPoint = stPoints.eChuck)
+			OR (eRobotTargetPoint = stPoints.eChuckApproach)))
+	// FB_ROBOT очищает eActivePoint сразу после принятого Stop. Пока
+	// аварийная защёлка не отпущена, считаем робота оставшимся внутри зоны.
+	OR xDoorRobotStopLatched;
 
 // Ручное управление разрешено только при выбранном ручном режиме и полностью
 // исключённом из автоматики станке. Конкретные xAllowed дополнительно не дают
@@ -215,13 +232,30 @@ xManualControlAllowed := xManualMode
 	AND NOT xGlobalError
 	AND NOT stMachineStatus.xAlarm
 	AND NOT stMachineStatus.xCycleActive;
+
+// После аварии «робот внутри/люк закрыт» разрешается только открыть люк,
+// причём лишь после полной остановки Motion-слоя. Остальные механизмы остаются
+// заблокированы до штатного сброса ошибки.
+xDoorRobotRecoveryReady := (stMachineStatus.xDoorOpen AND NOT stMachineStatus.xDoorClosed)
+	OR NOT xRobotInsideMachine;
+xManualHatchRecoveryOpenAllowed := xManualMode
+	AND NOT xAutomaticUseEnabled
+	AND (eState = E_MACHINE_STATE.ERROR)
+	AND ((Error.dwErrorActive AND ERR_DOOR_ROBOT) <> DWORD#0)
+	AND stMachineStatus.xDoorClosed
+	AND NOT stMachineStatus.xDoorOpen
+	AND NOT stMachineStatus.xAlarm
+	AND xSafetyDoorSafe
+	AND NOT xGlobalError
+	AND NOT xRobotMotionBusy
+	AND NOT stRobotStatus.xBusy;
 xManualSafetyDoorOpenAllowed := xManualControlAllowed
 	AND stMachineStatus.xSafetyDoorClosed
 	AND NOT stMachineStatus.xSafetyDoorOpen;
 xManualSafetyDoorCloseAllowed := xManualControlAllowed
 	AND stMachineStatus.xSafetyDoorOpen
 	AND NOT stMachineStatus.xSafetyDoorClosed;
-xManualHatchOpenAllowed := xManualControlAllowed
+xManualHatchOpenAllowed := (xManualControlAllowed OR xManualHatchRecoveryOpenAllowed)
 	AND stMachineStatus.xDoorClosed
 	AND NOT stMachineStatus.xDoorOpen;
 xManualHatchCloseAllowed := xManualControlAllowed
@@ -251,6 +285,9 @@ AND (eState = E_MACHINE_STATE.ERROR) THEN
 		Diag.stWarning.uiCode := WRN_RESET_GLOBAL_ERROR;
 	ELSIF xExecute THEN
 		Diag.stWarning.uiCode := WRN_RESET_EXECUTE;
+	ELSIF ((Error.dwErrorActive AND ERR_DOOR_ROBOT) <> DWORD#0)
+	AND NOT xDoorRobotRecoveryReady THEN
+		Diag.stWarning.uiCode := WRN_RESET_ROBOT_ERROR;
 	ELSIF NOT xRobotResetDependencyReady THEN
 		Diag.stWarning.uiCode := WRN_RESET_ROBOT_ERROR;
 	ELSE
@@ -437,6 +474,7 @@ IF xTestInitialize THEN
 	xRobotInsideMachine := FALSE;
 	xFaultContextCaptured := FALSE;
 	xRobotInsideAtFault := FALSE;
+	xDoorRobotStopLatched := FALSE;
 	xRobotStopRequired := FALSE;
 	xRobotDone := FALSE;
 	xServiceDoorCloseDemand := FALSE;
@@ -574,8 +612,20 @@ AND (eState <> E_MACHINE_STATE.ERROR) THEN
 	eState := E_MACHINE_STATE.ERROR;
 END_IF;
 						
-IF xRobotInsideMachine AND NOT tofErrorDoor.Q THEN
-	Command.stRobot.xStop := stRobotStatus.xBusy;
+IF xRobotInsideMachine
+AND (
+	(rtDoorClosed.Q)
+	OR (
+		NOT tofErrorDoor.Q
+		AND (stRobotStatus.xBusy
+			OR (eState = E_MACHINE_STATE.ROBOT_MOVE)
+			OR (eState = E_MACHINE_STATE.ROBOT_ACTION))
+	)
+) THEN
+	// Stop должен быть явным даже при гонке статусов: xBusy уже мог успеть
+	// сброситься в FB_ROBOT, пока группа ещё принимает команду останова.
+	Command.stRobot.xStop := TRUE;
+	xDoorRobotStopLatched := TRUE;
 	Error.dwErrorActive := Error.dwErrorActive OR ERR_DOOR_ROBOT;
     eState := E_MACHINE_STATE.ERROR;
 END_IF
@@ -848,6 +898,7 @@ CASE eState OF
 		IF xRobotInsideMachine
 		OR (NOT xOperatorClosingDoor AND NOT xRobotDone) THEN
 			Command.stRobot.xStop := xRobotInsideMachine AND stRobotStatus.xBusy;
+			xDoorRobotStopLatched := TRUE;
 			Error.dwErrorActive := Error.dwErrorActive OR ERR_DOOR_ROBOT;
 			eState := E_MACHINE_STATE.ERROR;
 		ELSE
@@ -965,6 +1016,7 @@ CASE eState OF
 		AND NOT xExecute
 		AND NOT stMachineStatus.xAlarm
 		AND xSafetyDoorSafe
+		AND xDoorRobotRecoveryReady
 		AND xRobotResetDependencyReady THEN
 			Error.dwErrorLast := Error.dwErrorActive;
 			Error.dwErrorActive := DWORD#0;
@@ -983,16 +1035,31 @@ ELSIF eState <> E_MACHINE_STATE.ERROR THEN
 END_IF;
 
 xRobotStopRequired := NOT xGlobalError
-	AND (((Error.dwErrorActive AND MASK_ALWAYS_ROBOT_STOP) <> DWORD#0)
-	OR (((Error.dwErrorActive AND MASK_EQUIPMENT_ERROR) <> DWORD#0)
-		AND xRobotInsideAtFault));
+	AND (
+		((Error.dwErrorActive
+			AND (MASK_ALWAYS_ROBOT_STOP AND NOT ERR_DOOR_ROBOT)) <> DWORD#0)
+		OR (((Error.dwErrorActive AND ERR_DOOR_ROBOT) <> DWORD#0)
+			AND NOT xDoorRobotRecoveryReady)
+		OR xDoorRobotStopLatched
+		OR (((Error.dwErrorActive
+			AND (MASK_EQUIPMENT_ERROR AND NOT ERR_DOOR_ROBOT)) <> DWORD#0)
+			AND xRobotInsideAtFault)
+	);
 
 // Stop нужен только выполняемому действию. Стоящий в станке робот получает
 // зависимую ошибку через FB_ROBOT, но бессмысленная команда Stop не выдаётся.
 IF (eState = E_MACHINE_STATE.ERROR)
 AND xRobotStopRequired
-AND stRobotStatus.xBusy THEN
+AND (stRobotStatus.xBusy OR xRobotMotionBusy) THEN
 	Command.stRobot.xStop := TRUE;
+END_IF;
+
+// После подтверждённого открытия люка и полной остановки можно отпустить
+// защёлку зависимого Stop; до этого новый цикл не должен стартовать.
+IF xDoorRobotStopLatched
+AND NOT xRobotMotionBusy
+AND xDoorRobotRecoveryReady THEN
+	xDoorRobotStopLatched := FALSE;
 END_IF;
 
 IF (eState <> E_MACHINE_STATE.ERROR)
@@ -1039,6 +1106,8 @@ Status.xResetAllowed := (eState = E_MACHINE_STATE.ERROR)
 	AND xSafetyDoorSafe
 	AND NOT xGlobalError
 	AND NOT xExecute
+	AND (((Error.dwErrorActive AND ERR_DOOR_ROBOT) = DWORD#0)
+		OR xDoorRobotRecoveryReady)
 	AND xRobotResetDependencyReady;
 Status.xManualControlAllowed := xManualControlAllowed;
 Status.xManualSafetyDoorOpenAllowed := xManualSafetyDoorOpenAllowed;

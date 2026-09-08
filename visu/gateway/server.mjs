@@ -33,6 +33,10 @@ import { AuthStore, AuthStoreError } from './auth-store.mjs';
 import { StatisticsStore, StatisticsStoreError } from './statistics-store.mjs';
 import { TestStore } from './test-store.mjs';
 import { isHmiCommandAllowedDuringTest } from './test-session.mjs';
+import { PointBackupStore, PointBackupStoreError } from './point-backup-store.mjs';
+import { MobilePointsService, MOBILE_COOKIE, isPhoneAgent } from './mobile-points.mjs';
+import { PointEditorChannel } from './point-editor-channel.mjs';
+import { PrimaryHmiSession } from './primary-hmi-session.mjs';
 
 const endpointUrl = process.env.OPCUA_ENDPOINT ?? 'opc.tcp://127.0.0.1:4840';
 const gatewayPort = Number(process.env.GATEWAY_PORT ?? 3001);
@@ -54,6 +58,7 @@ const authDbPath = process.env.AUTH_DB_PATH ?? 'gateway/data/auth.sqlite';
 const statisticsDbPath = process.env.STATISTICS_DB_PATH ?? 'gateway/data/statistics.sqlite';
 const authSessionHours = Math.max(1, Number(process.env.AUTH_SESSION_HOURS ?? 12));
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
+const pointBackupDir = process.env.POINT_BACKUP_DIR ?? join(__dirname, 'data', 'point-backups');
 const distDir = normalize(join(__dirname, '..', 'dist'));
 const bundledTestPython = normalize(join(
   __dirname, '..', '..', 'robot_simulator', '.venv',
@@ -62,6 +67,16 @@ const bundledTestPython = normalize(join(
 const testRunnerPython = process.env.TEST_RUNNER_PYTHON
   ?? (existsSync(bundledTestPython) ? bundledTestPython : 'python');
 const robotSimulatorControlUrl = process.env.ROBOT_SIM_CONTROL_URL ?? 'http://127.0.0.1:8765';
+const pointBackupStore = new PointBackupStore(pointBackupDir);
+
+const pointBackupLabels = [
+  'Станок 1 — над станком', 'Станок 1 — подход к патрону', 'Станок 1 — позиция патрона',
+  'Станок 2 — над станком', 'Станок 2 — подход к патрону', 'Станок 2 — позиция патрона',
+  'Станок 3 — над станком', 'Станок 3 — подход к патрону', 'Станок 3 — позиция патрона',
+  'HOME_SAFETY — безопасный повторный запуск',
+  'Магазин 1 — базовая точка детали',
+  'Магазин 2 — базовая точка детали',
+];
 
 const faultStatusLeaves = ['xAllowed', 'xActive', 'xBusy', 'xResetAllowed', 'xRejected', 'udiRejectSequence'];
 const faultStatusSymbols = (root) => faultStatusLeaves.map((leaf) => `${root}.${leaf}`);
@@ -124,6 +139,7 @@ const requiredSymbols = [...new Set([
   'stCellStatus.xStartCheckNoBlockingError',
   'stCellStatus.xStartCheckRobotInterfaceReady',
   'stCellStatus.xStartCheckConfigurationValid',
+  'stCellStatus.xStartCheckPointsConfigured',
   'stCellStatus.xStartCheckDrivesReady',
   'stCellStatus.xStartCheckRobotReady',
   'stCellStatus.xStartCheckMagazineReady',
@@ -212,6 +228,10 @@ const requiredSymbols = [...new Set([
   'xRobotStop',
   'xRobotReset',
   'udiHmiHeartbeat',
+  'xMobileMotionActive',
+  'udiMobileMotionHeartbeat',
+  'xMobileMotionLeaseAlive',
+  'rMobileMotionAppliedSpeedPercent',
   'xHmiConnectionAlive',
   'xManualRecoveryActive',
   'xRobotContinuousMode',
@@ -248,6 +268,14 @@ const requiredSymbols = [...new Set([
   'uiPointEditorRejectReason',
   'xPointEditorCaptureAllowed',
   'xPointEditorSaveAllowed',
+  'udiPointCheckHeartbeat',
+  'xPointCheckStop',
+  'rPointCheckSpeedPercent',
+  'xPointCheckActive',
+  'uiPointCheckIndex',
+  'uiPointCheckState',
+  'udiPointCheckRunSeq',
+  'rPointCheckAppliedSpeedPercent',
   'xPointTableReady',
   'stPointEditorResultPoint.X',
   'stPointEditorResultPoint.Y',
@@ -255,13 +283,15 @@ const requiredSymbols = [...new Set([
   'stPointEditorResultPoint.SpeedFactor',
   'stPointEditorResultPoint.xConfigured',
   ...[1, 2, 3].map((index) => `alrPointEditorDraftXYZ[${index}]`),
-  ...Array.from({ length: 15 }, (_, offset) => offset + 1).flatMap((index) => [
+  ...Array.from({ length: 12 }, (_, offset) => offset + 1).flatMap((index) => [
     `auiPointEditorPointId[${index}]`,
     `astPointEditorPoints[${index}].X`,
     `astPointEditorPoints[${index}].Y`,
     `astPointEditorPoints[${index}].Z`,
     `astPointEditorPoints[${index}].SpeedFactor`,
     `astPointEditorPoints[${index}].xConfigured`,
+    `axPointCheckAllowed[${index}]`,
+    `auiPointCheckRejectReason[${index}]`,
   ]),
   ...[1, 2, 3].flatMap((index) => [
     `astAxisHmiCommand[${index}].xJogPositive`,
@@ -332,42 +362,31 @@ const requiredSymbols = [...new Set([
     `astMagazineStatus[${index}].xError`, `astMagazineStatus[${index}].xFinished`,
     `astMagazineStatus[${index}].xCanTake`, `astMagazineStatus[${index}].xCanPut`,
     `astMagazineStatus[${index}].xCanChange`, `astMagazineStatus[${index}].xCanEnable`,
-    `astMagazineStatus[${index}].xEnableCheckPowered`, `astMagazineStatus[${index}].xEnableCheckHomed`,
-    `astMagazineStatus[${index}].xEnableCheckPositionValid`, `astMagazineStatus[${index}].xEnableCheckStationary`,
+    `astMagazineStatus[${index}].xEnableCheckRobotReady`,
     `astMagazineStatus[${index}].xEnableCheckNoError`, `astMagazineStatus[${index}].xEnableCheckRobotReleased`,
-    `astMagazineStatus[${index}].xEnableCheckContent`, `astMagazineStatus[${index}].xEnableCheckInventoryVerified`,
-    `astMagazineStatus[${index}].xHomed`, `astMagazineStatus[${index}].xPositionValid`,
-    `astMagazineStatus[${index}].xRecoveryRequired`, `astMagazineStatus[${index}].xIndexAllowed`,
-    `astMagazineStatus[${index}].xZone1EditAllowed`, `astMagazineStatus[${index}].xZone2EditAllowed`,
-    `astMagazineStatus[${index}].xJogPositiveAllowed`, `astMagazineStatus[${index}].xJogNegativeAllowed`,
-    `astMagazineStatus[${index}].xContentRecoveryAllowed`, `astMagazineStatus[${index}].xContentRecoveryActive`,
-    `astMagazineStatus[${index}].xInventoryVerificationRequired`, `astMagazineStatus[${index}].xIndexing`,
-    `astMagazineStatus[${index}].xIndexDone`, `astMagazineStatus[${index}].xAxisError`,
+    `astMagazineStatus[${index}].xEnableCheckContent`, `astMagazineStatus[${index}].xEnableCheckGeometry`,
+    `astMagazineStatus[${index}].xEditAllowed`, `astMagazineStatus[${index}].xPitchEditAllowed`,
     `astMagazineStatus[${index}].udiProducedPartsTotal`,
     `astMagazineStatus[${index}].iCurrentBlank`, `astMagazineStatus[${index}].iCurrentFreeSlot`,
     `astMagazineStatus[${index}].iSelectedBlank`, `astMagazineStatus[${index}].iSelectedFreeSlot`,
     `astMagazineStatus[${index}].eActualOperation`, `astMagazineDiag[${index}].eState`,
     `astMagazineError[${index}].dwErrorActive`, `astMagazineError[${index}].dwErrorLast`,
-    `astMagazineAxisStatus[${index}].xPowered`, `astMagazineAxisStatus[${index}].xBusy`,
-    `astMagazineAxisStatus[${index}].xDone`, `astMagazineAxisStatus[${index}].xError`,
-    `astMagazineAxisStatus[${index}].lrActualPosition`, `astMagazineAxisDiag[${index}].sStepName`,
     `astMagazineCommand[${index}].xEnable`, `astMagazineCommand[${index}].xDisable`,
-    `astMagazineCommand[${index}].xPowerOn`, `astMagazineCommand[${index}].xPowerOff`,
-    `astMagazineCommand[${index}].xHome`, `astMagazineCommand[${index}].xIndex`,
     `astMagazineCommand[${index}].xStop`, `astMagazineCommand[${index}].xReset`,
-    `astMagazineCommand[${index}].xJogPositive`, `astMagazineCommand[${index}].xJogNegative`,
-    `astMagazineCommand[${index}].xStartContentRecovery`, `astMagazineCommand[${index}].xConfirmRecovery`,
-    `astMagazineCommand[${index}].xClearRecoveryZones`,
-    `astMagazineCommand[${index}].xFillZone1`, `astMagazineCommand[${index}].xClearZone1`,
-    `astMagazineCommand[${index}].xCycleZone1Slot`, `astMagazineCommand[${index}].xApplyZone1Slot`,
-    `astMagazineCommand[${index}].uiEditZone`, `astMagazineCommand[${index}].uiEditSlot`, `astMagazineCommand[${index}].uiEditDetailType`,
+    `astMagazineCommand[${index}].xFill`, `astMagazineCommand[${index}].xClear`,
+    `astMagazineCommand[${index}].xCycleSlot`, `astMagazineCommand[${index}].xApplySlot`,
+    `astMagazineCommand[${index}].xApplyPitchX`, `astMagazineCommand[${index}].xApplyPitchY`,
+    `astMagazineCommand[${index}].xApplySafeAbove`, `astMagazineCommand[${index}].xApplySafeInside`,
+    `astMagazineCommand[${index}].uiEditSlot`, `astMagazineCommand[${index}].uiEditDetailType`,
     `astMagazineCommand[${index}].uiEditProductType`,
+    `astMagazineCommand[${index}].lrEditPitchX`, `astMagazineCommand[${index}].lrEditPitchY`,
+    `astMagazineCommand[${index}].lrEditSafeAbove`, `astMagazineCommand[${index}].lrEditSafeInside`,
     `alrMagazineSafeZ_1[${index}]`, `alrMagazineSafeZ_2[${index}]`,
-    ...[1, 2, 3].flatMap((zone) => Array.from({ length: zone === 3 ? 60 : 120 }, (_, slot) => [
-      `astMagazineInventory[${index}].aZone${zone}[${slot + 1}].xInPosition`,
-      `astMagazineInventory[${index}].aZone${zone}[${slot + 1}].eDetailType`,
-      `astMagazineInventory[${index}].aZone${zone}[${slot + 1}].uiProductType`,
-    ]).flat()),
+    ...Array.from({ length: 120 }, (_, slot) => [
+      `astMagazineInventory[${index}].aSlots[${slot + 1}].xInPosition`,
+      `astMagazineInventory[${index}].aSlots[${slot + 1}].eDetailType`,
+      `astMagazineInventory[${index}].aSlots[${slot + 1}].uiProductType`,
+    ]).flat(),
   ]),
   'stMultiType.Config.uiTypeCount',
   'stMultiType.ConfigStatus.xMagazineConfigAllowed',
@@ -434,6 +453,7 @@ const commandMap = {
   'cell.settings.safetyHomeToleranceX': { path: 'lrSafetyHomeToleranceX', dataType: DataType.Double, transform: (v) => Math.max(0.1, Math.min(1000, Number(v))) },
   'cell.settings.safetyHomeToleranceY': { path: 'lrSafetyHomeToleranceY', dataType: DataType.Double, transform: (v) => Math.max(0.1, Math.min(1000, Number(v))) },
   'cell.settings.safetyHomeToleranceZ': { path: 'lrSafetyHomeToleranceZ', dataType: DataType.Double, transform: (v) => Math.max(0.1, Math.min(1000, Number(v))) },
+  'cell.settings.pointCheckSpeed': { path: 'rPointCheckSpeedPercent', dataType: DataType.Float, transform: (v) => Math.max(0.1, Math.min(100, Number(v))) },
   'cell.settings.timeoutRobotMove': { path: 'stCellMachineTimeouts.tRobotMove', dataType: DataType.Int64, transform: (v) => Math.max(1000, Math.min(600000, Math.round(Number(v) * 1000))) },
   'cell.settings.timeoutRobotAction': { path: 'stCellMachineTimeouts.tRobotAction', dataType: DataType.Int64, transform: (v) => Math.max(1000, Math.min(600000, Math.round(Number(v) * 1000))) },
   'cell.settings.timeoutRobotRelease': { path: 'stCellMachineTimeouts.tRobotRelease', dataType: DataType.Int64, transform: (v) => Math.max(1000, Math.min(600000, Math.round(Number(v) * 1000))) },
@@ -488,12 +508,6 @@ const commandMap = {
     },
   },
   'robot.manualStep': { path: 'lrRobotManualStep', dataType: DataType.Double, transform: (v) => [0.1, 1, 10, 100].includes(Number(v)) ? Number(v) : 1 },
-  'magazine.rows': { path: 'MagazineRows', dataType: DataType.UInt16, transform: (v) => Math.max(1, Math.min(70, Math.round(Number(v)))) },
-  'magazine.columns': { path: 'MagazineColumns', dataType: DataType.UInt16, transform: (v) => Math.max(1, Math.min(70, Math.round(Number(v)))) },
-  'magazine.pitchX': { path: 'MagazinePitchX', dataType: DataType.Double, transform: (v) => Number(v) },
-  'magazine.pitchY': { path: 'MagazinePitchY', dataType: DataType.Double, transform: (v) => Number(v) },
-  'magazine.safeAbove': { path: 'MagazineSafeZ_1', dataType: DataType.Double, transform: (v) => Number(v) },
-  'magazine.safeInside': { path: 'MagazineSafeZ_2', dataType: DataType.Double, transform: (v) => Number(v) },
 };
 
 let opcua = null;
@@ -669,7 +683,33 @@ const pointEditorRejectReasons = [
   'активна глобальная ошибка', 'робот занят', 'оси или группа движутся',
   'активна Motion-ошибка', 'оси не базированы', 'позиция группы недостоверна',
   'software limits недоступны', 'координаты вне software limits', 'недопустимый коэффициент скорости',
+  'точка не сохранена', 'приводы или группа не готовы', 'люк станка не открыт',
+  'нет связи с мобильным редактором', 'другая команда претендует на робота', 'точка изменена после подтверждения',
 ];
+
+const pointEditorChannel = new PointEditorChannel({
+  ack: () => Number(latestValues.udiPointEditorAckSeq ?? 0) >>> 0,
+  readResult: async () => {
+    await new Promise((resolve) => setTimeout(resolve, cyclogramSettleMs));
+    await readSymbolValues([
+      'udiPointEditorAckSeq', 'uiPointEditorResult', 'uiPointEditorRejectReason',
+      'stPointEditorResultPoint.X', 'stPointEditorResultPoint.Y', 'stPointEditorResultPoint.Z',
+      'stPointEditorResultPoint.SpeedFactor', 'stPointEditorResultPoint.xConfigured',
+    ]);
+    const rejectCode = Number(latestValues.uiPointEditorRejectReason ?? 0);
+    return {
+      result: Number(latestValues.uiPointEditorResult ?? 0),
+      reason: pointEditorRejectReasons[rejectCode] ?? `PLC отклонил команду (код ${rejectCode})`,
+      point: {
+        x: Number(latestValues['stPointEditorResultPoint.X'] ?? 0),
+        y: Number(latestValues['stPointEditorResultPoint.Y'] ?? 0),
+        z: Number(latestValues['stPointEditorResultPoint.Z'] ?? 0),
+        speedFactor: Number(latestValues['stPointEditorResultPoint.SpeedFactor'] ?? 0),
+        configured: Boolean(latestValues['stPointEditorResultPoint.xConfigured']),
+      },
+    };
+  },
+});
 
 const mimeTypes = {
   '.css': 'text/css; charset=utf-8', '.html': 'text/html; charset=utf-8',
@@ -925,6 +965,18 @@ async function pulseValue(path) {
   setTimeout(() => writeValue(path, DataType.Boolean, false).catch(console.error), 150);
 }
 
+async function readSymbolValues(paths) {
+  if (!opcua?.session) throw new Error('OPC UA не подключён');
+  const entries = paths.map((path) => [path, symbolNodes.get(path)]).filter(([, nodeId]) => Boolean(nodeId));
+  if (entries.length !== paths.length) throw new Error('PLC не опубликовал результат команды редактора');
+  const values = await opcua.session.read(entries.map(([, nodeId]) => ({ nodeId, attributeId: AttributeIds.Value })));
+  entries.forEach(([path], index) => {
+    const dataValue = values[index];
+    if (!dataValue?.statusCode?.isGood()) throw new Error(`Не удалось прочитать ${plcRootName}.${path}`);
+    latestValues[path] = jsonValue(dataValue.value.value);
+  });
+}
+
 function nextPointEditorSequence() {
   const ack = Number(latestValues.udiPointEditorAckSeq ?? 0) >>> 0;
   const now = Date.now() >>> 0;
@@ -959,7 +1011,7 @@ function schedulePointEditorAudit() {
   pointEditorAuditTimer = setTimeout(flushPointEditorAudits, cyclogramSettleMs);
 }
 
-async function executeCommand(message) {
+async function executeCommandDirect(message) {
   const requestId = String(message.requestId ?? Date.now());
   if (message.command === 'test.environment.set') {
     const environment = Math.round(Number(message.value));
@@ -1032,7 +1084,7 @@ async function executeCommand(message) {
   if (message.command === 'robot.point.capture') {
     const index = Math.round(Number(message.index));
     const speedFactor = Number(message.speedFactor ?? 0);
-    if (!Number.isInteger(index) || index < 1 || index > 15) throw new Error('Неверный индекс инженерной точки');
+    if (!Number.isInteger(index) || index < 1 || index > 12) throw new Error('Неверный индекс инженерной точки');
     if (!Number.isFinite(speedFactor)) throw new Error('Неверный коэффициент скорости точки');
     const sequence = nextPointEditorSequence();
     message._pointEditorSequence = sequence;
@@ -1048,7 +1100,7 @@ async function executeCommand(message) {
     const point = message.draft ?? {};
     const coordinates = [Number(point.x), Number(point.y), Number(point.z)];
     const speedFactor = Number(point.speedFactor);
-    if (!Number.isInteger(index) || index < 1 || index > 15) throw new Error('Неверный индекс инженерной точки');
+    if (!Number.isInteger(index) || index < 1 || index > 12) throw new Error('Неверный индекс инженерной точки');
     if (!coordinates.every(Number.isFinite)) throw new Error('Координаты точки должны быть конечными числами');
     if (!Number.isFinite(speedFactor) || speedFactor <= 0.1 || speedFactor > 1) {
       throw new Error('Коэффициент скорости точки должен быть больше 0.1 и не больше 1.0');
@@ -1064,6 +1116,29 @@ async function executeCommand(message) {
     await writeValue('uiPointEditorCommand', DataType.UInt16, 2);
     // CommandSeq пишется последним: частично подготовленный черновик PLC не применит.
     await writeValue('udiPointEditorCommandSeq', DataType.UInt32, sequence);
+    return requestId;
+  }
+  if (message.command === 'robot.point.check') {
+    const index = Math.round(Number(message.index));
+    const point = message.draft ?? {};
+    const coordinates = [Number(point.x), Number(point.y), Number(point.z)];
+    const speedFactor = Number(point.speedFactor);
+    if (!Number.isInteger(index) || index < 1 || index > 12) throw new Error('Неверный индекс инженерной точки');
+    if (!coordinates.every(Number.isFinite) || !Number.isFinite(speedFactor)) throw new Error('Неверный снимок сохранённой точки');
+    const sequence = nextPointEditorSequence();
+    message._pointEditorSequence = sequence;
+    if (message._pointEditorAudit) pendingPointEditorAudits.set(sequence, { ...message._pointEditorAudit, pointIndex: index });
+    await writeValue('uiPointEditorIndex', DataType.UInt16, index);
+    for (let axis = 1; axis <= 3; axis += 1) await writeValue(`alrPointEditorDraftXYZ[${axis}]`, DataType.Double, coordinates[axis - 1]);
+    await writeValue('lrPointEditorDraftSpeedFactor', DataType.Double, speedFactor);
+    message._assertAuthorized?.();
+    await writeValue('uiPointEditorCommand', DataType.UInt16, 3);
+    message._assertAuthorized?.();
+    await writeValue('udiPointEditorCommandSeq', DataType.UInt32, sequence);
+    return requestId;
+  }
+  if (message.command === 'robot.point.stop') {
+    await writeValue('xPointCheckStop', DataType.Boolean, true);
     return requestId;
   }
   if (message.command === 'robot.axis.jog') {
@@ -1104,7 +1179,8 @@ async function executeCommand(message) {
     const point = Math.round(Number(message.point ?? 0));
     const slot = Math.round(Number(message.slot ?? 0));
     if (!Number.isInteger(action) || action < 1 || action > 7) throw new Error('Неверное ручное действие робота');
-    if (action === 1 && (!Number.isInteger(point) || point < 1 || point > 16)) throw new Error('Для перехода укажите точку робота');
+    const allowedManualPoints = new Set([1, 3, 4, 5, 7, 8, 9, 11, 12, 13, 14, 15, 16]);
+    if (action === 1 && (!Number.isInteger(point) || !allowedManualPoints.has(point))) throw new Error('Для перехода укажите существующую точку робота');
     const magazine = Math.round(Number(message.magazine ?? 1));
     if (action === 1 && point >= 14 && (!Number.isInteger(slot) || slot < 1 || slot > 120)) throw new Error('Для магазинной точки укажите слот');
     if (action === 1 && point >= 14 && ![1, 2].includes(magazine)) throw new Error('Для магазинной точки укажите магазин');
@@ -1162,41 +1238,41 @@ async function executeCommand(message) {
     setTimeout(() => writeValue('stMultiType.Command.xSetSlotType', DataType.Boolean, false).catch(console.error), 150);
     return requestId;
   }
-  if (message.command?.startsWith('magazine.') && !['magazine.rows', 'magazine.columns', 'magazine.pitchX', 'magazine.pitchY'].includes(message.command)) {
+  if (message.command?.startsWith('magazine.')) {
     const magazine = Math.round(Number(message.magazine));
     if (![1, 2].includes(magazine)) throw new Error('Неверный номер магазина');
     const action = message.command.slice('magazine.'.length);
     const pulseLeaves = {
-      enable: 'xEnable', disable: 'xDisable', powerOn: 'xPowerOn', powerOff: 'xPowerOff',
-      home: 'xHome', index: 'xIndex', stop: 'xStop', reset: 'xReset',
-      fillZone1: 'xFillZone1', clearZone1: 'xClearZone1',
-      startContentRecovery: 'xStartContentRecovery', confirmRecovery: 'xConfirmRecovery',
-      clearRecoveryZones: 'xClearRecoveryZones',
+      enable: 'xEnable', disable: 'xDisable', stop: 'xStop', reset: 'xReset',
+      fill: 'xFill', clear: 'xClear',
     };
-    if (action === 'jogPositive' || action === 'jogNegative') {
-      await writeValue(`astMagazineCommand[${magazine}].${action === 'jogPositive' ? 'xJogPositive' : 'xJogNegative'}`, DataType.Boolean, Boolean(message.value));
-      return requestId;
-    }
-    if (action === 'setZone1Slot' || action === 'setSlot') {
-      const zone = action === 'setZone1Slot' ? 1 : Math.round(Number(message.zone));
+    if (action === 'setSlot') {
       const slot = Math.round(Number(message.slot ?? message.value));
       const content = Math.round(Number(message.content));
       const productType = content === 0 ? 0 : Math.round(Number(message.productType));
-      if (![1, 2].includes(zone)) throw new Error('Редактировать можно только Zone 1 или Zone 2');
-      if (!Number.isInteger(slot) || slot < 1 || slot > 120) throw new Error(`Неверный номер слота Zone ${zone}`);
+      if (!Number.isInteger(slot) || slot < 1 || slot > 120) throw new Error('Неверный номер слота кассеты');
       if (![0, 1, 2].includes(content)) throw new Error('Состояние слота должно быть NONE, BLANK или DETAIL');
       if (content !== 0 && (!Number.isInteger(productType) || productType < 1 || productType > 3)) throw new Error('Неверный тип изделия');
-      await writeValue(`astMagazineCommand[${magazine}].uiEditZone`, DataType.UInt16, zone);
       await writeValue(`astMagazineCommand[${magazine}].uiEditSlot`, DataType.UInt16, slot);
       await writeValue(`astMagazineCommand[${magazine}].uiEditDetailType`, DataType.UInt16, content);
       await writeValue(`astMagazineCommand[${magazine}].uiEditProductType`, DataType.UInt16, productType);
-      await pulseValue(`astMagazineCommand[${magazine}].xApplyZone1Slot`);
+      await pulseValue(`astMagazineCommand[${magazine}].xApplySlot`);
       return requestId;
     }
-    if (action === 'safeAbove' || action === 'safeInside') {
+    const geometryCommands = {
+      pitchX: { valueLeaf: 'lrEditPitchX', pulseLeaf: 'xApplyPitchX', min: 1, max: 5000 },
+      pitchY: { valueLeaf: 'lrEditPitchY', pulseLeaf: 'xApplyPitchY', min: 1, max: 5000 },
+      safeAbove: { valueLeaf: 'lrEditSafeAbove', pulseLeaf: 'xApplySafeAbove', min: -10000, max: 10000 },
+      safeInside: { valueLeaf: 'lrEditSafeInside', pulseLeaf: 'xApplySafeInside', min: -10000, max: 10000 },
+    };
+    const geometry = geometryCommands[action];
+    if (geometry) {
       const value = Number(message.value);
-      if (!Number.isFinite(value)) throw new Error('Неверная координата магазина');
-      await writeValue(`${action === 'safeAbove' ? 'alrMagazineSafeZ_1' : 'alrMagazineSafeZ_2'}[${magazine}]`, DataType.Double, value);
+      if (!Number.isFinite(value) || value < geometry.min || value > geometry.max) {
+        throw new Error('Параметр геометрии магазина вне допустимого диапазона');
+      }
+      await writeValue(`astMagazineCommand[${magazine}].${geometry.valueLeaf}`, DataType.Double, value);
+      await pulseValue(`astMagazineCommand[${magazine}].${geometry.pulseLeaf}`);
       return requestId;
     }
     const leaf = pulseLeaves[action];
@@ -1263,6 +1339,13 @@ async function executeCommand(message) {
   await writeValue(definition.path, definition.dataType, value);
   if (definition.pulse) setTimeout(() => writeValue(definition.path, definition.dataType, false).catch(console.error), 150);
   return requestId;
+}
+
+async function executeCommand(message) {
+  if (message.command === 'robot.point.capture' || message.command === 'robot.point.save' || message.command === 'robot.point.check') {
+    return pointEditorChannel.run(message, executeCommandDirect);
+  }
+  return executeCommandDirect(message);
 }
 
 async function connectOpcUa() {
@@ -1401,8 +1484,23 @@ async function opcUaLoop() {
 }
 
 const jsonResponse = (response, status, value, headers = {}) => {
-  response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', ...headers });
-  response.end(JSON.stringify(value));
+  // Never let an accidental undefined payload turn an API response into an
+  // empty body.  The HMI can then show the actual gateway error instead of the
+  // misleading "Gateway вернул пустой ответ" message.
+  let payload;
+  try {
+    payload = JSON.stringify(value ?? {});
+  } catch (error) {
+    status = 500;
+    payload = JSON.stringify({ error: error instanceof Error ? error.message : 'Не удалось сформировать JSON-ответ gateway', code: 'GATEWAY_RESPONSE_SERIALIZATION_FAILED' });
+  }
+  if (typeof payload !== 'string' || payload.length === 0) payload = '{}';
+  response.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Content-Length': Buffer.byteLength(payload, 'utf8'),
+    ...headers,
+  });
+  response.end(payload);
 };
 
 const AUTH_COOKIE_NAME = 'portal_session';
@@ -1420,8 +1518,14 @@ const sessionCookie = (request, token, maxAgeSeconds) => {
   const secure = request.socket?.encrypted || request.headers['x-forwarded-proto'] === 'https';
   return `${AUTH_COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${Math.max(0, Math.floor(maxAgeSeconds))}${secure ? '; Secure' : ''}`;
 };
+const mobileSessionToken = (request) => parseCookies(request.headers.cookie)[MOBILE_COOKIE] ?? '';
+const mobileCookie = (request, token, maxAgeSeconds) => {
+  const secure = request.socket?.encrypted || request.headers['x-forwarded-proto'] === 'https';
+  return `${MOBILE_COOKIE}=${encodeURIComponent(token)}; Path=/api/mobile-points; HttpOnly; SameSite=Strict; Max-Age=${Math.max(0, Math.floor(maxAgeSeconds))}${secure ? '; Secure' : ''}`;
+};
 const requireSession = (request) => {
   if (!authStore) throw new AuthStoreError(authStoreError || 'Хранилище пользователей недоступно', 503, 'AUTH_UNAVAILABLE');
+  if (isPhoneAgent(request.headers['user-agent'])) throw new AuthStoreError('С телефона доступны только мобильный пульт и редактор точек', 403, 'MOBILE_POINTS_ONLY');
   const session = requestSession(request);
   if (!session) throw new AuthStoreError('Требуется вход в систему', 401, 'AUTH_REQUIRED');
   return session;
@@ -1442,6 +1546,104 @@ const recordAuthEvent = (eventType, status, message, user = null, details = {}) 
   actor: user,
   details: { ...details, actor: user ? { id: user.id, username: user.username, displayName: user.displayName, role: user.role } : null },
 });
+
+const primaryHmi = new PrimaryHmiSession((token) => authStore?.getSession(token) ?? null);
+function currentPrimaryHmiSession() {
+  return primaryHmi.current(webSocketServer.clients);
+}
+
+let pointCheckHeartbeat = 0;
+let mobileMotionHeartbeat = 0;
+const mobilePointsSnapshot = () => ({
+  online: connectionState.status === 'connected' || connectionState.status === 'degraded',
+  manualMode: Boolean(latestValues.xCellManual),
+  modbusMode: Boolean(latestValues.xModbusMode),
+  phoneSpeedLimitPercent: Math.max(0.1, Math.min(100, Number(latestValues.rPointCheckSpeedPercent ?? 10))),
+  robot: {
+    continuousMode: Boolean(latestValues.xRobotContinuousMode),
+    speedOverridePercent: Math.max(0.1, Math.min(100, Number(latestValues.rRobotManualSpeedPercent ?? 0.1))),
+    manualStep: Number(latestValues.lrRobotManualStep ?? 1),
+    drivesPowered: Boolean(latestValues['stRobotHmiStatus.xDrivesPowered']),
+    drivesOff: Boolean(latestValues['stRobotHmiStatus.xDrivesOff']),
+    powerTransitionActive: Boolean(latestValues['stRobotHmiStatus.xPowerTransitionActive']),
+    drivesEnableAllowed: Boolean(latestValues['stRobotHmiStatus.xDrivesEnableAllowed']),
+    drivesDisableAllowed: Boolean(latestValues['stRobotHmiStatus.xDrivesDisableAllowed']),
+    resetAllowed: Boolean(latestValues['stRobotHmiStatus.xResetAllowed']),
+    stopAllowed: Boolean(latestValues['stRobotHmiStatus.xStopAllowed']),
+    commandBusy: Boolean(latestValues['stRobotHmiStatus.xCommandBusy']),
+    rejectReason: pointEditorRejectReasons[Number(latestValues['stRobotHmiStatus.eRejectReason'] ?? 0)]
+      ?? `Неизвестная причина запрета (${Number(latestValues['stRobotHmiStatus.eRejectReason'] ?? 0)})`,
+  },
+  axes: [1, 2, 3].map((index) => ({
+    jogPositiveAllowed: Boolean(latestValues[`astAxisHmiStatus[${index}].xJogPositiveAllowed`]),
+    jogNegativeAllowed: Boolean(latestValues[`astAxisHmiStatus[${index}].xJogNegativeAllowed`]),
+    moveRelativePositiveAllowed: Boolean(latestValues[`astAxisHmiStatus[${index}].xMoveRelativePositiveAllowed`]),
+    moveRelativeNegativeAllowed: Boolean(latestValues[`astAxisHmiStatus[${index}].xMoveRelativeNegativeAllowed`]),
+    driveReady: Boolean(latestValues[`astAxisHmiStatus[${index}].xDriveReady`]),
+    busy: Boolean(latestValues[`astAxisHmiStatus[${index}].xBusy`]),
+    error: Boolean(latestValues[`astAxisHmiStatus[${index}].xError`]),
+    actualPosition: Number(latestValues[`astAxisHmiStatus[${index}].lrActualPosition`] ?? 0),
+    minPosition: Number(latestValues[`astAxisHmiStatus[${index}].lrMinPosition`] ?? 0),
+    maxPosition: Number(latestValues[`astAxisHmiStatus[${index}].lrMaxPosition`] ?? 0),
+    commandVelocity: Number(latestValues[`astAxisHmiStatus[${index}].lrCommandVelocity`] ?? 0),
+    maxVelocity: Number(latestValues[`astAxisHmiStatus[${index}].lrMaxVelocity`] ?? 0),
+    rejectReason: pointEditorRejectReasons[Number(latestValues[`astAxisHmiStatus[${index}].eRejectReason`] ?? 0)]
+      ?? `Неизвестная причина запрета (${Number(latestValues[`astAxisHmiStatus[${index}].eRejectReason`] ?? 0)})`,
+  })),
+  points: Array.from({ length: 12 }, (_, offset) => {
+    const index = offset + 1;
+    return {
+      index,
+      x: Number(latestValues[`astPointEditorPoints[${index}].X`] ?? 0),
+      y: Number(latestValues[`astPointEditorPoints[${index}].Y`] ?? 0),
+      z: Number(latestValues[`astPointEditorPoints[${index}].Z`] ?? 0),
+      speedFactor: Number(latestValues[`astPointEditorPoints[${index}].SpeedFactor`] ?? 0),
+      configured: Boolean(latestValues[`astPointEditorPoints[${index}].xConfigured`]),
+      checkAllowed: Boolean(latestValues[`axPointCheckAllowed[${index}]`]),
+      checkRejectCode: Number(latestValues[`auiPointCheckRejectReason[${index}]`] ?? 0),
+    };
+  }),
+  captureAllowed: Boolean(latestValues.xPointEditorCaptureAllowed),
+  saveAllowed: Boolean(latestValues.xPointEditorSaveAllowed),
+  coordinates: latestRobotCoordinateFrame?.coordinates ?? {
+    x: Number(latestValues['stAxisGroupStatus.ActualX'] ?? 0),
+    y: Number(latestValues['stAxisGroupStatus.ActualY'] ?? 0),
+    z: Number(latestValues['stAxisGroupStatus.ActualZ'] ?? 0),
+  },
+  checkSpeedPercent: Number(latestValues.rPointCheckAppliedSpeedPercent ?? latestValues.rPointCheckSpeedPercent ?? 10),
+  active: Boolean(latestValues.xPointCheckActive),
+  activeIndex: Number(latestValues.uiPointCheckIndex ?? 0),
+  checkState: Number(latestValues.uiPointCheckState ?? 0),
+  runSeq: Number(latestValues.udiPointCheckRunSeq ?? 0) >>> 0,
+  mobileMotionLeaseAlive: Boolean(latestValues.xMobileMotionLeaseAlive),
+  mobileMotionAppliedSpeedPercent: Number(latestValues.rMobileMotionAppliedSpeedPercent ?? 0.1),
+});
+
+const mobilePoints = new MobilePointsService({
+  authenticate: (username, password) => {
+    if (!authStore) throw new AuthStoreError(authStoreError || 'Хранилище пользователей недоступно', 503, 'AUTH_UNAVAILABLE');
+    return authStore.authenticate(username, password);
+  },
+  primary: currentPrimaryHmiSession,
+  snapshot: mobilePointsSnapshot,
+  execute: executeCommand,
+  heartbeat: async () => {
+    pointCheckHeartbeat = (Math.max(pointCheckHeartbeat, Number(latestValues.udiPointCheckHeartbeat ?? 0) >>> 0, Date.now() >>> 0) + 1) >>> 0 || 1;
+    await writeValue('udiPointCheckHeartbeat', DataType.UInt32, pointCheckHeartbeat);
+  },
+  motionHeartbeat: async () => {
+    mobileMotionHeartbeat = (Math.max(mobileMotionHeartbeat, Number(latestValues.udiMobileMotionHeartbeat ?? 0) >>> 0, Date.now() >>> 0) + 1) >>> 0 || 1;
+    await writeValue('udiMobileMotionHeartbeat', DataType.UInt32, mobileMotionHeartbeat);
+  },
+  motionActive: (active) => writeValue('xMobileMotionActive', DataType.Boolean, Boolean(active)),
+  stop: () => executeCommandDirect({ requestId: `mobile-stop-${Date.now()}`, command: 'robot.point.stop' }),
+  stopRobot: async ({ activeJog } = {}) => {
+    if (activeJog) await executeCommandDirect({ requestId: `mobile-jog-stop-${Date.now()}`, command: 'robot.axis.jog', machine: activeJog.axis, direction: activeJog.direction, value: false });
+    await executeCommandDirect({ requestId: `mobile-robot-stop-${Date.now()}`, command: 'robot.stop' });
+  },
+  audit: (eventType, status, message, user, details = {}) => recordAuthEvent(eventType, status, message, user, details),
+});
+setInterval(() => mobilePoints.tick().catch((error) => console.error(`[Mobile points] ${error.message}`)), 250).unref();
 
 function revokeOperatorSockets(reason = 'Управление перехвачено администратором') {
   if (typeof webSocketServer === 'undefined') return;
@@ -1520,7 +1722,7 @@ function currentScenario() {
   });
   const slots = Array.from({ length: 120 }, (_, offset) => {
     const index = offset + 1;
-    const root = `astMagazineInventory[1].aZone2[${index}]`;
+    const root = `astMagazineInventory[1].aSlots[${index}]`;
     const present = Boolean(latestValues[`${root}.xInPosition`]);
     return {
       content: present ? Number(latestValues[`${root}.eDetailType`] ?? 0) : 0,
@@ -1537,6 +1739,35 @@ function currentScenario() {
     ],
     orientation: Boolean(latestValues['stRobotStatus.xRotatedToDetail']) ? 1 : 0,
     faultMasks: { cell: 0, robot: 0, magazine: 0, machines: [0, 0, 0] },
+  };
+}
+
+function currentPointBackup(user) {
+  if (connectionState.status !== 'connected' && connectionState.status !== 'degraded') {
+    throw new PointBackupStoreError('Нет актуального снимка точек PLC', 409, 'POINT_BACKUP_PLC_OFFLINE');
+  }
+  return {
+    format: 'portal-robot-points',
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    exportedBy: {
+      id: user.id,
+      username: user.username,
+      displayName: user.displayName,
+    },
+    points: Array.from({ length: 12 }, (_, offset) => {
+      const index = offset + 1;
+      return {
+        index,
+        pointId: Number(latestValues[`auiPointEditorPointId[${index}]`] ?? 0),
+        label: pointBackupLabels[offset],
+        x: Number(latestValues[`astPointEditorPoints[${index}].X`] ?? 0),
+        y: Number(latestValues[`astPointEditorPoints[${index}].Y`] ?? 0),
+        z: Number(latestValues[`astPointEditorPoints[${index}].Z`] ?? 0),
+        speedFactor: Number(latestValues[`astPointEditorPoints[${index}].SpeedFactor`] ?? 0),
+        configured: Boolean(latestValues[`astPointEditorPoints[${index}].xConfigured`]),
+      };
+    }),
   };
 }
 
@@ -1630,7 +1861,43 @@ const httpServer = createServer(async (request, response) => {
   const userMatch = requestUrl.pathname.match(/^\/api\/users\/(\d+)$/);
   const shiftTemplateMatch = requestUrl.pathname.match(/^\/api\/statistics\/shift-templates\/(\d+)$/);
   const statisticsIntervalMatch = requestUrl.pathname.match(/^\/api\/statistics\/operator-intervals\/(\d+)$/);
+  if (requestUrl.pathname === '/api/mobile-points/session' && request.method === 'GET') {
+    const session = mobilePoints.getSession(mobileSessionToken(request));
+    jsonResponse(response, 200, mobilePoints.sessionView(session));
+    return;
+  }
+  if (requestUrl.pathname === '/api/mobile-points/login' && request.method === 'POST') {
+    try {
+      const body = await requestJson(request);
+      const login = mobilePoints.login(body.username, body.password);
+      jsonResponse(response, 200, { authenticated: true, user: login.user, expiresAt: login.expiresAt, cellUser: login.cellUser }, {
+        'Set-Cookie': mobileCookie(request, login.token, (login.expiresAt - Date.now()) / 1000),
+      });
+    } catch (error) { authErrorResponse(response, error); }
+    return;
+  }
+  if (requestUrl.pathname === '/api/mobile-points/logout' && request.method === 'POST') {
+    try {
+      const token = mobileSessionToken(request);
+      await mobilePoints.logout(token);
+      jsonResponse(response, 200, { authenticated: false, user: null }, { 'Set-Cookie': mobileCookie(request, '', 0) });
+    } catch (error) { authErrorResponse(response, error); }
+    return;
+  }
+  if (requestUrl.pathname === '/api/mobile-points/state' && request.method === 'GET') {
+    try {
+      const visible = requestUrl.searchParams.get('visible') !== '0';
+      jsonResponse(response, 200, await mobilePoints.state(mobileSessionToken(request), visible));
+    } catch (error) { authErrorResponse(response, error); }
+    return;
+  }
+  if (requestUrl.pathname === '/api/mobile-points/action' && request.method === 'POST') {
+    try { jsonResponse(response, 200, await mobilePoints.action(mobileSessionToken(request), await requestJson(request))); }
+    catch (error) { authErrorResponse(response, error); }
+    return;
+  }
   if (requestUrl.pathname === '/api/auth/session' && request.method === 'GET') {
+    if (isPhoneAgent(request.headers['user-agent'])) { jsonResponse(response, 200, { authenticated: false, user: null }); return; }
     if (!authStore) { jsonResponse(response, 503, { authenticated: false, error: authStoreError || 'Хранилище пользователей недоступно' }); return; }
     const session = requestSession(request);
     jsonResponse(response, 200, session
@@ -1641,6 +1908,7 @@ const httpServer = createServer(async (request, response) => {
   if (requestUrl.pathname === '/api/auth/login' && request.method === 'POST') {
     let attemptedUsername = '';
     try {
+      if (isPhoneAgent(request.headers['user-agent'])) throw new AuthStoreError('Используйте мобильный пульт или редактор точек', 403, 'MOBILE_POINTS_ONLY');
       if (!authStore) throw new AuthStoreError(authStoreError || 'Хранилище пользователей недоступно', 503, 'AUTH_UNAVAILABLE');
       const body = await requestJson(request);
       attemptedUsername = String(body.username ?? '').trim().replace(/[\r\n]/g, ' ').slice(0, 32);
@@ -1655,6 +1923,7 @@ const httpServer = createServer(async (request, response) => {
         revokeOperatorSockets(`Управление передано оператору ${login.user.displayName}`);
         statisticsStore?.openOperator(login.user, Date.now(), 'login');
       }
+      primaryHmi.select(login.token, login);
       recordAuthEvent('auth-login', 'accepted', `Пользователь ${login.user.username} вошёл в систему`, login.user);
       jsonResponse(response, 200, { authenticated: true, user: login.user, expiresAt: login.expiresAt }, {
         'Set-Cookie': sessionCookie(request, login.token, (login.expiresAt - Date.now()) / 1000),
@@ -1719,6 +1988,37 @@ const httpServer = createServer(async (request, response) => {
     catch (error) { authErrorResponse(response, error); return; }
   }
   try {
+    if (requestUrl.pathname === '/api/point-backups' && request.method === 'GET') {
+      jsonResponse(response, 200, { backups: await pointBackupStore.list() });
+      return;
+    }
+    if (requestUrl.pathname === '/api/point-backups/export' && request.method === 'POST') {
+      const session = requireSession(request);
+      const body = await requestJson(request);
+      const item = await pointBackupStore.save(currentPointBackup(session.user), body.name);
+      recordCellEvent({
+        timestampMs: Date.now(), sourceId: 6, eventType: 'configuration-backup', status: 'completed',
+        message: `Создана резервная копия точек ${item.id}`, actor: session.user,
+        details: { backupId: item.id, pointCount: item.pointCount, configuredCount: item.configuredCount },
+      });
+      jsonResponse(response, 201, { backup: item });
+      return;
+    }
+    if (requestUrl.pathname === '/api/point-backups/import' && request.method === 'POST') {
+      const session = requireSession(request);
+      const body = await requestJson(request);
+      const backup = await pointBackupStore.read(body.id);
+      recordCellEvent({
+        timestampMs: Date.now(), sourceId: 6, eventType: 'configuration-backup', status: 'accepted',
+        message: `Резервная копия точек ${String(body.id)} подготовлена к импорту`, actor: session.user,
+        details: {
+          backupId: String(body.id), pointCount: backup.points.length,
+          configuredCount: backup.points.filter((point) => point.configured).length,
+        },
+      });
+      jsonResponse(response, 200, { backup });
+      return;
+    }
     if (requestUrl.pathname === '/api/statistics/summary' && request.method === 'GET') {
       if (!statisticsStore) { jsonResponse(response, 503, { error: statisticsStoreError || 'Хранилище статистики недоступно' }); return; }
       const session = requireSession(request);
@@ -1884,7 +2184,11 @@ const httpServer = createServer(async (request, response) => {
       jsonResponse(response, run ? 202 : 404, run ?? { error: 'Прогон не найден' }); return;
     }
   } catch (error) {
-    jsonResponse(response, 400, { error: error instanceof Error ? error.message : String(error) });
+    const status = error instanceof PointBackupStoreError ? error.status : 400;
+    jsonResponse(response, status, {
+      error: error instanceof Error ? error.message : String(error),
+      ...(error instanceof PointBackupStoreError ? { code: error.code } : {}),
+    });
     return;
   }
   if (requestUrl.pathname === '/api/health') {
@@ -1931,6 +2235,10 @@ const httpServer = createServer(async (request, response) => {
       response.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
       response.end(JSON.stringify({ error: message }));
     }
+    return;
+  }
+  if (requestUrl.pathname.startsWith('/api/')) {
+    jsonResponse(response, 404, { error: 'Неизвестный API-маршрут gateway', code: 'API_NOT_FOUND' });
     return;
   }
   const requestPath = requestUrl.pathname === '/' ? '/index.html' : decodeURIComponent(requestUrl.pathname);
@@ -1989,12 +2297,17 @@ webSocketServer.on('connection', (socket, request) => {
     });
     return;
   }
+  if (isPhoneAgent(request.headers['user-agent'])) {
+    socket.close(4003, 'mobile control only');
+    return;
+  }
   const authToken = requestSessionToken(request);
   const connectedSession = authStore?.getSession(authToken) ?? null;
   const guestConnection = !connectedSession;
   socket.isGuest = guestConnection;
   socket.authUserId = connectedSession?.user.id ?? null;
   socket.authUserRole = connectedSession?.user.role ?? null;
+  socket.authToken = connectedSession ? authToken : '';
   send(socket, { type: 'connection', ...connectionState, readOnly: guestConnection });
   const timestamp = Date.now();
   const robotFrame = latestRobotCoordinateFrame ?? captureRobotCoordinateFrame(timestamp);
@@ -2030,7 +2343,7 @@ webSocketServer.on('connection', (socket, request) => {
       const actorDetails = { ...description.details, actor: liveSession ? {
         id: liveSession.user.id, username: liveSession.user.username, role: liveSession.user.role,
       } : null };
-      if (message.command === 'robot.point.capture' || message.command === 'robot.point.save') {
+      if (message.command === 'robot.point.capture' || message.command === 'robot.point.save' || message.command === 'robot.point.check') {
         message._pointEditorAudit = {
           requestId, label: description.label, actor: liveSession?.user ?? null, details: actorDetails,
         };

@@ -2,50 +2,11 @@ METHOD PRIVATE RunMagazine
 
 // --- BEGIN IMPLEMENTATION ---
 
-// Только технологический шаг фиксирован в PLC. Динамика берётся из настроек
-// соответствующей SoftMotion-оси, чтобы не зашивать выдуманные скорости.
 auiMagazineEditSlot[1] := GVL_HMI.astMagazineCommand[1].uiEditSlot;
 IF auiMagazineEditSlot[1] = UINT#0 THEN
 	auiMagazineEditSlot[1] := GVL_HMI.uiMagazineEditSlot;
 END_IF;
 auiMagazineEditSlot[2] := GVL_HMI.astMagazineCommand[2].uiEditSlot;
-GVL_MAGAZINE_AXIS.astAxis[1].MotionParam.lrDistance := GVL_CELL_SETTINGS.lrMagazineIndexDistance;
-GVL_MAGAZINE_AXIS.astAxis[1].MotionParam.lrHomePosition := GVL_HMI.alrMagazineHomePosition[1];
-GVL_MAGAZINE_AXIS.astAxis[1].MotionParam.lrVelocity := Magazine_1.fSWMaxVelocity;
-IF GVL_MAGAZINE_AXIS.astAxis[1].MotionParam.lrVelocity <= LREAL#0.0 THEN
-	GVL_MAGAZINE_AXIS.astAxis[1].MotionParam.lrVelocity := Magazine_1.fMaxVelocity;
-END_IF;
-GVL_MAGAZINE_AXIS.astAxis[1].MotionParam.lrAcceleration := Magazine_1.fSWMaxAcceleration;
-IF GVL_MAGAZINE_AXIS.astAxis[1].MotionParam.lrAcceleration <= LREAL#0.0 THEN
-	GVL_MAGAZINE_AXIS.astAxis[1].MotionParam.lrAcceleration := Magazine_1.fMaxAcceleration;
-END_IF;
-GVL_MAGAZINE_AXIS.astAxis[1].MotionParam.lrDeceleration := Magazine_1.fSWMaxDeceleration;
-IF GVL_MAGAZINE_AXIS.astAxis[1].MotionParam.lrDeceleration <= LREAL#0.0 THEN
-	GVL_MAGAZINE_AXIS.astAxis[1].MotionParam.lrDeceleration := Magazine_1.fMaxDeceleration;
-END_IF;
-GVL_MAGAZINE_AXIS.astAxis[1].MotionParam.lrJerk := Magazine_1.fSWMaxJerk;
-IF GVL_MAGAZINE_AXIS.astAxis[1].MotionParam.lrJerk <= LREAL#0.0 THEN
-	GVL_MAGAZINE_AXIS.astAxis[1].MotionParam.lrJerk := Magazine_1.fMaxJerk;
-END_IF;
-
-GVL_MAGAZINE_AXIS.astAxis[2].MotionParam.lrDistance := GVL_CELL_SETTINGS.lrMagazineIndexDistance;
-GVL_MAGAZINE_AXIS.astAxis[2].MotionParam.lrHomePosition := GVL_HMI.alrMagazineHomePosition[2];
-GVL_MAGAZINE_AXIS.astAxis[2].MotionParam.lrVelocity := Magazine_2.fSWMaxVelocity;
-IF GVL_MAGAZINE_AXIS.astAxis[2].MotionParam.lrVelocity <= LREAL#0.0 THEN
-	GVL_MAGAZINE_AXIS.astAxis[2].MotionParam.lrVelocity := Magazine_2.fMaxVelocity;
-END_IF;
-GVL_MAGAZINE_AXIS.astAxis[2].MotionParam.lrAcceleration := Magazine_2.fSWMaxAcceleration;
-IF GVL_MAGAZINE_AXIS.astAxis[2].MotionParam.lrAcceleration <= LREAL#0.0 THEN
-	GVL_MAGAZINE_AXIS.astAxis[2].MotionParam.lrAcceleration := Magazine_2.fMaxAcceleration;
-END_IF;
-GVL_MAGAZINE_AXIS.astAxis[2].MotionParam.lrDeceleration := Magazine_2.fSWMaxDeceleration;
-IF GVL_MAGAZINE_AXIS.astAxis[2].MotionParam.lrDeceleration <= LREAL#0.0 THEN
-	GVL_MAGAZINE_AXIS.astAxis[2].MotionParam.lrDeceleration := Magazine_2.fMaxDeceleration;
-END_IF;
-GVL_MAGAZINE_AXIS.astAxis[2].MotionParam.lrJerk := Magazine_2.fSWMaxJerk;
-IF GVL_MAGAZINE_AXIS.astAxis[2].MotionParam.lrJerk <= LREAL#0.0 THEN
-	GVL_MAGAZINE_AXIS.astAxis[2].MotionParam.lrJerk := Magazine_2.fMaxJerk;
-END_IF;
 
 fbMagazine1(
 	uiMagazineId := UINT#1,
@@ -61,51 +22,45 @@ fbMagazine1(
 	xGlobalError := GVL_CELL_CONTROL.xGlobalError,
 	xHmiEnable := GVL_HMI.astMagazineCommand[1].xEnable OR GVL_HMI.xMagazineEnable,
 	xHmiDisable := GVL_HMI.astMagazineCommand[1].xDisable OR GVL_HMI.xMagazineDisable,
-	xHmiFillBlanks := GVL_HMI.astMagazineCommand[1].xFillZone1 OR GVL_HMI.xMagazineFillBlanks,
-	xHmiClear := GVL_HMI.astMagazineCommand[1].xClearZone1 OR GVL_HMI.xMagazineClear,
-	xHmiCycleSlot := GVL_HMI.astMagazineCommand[1].xCycleZone1Slot OR GVL_HMI.xMagazineCycleSlot,
-	xHmiApplySlot := GVL_HMI.astMagazineCommand[1].xApplyZone1Slot,
-	uiHmiEditZone := GVL_HMI.astMagazineCommand[1].uiEditZone,
+	xHmiFillBlanks := GVL_HMI.astMagazineCommand[1].xFill OR GVL_HMI.xMagazineFillBlanks,
+	xHmiClear := GVL_HMI.astMagazineCommand[1].xClear OR GVL_HMI.xMagazineClear,
+	xHmiCycleSlot := GVL_HMI.astMagazineCommand[1].xCycleSlot OR GVL_HMI.xMagazineCycleSlot,
+	xHmiApplySlot := GVL_HMI.astMagazineCommand[1].xApplySlot,
+	xHmiApplyPitchX := GVL_HMI.astMagazineCommand[1].xApplyPitchX,
+	xHmiApplyPitchY := GVL_HMI.astMagazineCommand[1].xApplyPitchY,
+	xHmiApplySafeAbove := GVL_HMI.astMagazineCommand[1].xApplySafeAbove,
+	xHmiApplySafeInside := GVL_HMI.astMagazineCommand[1].xApplySafeInside,
 	uiHmiEditSlot := auiMagazineEditSlot[1],
 	uiHmiEditDetailType := GVL_HMI.astMagazineCommand[1].uiEditDetailType,
 	uiHmiEditProductType := GVL_HMI.astMagazineCommand[1].uiEditProductType,
-	xHmiPowerOn := GVL_HMI.astMagazineCommand[1].xPowerOn,
-	xHmiPowerOff := GVL_HMI.astMagazineCommand[1].xPowerOff,
-	xHmiHome := GVL_HMI.astMagazineCommand[1].xHome,
-	xHmiIndex := GVL_HMI.astMagazineCommand[1].xIndex,
-	xHmiAxisStop := GVL_HMI.astMagazineCommand[1].xStop,
-	xHmiJogPositive := GVL_HMI.astMagazineCommand[1].xJogPositive,
-	xHmiJogNegative := GVL_HMI.astMagazineCommand[1].xJogNegative,
-	xHmiStartContentRecovery := GVL_HMI.astMagazineCommand[1].xStartContentRecovery,
-	xHmiConfirmRecovery := GVL_HMI.astMagazineCommand[1].xConfirmRecovery,
-	xHmiApplyRecoverySlot := GVL_HMI.astMagazineCommand[1].xApplyRecoverySlot,
-	xHmiClearRecoveryZones := GVL_HMI.astMagazineCommand[1].xClearRecoveryZones,
-	uiHmiRecoveryZone := GVL_HMI.astMagazineCommand[1].uiRecoveryZone,
-	uiHmiRecoverySlot := GVL_HMI.astMagazineCommand[1].uiRecoverySlot,
-	eHmiRecoveryDetailType := GVL_HMI.astMagazineCommand[1].eRecoveryDetailType,
-	uiHmiRecoveryProductType := GVL_HMI.astMagazineCommand[1].uiRecoveryProductType,
+	lrHmiEditPitchX := GVL_HMI.astMagazineCommand[1].lrEditPitchX,
+	lrHmiEditPitchY := GVL_HMI.astMagazineCommand[1].lrEditPitchY,
+	lrHmiEditSafeAbove := GVL_HMI.astMagazineCommand[1].lrEditSafeAbove,
+	lrHmiEditSafeInside := GVL_HMI.astMagazineCommand[1].lrEditSafeInside,
 	xRobotOwnsMagazine := (GVL_CELL_MANAGER.Status.uiActiveMagazine = UINT#1)
 		AND (GVL_CELL_MANAGER.Status.xRunning OR GVL_ROBOT.Status.xBusy),
-	stAxisStatus := GVL_MAGAZINE_AXIS.astAxis[1].Status,
-	lrIndexTolerance := GVL_HMI.alrMagazineIndexTolerance[1],
+	xRobotCanWorkWithMagazine := xRobotInterfaceReady
+		AND xPointTableReady
+		AND NOT GVL_ROBOT.Status.xError,
+	xSharedGeometryEditAllowed := NOT GVL_MAGAZINE.astStatus[1].xEnabled
+		AND NOT GVL_MAGAZINE.astStatus[2].xEnabled
+		AND NOT GVL_HMI.xMagazineEnable
+		AND NOT GVL_HMI.astMagazineCommand[1].xEnable
+		AND NOT GVL_HMI.astMagazineCommand[2].xEnable,
 	uiRows := UINT#12,
 	uiColumns := UINT#10,
 	uiTypeCount := GVL_MULTI_TYPE.Config.uiTypeCount,
 	auiSlotType := GVL_MULTI_TYPE.Config.auiSlotType,
 	FaultRequest := astMagazineFaultRequest[1],
 	stInventory := GVL_DETAIL.astMagazine[1],
-	AxisCommand => GVL_MAGAZINE_AXIS.astAxis[1].Command,
+	lrPitchX := GVL_HMI.MagazinePitchX,
+	lrPitchY := GVL_HMI.MagazinePitchY,
+	lrSafeAbove := GVL_HMI.alrMagazineSafeZ_1[1],
+	lrSafeInside := GVL_HMI.alrMagazineSafeZ_2[1],
 	Command => GVL_MAGAZINE.astCommand[1],
 	Status => GVL_MAGAZINE.astStatus[1],
 	Diag => GVL_MAGAZINE.astDiag[1],
 	Error => GVL_MAGAZINE.astError[1]
-);
-
-MAGAZINE_AXIS_1(
-	FaultRequest := astMagazineAxisFaultRequest[1],
-	xResetPermit := NOT GVL_CELL_CONTROL.xGlobalError,
-	Axis := Magazine_1,
-	AxisData := GVL_MAGAZINE_AXIS.astAxis[1]
 );
 
 fbMagazine2(
@@ -122,49 +77,43 @@ fbMagazine2(
 	xGlobalError := GVL_CELL_CONTROL.xGlobalError,
 	xHmiEnable := GVL_HMI.astMagazineCommand[2].xEnable,
 	xHmiDisable := GVL_HMI.astMagazineCommand[2].xDisable,
-	xHmiFillBlanks := GVL_HMI.astMagazineCommand[2].xFillZone1,
-	xHmiClear := GVL_HMI.astMagazineCommand[2].xClearZone1,
-	xHmiCycleSlot := GVL_HMI.astMagazineCommand[2].xCycleZone1Slot,
-	xHmiApplySlot := GVL_HMI.astMagazineCommand[2].xApplyZone1Slot,
-	uiHmiEditZone := GVL_HMI.astMagazineCommand[2].uiEditZone,
+	xHmiFillBlanks := GVL_HMI.astMagazineCommand[2].xFill,
+	xHmiClear := GVL_HMI.astMagazineCommand[2].xClear,
+	xHmiCycleSlot := GVL_HMI.astMagazineCommand[2].xCycleSlot,
+	xHmiApplySlot := GVL_HMI.astMagazineCommand[2].xApplySlot,
+	xHmiApplyPitchX := GVL_HMI.astMagazineCommand[2].xApplyPitchX,
+	xHmiApplyPitchY := GVL_HMI.astMagazineCommand[2].xApplyPitchY,
+	xHmiApplySafeAbove := GVL_HMI.astMagazineCommand[2].xApplySafeAbove,
+	xHmiApplySafeInside := GVL_HMI.astMagazineCommand[2].xApplySafeInside,
 	uiHmiEditSlot := auiMagazineEditSlot[2],
 	uiHmiEditDetailType := GVL_HMI.astMagazineCommand[2].uiEditDetailType,
 	uiHmiEditProductType := GVL_HMI.astMagazineCommand[2].uiEditProductType,
-	xHmiPowerOn := GVL_HMI.astMagazineCommand[2].xPowerOn,
-	xHmiPowerOff := GVL_HMI.astMagazineCommand[2].xPowerOff,
-	xHmiHome := GVL_HMI.astMagazineCommand[2].xHome,
-	xHmiIndex := GVL_HMI.astMagazineCommand[2].xIndex,
-	xHmiAxisStop := GVL_HMI.astMagazineCommand[2].xStop,
-	xHmiJogPositive := GVL_HMI.astMagazineCommand[2].xJogPositive,
-	xHmiJogNegative := GVL_HMI.astMagazineCommand[2].xJogNegative,
-	xHmiStartContentRecovery := GVL_HMI.astMagazineCommand[2].xStartContentRecovery,
-	xHmiConfirmRecovery := GVL_HMI.astMagazineCommand[2].xConfirmRecovery,
-	xHmiApplyRecoverySlot := GVL_HMI.astMagazineCommand[2].xApplyRecoverySlot,
-	xHmiClearRecoveryZones := GVL_HMI.astMagazineCommand[2].xClearRecoveryZones,
-	uiHmiRecoveryZone := GVL_HMI.astMagazineCommand[2].uiRecoveryZone,
-	uiHmiRecoverySlot := GVL_HMI.astMagazineCommand[2].uiRecoverySlot,
-	eHmiRecoveryDetailType := GVL_HMI.astMagazineCommand[2].eRecoveryDetailType,
-	uiHmiRecoveryProductType := GVL_HMI.astMagazineCommand[2].uiRecoveryProductType,
+	lrHmiEditPitchX := GVL_HMI.astMagazineCommand[2].lrEditPitchX,
+	lrHmiEditPitchY := GVL_HMI.astMagazineCommand[2].lrEditPitchY,
+	lrHmiEditSafeAbove := GVL_HMI.astMagazineCommand[2].lrEditSafeAbove,
+	lrHmiEditSafeInside := GVL_HMI.astMagazineCommand[2].lrEditSafeInside,
 	xRobotOwnsMagazine := (GVL_CELL_MANAGER.Status.uiActiveMagazine = UINT#2)
 		AND (GVL_CELL_MANAGER.Status.xRunning OR GVL_ROBOT.Status.xBusy),
-	stAxisStatus := GVL_MAGAZINE_AXIS.astAxis[2].Status,
-	lrIndexTolerance := GVL_HMI.alrMagazineIndexTolerance[2],
+	xRobotCanWorkWithMagazine := xRobotInterfaceReady
+		AND xPointTableReady
+		AND NOT GVL_ROBOT.Status.xError,
+	xSharedGeometryEditAllowed := NOT GVL_MAGAZINE.astStatus[1].xEnabled
+		AND NOT GVL_MAGAZINE.astStatus[2].xEnabled
+		AND NOT GVL_HMI.xMagazineEnable
+		AND NOT GVL_HMI.astMagazineCommand[1].xEnable
+		AND NOT GVL_HMI.astMagazineCommand[2].xEnable,
 	uiRows := UINT#12,
 	uiColumns := UINT#10,
 	uiTypeCount := GVL_MULTI_TYPE.Config.uiTypeCount,
 	auiSlotType := GVL_MULTI_TYPE.Config.auiSlotType,
 	FaultRequest := astMagazineFaultRequest[2],
 	stInventory := GVL_DETAIL.astMagazine[2],
-	AxisCommand => GVL_MAGAZINE_AXIS.astAxis[2].Command,
+	lrPitchX := GVL_HMI.MagazinePitchX,
+	lrPitchY := GVL_HMI.MagazinePitchY,
+	lrSafeAbove := GVL_HMI.alrMagazineSafeZ_1[2],
+	lrSafeInside := GVL_HMI.alrMagazineSafeZ_2[2],
 	Command => GVL_MAGAZINE.astCommand[2],
 	Status => GVL_MAGAZINE.astStatus[2],
 	Diag => GVL_MAGAZINE.astDiag[2],
 	Error => GVL_MAGAZINE.astError[2]
-);
-
-MAGAZINE_AXIS_2(
-	FaultRequest := astMagazineAxisFaultRequest[2],
-	xResetPermit := NOT GVL_CELL_CONTROL.xGlobalError,
-	Axis := Magazine_2,
-	AxisData := GVL_MAGAZINE_AXIS.astAxis[2]
 );

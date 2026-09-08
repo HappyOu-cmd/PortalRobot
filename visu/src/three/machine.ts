@@ -76,22 +76,15 @@ function createPartAssembly(geometry: PartGeometryLayout) {
   root.position.set(0.14, 0, 0);
 
   const blank = new THREE.Group();
-  blank.add(partCylinder('blank_body', mm(geometry.blankDiameter) / 2, mm(geometry.blankLength), COLORS.blank));
+  blank.add(partCylinder('blank_body', mm(geometry.diameter) / 2, mm(geometry.length), COLORS.blank));
   root.add(blank);
 
   const detail = new THREE.Group();
-  detail.add(partCylinder('detail_body', mm(geometry.detailBodyDiameter) / 2, mm(geometry.detailBodyLength), COLORS.detail));
-  detail.add(partCylinder(
-    'detail_shoulder',
-    mm(geometry.detailShoulderDiameter) / 2,
-    mm(geometry.detailShoulderLength),
-    0x6cc194,
-    mm(geometry.detailShoulderOffset),
-  ));
+  detail.add(partCylinder('detail_body', mm(geometry.diameter) / 2, mm(geometry.length), COLORS.detail));
   root.add(detail);
 
   const unknown = new THREE.Group();
-  unknown.add(partCylinder('unknown_part', mm(geometry.blankDiameter) / 2, mm(geometry.blankLength), COLORS.steel));
+  unknown.add(partCylinder('unknown_part', mm(geometry.diameter) / 2, mm(geometry.length), COLORS.steel));
   root.add(unknown);
   return { root, blank, detail, unknown };
 }

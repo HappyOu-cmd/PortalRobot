@@ -23,8 +23,7 @@ stError.READ_STATUS_ERROR := (dwMotionError AND MOTION_ERR_READ_STATUS) <> DWORD
 stError.READ_GROUP_ERROR := (dwMotionError AND MOTION_ERR_READ_GROUP_ERROR) <> DWORD#0;
 stError.GROUP_ERROR_STOP := (dwMotionError AND MOTION_ERR_GROUP_ERROR_STOP) <> DWORD#0;
 stError.SIMULATED_ERROR := (dwMotionError AND MOTION_ERR_SIMULATED) <> DWORD#0;
-// Поле оставлено в публичном DUT для совместимости; MC_GroupSetOverride больше не используется.
-stError.OVERRIDE_ERROR := FALSE;
+stError.OVERRIDE_ERROR := (dwMotionError AND MOTION_ERR_OVERRIDE) <> DWORD#0;
 
 stError.STEP_TIMEOUT := (dwLogicalError AND LOG_STEP_TIMEOUT) <> DWORD#0;
 stError.INVALID_STATE := (dwLogicalError AND LOG_INVALID_STATE) <> DWORD#0;

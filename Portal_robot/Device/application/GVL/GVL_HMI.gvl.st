@@ -105,12 +105,18 @@ VAR_GLOBAL
 	{attribute 'symbol' := 'readwrite'}
 	udiHmiHeartbeat    : UDINT; // Счётчик связи HMI -> PLC, контролируется PLC watchdog
 	{attribute 'symbol' := 'readwrite'}
+	xMobileMotionActive : BOOL; // Активная аренда движения от мобильного пульта
+	{attribute 'symbol' := 'readwrite'}
+	udiMobileMotionHeartbeat : UDINT; // Heartbeat активной мобильной аренды
+	xMobileMotionLeaseAlive : BOOL; // Диагностика принятой PLC мобильной аренды
+	rMobileMotionAppliedSpeedPercent : REAL; // Защёлкнутый PLC лимит мобильной скорости
+	{attribute 'symbol' := 'readwrite'}
 	xRobotContinuousMode : BOOL := FALSE; // Режим ручного движения: FALSE шаг, TRUE непрерывный Jog
 	{attribute 'symbol' := 'readwrite'}
 	rRobotManualSpeedPercent : REAL := 0.1; // Общий override скорости JOG, MoveAbsolute и движения к точкам, 0.1..100 %; имя сохранено для OPC UA
 	{attribute 'symbol' := 'readwrite'}
 	lrRobotManualStep : LREAL := 1.0; // Шаг короткого относительного перемещения, мм
-	// Транзакционный редактор 15 фиксированных инженерных точек.
+	// Транзакционный редактор 12 фиксированных инженерных точек.
 	{attribute 'symbol' := 'readwrite'}
 	uiPointEditorIndex : UINT := UINT#1;
 	{attribute 'symbol' := 'readwrite'}
@@ -118,9 +124,15 @@ VAR_GLOBAL
 	{attribute 'symbol' := 'readwrite'}
 	lrPointEditorDraftSpeedFactor : LREAL;
 	{attribute 'symbol' := 'readwrite'}
-	uiPointEditorCommand : UINT; // 1 CAPTURE, 2 SAVE
+	uiPointEditorCommand : UINT; // 1 CAPTURE, 2 SAVE, 3 CHECK сохранённой точки
 	{attribute 'symbol' := 'readwrite'}
 	udiPointEditorCommandSeq : UDINT;
+	{attribute 'symbol' := 'readwrite'}
+	udiPointCheckHeartbeat : UDINT; // Отдельный heartbeat владельца проверки, не заменяет HMI
+	{attribute 'symbol' := 'readwrite'}
+	xPointCheckStop : BOOL; // Остановка только текущей проверки, потребляется PLC
+	{attribute 'symbol' := 'readwrite'}
+	rPointCheckSpeedPercent : REAL := 10.0; // Запрос настройки, 0.1..100 %
 	{attribute 'symbol' := 'readwrite'}
 	astAxisHmiCommand : ARRAY [1..3] OF ST_AXIS_HMI_COMMAND; // Команды выбранной оси от HMI
 	{attribute 'symbol' := 'readwrite'}
@@ -203,7 +215,7 @@ VAR_GLOBAL
 	axMachineAcceptRun : ARRAY [1..3] OF BOOL; // Подтвердить запуск обработки
 	{attribute 'symbol' := 'readwrite'}
 	axMachineRejectRun : ARRAY [1..3] OF BOOL; // Отказаться от запуска обработки
-	axMachineUsed      : ARRAY [1..3] OF BOOL := [TRUE, TRUE, TRUE]; // Станки в автоматической работе
+	axMachineUsed      : ARRAY [1..3] OF BOOL := [FALSE, FALSE, FALSE]; // Выбор станков для авто; FB_MACHINE после старта находится в DISABLED
 	xUseHmiCycleTime   : ARRAY [1..3] OF BOOL := [TRUE, TRUE, TRUE]; // Использовать заданное время цикла
 	tMachineCycleTime  : ARRAY [1..3] OF TIME := [T#60S, T#60S, T#60S]; // Время цикла станков
 	tMachineDoorOpenTime   : TIME := T#1S; // Время открытия люка в симуляторе станка
@@ -215,26 +227,22 @@ VAR_GLOBAL
 	tGripper2OpenTime   : TIME := T#500MS; // Время открытия второго захвата
 	tGripper2CloseTime  : TIME := T#500MS; // Время закрытия второго захвата
 	tGripperChangeTime  : TIME := T#700MS; // Время смены рабочего захвата
-	{attribute 'symbol' := 'readwrite'}
-	MagazineRows       : UINT := 12; // Рабочая Zone 2: 12 рядов
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
+	MagazineRows       : UINT := 12; // Статичная кассета: 12 рядов
+	{attribute 'symbol' := 'read'}
 	MagazineColumns    : UINT := 10; // Число столбцов магазина
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
 	MagazinePitchX     : LREAL := 60.0; // Шаг слотов по оси X
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
 	MagazinePitchY     : LREAL := 60.0; // Шаг слотов по оси Y
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
 	MagazineSafeZ_1    : LREAL := 0.0; // Безопасная высота над магазином
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
 	MagazineSafeZ_2    : LREAL := 1400.0; // Безопасная высота внутри магазина при смене
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
 	alrMagazineSafeZ_1 : ARRAY [1..GVL_CELL_SETTINGS.MagazineCount] OF LREAL := [0.0, 0.0];
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
 	alrMagazineSafeZ_2 : ARRAY [1..GVL_CELL_SETTINGS.MagazineCount] OF LREAL := [1400.0, 1400.0];
-	{attribute 'symbol' := 'readwrite'}
-	alrMagazineHomePosition : ARRAY [1..GVL_CELL_SETTINGS.MagazineCount] OF LREAL := [0.0, 0.0];
-	{attribute 'symbol' := 'readwrite'}
-	alrMagazineIndexTolerance : ARRAY [1..GVL_CELL_SETTINGS.MagazineCount] OF LREAL := [1.0, 1.0];
 	stRobotCommand     : ST_ROBOT_COMMAND; // Ручная команда роботу или магазину
 	{attribute 'symbol' := 'readwrite'}
 	stMultiType        : ST_MULTI_TYPE_HMI; // Конфигурация типов и диагностика универсального цикла
@@ -261,15 +269,22 @@ VAR_GLOBAL
 	lrActualX       : LREAL; // Текущая координата X
 	lrActualY       : LREAL; // Текущая координата Y
 	lrActualZ       : LREAL; // Текущая координата Z
-	astPointEditorPoints : ARRAY [1..15] OF ST_POINT; // Подтверждённые значения фиксированных точек
-	auiPointEditorPointId : ARRAY [1..15] OF UINT; // Фактические числовые E_POINT_NAME
+	astPointEditorPoints : ARRAY [1..12] OF ST_POINT; // Подтверждённые значения фиксированных точек
+	auiPointEditorPointId : ARRAY [1..12] OF UINT; // Фактические числовые E_POINT_NAME
 	stPointEditorResultPoint : ST_POINT; // Результат Capture либо подтверждённого Save
 	udiPointEditorAckSeq : UDINT; // Последняя обработанная транзакция
 	uiPointEditorResult : UINT; // 0 ожидание, 1 выполнено, 2 отклонено
 	uiPointEditorRejectReason : UINT; // Подробная причина отклонения для HMI
 	xPointEditorCaptureAllowed : BOOL; // Авторитетное разрешение PLC на Capture
 	xPointEditorSaveAllowed : BOOL; // Авторитетное разрешение PLC на Save
-	xPointTableReady : BOOL; // Все 15 базовых точек настроены
+	axPointCheckAllowed : ARRAY [1..12] OF BOOL;
+	auiPointCheckRejectReason : ARRAY [1..12] OF UINT;
+	xPointCheckActive : BOOL;
+	uiPointCheckIndex : UINT;
+	uiPointCheckState : UINT; // 0 idle, 1 running, 2 completed, 3 stopped, 4 failed
+	udiPointCheckRunSeq : UDINT; // Транзакция, которой принадлежит состояние проверки
+	rPointCheckAppliedSpeedPercent : REAL := 10.0;
+	xPointTableReady : BOOL; // Все 12 базовых точек настроены
 	{attribute 'symbol' := 'read'}
 	rLoadCNC_1      : REAL; // Процент загрузки станка 1
 	{attribute 'symbol' := 'read'}
@@ -311,7 +326,7 @@ VAR_GLOBAL
 	astMachineSimError : ARRAY [1..3] OF ST_MACHINE_SIM_ERRORS; // Ошибки симуляторов станков
 
 	{attribute 'symbol' := 'read'}
-	stMagazineStatus : ST_MAGAZINE_STATUS; // Legacy: Zone 2 первого магазина
+	stMagazineStatus : ST_MAGAZINE_STATUS; // Legacy: первый магазин
 	stMagazineDiag   : ST_MAGAZINE_DIAG;
 	stMagazineError  : ST_MAGAZINE_ERRORS;
 	astMagazineSlot  : ARRAY [1..GVL_CELL_SETTINGS.NumberDetail] OF ST_DETAIL;
@@ -319,9 +334,6 @@ VAR_GLOBAL
 	astMagazineDiag : ARRAY [1..GVL_CELL_SETTINGS.MagazineCount] OF ST_MAGAZINE_DIAG;
 	astMagazineError : ARRAY [1..GVL_CELL_SETTINGS.MagazineCount] OF ST_MAGAZINE_ERRORS;
 	astMagazineInventory : ARRAY [1..GVL_CELL_SETTINGS.MagazineCount] OF ST_MAGAZINE_INVENTORY;
-	astMagazineAxisStatus : ARRAY [1..GVL_CELL_SETTINGS.MagazineCount] OF ST_AXIS_STATUS;
-	astMagazineAxisDiag : ARRAY [1..GVL_CELL_SETTINGS.MagazineCount] OF ST_AXIS_DIAGNOSTICS;
-	astMagazineAxisError : ARRAY [1..GVL_CELL_SETTINGS.MagazineCount] OF ST_AXIS_ERROR_CODES;
 	stAlarmStatus : ST_ALARM_STATUS; // Сводный статус аварий и предупреждений
 	astAlarmEvent : ARRAY [1..100] OF ST_ALARM_EVENT; // Журнал активных и зафиксированных событий
 

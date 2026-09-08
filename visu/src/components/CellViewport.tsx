@@ -2,8 +2,6 @@ import { useEffect, useRef, useState, type RefObject } from 'react';
 import type {
   CellLayout,
   CellState,
-  IndexedConveyorTestCommand,
-  IndexedConveyorTestStatus,
   RobotCoordinateFrame,
 } from '../model/types';
 import { DEFAULT_DRIFT_SETTINGS, EMPTY_DRIFT_TELEMETRY, type DriftSettings, type DriftTelemetry, type EasterEggMode } from '../model/easterEggs';
@@ -30,9 +28,6 @@ interface CellViewportProps {
   cameraPreset: CameraPreset;
   onMachineSelect: (index: number) => void;
   onMagazineSelect?: (magazineId: 1 | 2) => void;
-  indexedConveyorTest?: IndexedConveyorTestCommand;
-  onIndexedConveyorTestStatus?: (magazineId: 1 | 2, status: IndexedConveyorTestStatus) => void;
-  syncMagazineInventory?: boolean;
   easterEggMode?: EasterEggMode;
   easterEggRevision?: number;
   driftSettings?: DriftSettings;
@@ -53,9 +48,6 @@ export function CellViewport({
   cameraPreset,
   onMachineSelect,
   onMagazineSelect,
-  indexedConveyorTest,
-  onIndexedConveyorTestStatus,
-  syncMagazineInventory = true,
   easterEggMode = 'off',
   easterEggRevision = 0,
   driftSettings = DEFAULT_DRIFT_SETTINGS,
@@ -75,7 +67,6 @@ export function CellViewport({
   });
   const selectRef = useRef(onMachineSelect);
   const magazineSelectRef = useRef(onMagazineSelect);
-  const conveyorStatusRef = useRef(onIndexedConveyorTestStatus);
   const machineStatusRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const magazineStatusRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
@@ -86,10 +77,6 @@ export function CellViewport({
   useEffect(() => {
     magazineSelectRef.current = onMagazineSelect;
   }, [onMagazineSelect]);
-
-  useEffect(() => {
-    conveyorStatusRef.current = onIndexedConveyorTestStatus;
-  }, [onIndexedConveyorTestStatus]);
 
   useEffect(() => {
     if (!robotCoordinatesRef) {
@@ -127,11 +114,9 @@ export function CellViewport({
       (index) => selectRef.current(index),
       (magazineId) => magazineSelectRef.current?.(magazineId),
       updateAnchors,
-      (magazineId, status) => conveyorStatusRef.current?.(magazineId, status),
       setDriftTelemetry,
     );
     sceneRef.current = scene;
-    scene.setMagazineInventorySync(syncMagazineInventory);
     scene.setDriftSettings(driftSettings);
     scene.setVisualEffects(visualEffects);
     scene.setSceneActivity(sceneActivity);
@@ -144,15 +129,11 @@ export function CellViewport({
   }, []);
 
   useEffect(() => sceneRef.current?.setState(state), [state]);
-  useEffect(() => sceneRef.current?.setMagazineInventorySync(syncMagazineInventory), [syncMagazineInventory]);
   useEffect(() => sceneRef.current?.setEasterEgg(easterEggMode, easterEggRevision), [easterEggMode, easterEggRevision]);
   useEffect(() => sceneRef.current?.setDriftSettings(driftSettings), [driftSettings]);
   useEffect(() => sceneRef.current?.setVisualEffects(visualEffects), [visualEffects]);
   useEffect(() => sceneRef.current?.setSceneActivity(sceneActivity), [sceneActivity]);
   useEffect(() => sceneRef.current?.setFocusTarget(focusTarget), [focusTarget]);
-  useEffect(() => {
-    if (indexedConveyorTest) sceneRef.current?.setIndexedConveyorTest(indexedConveyorTest);
-  }, [indexedConveyorTest]);
   useEffect(() => sceneRef.current?.rebuild(layout), [layout]);
   useEffect(() => sceneRef.current?.setSelectedMachine(selectedMachine), [selectedMachine]);
   useEffect(() => sceneRef.current?.setCamera(cameraPreset), [cameraPreset]);

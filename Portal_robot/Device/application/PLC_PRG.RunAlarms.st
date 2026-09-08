@@ -30,11 +30,11 @@ xAlarmResetAllowed := xAlarmResetRequired
 	AND (NOT GVL_MACHINE.Status[2].xError OR GVL_MACHINE.Status[2].xResetAllowed)
 	AND (NOT GVL_MACHINE.Status[3].xError OR GVL_MACHINE.Status[3].xResetAllowed)
 	AND (NOT GVL_MAGAZINE.astStatus[1].xError
-		OR ((GVL_MAGAZINE.astError[1].dwAlarmActive = DWORD#0) OR fbMagazine1.FaultStatus.xResetAllowed)
-		AND (NOT GVL_MAGAZINE.astStatus[1].xAxisError OR MAGAZINE_AXIS_1.FaultStatus.xResetAllowed))
+		OR (GVL_MAGAZINE.astError[1].dwAlarmActive = DWORD#0)
+		OR fbMagazine1.FaultStatus.xResetAllowed)
 	AND (NOT GVL_MAGAZINE.astStatus[2].xError
-		OR ((GVL_MAGAZINE.astError[2].dwAlarmActive = DWORD#0) OR fbMagazine2.FaultStatus.xResetAllowed)
-		AND (NOT GVL_MAGAZINE.astStatus[2].xAxisError OR MAGAZINE_AXIS_2.FaultStatus.xResetAllowed))
+		OR (GVL_MAGAZINE.astError[2].dwAlarmActive = DWORD#0)
+		OR fbMagazine2.FaultStatus.xResetAllowed)
 	AND (GVL_HMI.xModbusMode OR NOT GVL_AXIS.arrAxis[1].Status.xError OR AXIS_X.FaultStatus.xResetAllowed)
 	AND (GVL_HMI.xModbusMode OR NOT GVL_AXIS.arrAxis[2].Status.xError OR AXIS_Y.FaultStatus.xResetAllowed)
 	AND (GVL_HMI.xModbusMode OR NOT GVL_AXIS.arrAxis[3].Status.xError OR AXIS_Z.FaultStatus.xResetAllowed)
@@ -92,17 +92,21 @@ astAlarmSource[7].xRobotStopRequired := GVL_MAGAZINE.astStatus[2].xRobotStopRequ
 astAlarmSource[7].xGlobalError := GVL_CELL_CONTROL.xGlobalError;
 astAlarmSource[7].stWarning := GVL_MAGAZINE.astDiag[2].stWarning;
 
-astAlarmSource[8].eSource := E_ALARM_SOURCE.MAGAZINE_AXIS_1;
-astAlarmSource[8].dwAlarmActive := GVL_MAGAZINE_AXIS.astAxis[1].Error.dwAlarmActive;
-astAlarmSource[8].xRobotStopRequired := GVL_MAGAZINE.astStatus[1].xRobotStopRequired;
+// Числовые коды 7 и 8 зарезервированы, чтобы старые записи SQLite не начали
+// отображаться как аварии осей X/Y после удаления приводов магазинов.
+astAlarmSource[8].eSource := E_ALARM_SOURCE.RESERVED_LEGACY_MAGAZINE_AXIS_1;
+astAlarmSource[8].dwAlarmActive := DWORD#0;
+astAlarmSource[8].xRobotStopRequired := FALSE;
 astAlarmSource[8].xGlobalError := GVL_CELL_CONTROL.xGlobalError;
-astAlarmSource[8].stWarning := GVL_MAGAZINE_AXIS.astAxis[1].Diag.stWarning;
+astAlarmSource[8].stWarning.uiCode := UINT#0;
+astAlarmSource[8].stWarning.udiSequence := UDINT#0;
 
-astAlarmSource[9].eSource := E_ALARM_SOURCE.MAGAZINE_AXIS_2;
-astAlarmSource[9].dwAlarmActive := GVL_MAGAZINE_AXIS.astAxis[2].Error.dwAlarmActive;
-astAlarmSource[9].xRobotStopRequired := GVL_MAGAZINE.astStatus[2].xRobotStopRequired;
+astAlarmSource[9].eSource := E_ALARM_SOURCE.RESERVED_LEGACY_MAGAZINE_AXIS_2;
+astAlarmSource[9].dwAlarmActive := DWORD#0;
+astAlarmSource[9].xRobotStopRequired := FALSE;
 astAlarmSource[9].xGlobalError := GVL_CELL_CONTROL.xGlobalError;
-astAlarmSource[9].stWarning := GVL_MAGAZINE_AXIS.astAxis[2].Diag.stWarning;
+astAlarmSource[9].stWarning.uiCode := UINT#0;
+astAlarmSource[9].stWarning.udiSequence := UDINT#0;
 
 astAlarmSource[10].eSource := E_ALARM_SOURCE.AXIS_X;
 IF GVL_HMI.xModbusMode THEN astAlarmSource[10].dwAlarmActive := DWORD#0;
