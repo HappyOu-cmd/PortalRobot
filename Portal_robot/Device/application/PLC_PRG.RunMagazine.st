@@ -10,8 +10,8 @@ auiMagazineEditSlot[2] := GVL_HMI.astMagazineCommand[2].uiEditSlot;
 
 fbMagazine1(
 	uiMagazineId := UINT#1,
-	xTestInitialize := xTestInitializePulse,
-	xTestEnabled := GVL_HMI.stTestScenario.xMagazineEnabled,
+	xTestInitialize := xTestInitializePulse OR xTestAbortActive,
+	xTestEnabled := GVL_HMI.stTestScenario.axMagazineEnabled[1],
 	stRobotStatus := GVL_ROBOT.Status,
 	astMachineStatus := GVL_MACHINE.Status,
 	auiMachineType := GVL_MULTI_TYPE.Config.auiMachineType,
@@ -28,15 +28,11 @@ fbMagazine1(
 	xHmiApplySlot := GVL_HMI.astMagazineCommand[1].xApplySlot,
 	xHmiApplyPitchX := GVL_HMI.astMagazineCommand[1].xApplyPitchX,
 	xHmiApplyPitchY := GVL_HMI.astMagazineCommand[1].xApplyPitchY,
-	xHmiApplySafeAbove := GVL_HMI.astMagazineCommand[1].xApplySafeAbove,
-	xHmiApplySafeInside := GVL_HMI.astMagazineCommand[1].xApplySafeInside,
 	uiHmiEditSlot := auiMagazineEditSlot[1],
 	uiHmiEditDetailType := GVL_HMI.astMagazineCommand[1].uiEditDetailType,
 	uiHmiEditProductType := GVL_HMI.astMagazineCommand[1].uiEditProductType,
 	lrHmiEditPitchX := GVL_HMI.astMagazineCommand[1].lrEditPitchX,
 	lrHmiEditPitchY := GVL_HMI.astMagazineCommand[1].lrEditPitchY,
-	lrHmiEditSafeAbove := GVL_HMI.astMagazineCommand[1].lrEditSafeAbove,
-	lrHmiEditSafeInside := GVL_HMI.astMagazineCommand[1].lrEditSafeInside,
 	xRobotOwnsMagazine := (GVL_CELL_MANAGER.Status.uiActiveMagazine = UINT#1)
 		AND (GVL_CELL_MANAGER.Status.xRunning OR GVL_ROBOT.Status.xBusy),
 	xRobotCanWorkWithMagazine := xRobotInterfaceReady
@@ -55,8 +51,6 @@ fbMagazine1(
 	stInventory := GVL_DETAIL.astMagazine[1],
 	lrPitchX := GVL_HMI.MagazinePitchX,
 	lrPitchY := GVL_HMI.MagazinePitchY,
-	lrSafeAbove := GVL_HMI.alrMagazineSafeZ_1[1],
-	lrSafeInside := GVL_HMI.alrMagazineSafeZ_2[1],
 	Command => GVL_MAGAZINE.astCommand[1],
 	Status => GVL_MAGAZINE.astStatus[1],
 	Diag => GVL_MAGAZINE.astDiag[1],
@@ -65,8 +59,8 @@ fbMagazine1(
 
 fbMagazine2(
 	uiMagazineId := UINT#2,
-	xTestInitialize := xTestInitializePulse,
-	xTestEnabled := FALSE,
+	xTestInitialize := xTestInitializePulse OR xTestAbortActive,
+	xTestEnabled := GVL_HMI.stTestScenario.axMagazineEnabled[2],
 	stRobotStatus := GVL_ROBOT.Status,
 	astMachineStatus := GVL_MACHINE.Status,
 	auiMachineType := GVL_MULTI_TYPE.Config.auiMachineType,
@@ -83,15 +77,11 @@ fbMagazine2(
 	xHmiApplySlot := GVL_HMI.astMagazineCommand[2].xApplySlot,
 	xHmiApplyPitchX := GVL_HMI.astMagazineCommand[2].xApplyPitchX,
 	xHmiApplyPitchY := GVL_HMI.astMagazineCommand[2].xApplyPitchY,
-	xHmiApplySafeAbove := GVL_HMI.astMagazineCommand[2].xApplySafeAbove,
-	xHmiApplySafeInside := GVL_HMI.astMagazineCommand[2].xApplySafeInside,
 	uiHmiEditSlot := auiMagazineEditSlot[2],
 	uiHmiEditDetailType := GVL_HMI.astMagazineCommand[2].uiEditDetailType,
 	uiHmiEditProductType := GVL_HMI.astMagazineCommand[2].uiEditProductType,
 	lrHmiEditPitchX := GVL_HMI.astMagazineCommand[2].lrEditPitchX,
 	lrHmiEditPitchY := GVL_HMI.astMagazineCommand[2].lrEditPitchY,
-	lrHmiEditSafeAbove := GVL_HMI.astMagazineCommand[2].lrEditSafeAbove,
-	lrHmiEditSafeInside := GVL_HMI.astMagazineCommand[2].lrEditSafeInside,
 	xRobotOwnsMagazine := (GVL_CELL_MANAGER.Status.uiActiveMagazine = UINT#2)
 		AND (GVL_CELL_MANAGER.Status.xRunning OR GVL_ROBOT.Status.xBusy),
 	xRobotCanWorkWithMagazine := xRobotInterfaceReady
@@ -110,8 +100,6 @@ fbMagazine2(
 	stInventory := GVL_DETAIL.astMagazine[2],
 	lrPitchX := GVL_HMI.MagazinePitchX,
 	lrPitchY := GVL_HMI.MagazinePitchY,
-	lrSafeAbove := GVL_HMI.alrMagazineSafeZ_1[2],
-	lrSafeInside := GVL_HMI.alrMagazineSafeZ_2[2],
 	Command => GVL_MAGAZINE.astCommand[2],
 	Status => GVL_MAGAZINE.astStatus[2],
 	Diag => GVL_MAGAZINE.astDiag[2],

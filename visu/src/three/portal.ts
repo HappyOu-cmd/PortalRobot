@@ -1,14 +1,28 @@
 import * as THREE from 'three';
 import { getRobotTravelLimits } from '../model/travel';
 import type { CellLayout, GripperPayloadPoseLayout, PartGeometryLayout, RobotCoordinateFrame, RobotState, Vec3Mm } from '../model/types';
-import { applyPartMaterial, box, COLORS, cylinder, damp, logicalPosition, mm } from './primitives';
+import {
+  alarmPulse,
+  applyPartMaterial,
+  box,
+  collectAlarmSurfaceMaterials,
+  COLORS,
+  cylinder,
+  damp,
+  mm,
+  setAlarmSurfaceMaterials,
+  type AlarmSurfaceMaterial,
+} from './primitives';
+import { createPortalMechanics } from './portalMechanics';
+import { PORTAL_MEASUREMENTS } from '../config/portalMeasurements';
 
 interface GripperRig {
   pivot: THREE.Group;
   gripper1: THREE.Group;
   gripper2: THREE.Group;
-  fingers1: [THREE.Mesh, THREE.Mesh];
-  fingers2: [THREE.Mesh, THREE.Mesh];
+  fingers1: THREE.Group[];
+  fingers2: THREE.Group[];
+  jawCenter: THREE.Vector2;
   blank: THREE.Group;
   detail: THREE.Group;
   grip1Value: number;
@@ -22,15 +36,14 @@ const GRIPPER_1_ROTATION = new THREE.Quaternion().setFromAxisAngle(new THREE.Vec
 // The second head must already include the swap rotation. This makes both complete
 // head poses (including finger depth) exchange exactly when the pivot turns 180°.
 const GRIPPER_2_ROTATION = GRIPPER_DETAIL_ROTATION.clone().multiply(GRIPPER_1_ROTATION);
-const GRIPPER_SCALE = 0.68;
+const GRIPPER_SCALE = 0.42;
+const GRIPPER_FLANGE_RADIUS_FACTOR = 0.64;
 
-export interface PortalRig {
-  root: THREE.Group;
-  xAssembly: THREE.Group;
-  yCarriage: THREE.Group;
-  zExtension: THREE.Mesh;
-  gripperMount: THREE.Group;
+export interface PortalRig extends ReturnType<typeof createPortalMechanics> {
   gripper: GripperRig;
+  alarmSurfaceMaterials: AlarmSurfaceMaterial[];
+  alarmElapsed: number;
+  reducedMotion: boolean;
   xTravelOrigin: number;
   current: { x: number; y: number; z: number };
   telemetry: {
@@ -127,26 +140,60 @@ function interpolateTelemetry(rig: PortalRig, frame: RobotCoordinateFrame): Vec3
   };
 }
 
-function makeGripperHead(name: string, color: number): {
+function makeGripperHead(name: string, jawCenter: THREE.Vector2): {
   root: THREE.Group;
-  fingers: [THREE.Mesh, THREE.Mesh];
+  fingers: THREE.Group[];
   payloadMount: THREE.Group;
 } {
   const root = new THREE.Group();
   root.name = name;
-  const arm = cylinder(`${name}_arm`, 0.075, 0.32, color, new THREE.Vector3(0.16, 0, 0));
+  // Convert the physical measurements to the pivot's local scale. The
+  // measured body diameter made the two chuck cylinders visibly wider than
+  // the gripper flange, so keep their radius aligned with the flange (the
+  // same radius used by the hub and the front cap).
+  const measuredBodyRadius = mm(PORTAL_MEASUREMENTS.gripperBodyRadius) / GRIPPER_SCALE;
+  const bodyRadius = measuredBodyRadius * GRIPPER_FLANGE_RADIUS_FACTOR;
+  const flangeRadius = bodyRadius;
+  const bodyLength = mm(PORTAL_MEASUREMENTS.gripperBodyLength) / GRIPPER_SCALE;
+  const bodyBack = 0.23;
+  const bodyFront = bodyBack + bodyLength;
+  const jawOffsetX = bodyFront - 0.35;
+  const radialScale = bodyRadius / 0.14;
+  const arm = cylinder(`${name}_arm`, 0.073, 0.17, COLORS.steel, new THREE.Vector3(0.13, jawCenter.x, jawCenter.y));
   arm.rotation.z = Math.PI / 2;
   root.add(arm);
-  root.add(box(`${name}_jaw_body`, new THREE.Vector3(0.16, 0.18, 0.2), COLORS.graphite, new THREE.Vector3(0.34, 0, 0)));
-  const fingerA = box(`${name}_finger_a`, new THREE.Vector3(0.16, 0.035, 0.045), COLORS.silver, new THREE.Vector3(0.46, 0.08, 0.06), { metalness: 0.35, roughness: 0.28 });
-  const fingerB = fingerA.clone();
-  fingerB.name = `${name}_finger_b`;
-  fingerB.position.y = -0.08;
-  root.add(fingerA, fingerB);
+  root.add(box(`${name}_back_plate`, new THREE.Vector3(0.04, bodyRadius * 2, bodyRadius * 2), COLORS.graphite,
+    new THREE.Vector3(0.215, jawCenter.x, jawCenter.y)));
+  for (const [x, radius, length, color] of [
+    [bodyBack + bodyLength / 2, bodyRadius, bodyLength, COLORS.silver],
+    [bodyFront + 0.015, bodyRadius, 0.03, COLORS.steel],
+    [bodyFront + 0.037, flangeRadius, 0.016, COLORS.graphite],
+  ]) {
+    const body = cylinder(`${name}_chuck`, radius, length, color, new THREE.Vector3(x, jawCenter.x, jawCenter.y), 32);
+    body.rotation.z = Math.PI / 2;
+    root.add(body);
+  }
+  const fingers: THREE.Group[] = [];
+  for (let i = 0; i < 3; i++) {
+    const angle = i * Math.PI * 2 / 3;
+    const track = box(`${name}_jaw_slide`, new THREE.Vector3(0.014, 0.125 * radialScale, 0.041), COLORS.graphite,
+      new THREE.Vector3(bodyFront + 0.04, jawCenter.x + Math.cos(angle) * 0.077 * radialScale,
+        jawCenter.y + Math.sin(angle) * 0.077 * radialScale));
+    track.rotation.x = angle;
+    root.add(track);
+    const finger = new THREE.Group();
+    finger.name = `${name}_jaw_${i + 1}`;
+    finger.rotation.x = angle;
+    finger.add(box(`${name}_jaw_slider`, new THREE.Vector3(0.05, 0.087, 0.04), COLORS.steel, new THREE.Vector3(0.421 + jawOffsetX, 0.02, 0)));
+    finger.add(box(`${name}_jaw_finger`, new THREE.Vector3(0.17, 0.035, 0.038), COLORS.silver, new THREE.Vector3(0.51 + jawOffsetX, 0, 0), { metalness: 0.55, roughness: 0.32 }));
+    finger.add(box(`${name}_jaw_contact`, new THREE.Vector3(0.065, 0.008, 0.04), COLORS.graphite, new THREE.Vector3(0.555 + jawOffsetX, -0.0195, 0)));
+    root.add(finger);
+    fingers.push(finger);
+  }
   const payloadMount = new THREE.Group();
-  payloadMount.position.x = 0.57;
+  payloadMount.position.x = 0.57 + jawOffsetX;
   root.add(payloadMount);
-  return { root, fingers: [fingerA, fingerB], payloadMount };
+  return { root, fingers, payloadMount };
 }
 
 function createBlankPayload(geometry: PartGeometryLayout): THREE.Group {
@@ -184,15 +231,16 @@ function createDualGripper(
 ): GripperRig {
   const pivot = new THREE.Group();
   pivot.name = 'dual_gripper';
-  pivot.add(box('gripper_rotator', new THREE.Vector3(0.34, 0.18, 0.28), COLORS.graphite, new THREE.Vector3()));
-  const hub = cylinder('gripper_hub', 0.12, 0.22, COLORS.steel, new THREE.Vector3(0, 0, 0));
-  hub.rotation.x = Math.PI / 2;
+  pivot.add(box('gripper_angle_adapter', new THREE.Vector3(0.19, 0.19, 0.22), COLORS.silver, new THREE.Vector3(-0.035, -0.035, 0)));
+  const hub = cylinder('gripper_hub', 0.13, 0.12, COLORS.steel, new THREE.Vector3());
+  hub.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), SWAP_AXIS);
   pivot.add(hub);
 
-  const first = makeGripperHead('gripper_1', COLORS.blueDark);
+  const jawCenter = new THREE.Vector2(mm(pose.offset.y) / GRIPPER_SCALE, mm(pose.offset.z) / GRIPPER_SCALE);
+  const first = makeGripperHead('gripper_1', jawCenter);
   first.root.quaternion.copy(GRIPPER_1_ROTATION);
   pivot.add(first.root);
-  const second = makeGripperHead('gripper_2', 0x526573);
+  const second = makeGripperHead('gripper_2', jawCenter);
   second.root.quaternion.copy(GRIPPER_2_ROTATION);
   pivot.add(second.root);
 
@@ -213,6 +261,7 @@ function createDualGripper(
     gripper2: second.root,
     fingers1: first.fingers,
     fingers2: second.fingers,
+    jawCenter,
     blank,
     detail,
     grip1Value: 0,
@@ -221,97 +270,77 @@ function createDualGripper(
 }
 
 export function createPortal(layout: CellLayout): PortalRig {
-  const portal = layout.portal;
-  const root = new THREE.Group();
-  root.name = 'Portal';
-  root.position.copy(logicalPosition(portal.position.x, portal.position.y, portal.position.z));
-
-  const length = mm(portal.lengthX);
-  const width = mm(portal.widthY);
-  const railHeight = mm(portal.frameBottomZ);
-  const frameHeight = mm(portal.frameThicknessZ);
-  const frameDepth = mm(portal.frameDepthY);
-  const support = mm(portal.supportSize);
-  const supportXs = [0, length];
-  const railStartX = supportXs[0];
-  const railEndX = supportXs[1];
-  const railLength = railEndX - railStartX;
-  const railCenterX = (railStartX + railEndX) / 2;
-  const railCenterY = railHeight + frameHeight / 2;
-  root.add(box('portal_front_rail', new THREE.Vector3(railLength, frameHeight, frameDepth), COLORS.blueDark, new THREE.Vector3(railCenterX, railCenterY, 0)));
-  root.add(box('portal_rear_rail', new THREE.Vector3(railLength, frameHeight, frameDepth), COLORS.blueDark, new THREE.Vector3(railCenterX, railCenterY, -width)));
-  root.add(box('portal_start_bridge', new THREE.Vector3(frameDepth, frameHeight, width), COLORS.blue, new THREE.Vector3(railStartX, railCenterY, -width / 2)));
-  root.add(box('portal_end_bridge', new THREE.Vector3(frameDepth, frameHeight, width), COLORS.blue, new THREE.Vector3(railEndX, railCenterY, -width / 2)));
-
-  const supportZs = [0, -width];
-  supportXs.forEach((x, xIndex) => {
-    supportZs.forEach((z, zIndex) => {
-      root.add(box(`portal_support_${xIndex}_${zIndex}`, new THREE.Vector3(support, railHeight, support), COLORS.silver, new THREE.Vector3(x, railHeight / 2, z)));
-      root.add(box(`portal_foot_${xIndex}_${zIndex}`, new THREE.Vector3(support * 2.2, 0.07, support * 2.2), COLORS.graphite, new THREE.Vector3(x, 0.035, z)));
-    });
-  });
-
-  const xAssembly = new THREE.Group();
-  xAssembly.name = 'Axis_X';
-  const beamHeight = mm(layout.robot.yBeamHeight);
-  const beamWidth = mm(layout.robot.yBeamWidthX);
-  const xTravelOrigin = railStartX;
-  xAssembly.add(box('axis_y_beam', new THREE.Vector3(beamWidth, beamHeight, width + frameDepth * 1.5), COLORS.blue, new THREE.Vector3(0, railHeight + frameHeight + beamHeight / 2, -width / 2)));
-  xAssembly.add(box('axis_x_front_carriage', new THREE.Vector3(beamWidth * 1.2, 0.16, 0.24), COLORS.graphite, new THREE.Vector3(0, railCenterY + 0.08, 0)));
-  xAssembly.add(box('axis_x_rear_carriage', new THREE.Vector3(beamWidth * 1.2, 0.16, 0.24), COLORS.graphite, new THREE.Vector3(0, railCenterY + 0.08, -width)));
-  root.add(xAssembly);
-
-  const yCarriage = new THREE.Group();
-  yCarriage.name = 'Axis_Y';
-  yCarriage.position.y = railHeight + frameHeight + beamHeight * 0.72;
-  yCarriage.add(box('axis_y_carriage', new THREE.Vector3(0.38, 0.32, 0.34), COLORS.graphite, new THREE.Vector3()));
-  xAssembly.add(yCarriage);
-
-  const zMount = new THREE.Group();
-  zMount.name = 'Axis_Z';
-  const baseLength = mm(layout.robot.zBaseLength);
-  const columnWidth = mm(layout.robot.zColumnWidth);
-  const zExtension = box('axis_z_column', new THREE.Vector3(columnWidth, baseLength, columnWidth), 0x394853, new THREE.Vector3(0, -baseLength / 2, 0), { metalness: 0.25, roughness: 0.36 });
-  zMount.add(zExtension);
-  yCarriage.add(zMount);
-
-  const gripperMount = new THREE.Group();
-  gripperMount.position.y = -baseLength;
+  const mechanics = createPortalMechanics(layout);
   const gripper = createDualGripper(layout.partGeometry, layout.gripperPayloadPose);
-  gripperMount.add(gripper.pivot);
-  zMount.add(gripperMount);
-
+  const alarmSurfaceMaterials: AlarmSurfaceMaterial[] = [];
+  mechanics.root.traverse((object) => {
+    if (object instanceof THREE.Group && object.name.startsWith('portal_x_rail_')) {
+      alarmSurfaceMaterials.push(...collectAlarmSurfaceMaterials(object));
+    }
+  });
+  mechanics.gripperMount.add(gripper.pivot);
+  // Stationary pneumatic actuator and adapter stay attached to the ram. Only
+  // the diagonal output hub and both complete chuck heads rotate during a swap.
+  const fixedHousing = new THREE.Group();
+  fixedHousing.name = 'gripper_fixed_housing';
+  fixedHousing.scale.setScalar(GRIPPER_SCALE / 0.68);
+  mechanics.gripperMount.add(fixedHousing);
+  fixedHousing.add(box('gripper_transition_plate', new THREE.Vector3(0.19, 0.04, 0.17),
+    COLORS.silver, new THREE.Vector3(0, 0.105, 0)));
+  const actuator = cylinder('gripper_rotary_actuator', 0.089, 0.09, COLORS.steel,
+    new THREE.Vector3(0.06, 0.06, 0), 32);
+  actuator.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), SWAP_AXIS);
+  fixedHousing.add(actuator);
+  fixedHousing.add(box('gripper_pneumatic_block', new THREE.Vector3(0.115, 0.048, 0.06),
+    COLORS.silver, new THREE.Vector3(0, 0.148, 0.05)));
+  for (const x of [-0.04, 0.04]) {
+    fixedHousing.add(cylinder('gripper_air_port', 0.011, 0.026, 0x176da0,
+      new THREE.Vector3(x, 0.18, 0.05), 12));
+  }
   return {
-    root,
-    xAssembly,
-    yCarriage,
-    zExtension,
-    gripperMount,
+    ...mechanics,
     gripper,
-    xTravelOrigin,
+    alarmSurfaceMaterials,
+    alarmElapsed: 0,
+    reducedMotion: typeof window !== 'undefined'
+      && typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+    xTravelOrigin: 0,
     current: { x: 0, y: 0, z: 0 },
     telemetry: {
-      samples: [],
-      lastSequence: 0,
-      velocity: { x: 0, y: 0, z: 0 },
-      initialized: false,
+      samples: [], lastSequence: 0,
+      velocity: { x: 0, y: 0, z: 0 }, initialized: false,
     },
   };
 }
 
-function updateFingerPair(fingers: [THREE.Mesh, THREE.Mesh], value: number, closedGap: number): void {
-  const gap = THREE.MathUtils.lerp(0.09, closedGap, value);
-  fingers[0].position.y = gap;
-  fingers[1].position.y = -gap;
+function updateRadialJaws(fingers: THREE.Group[], value: number, closedGap: number, center: THREE.Vector2): void {
+  // Even a large configured part must open outwards, never close in reverse.
+  const gap = THREE.MathUtils.lerp(Math.max(0.095, closedGap + 0.045), closedGap, value);
+  fingers.forEach((finger, index) => {
+    const angle = index * Math.PI * 2 / fingers.length;
+    finger.position.set(0, center.x + Math.cos(angle) * gap, center.y + Math.sin(angle) * gap);
+  });
 }
-
 export function updatePortalRig(
   rig: PortalRig,
   state: RobotState,
   coordinateFrame: RobotCoordinateFrame,
   layout: CellLayout,
   dt: number,
+  alarmTargetActive = false,
+  inspecting = false,
 ): void {
+  const alarm = alarmTargetActive || state.error;
+  if (alarm) rig.alarmElapsed += dt;
+  else rig.alarmElapsed = 0;
+  setAlarmSurfaceMaterials(
+    rig.alarmSurfaceMaterials,
+    alarm && !inspecting,
+    alarmPulse(rig.alarmElapsed, rig.reducedMotion),
+    rig.alarmElapsed,
+    rig.reducedMotion,
+  );
   const interpolated = interpolateTelemetry(rig, coordinateFrame);
   const smoothed = smoothTelemetryTarget(rig, interpolated, dt);
   rig.current.x = smoothed.x;
@@ -327,14 +356,7 @@ export function updatePortalRig(
   );
   const localY = coordinate.origin.y + coordinate.direction.y * rig.current.y;
   const localZ = Math.max(0, coordinate.origin.z + coordinate.direction.z * rig.current.z);
-  rig.xAssembly.position.x = rig.xTravelOrigin + mm(localX);
-  rig.yCarriage.position.z = -mm(localY);
-
-  const baseLength = mm(layout.robot.zBaseLength);
-  const extensionLength = baseLength + mm(localZ);
-  rig.zExtension.scale.y = extensionLength / baseLength;
-  rig.zExtension.position.y = -extensionLength / 2;
-  rig.gripperMount.position.y = -extensionLength;
+  rig.updateMechanics(rig.xTravelOrigin + mm(localX), mm(localY), mm(localZ));
 
   const mechanismResponse = layout.animation.mechanismResponse;
   const rotationTarget = state.rotatedToDetail && !state.rotatedToBlank
@@ -344,10 +366,10 @@ export function updatePortalRig(
 
   rig.gripper.grip1Value = damp(rig.gripper.grip1Value, state.gripper1Closed ? 1 : 0, mechanismResponse, dt);
   rig.gripper.grip2Value = damp(rig.gripper.grip2Value, state.gripper2Closed ? 1 : 0, mechanismResponse, dt);
-  const fingerHalfWidth = 0.0175;
+  const fingerHalfWidth = 0.0235;
   const closedGap = (mm(layout.partGeometry.diameter) / 2) / GRIPPER_SCALE + fingerHalfWidth;
-  updateFingerPair(rig.gripper.fingers1, rig.gripper.grip1Value, closedGap);
-  updateFingerPair(rig.gripper.fingers2, rig.gripper.grip2Value, closedGap);
+  updateRadialJaws(rig.gripper.fingers1, rig.gripper.grip1Value, closedGap, rig.gripper.jawCenter);
+  updateRadialJaws(rig.gripper.fingers2, rig.gripper.grip2Value, closedGap, rig.gripper.jawCenter);
   rig.gripper.blank.visible = state.gripper1Closed;
   rig.gripper.detail.visible = state.gripper2Closed;
   const blankMaterials = state.blankProductType >= 1 && state.blankProductType <= 3

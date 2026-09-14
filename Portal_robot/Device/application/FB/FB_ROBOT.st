@@ -43,6 +43,7 @@ VAR_INPUT
 	xMotionBusy         : BOOL; // Одна из осей выполняет движение
 	xSingleAxisMotionBusy : BOOL; // Один из FB_AXIS владеет осью; групповое движение запускать нельзя
 	xPointCheckActive : BOOL; // Текущая команда принадлежит проверке сохранённой точки
+	xTestAbort : BOOL; // Немедленная отмена активной команды виртуального теста
 	rPointCheckSpeedPercent : REAL; // Фактическая скорость проверки 0.1..100 %
 	FaultRequest        : ST_ROBOT_FAULT_REQUEST; // Единый контракт диагностической инъекции
 	tGripper1OpenTime   : TIME := T#500MS; // Время открытия первого захвата в модели
@@ -213,6 +214,13 @@ ELSE
 	ELSE
 		Command := stHmiCommand;
 	END_IF;
+END_IF;
+
+// Abort теста имеет приоритет над любым владельцем, включая ручную подготовку
+// сценария, когда команда ячейки обычно не участвует в выборе.
+IF xTestAbort THEN
+	Command.xExecute := FALSE;
+	Command.xStop := TRUE;
 END_IF;
 
 // Уже принятую внешним контроллером команду не прерываем. Запрет действует
@@ -488,12 +496,21 @@ CASE eState OF
         END_IF;
 
 
-    E_ROBOT_STATE.GRIPPER:
+	E_ROBOT_STATE.GRIPPER:
 
         Status.xBusy := TRUE;
         xGripperExecute := TRUE;
 
-		IF xEquipmentStopRequired THEN
+		IF xTestAbort THEN
+			xGripperExecute := FALSE;
+			Status.xBusy := FALSE;
+			Status.xDone := FALSE;
+			xActiveManualGripper := FALSE;
+			eActiveAction := E_ROBOT_ACTION.NONE;
+			eActivePoint := E_POINT_NAME.NONE;
+			eState := E_ROBOT_STATE.IDLE;
+
+		ELSIF xEquipmentStopRequired THEN
 			xGripperExecute := FALSE;
 			Error.dwErrorActive := Error.dwErrorActive OR ERR_ROBOT_STOP;
 			eState := E_ROBOT_STATE.ERROR;
@@ -535,6 +552,12 @@ CASE eState OF
         END_IF;
 
 		IF NOT Command.xExecute THEN
+			// Владелец уже снял Execute: в этом же цикле погасить запрос
+			// вложенному FB до очистки action/point. Иначе при быстром
+			// SoftMotion движении один скан уходил как Execute=TRUE + point=NONE,
+			// а FB_MOTION_MANAGER закономерно валил нулевую точку.
+			xMotionExecute := FALSE;
+			xGripperExecute := FALSE;
             Status.xDone := FALSE;
 			xModbusCommandStarted := FALSE;
             eActiveAction := E_ROBOT_ACTION.NONE;
@@ -559,7 +582,19 @@ CASE eState OF
 			xModbusCommandStarted := TRUE;
 		END_IF;
 
-		IF Command.xStop OR xHmiStopAccepted OR xGlobalError THEN
+		IF xTestAbort THEN
+			ModbusCommand.xStop := TRUE;
+			IF NOT stModbusStatus.xBusy THEN
+				Status.xBusy := FALSE;
+				Status.xDone := FALSE;
+				xModbusCommandStarted := FALSE;
+				eActiveAction := E_ROBOT_ACTION.NONE;
+				eActivePoint := E_POINT_NAME.NONE;
+				iActiveSlot := SINT#0;
+				uiActiveMagazineId := UINT#0;
+				eState := E_ROBOT_STATE.IDLE;
+			END_IF;
+		ELSIF Command.xStop OR xHmiStopAccepted OR xGlobalError THEN
 			ModbusCommand.xStop := TRUE;
 			Error.dwErrorActive := Error.dwErrorActive OR ERR_ROBOT_STOP;
 			eState := E_ROBOT_STATE.ERROR;
@@ -677,11 +712,22 @@ FaultStatus.stPoint := fbMotionManager.FaultStatus;
 stGripperCommand.xExecute := NOT xMode
 	AND (xGripperExecute OR xManualGripperOverrideExecute);
 stGripperCommand.xReset := NOT xMode AND xResetAccepted;
+stGripperCommand.xGripper1Open := fbGripper.Status.xGripper1Open;
+stGripperCommand.xGripper2Open := fbGripper.Status.xGripper2Open;
+stGripperCommand.xRotateToDetail := fbGripper.Status.xRotatedToDetail;
 IF xManualGripperOverrideExecute THEN
 	stGripperCommand.eAction := eManualGripperAction;
 ELSE
 	stGripperCommand.eAction := eActiveAction;
 END_IF;
+CASE stGripperCommand.eAction OF
+	E_ROBOT_ACTION.UNCLAMP_1: stGripperCommand.xGripper1Open := TRUE;
+	E_ROBOT_ACTION.CLAMP_1: stGripperCommand.xGripper1Open := FALSE;
+	E_ROBOT_ACTION.UNCLAMP_2: stGripperCommand.xGripper2Open := TRUE;
+	E_ROBOT_ACTION.CLAMP_2: stGripperCommand.xGripper2Open := FALSE;
+	E_ROBOT_ACTION.ROTATE_TO_BLANK: stGripperCommand.xRotateToDetail := FALSE;
+	E_ROBOT_ACTION.ROTATE_TO_DETAIL: stGripperCommand.xRotateToDetail := TRUE;
+END_CASE;
 
 fbGripper(
 	// Положение и захваты робота не подменяются записью сценария: runner

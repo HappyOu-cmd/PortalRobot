@@ -23,6 +23,7 @@
 | [15-equipment-error-reset-table.md](15-equipment-error-reset-table.md) | Единая карта аварий, условий сброса и сообщений журнала |
 | [16-cell-warnings.md](16-cell-warnings.md) | Реестр предупреждений ячейки |
 | [19-discrete-signal-list.md](19-discrete-signal-list.md) | Предварительная таблица дискретных сигналов станков, захватов, пультов и цепи безопасности |
+| [20-smoke-and-integration-test-catalog.md](20-smoke-and-integration-test-catalog.md) | Человеческое описание входов и ожидаемых результатов Smoke, Regression и генеральных сценариев ячейки |
 
 ## Карта правил
 

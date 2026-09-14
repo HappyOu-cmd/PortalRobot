@@ -2,36 +2,62 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import machineModelUrl from '../assets/models/Headman.glb?url';
 import type { CellLayout, MachineState, PartGeometryLayout } from '../model/types';
-import { applyPartMaterial, COLORS, cylinder, damp, logicalPosition, mm } from './primitives';
+import {
+  alarmPulse,
+  applyPartMaterial,
+  collectAlarmSurfaceMaterials,
+  COLORS,
+  cylinder,
+  damp,
+  logicalPosition,
+  mm,
+  setAlarmSurfaceMaterials,
+  type AlarmSurfaceMaterial,
+} from './primitives';
 import { OilMistEffect } from './OilMistEffect';
+import { createMachineHatch, updateMachineHatch, type MachineHatchRig } from './machineHatch';
 
 const MODEL_DOOR_TRAVEL = 1.01;
 const DEFAULT_DOOR_TRAVEL_MM = 1120;
 const DOOR_CLOSE_CORRECTION = 0.16;
 const DOOR_WIDTH_SCALE = 1.16;
+// Visual installation correction from the reference: move the whole machine
+// down by 50 mm without changing the cell layout or enclosure coordinates.
+const MACHINE_VERTICAL_OFFSET_MM = -50;
+
+// Native Headman.glb enclosure faces; the conveyor, control panel and beacon
+// project beyond these bounds and must not define the configured body size.
+const MODEL_BODY_BOUNDS = new THREE.Box3(
+  new THREE.Vector3(-1.4025, 0, -0.835),
+  new THREE.Vector3(1.4025, 1.78, 0.835),
+);
+const MODEL_BODY_SIZE = MODEL_BODY_BOUNDS.getSize(new THREE.Vector3());
 
 interface MachineTemplate {
   scene: THREE.Group;
-  bounds: THREE.Box3;
-  size: THREE.Vector3;
 }
 
 export interface MachineRig {
   root: THREE.Group;
   door?: THREE.Object3D;
   hatch?: THREE.Object3D;
+  hatchMechanism?: MachineHatchRig;
   chuck?: THREE.Object3D;
   doorOpenX: number;
   doorClosedX: number;
   hatchOpenX: number;
   hatchClosedX: number;
   doorValue: number;
+  hatchValue: number;
   part: THREE.Group;
   blankPart: THREE.Group;
   detailPart: THREE.Group;
   unknownPart: THREE.Group;
   redLights: THREE.MeshStandardMaterial[];
   greenLights: THREE.MeshStandardMaterial[];
+  alarmSurfaceMaterials: AlarmSurfaceMaterial[];
+  alarmElapsed: number;
+  reducedMotion: boolean;
   oilMist?: OilMistEffect;
   disposed: boolean;
   selection: THREE.LineSegments;
@@ -40,8 +66,7 @@ export interface MachineRig {
 const machineTemplate = new GLTFLoader().loadAsync(machineModelUrl).then((gltf): MachineTemplate => {
   const scene = gltf.scene;
   scene.updateMatrixWorld(true);
-  const bounds = new THREE.Box3().setFromObject(scene);
-  return { scene, bounds, size: bounds.getSize(new THREE.Vector3()) };
+  return { scene };
 });
 
 function markClickable(root: THREE.Object3D, machineIndex: number): void {
@@ -104,20 +129,22 @@ function lampMaterials(root: THREE.Object3D, materialName: string): THREE.MeshSt
 function configureMachineModel(rig: MachineRig, template: MachineTemplate, layout: CellLayout, index: number): void {
   if (rig.disposed) return;
   const model = cloneModel(template.scene);
-  const scaleX = mm(layout.machine.sizeX) / template.size.x;
-  const scaleY = mm(layout.machine.sizeZ) / template.size.y;
-  const scaleZ = mm(layout.machine.sizeY) / template.size.z;
+  const scaleX = mm(layout.machine.sizeX) / MODEL_BODY_SIZE.x;
+  const scaleY = mm(layout.machine.sizeZ) / MODEL_BODY_SIZE.y;
+  const scaleZ = mm(layout.machine.sizeY) / MODEL_BODY_SIZE.z;
   model.scale.set(scaleX, scaleY, scaleZ);
   model.position.set(
-    -template.bounds.min.x * scaleX,
-    -template.bounds.min.y * scaleY,
-    -template.bounds.max.z * scaleZ,
+    -MODEL_BODY_BOUNDS.min.x * scaleX,
+    -MODEL_BODY_BOUNDS.min.y * scaleY,
+    -MODEL_BODY_BOUNDS.max.z * scaleZ,
   );
   model.name = `Headman_${index + 1}`;
 
   rig.door = model.getObjectByName('Door-1');
   rig.hatch = model.getObjectByName('Hatch-1');
   rig.chuck = model.getObjectByName('Chuck-1');
+  const body = model.getObjectByName('CNC-1');
+  const bodyAlarmSurfaceMaterials = body ? collectAlarmSurfaceMaterials(body, 'whitecarpaint') : [];
   const travel = MODEL_DOOR_TRAVEL * layout.machine.doorTravel / DEFAULT_DOOR_TRAVEL_MM;
   if (rig.door) {
     rig.doorOpenX = rig.door.position.x;
@@ -141,6 +168,17 @@ function configureMachineModel(rig: MachineRig, template: MachineTemplate, layou
       });
     });
   }
+  if (rig.hatch && rig.door) {
+    rig.hatchMechanism = createMachineHatch(model, rig.hatch, rig.door, travel, MODEL_BODY_BOUNDS.max.y);
+    rig.hatch = rig.hatchMechanism.slide;
+    rig.hatchClosedX = rig.hatchMechanism.closedX;
+    rig.hatchOpenX = rig.hatchMechanism.openX;
+  }
+  rig.alarmSurfaceMaterials = [
+    ...bodyAlarmSurfaceMaterials,
+    ...(rig.door ? collectAlarmSurfaceMaterials(rig.door, 'whitecarpaint') : []),
+    ...(rig.hatch ? collectAlarmSurfaceMaterials(rig.hatch) : []),
+  ];
 
   if (rig.chuck) rig.chuck.add(rig.part);
   if (rig.chuck && rig.door) rig.oilMist = new OilMistEffect(model, rig.chuck, rig.door);
@@ -159,7 +197,7 @@ export function createMachine(layout: CellLayout, index: number): MachineRig {
   root.position.copy(logicalPosition(
     layout.machine.machines[index].position.x,
     layout.machine.machines[index].position.y,
-    layout.machine.machines[index].position.z,
+    layout.machine.machines[index].position.z + MACHINE_VERTICAL_OFFSET_MM,
   ));
 
   const selectionGeometry = new THREE.EdgesGeometry(new THREE.BoxGeometry(width + 0.08, height + 0.08, depth + 0.08));
@@ -176,12 +214,18 @@ export function createMachine(layout: CellLayout, index: number): MachineRig {
     hatchOpenX: 0,
     hatchClosedX: 0,
     doorValue: 0,
+    hatchValue: 0,
     part: part.root,
     blankPart: part.blank,
     detailPart: part.detail,
     unknownPart: part.unknown,
     redLights: [],
     greenLights: [],
+    alarmSurfaceMaterials: [],
+    alarmElapsed: 0,
+    reducedMotion: typeof window !== 'undefined'
+      && typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
     disposed: false,
     selection,
   };
@@ -197,14 +241,27 @@ function setLamp(materialValue: THREE.MeshStandardMaterial, color: number, activ
   materialValue.emissiveIntensity = active ? 1.6 : 0;
 }
 
-export function updateMachineRig(rig: MachineRig, state: MachineState, dt: number, layout: CellLayout): void {
+export function updateMachineRig(
+  rig: MachineRig,
+  state: MachineState,
+  dt: number,
+  layout: CellLayout,
+  alarmTargetActive = false,
+  inspecting = false,
+): void {
   const response = layout.animation.mechanismResponse;
   let doorTarget = rig.doorValue;
-  if (state.hatchOpen && !state.hatchClosed) doorTarget = 1;
-  if (state.hatchClosed && !state.hatchOpen) doorTarget = 0;
+  if (state.doorOpen && !state.doorClosed) doorTarget = 1;
+  if (state.doorClosed && !state.doorOpen) doorTarget = 0;
   rig.doorValue = damp(rig.doorValue, doorTarget, response, dt);
-  if (rig.door) rig.door.position.x = rig.doorClosedX;
-  if (rig.hatch) rig.hatch.position.x = THREE.MathUtils.lerp(rig.hatchClosedX, rig.hatchOpenX, rig.doorValue);
+  if (rig.door) rig.door.position.x = THREE.MathUtils.lerp(rig.doorClosedX, rig.doorOpenX, rig.doorValue);
+
+  let hatchTarget = rig.hatchValue;
+  if (state.hatchOpen && !state.hatchClosed) hatchTarget = 1;
+  if (state.hatchClosed && !state.hatchOpen) hatchTarget = 0;
+  rig.hatchValue = damp(rig.hatchValue, hatchTarget, response, dt);
+  if (rig.hatch) rig.hatch.position.x = THREE.MathUtils.lerp(rig.hatchClosedX, rig.hatchOpenX, rig.hatchValue);
+  if (rig.hatchMechanism) updateMachineHatch(rig.hatchMechanism, state.hatchLocked);
 
   if (rig.chuck && state.mode === 'processing') rig.chuck.rotation.x += dt * 13.5;
 
@@ -220,6 +277,15 @@ export function updateMachineRig(rig: MachineRig, state: MachineState, dt: numbe
   const activeColor = state.mode === 'processing' ? COLORS.green : state.mode === 'change' ? COLORS.amber : COLORS.amber;
   rig.redLights.forEach((item) => setLamp(item, COLORS.red, error));
   rig.greenLights.forEach((item) => setLamp(item, activeColor, !error && state.mode !== 'off'));
+  const alarm = alarmTargetActive || state.alarm || error || state.activeErrors.length > 0;
+  rig.alarmElapsed = alarm ? rig.alarmElapsed + dt : 0;
+  setAlarmSurfaceMaterials(
+    rig.alarmSurfaceMaterials,
+    alarm && !inspecting,
+    alarmPulse(rig.alarmElapsed, rig.reducedMotion),
+    rig.alarmElapsed,
+    rig.reducedMotion,
+  );
   rig.oilMist?.setActive(state.mode === 'processing');
   rig.oilMist?.update(dt);
 }

@@ -15,6 +15,7 @@ TYPE E_ALARM_SOURCE :
 	AXIS_GROUP, // Группа осей XYZ
 	MOTION_MANAGER, // Менеджер движения
 	POINT_MANAGER, // Менеджер точек
-	GRIPPER // Захват робота
+	GRIPPER, // Захват робота
+	CELL_SAFETY // Дискретный контур безопасности; добавлен в конец без сдвига старых кодов
 );
 END_TYPE

@@ -14,6 +14,8 @@ VAR_INPUT
 	xHmiCloseSafetyDoor : BOOL; // Импульс ручного закрытия операторской двери
 	xHmiOpenHatch       : BOOL; // Импульс ручного открытия роботного люка
 	xHmiCloseHatch      : BOOL; // Импульс ручного закрытия роботного люка
+	xHmiUnlockHatch     : BOOL; // Импульс ручного открытия замка роботного люка
+	xHmiLockHatch       : BOOL; // Импульс ручного закрытия замка роботного люка
 	xHmiOpenChuck       : BOOL; // Импульс ручного разжима патрона
 	xHmiCloseChuck      : BOOL; // Импульс ручного зажима патрона
 	xHmiSetBlank	  : BOOL; // Ручное подтверждение загруженной заготовки
@@ -60,6 +62,8 @@ VAR
 	rtHmiCloseSafetyDoor     : R_TRIG; // Фронт ручного закрытия операторской двери
 	rtHmiOpenHatch           : R_TRIG; // Фронт ручного открытия люка
 	rtHmiCloseHatch          : R_TRIG; // Фронт ручного закрытия люка
+	rtHmiUnlockHatch         : R_TRIG; // Фронт ручного открытия замка
+	rtHmiLockHatch           : R_TRIG; // Фронт ручного закрытия замка
 	rtDoorClosed             : R_TRIG; // Фронт подтверждённого закрытия роботного люка
 	rtHmiOpenChuck           : R_TRIG; // Фронт ручного разжима патрона
 	rtHmiCloseChuck          : R_TRIG; // Фронт ручного зажима патрона
@@ -70,6 +74,7 @@ VAR
 	tonRobotReleaseTimeout  : TON; // Ограничение времени освобождения интерфейса робота
 	tonDoorOpenTimeout      : TON; // Ограничение времени открытия двери
 	tonDoorCloseTimeout     : TON; // Ограничение времени закрытия двери
+	tonHatchUnlockTimeout   : TON; // Ограничение времени открытия замка
 	tonChuckOpenTimeout     : TON; // Ограничение времени разжима патрона
 	tonChuckCloseTimeout    : TON; // Ограничение времени зажима патрона
 	tonCycleStartTimeout    : TON; // Ограничение времени подтверждения запуска цикла
@@ -96,11 +101,16 @@ VAR
 	xManualSafetyDoorCloseAllowed : BOOL;
 	xManualHatchOpenAllowed       : BOOL;
 	xManualHatchCloseAllowed      : BOOL;
+	xManualHatchUnlockAllowed     : BOOL;
+	xManualHatchLockAllowed       : BOOL;
 	xManualChuckOpenAllowed       : BOOL;
 	xManualChuckCloseAllowed      : BOOL;
 	xRobotDone              : BOOL; // Робот освобождён алгоритмом станка
 	xServiceDoorCloseDemand : BOOL; // Внутренний запрос закрытия двери
 	xServiceDoorOpenDemand  : BOOL; // Внутренний запрос открытия двери
+	xServiceHatchUnlockDemand : BOOL; // Внутренний запрос открытия замка
+	xManualHatchUnlockDemand  : BOOL; // Защёлкнутое ручное состояние открытия замка
+	xManualHatchOpenDemand    : BOOL; // Ручное открытие люка после снятия замка
 	xAutoDoorOpenLatched    : BOOL; // Защёлка автоматического открытия двери
 	xRobotActionDone        : BOOL; // Запрошенное действие захвата уже выполнено
 	xRobotCommandStarted    : BOOL; // Текущий шаг рецепта действительно принят FB_ROBOT
@@ -135,6 +145,8 @@ VAR CONSTANT
 	ERR_TIMEOUT_CHUCK_CLOSE   : DWORD := DWORD#16#00200000; // Таймаут зажима патрона
 	ERR_TIMEOUT_CYCLE_START   : DWORD := DWORD#16#00400000; // Таймаут подтверждения запуска цикла
 	ERR_SAFETY_DOOR_OPEN     : DWORD := DWORD#16#00800000; // Дверь открылась во время обслуживания
+	ERR_TIMEOUT_HATCH_UNLOCK : DWORD := DWORD#16#01000000; // Таймаут открытия замка роботного люка
+	ERR_HATCH_UNLOCK_PROCESSING : DWORD := DWORD#16#02000000; // Замок открыт во время обработки
 
 	// Эти ошибки уже относятся к действию робота и всегда имеют эффект ROBOT_STOP.
 	MASK_ALWAYS_ROBOT_STOP : DWORD :=
@@ -163,7 +175,9 @@ VAR CONSTANT
 								ERR_TIMEOUT_DOOR_CLOSE OR
 								ERR_TIMEOUT_CHUCK_OPEN OR
 								ERR_TIMEOUT_CHUCK_CLOSE OR
-								ERR_TIMEOUT_CYCLE_START;
+								ERR_TIMEOUT_CYCLE_START OR
+								ERR_TIMEOUT_HATCH_UNLOCK OR
+								ERR_HATCH_UNLOCK_PROCESSING;
 								
 	// Ошибки, полученные от других блоков или общей логики ячейки.
 	MASK_EXTERNAL_ERROR  	: DWORD :=
@@ -198,6 +212,8 @@ rtHmiOpenSafetyDoor(CLK := xHmiOpenSafetyDoor);
 rtHmiCloseSafetyDoor(CLK := xHmiCloseSafetyDoor);
 rtHmiOpenHatch(CLK := xHmiOpenHatch);
 rtHmiCloseHatch(CLK := xHmiCloseHatch);
+rtHmiUnlockHatch(CLK := xHmiUnlockHatch);
+rtHmiLockHatch(CLK := xHmiLockHatch);
 rtDoorClosed(CLK := stMachineStatus.xDoorClosed);
 rtHmiOpenChuck(CLK := xHmiOpenChuck);
 rtHmiCloseChuck(CLK := xHmiCloseChuck);
@@ -262,6 +278,14 @@ xManualHatchCloseAllowed := xManualControlAllowed
 	AND stMachineStatus.xDoorOpen
 	AND NOT stMachineStatus.xDoorClosed
 	AND NOT xRobotInsideMachine;
+xManualHatchUnlockAllowed := xManualControlAllowed
+	AND stMachineStatus.xDoorClosed
+	AND NOT stMachineStatus.xDoorOpen
+	AND stMachineStatus.xHatchLocked;
+xManualHatchLockAllowed := xManualControlAllowed
+	AND NOT stMachineStatus.xHatchLocked
+	AND stMachineStatus.xDoorClosed
+	AND NOT stMachineStatus.xDoorOpen;
 xManualChuckOpenAllowed := xManualControlAllowed
 	AND stMachineStatus.xChuckClamped
 	AND NOT stMachineStatus.xChuckUnclamped;
@@ -331,6 +355,8 @@ IF (rtHmiOpenSafetyDoor.Q AND NOT xManualSafetyDoorOpenAllowed)
 OR (rtHmiCloseSafetyDoor.Q AND NOT xManualSafetyDoorCloseAllowed)
 OR (rtHmiOpenHatch.Q AND NOT xManualHatchOpenAllowed)
 OR (rtHmiCloseHatch.Q AND NOT xManualHatchCloseAllowed)
+OR (rtHmiUnlockHatch.Q AND NOT xManualHatchUnlockAllowed)
+OR (rtHmiLockHatch.Q AND NOT xManualHatchLockAllowed)
 OR (rtHmiOpenChuck.Q AND NOT xManualChuckOpenAllowed)
 OR (rtHmiCloseChuck.Q AND NOT xManualChuckCloseAllowed) THEN
 	Diag.stWarning.uiCode := WRN_MANUAL_CONTROL_REJECTED;
@@ -401,6 +427,13 @@ tonDoorCloseTimeout(
 	IN := eState = E_MACHINE_STATE.DOOR_CLOSE,
 	PT := stTimeouts.tDoorClose
 );
+tonHatchUnlockTimeout(
+	IN := (eState <> E_MACHINE_STATE.ERROR)
+		AND stMachineStatus.xHatchLocked
+		AND (((eState = E_MACHINE_STATE.DOOR_OPEN) AND xServiceHatchUnlockDemand)
+			OR (xManualHatchUnlockDemand AND xManualMode AND NOT xAutomaticUseEnabled)),
+	PT := stTimeouts.tHatchUnlock
+);
 tonChuckOpenTimeout(
 	IN := eState = E_MACHINE_STATE.CHUCK_OPEN,
 	PT := stTimeouts.tChuckOpen
@@ -426,6 +459,7 @@ END_IF;
 // Команды по умолчанию
 Command.stIo.xOpenDoor := FALSE;
 Command.stIo.xCloseDoor := FALSE;
+Command.stIo.xHatchUnLock := FALSE;
 Command.stIo.xOpenSafetyDoor := FALSE;
 Command.stIo.xCloseSafetyDoor := FALSE;
 Command.stIo.xClampChuck := FALSE;
@@ -445,10 +479,24 @@ IF xHmiCloseSafetyDoor AND xManualSafetyDoorCloseAllowed THEN
 	Command.stIo.xCloseSafetyDoor := TRUE;
 END_IF;
 IF xHmiOpenHatch AND xManualHatchOpenAllowed THEN
-	Command.stIo.xOpenDoor := TRUE;
+	xManualHatchOpenDemand := TRUE;
+	xManualHatchUnlockDemand := TRUE;
 END_IF;
 IF xHmiCloseHatch AND xManualHatchCloseAllowed THEN
 	Command.stIo.xCloseDoor := TRUE;
+	xManualHatchOpenDemand := FALSE;
+	xManualHatchUnlockDemand := FALSE;
+END_IF;
+IF rtHmiUnlockHatch.Q AND xManualHatchUnlockAllowed THEN
+	xManualHatchUnlockDemand := TRUE;
+END_IF;
+IF rtHmiLockHatch.Q AND xManualHatchLockAllowed THEN
+	xManualHatchUnlockDemand := FALSE;
+	xManualHatchOpenDemand := FALSE;
+END_IF;
+IF xAutomaticUseEnabled OR NOT xManualMode THEN
+	xManualHatchUnlockDemand := FALSE;
+	xManualHatchOpenDemand := FALSE;
 END_IF;
 IF xHmiOpenChuck AND xManualChuckOpenAllowed THEN
 	Command.stIo.xUnclampChuck := TRUE;
@@ -459,6 +507,7 @@ END_IF;
 Command.stRobot.eAction := E_ROBOT_ACTION.NONE;
 xServiceDoorOpenDemand := FALSE;
 xServiceDoorCloseDemand := FALSE;
+xServiceHatchUnlockDemand := FALSE;
 
 IF xTestInitialize THEN
 	Error.dwErrorActive := DWORD#0;
@@ -479,6 +528,9 @@ IF xTestInitialize THEN
 	xRobotDone := FALSE;
 	xServiceDoorCloseDemand := FALSE;
 	xServiceDoorOpenDemand := FALSE;
+	xServiceHatchUnlockDemand := FALSE;
+	xManualHatchUnlockDemand := FALSE;
+	xManualHatchOpenDemand := FALSE;
 	xAutoDoorOpenLatched := FALSE;
 	xRobotActionDone := FALSE;
 	xRobotCommandStarted := FALSE;
@@ -877,11 +929,17 @@ CASE eState OF
 		
 	E_MACHINE_STATE.DOOR_OPEN:
 		xServiceDoorOpenDemand := TRUE;
+		// Сначала снимаем замок, затем открываем роботный люк.
+		IF stMachineStatus.xHatchLocked THEN
+			xServiceHatchUnlockDemand := TRUE;
+		END_IF;
 
-    	IF stMachineStatus.xDoorOpen
+	    IF stMachineStatus.xDoorOpen
+		AND NOT stMachineStatus.xHatchLocked
 		AND NOT stMachineStatus.xAlarm THEN
 			xServiceDoorOpenDemand := FALSE;
-        	eState := E_MACHINE_STATE.NEXT;
+			xServiceHatchUnlockDemand := FALSE;
+         	eState := E_MACHINE_STATE.NEXT;
 		ELSIF stMachineStatus.xAlarm THEN
 			Error.dwErrorActive := Error.dwErrorActive OR ERR_DOOR_OPEN;
 			eState := E_MACHINE_STATE.ERROR;
@@ -903,16 +961,25 @@ CASE eState OF
 			eState := E_MACHINE_STATE.ERROR;
 		ELSE
 			xServiceDoorCloseDemand := TRUE;
+			// Замок удерживается открытым до подтверждения закрытой двери.
+			IF NOT stMachineStatus.xDoorClosed THEN
+				xServiceHatchUnlockDemand := TRUE;
+			END_IF;
 		END_IF;
 
-    	IF stMachineStatus.xDoorClosed
+	    IF stMachineStatus.xDoorClosed
 		AND NOT stMachineStatus.xAlarm THEN
-			xServiceDoorCloseDemand := FALSE;
+			// После закрытия двери снимаем xHatchUnLock и ждём
+			// подтверждение xHatchLocked=TRUE.
+			xServiceHatchUnlockDemand := FALSE;
+			IF stMachineStatus.xHatchLocked THEN
+				xServiceDoorCloseDemand := FALSE;
 			IF NOT xOperatorClosingDoor THEN
         		eState := E_MACHINE_STATE.NEXT;
 			ELSIF xOperatorClosingDoor THEN
 				eState := E_MACHINE_STATE.OPERATOR_CHOICE_RUN;
-				xOperatorClosingDoor := FALSE;
+					xOperatorClosingDoor := FALSE;
+				END_IF;
 			END_IF;
 		ELSIF stMachineStatus.xAlarm THEN
 			Error.dwErrorActive := Error.dwErrorActive OR ERR_DOOR_CLOSE;
@@ -1020,9 +1087,23 @@ CASE eState OF
 		AND xRobotResetDependencyReady THEN
 			Error.dwErrorLast := Error.dwErrorActive;
 			Error.dwErrorActive := DWORD#0;
+			xManualHatchUnlockDemand := FALSE;
+			xManualHatchOpenDemand := FALSE;
         	eState := E_MACHINE_STATE.DISABLED;
     	END_IF;
 END_CASE;
+
+// Таймаут одинаково контролирует автоматическое и ручное снятие замка.
+// После отказа удерживаемый запрос снимается, чтобы сброс не запустил его
+// повторно без нового явного действия оператора.
+IF tonHatchUnlockTimeout.Q
+AND (eState <> E_MACHINE_STATE.ERROR) THEN
+	xServiceHatchUnlockDemand := FALSE;
+	xManualHatchUnlockDemand := FALSE;
+	xManualHatchOpenDemand := FALSE;
+	Error.dwErrorActive := Error.dwErrorActive OR ERR_TIMEOUT_HATCH_UNLOCK;
+	eState := E_MACHINE_STATE.ERROR;
+END_IF;
 
 // Причина остаётся в своём CASE, а единая реакция рассчитывается один раз.
 // Контекст защёлкивается до сброса, поэтому смена состояния робота его не теряет.
@@ -1064,6 +1145,14 @@ END_IF;
 
 IF (eState <> E_MACHINE_STATE.ERROR)
 AND NOT xGlobalError THEN
+	Command.stIo.xHatchUnLock := xManualHatchUnlockDemand OR xServiceHatchUnlockDemand;
+	IF xManualHatchOpenDemand
+	AND NOT stMachineStatus.xHatchLocked
+	AND NOT stMachineStatus.xDoorOpen
+	AND NOT stMachineStatus.xCycleActive
+	AND NOT stMachineStatus.xAlarm THEN
+		Command.stIo.xOpenDoor := TRUE;
+	END_IF;
     IF xServiceDoorCloseDemand 
 	AND NOT (xAutoDoorOpenLatched OR xServiceDoorOpenDemand)
 	AND NOT xRobotInsideMachine
@@ -1073,10 +1162,21 @@ AND NOT xGlobalError THEN
 
     ELSIF (xAutoDoorOpenLatched OR xServiceDoorOpenDemand)
 	AND NOT xServiceDoorCloseDemand
+	AND NOT stMachineStatus.xHatchLocked
     AND NOT stMachineStatus.xCycleActive
     AND NOT stMachineStatus.xAlarm THEN
         Command.stIo.xOpenDoor := TRUE;
     END_IF;
+END_IF;
+
+// Замок нельзя открывать во время обработки выбранного для автоматической
+// линии станка. Срабатывание формируется самим PLC по фактической команде.
+IF xAutomaticUseEnabled
+AND stMachineStatus.xCycleActive
+AND NOT stMachineStatus.xHatchLocked THEN
+	Command.stIo.xHatchUnLock := FALSE;
+	Error.dwErrorActive := Error.dwErrorActive OR ERR_HATCH_UNLOCK_PROCESSING;
+	eState := E_MACHINE_STATE.ERROR;
 END_IF;
 
 Status.xCanAcceptService := (eState = E_MACHINE_STATE.IDLE)
@@ -1114,6 +1214,8 @@ Status.xManualSafetyDoorOpenAllowed := xManualSafetyDoorOpenAllowed;
 Status.xManualSafetyDoorCloseAllowed := xManualSafetyDoorCloseAllowed;
 Status.xManualHatchOpenAllowed := xManualHatchOpenAllowed;
 Status.xManualHatchCloseAllowed := xManualHatchCloseAllowed;
+Status.xManualHatchUnlockAllowed := xManualHatchUnlockAllowed;
+Status.xManualHatchLockAllowed := xManualHatchLockAllowed;
 Status.xManualChuckOpenAllowed := xManualChuckOpenAllowed;
 Status.xManualChuckCloseAllowed := xManualChuckCloseAllowed;
 Status.xProcessing := stMachineStatus.xCycleActive;

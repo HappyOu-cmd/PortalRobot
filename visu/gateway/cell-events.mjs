@@ -14,6 +14,38 @@ export const CELL_EVENT_SOURCES = Object.freeze({
   8: 'Система и связь',
 });
 
+// Existing I/O feedback, recorded separately from the PLC alarm catalogue.
+const INSPECTION_IO = [
+  ...['magazine-1-front', 'magazine-1-rear', 'magazine-2-front', 'magazine-2-rear'].map((id, index) => ({
+    path: `astButtonStationIoStatus[${index + 1}].xEmergencyStopPressed`, code: `io:station:${id}:emergency-stop`,
+    label: `Аварийный пост ${index + 1}`, activeText: 'аварийная кнопка нажата', restoredText: 'аварийная кнопка освобождена',
+  })),
+  ...['magazine-1-front', 'magazine-1-rear', 'magazine-2-front', 'magazine-2-rear'].map((id, index) => ({
+    path: `stCellSafetyStatus.axDoorReady[${index + 1}]`, code: `io:station:${id}:door-lock`,
+    label: `Замок двери ${index + 1}`, faultWhenFalse: true,
+    activeText: 'открыт при включённом магазине', restoredText: 'условие безопасности восстановлено',
+  })),
+  { path: 'stFrontControlCabinetIoStatus.xEmergencyStopPressed', code: 'io:cabinet:front:emergency-stop', label: 'Шкаф оператора', activeText: 'аварийная кнопка нажата', restoredText: 'аварийная кнопка освобождена' },
+  { path: 'stRearControlCabinetIoStatus.xEmergencyStopPressed', code: 'io:cabinet:rear:emergency-stop', label: 'Шкаф управления', activeText: 'аварийная кнопка нажата', restoredText: 'аварийная кнопка освобождена' },
+  { path: 'stCellSafetyStatus.xPhaseRelayOk', code: 'io:cabinet:rear:phase-relay', label: 'Контроль фаз', faultWhenFalse: true, activeText: 'реле не в норме', restoredText: 'реле в норме' },
+  { path: 'stCellSafetyStatus.xSafetyRelayOk', code: 'io:cabinet:rear:safety-relay', label: 'Реле безопасности', faultWhenFalse: true, activeText: 'не взведено', restoredText: 'взведено' },
+  { path: 'stCellSafetyStatus.xPressureRelayOk', code: 'io:air:pressure-relay', label: 'Контроль давления', faultWhenFalse: true, activeText: 'реле не в норме', restoredText: 'реле в норме' },
+];
+
+function inspectionIoEvents(current, previous, timestampMs) {
+  return INSPECTION_IO.flatMap(({ path, code, label, faultWhenFalse = false, activeText, restoredText }) => {
+    if (!Object.hasOwn(current, path)) return [];
+    const active = faultWhenFalse ? !boolValue(current, path) : boolValue(current, path);
+    const known = previous && Object.hasOwn(previous, path);
+    const previousActive = known ? (faultWhenFalse ? !boolValue(previous, path) : boolValue(previous, path)) : false;
+    if ((!known && !active) || (known && active === previousActive)) return [];
+    return [{ timestampMs, sourceId: 8, eventType: 'equipment-diagnostic', status: active ? 'active' : 'restored', code,
+      message: `${label}: ${active ? activeText : restoredText}`,
+      oldValue: known ? previousActive : null, newValue: active,
+      details: { signal: path, observedOnConnect: !known } }];
+  });
+}
+
 const MACHINE_STATES = [
   'Выключен', 'Ожидание выбора изделия', 'Ожидание подтверждения запуска',
   'Ожидание подтверждения двери', 'Ожидание', 'Операция выбрана', 'Чтение состояния',
@@ -224,7 +256,7 @@ export class CellEventStore {
 
   query({
     fromMs, toMs, sourceIds = [], statuses = [], eventTypes = [], level = 'all', text = '',
-    operationId = '', commandSeq, code = '', actorUserId, order = 'desc', cursor = null, limit = 100,
+    operationId = '', commandSeq, code = '', codePrefixes = [], actorUserId, order = 'desc', cursor = null, limit = 100,
   } = {}) {
     const clauses = [];
     const parameters = [];
@@ -239,6 +271,11 @@ export class CellEventStore {
     addList('source_id', sourceIds.map(Number).filter((value) => Number.isInteger(value) && value >= 1 && value <= 8));
     addList('status', statuses.map(String));
     addList('event_type', eventTypes.map(String));
+    const prefixes = [...new Set(codePrefixes.map(String))].filter((prefix) => /^[a-zA-Z0-9:_-]+:$/.test(prefix)).slice(0, 16);
+    if (prefixes.length) {
+      clauses.push(`(${prefixes.map(() => "code LIKE ? ESCAPE '\\'").join(' OR ')})`);
+      parameters.push(...prefixes.map((prefix) => `${prefix.replace(/_/g, '\\_')}%`));
+    }
     if (level === 'error') {
       clauses.push("(event_type = 'alarm' OR status IN ('error', 'rejected', 'lost'))");
     } else if (level === 'warning') {
@@ -345,11 +382,12 @@ export class CellEventClassifier {
         this.operationSequence += 1;
         this.activeOperationId = `cycle-${timestampMs}-${this.operationSequence}`;
       }
-      return this.alarmEvents(current, timestampMs, true).map((event) => ({ ...event, timestampMs }));
+      return [...this.alarmEvents(current, timestampMs, true), ...inspectionIoEvents(current, null, timestampMs)]
+        .map((event) => ({ ...event, timestampMs }));
     }
 
     const previous = this.previous;
-    const events = [];
+    const events = inspectionIoEvents(current, previous, timestampMs);
     const changed = (path) => Object.hasOwn(current, path) && current[path] !== previous[path];
     const push = (event) => events.push({ timestampMs, ...event });
 
@@ -376,6 +414,7 @@ export class CellEventClassifier {
       transition(`${diag}.eState`, 'state', () => `Станок ${machine}: ${catalog(MACHINE_STATES, numberValue(current, `${diag}.eState`), 'состояние')}`);
       transition(`${io}.xDoorOpen`, 'hatch', () => boolValue(current, `${io}.xDoorOpen`) ? `Станок ${machine}: люк открыт` : `Станок ${machine}: сигнал «люк открыт» снят`);
       transition(`${io}.xDoorClosed`, 'hatch', () => boolValue(current, `${io}.xDoorClosed`) ? `Станок ${machine}: люк закрыт` : `Станок ${machine}: сигнал «люк закрыт» снят`);
+      transition(`${io}.xHatchLocked`, 'hatch', () => boolValue(current, `${io}.xHatchLocked`) ? `Станок ${machine}: замок люка закрыт` : `Станок ${machine}: замок люка открыт`);
       transition(`${io}.xSafetyDoorOpen`, 'door', () => boolValue(current, `${io}.xSafetyDoorOpen`) ? `Станок ${machine}: операторская дверь открыта` : `Станок ${machine}: сигнал «дверь открыта» снят`);
       transition(`${io}.xSafetyDoorClosed`, 'door', () => boolValue(current, `${io}.xSafetyDoorClosed`) ? `Станок ${machine}: операторская дверь закрыта` : `Станок ${machine}: сигнал «дверь закрыта» снят`);
       transition(`${io}.xChuckUnclamped`, 'chuck', () => boolValue(current, `${io}.xChuckUnclamped`) ? `Станок ${machine}: патрон разжат` : `Станок ${machine}: сигнал разжима патрона снят`);
@@ -515,6 +554,7 @@ export class CellEventClassifier {
 const COMMAND_LABELS = {
   'cell.enable': 'Включить ячейку', 'cell.disable': 'Выключить ячейку', 'cell.start': 'Запустить цикл',
   'cell.stop': 'Остановить цикл', 'cell.reset': 'Сбросить аварии ячейки', 'cell.manual': 'Изменить режим ячейки',
+  'safety.resetRelay': 'Сбросить реле безопасности',
   'cell.operatorChoice': 'Ответить на предпусковой опрос', 'cell.operatorCancel': 'Отменить предпусковой опрос',
   'alarms.resetWarnings': 'Сбросить предупреждения', 'robot.enableDrives': 'Включить приводы робота',
   'robot.disableDrives': 'Отключить приводы робота', 'robot.stop': 'Остановить робота',
@@ -532,12 +572,12 @@ const COMMAND_LABELS = {
   'magazine.setSlot': 'Изменить содержимое слота магазина',
   'magazine.pitchX': 'Изменить шаг слотов магазина по X',
   'magazine.pitchY': 'Изменить шаг слотов магазина по Y',
-  'magazine.safeAbove': 'Изменить безопасную высоту над магазином',
-  'magazine.safeInside': 'Изменить рабочую высоту внутри магазина',
   'machine.manualDoorOpen': 'Открыть операторскую дверь станка',
   'machine.manualDoorClose': 'Закрыть операторскую дверь станка',
   'machine.manualHatchOpen': 'Открыть роботный люк станка',
   'machine.manualHatchClose': 'Закрыть роботный люк станка',
+  'machine.manualHatchUnlock': 'Открыть замок роботного люка станка',
+  'machine.manualHatchLock': 'Закрыть замок роботного люка станка',
   'machine.manualChuckOpen': 'Разжать патрон станка',
   'machine.manualChuckClose': 'Зажать патрон станка',
 };

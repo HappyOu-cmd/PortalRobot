@@ -7,12 +7,16 @@ rtTestEnvironmentApply(CLK := GVL_HMI.xTestEnvironmentApply);
 rtTestSpeedProfileApply(CLK := GVL_HMI.xTestSpeedProfileApply);
 rtTestScenarioApply(CLK := GVL_HMI.xTestScenarioApply);
 xTestInitializePulse := FALSE;
+xTestAbortActive := GVL_HMI.xTestAbort
+	AND GVL_HMI.xTestSessionActive
+	AND (GVL_CELL_SETTINGS.eTestEnvironment = E_CELL_TEST_ENVIRONMENT.SIMULATION);
 
 xTestStable := NOT GVL_CELL_MANAGER.Status.xRunning
 	AND NOT GVL_ROBOT.Status.xBusy
 	AND NOT GVL_MAGAZINE.astStatus[1].xBusy
 	AND NOT GVL_MAGAZINE.astStatus[2].xBusy
-	AND NOT xMotionBusy;
+	AND NOT xMotionBusy
+	AND NOT SIMULATION_DYNAMICS.xBusy;
 FOR uiTestIndex := UINT#1 TO UINT#3 DO
 	xTestStable := xTestStable
 		AND NOT GVL_MACHINE.Status[uiTestIndex].xBusy
@@ -55,16 +59,26 @@ IF rtTestEnvironmentApply.Q THEN
 END_IF;
 
 IF rtTestSpeedProfileApply.Q THEN
+	GVL_HMI.uiTestRejectReason := UINT#0;
 	IF (GVL_HMI.uiTestSpeedProfileRequest <= UINT#1)
-	AND (GVL_CELL_SETTINGS.eTestEnvironment = E_CELL_TEST_ENVIRONMENT.SIMULATION)
-	AND xTestStable THEN
+	AND (GVL_CELL_SETTINGS.eTestEnvironment = E_CELL_TEST_ENVIRONMENT.SIMULATION) THEN
 		IF GVL_HMI.uiTestSpeedProfileRequest = UINT#1 THEN
 			GVL_CELL_SETTINGS.eTestSpeedProfile := E_TEST_SPEED_PROFILE.FAST;
+			// В Modbus профиль по-прежнему владеет коэффициентом внешней модели.
+			// В SoftMotion коэффициент задаёт ползунок, а применение выполняется
+			// отдельной транзакцией только на границе следующего теста.
+			IF GVL_ROBOT_MODBUS.xModeActive THEN
+				GVL_CELL_SETTINGS.uiSimulationTimeFactor := UINT#250;
+			END_IF;
 		ELSE
 			GVL_CELL_SETTINGS.eTestSpeedProfile := E_TEST_SPEED_PROFILE.REALTIME;
+			IF GVL_ROBOT_MODBUS.xModeActive THEN
+				GVL_CELL_SETTINGS.uiSimulationTimeFactor := UINT#1;
+			END_IF;
 		END_IF;
+		GVL_HMI.uiSimulationTimeFactor := GVL_CELL_SETTINGS.uiSimulationTimeFactor;
 	ELSE
-		GVL_HMI.uiTestRejectReason := UINT#5; // FAST is simulation-only
+		GVL_HMI.uiTestRejectReason := UINT#5; // speed profile is simulation-only
 	END_IF;
 END_IF;
 
@@ -93,10 +107,13 @@ IF rtTestScenarioApply.Q THEN
 	END_FOR;
 	FOR uiTestIndex := UINT#1 TO UINT#120 DO
 		xTestScenarioValid := xTestScenarioValid
-			AND (GVL_HMI.stTestScenario.auiSlotContent[uiTestIndex] <= UINT#2)
 			AND (GVL_HMI.stTestScenario.auiSlotType[uiTestIndex] >= UINT#1)
 			AND (GVL_HMI.stTestScenario.auiSlotType[uiTestIndex]
 				<= GVL_HMI.stTestScenario.uiTypeCount);
+		FOR uiTestMagazine := UINT#1 TO UINT#2 DO
+			xTestScenarioValid := xTestScenarioValid
+				AND (GVL_HMI.stTestScenario.aauiSlotContent[uiTestMagazine, uiTestIndex] <= UINT#2);
+		END_FOR;
 	END_FOR;
 	uiTestFaultOwnerCount := UINT#0;
 	IF GVL_HMI.stTestScenario.dwCellFaultMask <> DWORD#0 THEN
@@ -105,9 +122,13 @@ IF rtTestScenarioApply.Q THEN
 	IF GVL_HMI.stTestScenario.dwRobotFaultMask <> DWORD#0 THEN
 		uiTestFaultOwnerCount := uiTestFaultOwnerCount + UINT#1;
 	END_IF;
-	IF GVL_HMI.stTestScenario.dwMagazineFaultMask <> DWORD#0 THEN
-		uiTestFaultOwnerCount := uiTestFaultOwnerCount + UINT#1;
-	END_IF;
+	FOR uiTestMagazine := UINT#1 TO UINT#2 DO
+		IF GVL_HMI.stTestScenario.adwMagazineFaultMask[uiTestMagazine] <> DWORD#0 THEN
+			uiTestFaultOwnerCount := uiTestFaultOwnerCount + UINT#1;
+		END_IF;
+		xTestScenarioValid := xTestScenarioValid
+			AND (GVL_HMI.stTestScenario.adwMagazineFaultMask[uiTestMagazine] <= DWORD#16#0000_003F);
+	END_FOR;
 	FOR uiTestIndex := UINT#1 TO UINT#3 DO
 		IF GVL_HMI.stTestScenario.adwMachineFaultMask[uiTestIndex] <> DWORD#0 THEN
 			uiTestFaultOwnerCount := uiTestFaultOwnerCount + UINT#1;
@@ -119,7 +140,6 @@ IF rtTestScenarioApply.Q THEN
 		AND (uiTestFaultOwnerCount <= UINT#1)
 		AND (GVL_HMI.stTestScenario.dwCellFaultMask <= DWORD#16#0000_0001)
 		AND (GVL_HMI.stTestScenario.dwRobotFaultMask <= DWORD#16#0000_01FF)
-		AND (GVL_HMI.stTestScenario.dwMagazineFaultMask <= DWORD#16#0000_003F)
 		AND (GVL_HMI.stTestScenario.auiGripperContent[1] <= UINT#1)
 		AND ((GVL_HMI.stTestScenario.auiGripperContent[1] = UINT#0)
 			= (GVL_HMI.stTestScenario.auiGripperType[1] = UINT#0))
@@ -137,25 +157,25 @@ IF rtTestScenarioApply.Q THEN
 	ELSIF NOT xTestScenarioValid OR (GVL_HMI.stTestScenario.uiOrientation > UINT#1) THEN
 		GVL_HMI.uiTestScenarioResult := UINT#2;
 	ELSE
-		FOR uiTestIndex := UINT#1 TO UINT#120 DO
-			// Сценарий задаёт единственную кассету магазина 1; второй магазин пуст.
-			GVL_DETAIL.astMagazine[2].aSlots[uiTestIndex].xInPosition := FALSE;
-			GVL_DETAIL.astMagazine[2].aSlots[uiTestIndex].eDetailType := E_DETAIL_TYPE.NONE;
-			GVL_DETAIL.astMagazine[2].aSlots[uiTestIndex].uiProductType := UINT#0;
-			GVL_DETAIL.astMagazine[1].aSlots[uiTestIndex].xInPosition :=
-				GVL_HMI.stTestScenario.auiSlotContent[uiTestIndex] <> UINT#0;
-			CASE GVL_HMI.stTestScenario.auiSlotContent[uiTestIndex] OF
-				UINT#1: GVL_DETAIL.astMagazine[1].aSlots[uiTestIndex].eDetailType := E_DETAIL_TYPE.BLANK;
-				UINT#2: GVL_DETAIL.astMagazine[1].aSlots[uiTestIndex].eDetailType := E_DETAIL_TYPE.DETAIL;
-			ELSE
-				GVL_DETAIL.astMagazine[1].aSlots[uiTestIndex].eDetailType := E_DETAIL_TYPE.NONE;
-			END_CASE;
-			IF GVL_HMI.stTestScenario.auiSlotContent[uiTestIndex] = UINT#0 THEN
-				GVL_DETAIL.astMagazine[1].aSlots[uiTestIndex].uiProductType := UINT#0;
-			ELSE
-				GVL_DETAIL.astMagazine[1].aSlots[uiTestIndex].uiProductType :=
-					GVL_HMI.stTestScenario.auiSlotType[uiTestIndex];
-			END_IF;
+		FOR uiTestMagazine := UINT#1 TO UINT#2 DO
+			FOR uiTestIndex := UINT#1 TO UINT#120 DO
+				GVL_DETAIL.astMagazine[uiTestMagazine].aSlots[uiTestIndex].xInPosition :=
+					GVL_HMI.stTestScenario.aauiSlotContent[uiTestMagazine, uiTestIndex] <> UINT#0;
+				CASE GVL_HMI.stTestScenario.aauiSlotContent[uiTestMagazine, uiTestIndex] OF
+					UINT#1: GVL_DETAIL.astMagazine[uiTestMagazine].aSlots[uiTestIndex].eDetailType := E_DETAIL_TYPE.BLANK;
+					UINT#2: GVL_DETAIL.astMagazine[uiTestMagazine].aSlots[uiTestIndex].eDetailType := E_DETAIL_TYPE.DETAIL;
+				ELSE
+					GVL_DETAIL.astMagazine[uiTestMagazine].aSlots[uiTestIndex].eDetailType := E_DETAIL_TYPE.NONE;
+				END_CASE;
+				IF GVL_HMI.stTestScenario.aauiSlotContent[uiTestMagazine, uiTestIndex] = UINT#0 THEN
+					GVL_DETAIL.astMagazine[uiTestMagazine].aSlots[uiTestIndex].uiProductType := UINT#0;
+				ELSE
+					GVL_DETAIL.astMagazine[uiTestMagazine].aSlots[uiTestIndex].uiProductType :=
+						GVL_HMI.stTestScenario.auiSlotType[uiTestIndex];
+				END_IF;
+			END_FOR;
+			adwTestMagazineFaultMask[uiTestMagazine] :=
+				GVL_HMI.stTestScenario.adwMagazineFaultMask[uiTestMagazine];
 		END_FOR;
 		// Начальные инъекции: маски переводятся в существующий диагностический
 		// контракт, а не обходят владельцев ошибок.
@@ -180,17 +200,17 @@ IF rtTestScenarioApply.Q THEN
 		GVL_HMI.xSimPointInvalidVelocity :=
 			(GVL_HMI.stTestScenario.dwRobotFaultMask AND DWORD#16#0000_0100) <> DWORD#0;
 		GVL_HMI.xSimMagazineWrongOperation :=
-			(GVL_HMI.stTestScenario.dwMagazineFaultMask AND DWORD#16#0000_0001) <> DWORD#0;
+			(GVL_HMI.stTestScenario.adwMagazineFaultMask[1] AND DWORD#16#0000_0001) <> DWORD#0;
 		GVL_HMI.xSimMagazineNoBlank :=
-			(GVL_HMI.stTestScenario.dwMagazineFaultMask AND DWORD#16#0000_0002) <> DWORD#0;
+			(GVL_HMI.stTestScenario.adwMagazineFaultMask[1] AND DWORD#16#0000_0002) <> DWORD#0;
 		GVL_HMI.xSimMagazineNoFreeSlot :=
-			(GVL_HMI.stTestScenario.dwMagazineFaultMask AND DWORD#16#0000_0004) <> DWORD#0;
+			(GVL_HMI.stTestScenario.adwMagazineFaultMask[1] AND DWORD#16#0000_0004) <> DWORD#0;
 		GVL_HMI.xSimMagazineInvalidSlot :=
-			(GVL_HMI.stTestScenario.dwMagazineFaultMask AND DWORD#16#0000_0008) <> DWORD#0;
+			(GVL_HMI.stTestScenario.adwMagazineFaultMask[1] AND DWORD#16#0000_0008) <> DWORD#0;
 		GVL_HMI.xSimMagazineSlotContent :=
-			(GVL_HMI.stTestScenario.dwMagazineFaultMask AND DWORD#16#0000_0010) <> DWORD#0;
+			(GVL_HMI.stTestScenario.adwMagazineFaultMask[1] AND DWORD#16#0000_0010) <> DWORD#0;
 		GVL_HMI.xSimMagazineGeometry :=
-			(GVL_HMI.stTestScenario.dwMagazineFaultMask AND DWORD#16#0000_0020) <> DWORD#0;
+			(GVL_HMI.stTestScenario.adwMagazineFaultMask[1] AND DWORD#16#0000_0020) <> DWORD#0;
 		FOR uiTestIndex := UINT#1 TO UINT#3 DO
 			GVL_HMI.axMachineSimAlarm[uiTestIndex] :=
 				(GVL_HMI.stTestScenario.adwMachineFaultMask[uiTestIndex] AND DWORD#16#0000_0001) <> DWORD#0;
@@ -218,7 +238,8 @@ IF rtTestScenarioApply.Q THEN
 		GVL_HMI.xErrorSimulationEnable :=
 			(GVL_HMI.stTestScenario.dwCellFaultMask <> DWORD#0)
 			OR (GVL_HMI.stTestScenario.dwRobotFaultMask <> DWORD#0)
-			OR (GVL_HMI.stTestScenario.dwMagazineFaultMask <> DWORD#0)
+			OR (GVL_HMI.stTestScenario.adwMagazineFaultMask[1] <> DWORD#0)
+			OR (GVL_HMI.stTestScenario.adwMagazineFaultMask[2] <> DWORD#0)
 			OR (GVL_HMI.stTestScenario.adwMachineFaultMask[1] <> DWORD#0)
 			OR (GVL_HMI.stTestScenario.adwMachineFaultMask[2] <> DWORD#0)
 			OR (GVL_HMI.stTestScenario.adwMachineFaultMask[3] <> DWORD#0);
@@ -231,19 +252,15 @@ END_IF;
 GVL_HMI.uiTestEnvironmentApplied := TO_UINT(GVL_CELL_SETTINGS.eTestEnvironment);
 GVL_HMI.uiTestSpeedProfileApplied := TO_UINT(GVL_CELL_SETTINGS.eTestSpeedProfile);
 GVL_HMI.xSc500BenchKeyLost := xSc500BenchKeyLost;
-IF GVL_CELL_SETTINGS.eTestEnvironment <> E_CELL_TEST_ENVIRONMENT.NORMAL THEN
-	GVL_CELL_SETTINGS.xSimulationAccelerationEnable :=
-		(GVL_CELL_SETTINGS.eTestEnvironment = E_CELL_TEST_ENVIRONMENT.SIMULATION)
-		AND (GVL_CELL_SETTINGS.eTestSpeedProfile = E_TEST_SPEED_PROFILE.FAST);
-	IF GVL_CELL_SETTINGS.xSimulationAccelerationEnable THEN
-		// Ускорение x250 относится только к автоматическим тестам Python-Modbus.
-		// SoftMotion сохраняет прежний профиль x25.
-		IF GVL_ROBOT_MODBUS.xModeActive THEN
-			GVL_CELL_SETTINGS.uiSimulationTimeFactor := UINT#250;
-		ELSE
-			GVL_CELL_SETTINGS.uiSimulationTimeFactor := UINT#25;
-		END_IF;
-	ELSE
-		GVL_CELL_SETTINGS.uiSimulationTimeFactor := UINT#1;
+IF GVL_CELL_SETTINGS.eTestEnvironment = E_CELL_TEST_ENVIRONMENT.SIMULATION THEN
+	IF GVL_HMI.xTestSessionActive THEN
+		GVL_CELL_SETTINGS.xSimulationAccelerationEnable :=
+			GVL_CELL_SETTINGS.eTestSpeedProfile = E_TEST_SPEED_PROFILE.FAST;
+		// Профиль владеет включением ускоренных таймеров, а сам коэффициент
+		// разрешено менять с HMI прямо во время тестового движения.
+		GVL_HMI.xSimulationAccelerationEnable := GVL_CELL_SETTINGS.xSimulationAccelerationEnable;
 	END_IF;
+ELSE
+	GVL_CELL_SETTINGS.xSimulationAccelerationEnable := FALSE;
+	GVL_HMI.xSimulationAccelerationEnable := FALSE;
 END_IF;

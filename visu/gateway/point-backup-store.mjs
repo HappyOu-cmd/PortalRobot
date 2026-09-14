@@ -69,6 +69,11 @@ export function validatePointBackup(value) {
     pointIds.add(pointId);
     const configured = raw.configured === true;
     const speedFactor = finiteNumber(raw.speedFactor, 'speedFactor', index);
+    // Версия формата остаётся 1: старые экспорты нельзя ломать. Отсутствующие
+    // поля геометрии магазина мигрируют в 0 и после импорта оставляют точку
+    // ненастроенной до явного ввода обоих смещений оператором.
+    const magazineSafeZ = finiteNumber(raw.magazineSafeZ ?? 0, 'magazineSafeZ', index);
+    const magazineChangeZ = finiteNumber(raw.magazineChangeZ ?? 0, 'magazineChangeZ', index);
     if (configured && (speedFactor <= 0.1 || speedFactor > 1)) {
       throw new PointBackupStoreError(`Недопустимая скорость точки ${index}`, 400, 'POINT_BACKUP_SCHEMA_INVALID');
     }
@@ -79,6 +84,8 @@ export function validatePointBackup(value) {
       x: finiteNumber(raw.x, 'x', index),
       y: finiteNumber(raw.y, 'y', index),
       z: finiteNumber(raw.z, 'z', index),
+      magazineSafeZ,
+      magazineChangeZ,
       speedFactor,
       configured,
     };

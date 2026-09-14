@@ -6,6 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/Tabs';
 import { RobotSpeedEditor } from './RobotSpeedEditor';
 import { ACTIVE_POINT_LABELS, EDITOR_POINT_LABELS, MANUAL_POINT_OPTIONS, robotActionCommand, type RobotManualAction } from './robotManualControl';
 import { initialRobotControlTab, reconcileRobotControlTab, type RobotControlTab } from './robotControlTabs';
+import { SegmentedControl } from './ui/ControlPrimitives';
 import type { PlcCommand, PlcRuntimeInfo } from '../plc/client';
 import type { CellState } from '../model/types';
 import type { PointBackupDocument, PointBackupItem } from '../points/client';
@@ -38,7 +39,7 @@ const EDITOR_POINT_GROUPS = [
   { title: 'Магазины', indexes: [11, 12] },
 ] as const;
 
-type PointDraft = { x: string; y: string; z: string; speedFactor: string };
+type PointDraft = { x: string; y: string; z: string; magazineSafeZ: string; magazineChangeZ: string; speedFactor: string };
 type PointPendingCommand = 'capture' | 'save' | 'import' | null;
 type ImportedPoint = PointDraft & { index: number; label: string };
 
@@ -47,6 +48,8 @@ function pointDraft(point: PlcRuntimeInfo['pointEditor']['points'][number] | und
     x: String(point?.x ?? 0),
     y: String(point?.y ?? 0),
     z: String(point?.z ?? 0),
+    magazineSafeZ: String(point?.magazineSafeZ ?? 0),
+    magazineChangeZ: String(point?.magazineChangeZ ?? 0),
     speedFactor: String(point?.speedFactor ?? 0),
   };
 }
@@ -225,21 +228,13 @@ function AxisSelector({
   compact?: boolean;
   onSelect: (axis: number) => void;
 }) {
-  return <div className={`robot-axis-selector ${compact ? 'compact' : ''}`} role="tablist" aria-label="Выбор оси робота">
-    {AXIS_NAMES.map((name, index) => {
-      const selected = selectedAxis === index + 1;
-      return <button
-        type="button"
-        key={name}
-        role="tab"
-        aria-selected={selected}
-        className={selected ? 'active' : ''}
-        onClick={() => onSelect(index + 1)}
-      >
-        <strong>{name}</strong>
-      </button>;
-    })}
-  </div>;
+  return <SegmentedControl
+    className={`robot-axis-selector ${compact ? 'compact' : ''}`}
+    value={String(selectedAxis)}
+    options={AXIS_NAMES.map((name, index) => ({ value: String(index + 1), label: <strong>{name}</strong>, className: `axis-${name.toLowerCase()}` }))}
+    onChange={(nextValue) => onSelect(Number(nextValue))}
+    ariaLabel="Выбор оси робота"
+  />;
 }
 
 function AxisJogButton({
@@ -343,12 +338,19 @@ export function RobotExtendedPanel({
     ? 'Переключение'
     : drivesPowered ? 'Включены' : runtime.robotManual.drivesOff ? 'Выключены' : 'Частично включены';
   const selectedEditorValue = runtime.pointEditor.points[selectedEditorPoint - 1];
+  const magazinePointSelected = selectedEditorPoint === 11 || selectedEditorPoint === 12;
   const editorCoordinates = [editorDraft.x, editorDraft.y, editorDraft.z].map(pointNumber);
   const editorSpeedFactor = pointNumber(editorDraft.speedFactor);
+  const editorMagazineSafeZ = pointNumber(editorDraft.magazineSafeZ);
+  const editorMagazineChangeZ = pointNumber(editorDraft.magazineChangeZ);
   const editorDraftValid = editorCoordinates.every(Number.isFinite)
     && Number.isFinite(editorSpeedFactor)
     && editorSpeedFactor > 0.1
-    && editorSpeedFactor <= 1;
+    && editorSpeedFactor <= 1
+    && (!magazinePointSelected || ([editorMagazineSafeZ, editorMagazineChangeZ].every(Number.isFinite)
+      && Math.abs(editorMagazineSafeZ) <= 10000 && Math.abs(editorMagazineChangeZ) <= 10000));
+  const magazineOffsetsConfigured = !magazinePointSelected
+    || (editorMagazineSafeZ !== 0 && editorMagazineChangeZ !== 0);
   const selectedBackup = backups.find((item) => item.id === selectedBackupId) ?? null;
 
   onlineRef.current = online;
@@ -393,9 +395,10 @@ export function RobotExtendedPanel({
     if (tab === 'points' && next !== 'points' && editorDirty) cancelEditorDraft();
     stopActiveJog();
 
-    // Motion tabs show only the mode confirmed by the next PLC snapshot. This prevents
-    // a local tab from claiming JOG while PLC still owns the precise-positioning mode.
-    if (!modbusMode && (next === 'jog' || next === 'position')) {
+    // When PLC is online, motion tabs show only the mode confirmed by the next
+    // snapshot. Offline mode is a local HMI sandbox, so let the operator inspect
+    // either motion tab without waiting for a confirmation that cannot arrive.
+    if (online && !modbusMode && (next === 'jog' || next === 'position')) {
       const continuous = next === 'jog';
       if (runtime.continuousMode !== continuous) {
         setContinuousMode(continuous);
@@ -448,7 +451,16 @@ export function RobotExtendedPanel({
     setEditorAckBaseline(runtime.pointEditor.ackSeq);
     setEditorPending('capture');
     setEditorMessage('Ожидание подтверждения CAPTURE от PLC…');
-    send({ command: 'robot.point.capture', index: selectedEditorPoint, speedFactor: Number.isFinite(editorSpeedFactor) ? editorSpeedFactor : 0 });
+    send({
+      command: 'robot.point.capture', index: selectedEditorPoint,
+      speedFactor: Number.isFinite(editorSpeedFactor) ? editorSpeedFactor : 0,
+      draft: {
+        x: editorCoordinates[0], y: editorCoordinates[1], z: editorCoordinates[2],
+        magazineSafeZ: magazinePointSelected && Number.isFinite(editorMagazineSafeZ) ? editorMagazineSafeZ : 0,
+        magazineChangeZ: magazinePointSelected && Number.isFinite(editorMagazineChangeZ) ? editorMagazineChangeZ : 0,
+        speedFactor: Number.isFinite(editorSpeedFactor) ? editorSpeedFactor : 0,
+      },
+    });
   };
 
   const saveEditorPoint = () => {
@@ -459,7 +471,12 @@ export function RobotExtendedPanel({
     send({
       command: 'robot.point.save',
       index: selectedEditorPoint,
-      draft: { x: editorCoordinates[0], y: editorCoordinates[1], z: editorCoordinates[2], speedFactor: editorSpeedFactor },
+      draft: {
+        x: editorCoordinates[0], y: editorCoordinates[1], z: editorCoordinates[2],
+        magazineSafeZ: magazinePointSelected ? editorMagazineSafeZ : 0,
+        magazineChangeZ: magazinePointSelected ? editorMagazineChangeZ : 0,
+        speedFactor: editorSpeedFactor,
+      },
     });
   };
 
@@ -498,7 +515,7 @@ export function RobotExtendedPanel({
 
   const sendImportedPoint = (point: ImportedPoint, ackBaseline: number) => {
     setSelectedEditorPoint(point.index);
-    setEditorDraft({ x: point.x, y: point.y, z: point.z, speedFactor: point.speedFactor });
+    setEditorDraft(point);
     setEditorDirty(false);
     setEditorAckBaseline(ackBaseline);
     setEditorPending('import');
@@ -509,6 +526,8 @@ export function RobotExtendedPanel({
         x: pointNumber(point.x),
         y: pointNumber(point.y),
         z: pointNumber(point.z),
+        magazineSafeZ: pointNumber(point.magazineSafeZ),
+        magazineChangeZ: pointNumber(point.magazineChangeZ),
         speedFactor: pointNumber(point.speedFactor),
       },
     });
@@ -532,14 +551,16 @@ export function RobotExtendedPanel({
         const index = currentIndexesByPointId.get(pointId);
         if (!index || seenPointIds.has(pointId) || raw.configured !== true) return [];
         seenPointIds.add(pointId);
-        const values = [Number(raw.x), Number(raw.y), Number(raw.z), Number(raw.speedFactor)];
-        if (!values.every(Number.isFinite) || values[3] <= 0.1 || values[3] > 1) {
+        const values = [Number(raw.x), Number(raw.y), Number(raw.z), Number(raw.speedFactor), Number(raw.magazineSafeZ), Number(raw.magazineChangeZ)];
+        if (!values.every(Number.isFinite) || values[3] <= 0.1 || values[3] > 1
+          || Math.abs(values[4]) > 10000 || Math.abs(values[5]) > 10000) {
           throw new Error(`Некорректные координаты или скорость точки ${raw.label ?? pointId}.`);
         }
         return [{
           index,
           label: EDITOR_POINT_LABELS[index - 1] ?? `Точка ${index}`,
           x: String(values[0]), y: String(values[1]), z: String(values[2]), speedFactor: String(values[3]),
+          magazineSafeZ: String(values[4]), magazineChangeZ: String(values[5]),
         } satisfies ImportedPoint];
       }).sort((left, right) => left.index - right.index);
 
@@ -599,7 +620,9 @@ export function RobotExtendedPanel({
         setEditorPending(null);
         setEditorDirty(false);
         setEditorDraft(pointDraft(runtime.pointEditor.resultPoint));
-        setEditorMessage(`Импорт завершён: PLC подтвердил ${pointImportTotalRef.current} точек.`);
+        setEditorMessage(runtime.pointEditor.resultPoint.configured
+          ? `Импорт завершён: PLC подтвердил ${pointImportTotalRef.current} точек.`
+          : `Импорт завершён: PLC принял ${pointImportTotalRef.current} точек. Для старой базы магазина задайте ненулевые Safe Z и Change Z.`);
       }
       return;
     }
@@ -617,7 +640,9 @@ export function RobotExtendedPanel({
       } else {
         setEditorDraft(pointDraft(runtime.pointEditor.resultPoint));
         setEditorDirty(false);
-        setEditorMessage('Точка сохранена и подтверждена PLC.');
+        setEditorMessage(runtime.pointEditor.resultPoint.configured
+          ? 'Точка сохранена и подтверждена PLC.'
+          : 'Точка сохранена, но не настроена: задайте ненулевые Safe Z и Change Z.');
       }
     } else {
       setEditorMessage(runtime.pointEditor.rejectReason || 'PLC отклонил команду редактора.');
@@ -638,7 +663,7 @@ export function RobotExtendedPanel({
 
   useEffect(() => {
     if (!editorDirty && !editorPending) setEditorDraft(pointDraft(selectedEditorValue));
-  }, [editorDirty, editorPending, selectedEditorPoint, selectedEditorValue?.configured, selectedEditorValue?.speedFactor, selectedEditorValue?.x, selectedEditorValue?.y, selectedEditorValue?.z]);
+  }, [editorDirty, editorPending, selectedEditorPoint, selectedEditorValue?.configured, selectedEditorValue?.magazineChangeZ, selectedEditorValue?.magazineSafeZ, selectedEditorValue?.speedFactor, selectedEditorValue?.x, selectedEditorValue?.y, selectedEditorValue?.z]);
 
   useEffect(() => {
     if (!online) stopActiveJog();
@@ -769,7 +794,7 @@ export function RobotExtendedPanel({
         <div className="robot-extended-scroll">
           <section className="robot-extended-section robot-position-section">
             <div className="robot-section-title"><div><span>Точное перемещение оси</span><small>Шаговый JOG, абсолютная координата и Home</small></div><Crosshair size={19} /></div>
-            <AxisSelector selectedAxis={selectedAxis} compact onSelect={selectAxis} />
+            <AxisSelector selectedAxis={selectedAxis} onSelect={selectAxis} />
 
             <div className="axis-card">
               <div className="axis-card-head"><strong>Ось {AXIS_NAMES[selectedAxis - 1]}</strong><span><Indicator active={axis.driveReady} tone={axis.driveReady ? 'green' : 'blue'} />{axis.driveReady ? 'Привод готов' : 'Привод не готов'}</span></div>
@@ -786,7 +811,14 @@ export function RobotExtendedPanel({
               </div>
               <AxisLimits axis={axis} />
 
-              <div className="step-selector"><span>Шаг</span>{STEP_VALUES.map((value) => <button type="button" disabled={!online} key={value} className={Math.abs(runtime.manualStep - value) < 0.001 ? 'active' : ''} onClick={() => send({ command: 'robot.manualStep', value })}>{value} мм</button>)}</div>
+              <div className="step-selector"><span>Шаг</span><SegmentedControl
+                className="step-selector-control"
+                value={String(runtime.manualStep)}
+                options={STEP_VALUES.map((value) => ({ value: String(value), label: `${value} мм` }))}
+                disabled={!online}
+                onChange={(nextValue) => send({ command: 'robot.manualStep', value: Number(nextValue) })}
+                ariaLabel="Шаг перемещения"
+              /></div>
               <div className="axis-step-command-row">
                 <button type="button" disabled={!online} className={`short-move-button ${allowedClass(axis.moveRelativeNegativeAllowed)}`} aria-disabled={!axis.moveRelativeNegativeAllowed} onClick={() => send({ command: 'robot.axis.moveRelative', machine: selectedAxis, value: -runtime.manualStep })}>− {runtime.manualStep} мм</button>
                 <button type="button" disabled={!online} className={`axis-go-button ${allowedClass(axis.moveAbsoluteAllowed)}`} aria-disabled={!axis.moveAbsoluteAllowed} onClick={() => send({ command: 'robot.axis.moveAbsolute', machine: selectedAxis, value: numericTarget(selectedAxis) })}>Перейти к координате</button>
@@ -851,12 +883,17 @@ export function RobotExtendedPanel({
                     <span>{field.toUpperCase()}</span>
                     <div><input type="number" step="0.1" disabled={!editorEditable} value={editorDraft[field]} onChange={(event) => changeEditorDraft(field, event.target.value)} /><small>мм</small></div>
                   </label>)}
+                  {magazinePointSelected && <>
+                    <label><span>Смещение Safe Z</span><div><input type="text" inputMode="decimal" disabled={!editorEditable} value={editorDraft.magazineSafeZ} onChange={(event) => changeEditorDraft('magazineSafeZ', event.target.value)} /><small>мм</small></div></label>
+                    <label><span>Смещение Change Z</span><div><input type="text" inputMode="decimal" disabled={!editorEditable} value={editorDraft.magazineChangeZ} onChange={(event) => changeEditorDraft('magazineChangeZ', event.target.value)} /><small>мм</small></div></label>
+                  </>}
                   <label className="speed-factor">
                     <span>Коэффициент скорости</span>
                     <div><input type="number" min="0.11" max="1" step="0.01" disabled={!editorEditable} value={editorDraft.speedFactor} onChange={(event) => changeEditorDraft('speedFactor', event.target.value)} /><small>×</small></div>
                   </label>
                 </div>
-                {!editorDraftValid && <p className="point-editor-validation"><AlertCircle size={15} />Заполните XYZ числами; скорость должна быть от 0.11 до 1.00.</p>}
+                {!editorDraftValid && <p className="point-editor-validation"><AlertCircle size={15} />Заполните XYZ числами; скорость — от 0.11 до 1.00{magazinePointSelected ? '; смещения Z — от -10000 до 10000 мм' : ''}.</p>}
+                {editorDraftValid && !magazineOffsetsConfigured && <p className="point-editor-validation"><AlertCircle size={15} />Точка останется ненастроенной, пока хотя бы одно из смещений Safe Z или Change Z равно нулю.</p>}
                 <div className="point-editor-actions">
                   <button type="button" disabled={!editorEditable || !online || Boolean(editorPending)} className={allowedClass(runtime.pointEditor.captureAllowed)} aria-disabled={!runtime.pointEditor.captureAllowed || !editorEditable} onClick={captureEditorPoint}><Crosshair size={16} />{editorPending === 'capture' ? 'Фиксация…' : 'Зафиксировать текущие координаты'}</button>
                   <button type="button" disabled={Boolean(editorPending) || !editorDirty} onClick={cancelEditorDraft}>Отмена</button>
@@ -875,10 +912,40 @@ export function RobotExtendedPanel({
           <section className="robot-extended-section robot-grippers-section">
             <div className="robot-section-title"><div><span>Управление двойным захватом</span><small>В ручном режиме доступность действий определяет PLC</small></div><Hand size={19} /></div>
             <div className="gripper-grid">
-              <div className="gripper-card"><strong>Захват 1 — заготовка</strong><span><Indicator active={robot.gripper1Closed} tone="blue" />{robot.gripper1Closed ? 'Закрыт' : robot.gripper1Open ? 'Открыт' : 'Переход'}</span><div><button type="button" disabled={!online} className={allowedClass(runtime.robotManual.gripper1OpenAllowed)} aria-disabled={!runtime.robotManual.gripper1OpenAllowed} onClick={() => sendAction(2)}>Открыть</button><button type="button" disabled={!online} className={allowedClass(runtime.robotManual.gripper1CloseAllowed)} aria-disabled={!runtime.robotManual.gripper1CloseAllowed} onClick={() => sendAction(3)}>Закрыть</button></div></div>
-              <div className="gripper-card"><strong>Захват 2 — деталь</strong><span><Indicator active={robot.gripper2Closed} tone="green" />{robot.gripper2Closed ? 'Закрыт' : robot.gripper2Open ? 'Открыт' : 'Переход'}</span><div><button type="button" disabled={!online} className={allowedClass(runtime.robotManual.gripper2OpenAllowed)} aria-disabled={!runtime.robotManual.gripper2OpenAllowed} onClick={() => sendAction(4)}>Открыть</button><button type="button" disabled={!online} className={allowedClass(runtime.robotManual.gripper2CloseAllowed)} aria-disabled={!runtime.robotManual.gripper2CloseAllowed} onClick={() => sendAction(5)}>Закрыть</button></div></div>
+              <div className="gripper-card"><strong>Захват 1 — заготовка</strong><span><Indicator active={robot.gripper1Closed} tone="blue" />{robot.gripper1Closed ? 'Закрыт' : robot.gripper1Open ? 'Открыт' : 'Переход'}</span><SegmentedControl
+                className="gripper-action-selector"
+                value={robot.gripper1Closed ? 'close' : robot.gripper1Open ? 'open' : ''}
+                options={[
+                  { value: 'open', label: 'Открыть', className: allowedClass(runtime.robotManual.gripper1OpenAllowed), ariaDisabled: !runtime.robotManual.gripper1OpenAllowed },
+                  { value: 'close', label: 'Закрыть', className: allowedClass(runtime.robotManual.gripper1CloseAllowed), ariaDisabled: !runtime.robotManual.gripper1CloseAllowed },
+                ]}
+                disabled={!online}
+                onChange={(nextValue) => sendAction(nextValue === 'open' ? 2 : 3)}
+                ariaLabel="Действие захвата 1"
+              /></div>
+              <div className="gripper-card"><strong>Захват 2 — деталь</strong><span><Indicator active={robot.gripper2Closed} tone="green" />{robot.gripper2Closed ? 'Закрыт' : robot.gripper2Open ? 'Открыт' : 'Переход'}</span><SegmentedControl
+                className="gripper-action-selector"
+                value={robot.gripper2Closed ? 'close' : robot.gripper2Open ? 'open' : ''}
+                options={[
+                  { value: 'open', label: 'Открыть', className: allowedClass(runtime.robotManual.gripper2OpenAllowed), ariaDisabled: !runtime.robotManual.gripper2OpenAllowed },
+                  { value: 'close', label: 'Закрыть', className: allowedClass(runtime.robotManual.gripper2CloseAllowed), ariaDisabled: !runtime.robotManual.gripper2CloseAllowed },
+                ]}
+                disabled={!online}
+                onChange={(nextValue) => sendAction(nextValue === 'open' ? 4 : 5)}
+                ariaLabel="Действие захвата 2"
+              /></div>
             </div>
-            <div className="rotation-row"><span><RotateCcw size={18} />Поворот двойного захвата</span><button type="button" disabled={!online} className={allowedClass(runtime.robotManual.rotateToBlankAllowed)} aria-disabled={!runtime.robotManual.rotateToBlankAllowed} onClick={() => sendAction(6)}>К заготовке</button><button type="button" disabled={!online} className={allowedClass(runtime.robotManual.rotateToDetailAllowed)} aria-disabled={!runtime.robotManual.rotateToDetailAllowed} onClick={() => sendAction(7)}>К детали</button></div>
+            <div className="rotation-row"><span><RotateCcw size={18} />Поворот двойного захвата</span><SegmentedControl
+              className="rotation-selector"
+              value={robot.rotatedToBlank ? 'blank' : robot.rotatedToDetail ? 'detail' : ''}
+              options={[
+                { value: 'blank', label: 'К заготовке', className: allowedClass(runtime.robotManual.rotateToBlankAllowed), ariaDisabled: !runtime.robotManual.rotateToBlankAllowed },
+                { value: 'detail', label: 'К детали', className: allowedClass(runtime.robotManual.rotateToDetailAllowed), ariaDisabled: !runtime.robotManual.rotateToDetailAllowed },
+              ]}
+              disabled={!online}
+              onChange={(nextValue) => sendAction(nextValue === 'blank' ? 6 : 7)}
+              ariaLabel="Ориентация двойного захвата"
+            /></div>
             {!runtime.robotManual.gripperAllowed && runtime.robotManual.rejectReason && <div className="robot-reject-banner"><AlertCircle size={18} />{runtime.robotManual.rejectReason}</div>}
           </section>
         </div>

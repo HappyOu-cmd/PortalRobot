@@ -1,11 +1,14 @@
 import alarmCatalog from '../../alarm-catalog.json';
+import { BUTTON_STATIONS, DEFAULT_BUTTON_STATIONS } from '../model/buttonStations';
+import { DEFAULT_CONTROL_CABINETS } from '../model/controlCabinets';
+import { DEFAULT_MPG_PENDANT } from '../model/mpgPendant';
 import type { CellState, MachineMode, MachineOperation, MachinePartState, MachinePartType, MagazineOperation, PayloadProductType, ProductType, RobotCoordinateFrame, SlotType, Vec3Mm } from '../model/types';
 import type { CyclogramHistory, CyclogramUpdate } from '../model/cyclogram';
 
 export type PlcConnectionStatus = 'connecting' | 'connected' | 'degraded' | 'disconnected';
 export type PlcAlarmSeverity = 'alarm' | 'warning';
 export type PlcAlarmEffect = 'global-stop' | 'robot-stop' | 'equipment-stop' | 'warning';
-export type PlcAlarmSource = 'cell' | 'robot' | 'machine-1' | 'machine-2' | 'machine-3' | 'magazine-1' | 'magazine-2' | 'magazine-axis-1' | 'magazine-axis-2' | 'axis-x' | 'axis-y' | 'axis-z' | 'axis-group' | 'motion-manager' | 'point-manager' | 'gripper';
+export type PlcAlarmSource = 'cell' | 'robot' | 'machine-1' | 'machine-2' | 'machine-3' | 'magazine-1' | 'magazine-2' | 'magazine-axis-1' | 'magazine-axis-2' | 'axis-x' | 'axis-y' | 'axis-z' | 'axis-group' | 'motion-manager' | 'point-manager' | 'gripper' | 'cell-safety';
 
 export interface PlcAlarmEvent {
   id: number;
@@ -118,6 +121,8 @@ export interface PlcPointEditorPoint {
   x: number;
   y: number;
   z: number;
+  magazineSafeZ: number;
+  magazineChangeZ: number;
   speedFactor: number;
   configured: boolean;
 }
@@ -146,8 +151,21 @@ export interface PlcCellStartReadiness {
   magazineReady: boolean;
   taskAvailable: boolean;
   safetyHome: boolean;
+  safety: boolean;
   met: number;
   total: number;
+}
+
+export interface PlcCellSafetyInfo {
+  ready: boolean;
+  globalError: boolean;
+  phaseRelayOk: boolean;
+  pressureRelayOk: boolean;
+  safetyRelayOk: boolean;
+  safetyRelayResetAllowed: boolean;
+  safetyRelayResetActive: boolean;
+  emergencyStopsReleased: [boolean, boolean, boolean, boolean, boolean, boolean, boolean];
+  doorsReady: [boolean, boolean, boolean, boolean];
 }
 
 export interface PlcRobotModbusInfo {
@@ -219,6 +237,7 @@ export interface PlcCellSettings {
     robotRelease: number;
     doorOpen: number;
     doorClose: number;
+    hatchUnlock: number;
     chuckOpen: number;
     chuckClose: number;
     cycleStart: number;
@@ -252,6 +271,7 @@ export interface PlcRuntimeInfo {
   magazineReady: boolean;
   safetyHomeRequired: boolean;
   robotAtSafetyHome: boolean;
+  safety: PlcCellSafetyInfo;
   cellSettings: PlcCellSettings;
   testEnvironment: PlcTestEnvironmentInfo;
   startReadiness: PlcCellStartReadiness;
@@ -334,7 +354,7 @@ export interface PlcCommand {
   point?: number;
   index?: number;
   speedFactor?: number;
-  draft?: { x: number; y: number; z: number; speedFactor: number };
+  draft?: { x: number; y: number; z: number; magazineSafeZ?: number; magazineChangeZ?: number; speedFactor: number };
 }
 
 const CELL_STATES = [
@@ -385,6 +405,13 @@ const POINT_EDITOR_REJECT_REASONS = [
   'Software limits осей недоступны',
   'Координаты выходят за software limits',
   'Коэффициент скорости должен быть больше 0.1 и не больше 1.0',
+  'Точка не сохранена',
+  'Приводы или координатная группа не готовы',
+  'Люк станка не открыт',
+  'Нет связи с мобильным редактором',
+  'Другая команда претендует на робота',
+  'Точка изменена после подтверждения',
+  'Смещения Safe Z или Change Z находятся вне диапазона от -10000 до 10000 мм',
 ];
 const ROBOT_ACTIONS = ['Нет действия', 'Движение к точке', 'Открывает захват 1', 'Закрывает захват 1', 'Открывает захват 2', 'Закрывает захват 2', 'Поворот к заготовке', 'Поворот к детали'];
 const POINT_NAMES = [
@@ -412,7 +439,7 @@ const MAGAZINE_STATES = [
 const ALARM_SOURCES: PlcAlarmSource[] = [
   'cell', 'robot', 'machine-1', 'machine-2', 'machine-3', 'magazine-1', 'magazine-2',
   'magazine-axis-1', 'magazine-axis-2', 'axis-x', 'axis-y', 'axis-z', 'axis-group',
-  'motion-manager', 'point-manager', 'gripper',
+  'motion-manager', 'point-manager', 'gripper', 'cell-safety',
 ];
 const ALARM_EFFECTS: PlcAlarmEffect[] = ['global-stop', 'robot-stop', 'equipment-stop', 'warning'];
 export const ALARM_SOURCE_LABELS = alarmCatalog.sources as Record<PlcAlarmSource, string>;
@@ -561,12 +588,15 @@ export function mapPlcSnapshot(
       manualDoorCloseAllowed: booleanValue(values, `${status}.xManualSafetyDoorCloseAllowed`, machine.manualDoorCloseAllowed),
       manualHatchOpenAllowed: booleanValue(values, `${status}.xManualHatchOpenAllowed`, machine.manualHatchOpenAllowed),
       manualHatchCloseAllowed: booleanValue(values, `${status}.xManualHatchCloseAllowed`, machine.manualHatchCloseAllowed),
+      manualHatchUnlockAllowed: booleanValue(values, `${status}.xManualHatchUnlockAllowed`, machine.manualHatchUnlockAllowed),
+      manualHatchLockAllowed: booleanValue(values, `${status}.xManualHatchLockAllowed`, machine.manualHatchLockAllowed),
       manualChuckOpenAllowed: booleanValue(values, `${status}.xManualChuckOpenAllowed`, machine.manualChuckOpenAllowed),
       manualChuckCloseAllowed: booleanValue(values, `${status}.xManualChuckCloseAllowed`, machine.manualChuckCloseAllowed),
       doorOpen: booleanValue(values, `${io}.xSafetyDoorOpen`, machine.doorOpen),
       doorClosed: booleanValue(values, `${io}.xSafetyDoorClosed`, machine.doorClosed),
       hatchOpen: booleanValue(values, `${io}.xDoorOpen`, machine.hatchOpen),
       hatchClosed: booleanValue(values, `${io}.xDoorClosed`, machine.hatchClosed),
+      hatchLocked: booleanValue(values, `${io}.xHatchLocked`, machine.hatchLocked),
       chuckOpen: booleanValue(values, `${io}.xChuckUnclamped`, machine.chuckOpen),
       chuckClosed: booleanValue(values, `${io}.xChuckClamped`, machine.chuckClosed),
       partPresent: partState === 'LOADED',
@@ -637,13 +667,31 @@ export function mapPlcSnapshot(
         columns: numberValue(values, 'MagazineColumns', magazine.state.columns),
         pitchX: numberValue(values, 'MagazinePitchX', magazine.state.pitchX),
         pitchY: numberValue(values, 'MagazinePitchY', magazine.state.pitchY),
-        safeAbove: numberValue(values, `alrMagazineSafeZ_1[${number}]`, magazine.state.safeAbove),
-        safeInside: numberValue(values, `alrMagazineSafeZ_2[${number}]`, magazine.state.safeInside),
         activeErrors: errorList(values, `astMagazineError[${number}].dwErrorActive`, `Ошибка магазина ${number}`, magazine.state.activeErrors),
         lastErrors: errorList(values, `astMagazineError[${number}].dwErrorLast`, `Последняя ошибка магазина ${number}`, magazine.state.lastErrors),
       },
     };
   }) as CellState['magazines'];
+
+  const buttonStations = { ...(current.buttonStations ?? DEFAULT_BUTTON_STATIONS) };
+  const cabinets = current.controlCabinets ?? DEFAULT_CONTROL_CABINETS;
+  const mpg = current.mpgPendant ?? DEFAULT_MPG_PENDANT;
+  for (const { id, plcIndex } of BUTTON_STATIONS) {
+    const previous = buttonStations[id];
+    const path = `astButtonStationIoStatus[${plcIndex}]`;
+    buttonStations[id] = {
+      emergencyStopPressed: booleanValue(values, `${path}.xEmergencyStopPressed`, previous.emergencyStopPressed),
+      buttonPressed: booleanValue(values, `${path}.xButtonPressed`, previous.buttonPressed),
+      buttonLightOn: booleanValue(values, `${path}.xButtonLightOn`, previous.buttonLightOn),
+    };
+  }
+  const enclosureDoors = { ...current.enclosureDoors };
+  for (const { id, plcIndex } of BUTTON_STATIONS) {
+    enclosureDoors[id] = {
+      ...enclosureDoors[id],
+      locked: booleanValue(values, `astEnclosureDoorStatus[${plcIndex}].xLocked`, enclosureDoors[id].locked),
+    };
+  }
 
   return {
     robot: {
@@ -668,6 +716,35 @@ export function mapPlcSnapshot(
     },
     machines,
     magazines,
+    enclosureDoors,
+    buttonStations,
+    mpgPendant: {
+      emergencyStopPressed: booleanValue(values, 'stMpgIoStatus.xEmergencyStopPressed', mpg.emergencyStopPressed),
+      axisX: booleanValue(values, 'stMpgIoStatus.xAxisX', mpg.axisX),
+      axisY: booleanValue(values, 'stMpgIoStatus.xAxisY', mpg.axisY),
+      axisZ: booleanValue(values, 'stMpgIoStatus.xAxisZ', mpg.axisZ),
+      multiplier1: booleanValue(values, 'stMpgIoStatus.xMultiplier1', mpg.multiplier1),
+      multiplier10: booleanValue(values, 'stMpgIoStatus.xMultiplier10', mpg.multiplier10),
+      multiplier100: booleanValue(values, 'stMpgIoStatus.xMultiplier100', mpg.multiplier100),
+    },
+    controlCabinets: {
+      front: {
+        emergencyStopPressed: booleanValue(values, 'stFrontControlCabinetIoStatus.xEmergencyStopPressed', cabinets.front.emergencyStopPressed),
+        startPressed: booleanValue(values, 'stFrontControlCabinetIoStatus.xStartPressed', cabinets.front.startPressed),
+        stopPressed: booleanValue(values, 'stFrontControlCabinetIoStatus.xStopPressed', cabinets.front.stopPressed),
+        resetPressed: booleanValue(values, 'stFrontControlCabinetIoStatus.xResetPressed', cabinets.front.resetPressed),
+      },
+      rear: {
+        ...DEFAULT_CONTROL_CABINETS.rear,
+        ...cabinets.rear,
+        emergencyStopPressed: booleanValue(values, 'stRearControlCabinetIoStatus.xEmergencyStopPressed', cabinets.rear.emergencyStopPressed),
+        phaseRelayFault: !booleanValue(values, 'stCellSafetyStatus.xPhaseRelayOk', !cabinets.rear.phaseRelayFault),
+        safetyRelayFault: !booleanValue(values, 'stCellSafetyStatus.xSafetyRelayOk', !cabinets.rear.safetyRelayFault),
+      },
+      airPreparation: {
+        lowPressure: !booleanValue(values, 'stCellSafetyStatus.xPressureRelayOk', !(cabinets.airPreparation?.lowPressure ?? false)),
+      },
+    },
   };
 }
 
@@ -718,7 +795,7 @@ export function mapRuntimeInfo(values: Record<string, unknown>, current: PlcRunt
     const index = offset + 1;
     const root = `astPointEditorPoints[${index}]`;
     const previous = current.pointEditor.points[offset] ?? {
-      index, pointId: 0, x: 0, y: 0, z: 0, speedFactor: 0, configured: false,
+      index, pointId: 0, x: 0, y: 0, z: 0, magazineSafeZ: 0, magazineChangeZ: 0, speedFactor: 0, configured: false,
     };
     return {
       index,
@@ -726,6 +803,8 @@ export function mapRuntimeInfo(values: Record<string, unknown>, current: PlcRunt
       x: numberValue(values, `${root}.X`, previous.x),
       y: numberValue(values, `${root}.Y`, previous.y),
       z: numberValue(values, `${root}.Z`, previous.z),
+      magazineSafeZ: numberValue(values, `${root}.MagazineSafeZ`, previous.magazineSafeZ),
+      magazineChangeZ: numberValue(values, `${root}.MagazineChangeZ`, previous.magazineChangeZ),
       speedFactor: numberValue(values, `${root}.SpeedFactor`, previous.speedFactor),
       configured: booleanValue(values, `${root}.xConfigured`, previous.configured),
     };
@@ -748,6 +827,8 @@ export function mapRuntimeInfo(values: Record<string, unknown>, current: PlcRunt
       x: numberValue(values, 'stPointEditorResultPoint.X', current.pointEditor.resultPoint.x),
       y: numberValue(values, 'stPointEditorResultPoint.Y', current.pointEditor.resultPoint.y),
       z: numberValue(values, 'stPointEditorResultPoint.Z', current.pointEditor.resultPoint.z),
+      magazineSafeZ: numberValue(values, 'stPointEditorResultPoint.MagazineSafeZ', current.pointEditor.resultPoint.magazineSafeZ),
+      magazineChangeZ: numberValue(values, 'stPointEditorResultPoint.MagazineChangeZ', current.pointEditor.resultPoint.magazineChangeZ),
       speedFactor: numberValue(values, 'stPointEditorResultPoint.SpeedFactor', current.pointEditor.resultPoint.speedFactor),
       configured: booleanValue(values, 'stPointEditorResultPoint.xConfigured', current.pointEditor.resultPoint.configured),
     },
@@ -790,6 +871,21 @@ export function mapRuntimeInfo(values: Record<string, unknown>, current: PlcRunt
     magazineReady: booleanValue(values, 'stCellStatus.xMagazineReady', current.magazineReady),
     safetyHomeRequired: booleanValue(values, 'stCellStatus.xSafetyHomeRequired', current.safetyHomeRequired),
     robotAtSafetyHome: booleanValue(values, 'stCellStatus.xRobotAtSafetyHome', current.robotAtSafetyHome),
+    safety: {
+      ready: booleanValue(values, 'stCellSafetyStatus.xReady', current.safety.ready),
+      globalError: booleanValue(values, 'stCellSafetyStatus.xGlobalError', current.safety.globalError),
+      phaseRelayOk: booleanValue(values, 'stCellSafetyStatus.xPhaseRelayOk', current.safety.phaseRelayOk),
+      pressureRelayOk: booleanValue(values, 'stCellSafetyStatus.xPressureRelayOk', current.safety.pressureRelayOk),
+      safetyRelayOk: booleanValue(values, 'stCellSafetyStatus.xSafetyRelayOk', current.safety.safetyRelayOk),
+      safetyRelayResetAllowed: booleanValue(values, 'stCellSafetyStatus.xSafetyRelayResetAllowed', current.safety.safetyRelayResetAllowed),
+      safetyRelayResetActive: booleanValue(values, 'stCellSafetyStatus.xSafetyRelayResetActive', current.safety.safetyRelayResetActive),
+      emergencyStopsReleased: Array.from({ length: 7 }, (_, offset) => booleanValue(
+        values, `stCellSafetyStatus.axEmergencyStopReleased[${offset + 1}]`, current.safety.emergencyStopsReleased[offset],
+      )) as PlcCellSafetyInfo['emergencyStopsReleased'],
+      doorsReady: Array.from({ length: 4 }, (_, offset) => booleanValue(
+        values, `stCellSafetyStatus.axDoorReady[${offset + 1}]`, current.safety.doorsReady[offset],
+      )) as PlcCellSafetyInfo['doorsReady'],
+    },
     cellSettings: {
       changeAllowed: booleanValue(values, 'xCellSettingsChangeAllowed', current.cellSettings.changeAllowed),
       pointCheckSpeedPercent: numberValue(values, 'rPointCheckSpeedPercent', current.cellSettings.pointCheckSpeedPercent),
@@ -808,6 +904,7 @@ export function mapRuntimeInfo(values: Record<string, unknown>, current: PlcRunt
         robotRelease: secondsValue(values, 'stCellMachineTimeouts.tRobotRelease', current.cellSettings.timeouts.robotRelease),
         doorOpen: secondsValue(values, 'stCellMachineTimeouts.tDoorOpen', current.cellSettings.timeouts.doorOpen),
         doorClose: secondsValue(values, 'stCellMachineTimeouts.tDoorClose', current.cellSettings.timeouts.doorClose),
+        hatchUnlock: secondsValue(values, 'stCellMachineTimeouts.tHatchUnlock', current.cellSettings.timeouts.hatchUnlock),
         chuckOpen: secondsValue(values, 'stCellMachineTimeouts.tChuckOpen', current.cellSettings.timeouts.chuckOpen),
         chuckClose: secondsValue(values, 'stCellMachineTimeouts.tChuckClose', current.cellSettings.timeouts.chuckClose),
         cycleStart: secondsValue(values, 'stCellMachineTimeouts.tCycleStart', current.cellSettings.timeouts.cycleStart),
@@ -836,6 +933,7 @@ export function mapRuntimeInfo(values: Record<string, unknown>, current: PlcRunt
       magazineReady: booleanValue(values, 'stCellStatus.xStartCheckMagazineReady', current.startReadiness.magazineReady),
       taskAvailable: booleanValue(values, 'stCellStatus.xStartCheckTaskAvailable', current.startReadiness.taskAvailable),
       safetyHome: booleanValue(values, 'stCellStatus.xStartCheckSafetyHome', current.startReadiness.safetyHome),
+      safety: booleanValue(values, 'stCellStatus.xStartCheckSafety', current.startReadiness.safety),
       met: numberValue(values, 'stCellStatus.uiStartConditionsMet', current.startReadiness.met),
       total: numberValue(values, 'stCellStatus.uiStartConditionsTotal', current.startReadiness.total),
     },

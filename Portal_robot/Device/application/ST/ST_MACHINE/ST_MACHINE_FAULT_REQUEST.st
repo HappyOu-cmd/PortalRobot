@@ -10,6 +10,7 @@ STRUCT
 	xTimeoutRobotRelease : BOOL; // Не подтверждать освобождение интерфейса робота
 	xTimeoutDoorOpen     : BOOL; // Не подтверждать открытие двери
 	xTimeoutDoorClose    : BOOL; // Не подтверждать закрытие двери
+	xTimeoutHatchUnlock  : BOOL; // Не подтверждать открытие замка до TIMEOUT
 	xTimeoutChuckOpen    : BOOL; // Не подтверждать разжим патрона
 	xTimeoutChuckClose   : BOOL; // Не подтверждать зажим патрона
 	xTimeoutCycleStart   : BOOL; // Не подтверждать запуск цикла обработки

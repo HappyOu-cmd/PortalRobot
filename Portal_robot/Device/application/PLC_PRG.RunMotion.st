@@ -84,6 +84,34 @@ FOR uiMachine := 1 TO 3 DO
 END_FOR;
 xMotionBusy := xMotionBusy OR (uiManualAxisOwner > UINT#0);
 
+// Отдельный владелец тестовой динамики ничего не пишет напрямую в существующие
+// FB_AXIS/FB_AXIS_GROUP. Он выдаёт им штатные Stop/Disable/Enable-запросы и сам
+// вызывает только административные SMC_ChangeDynamicLimits для X/Y/Z.
+SIMULATION_DYNAMICS(
+	xSimulationMode := GVL_CELL_SETTINGS.eTestEnvironment = E_CELL_TEST_ENVIRONMENT.SIMULATION,
+	xSoftMotionMode := NOT GVL_HMI.xModbusMode,
+	xAccelerationEnabled := GVL_CELL_SETTINGS.xSimulationAccelerationEnable,
+	xPrepareTest := xTestInitializePulse,
+	uiRequestedFactor := GVL_CELL_SETTINGS.uiSimulationTimeFactor,
+	xCellRunning := GVL_CELL_MANAGER.Status.xRunning,
+	xRobotBusy := GVL_ROBOT.Status.xBusy,
+	xMotionBusy := xMotionBusy,
+	xDrivesPowered := xDrivesPowered,
+	xDrivesOff := xDrivesOff,
+	eGroupState := GVL_AXIS_GROUP.AxisGroup.Diag.iStep,
+	AxisX := X,
+	AxisY := Y,
+	AxisZ := Z
+);
+GVL_CELL_CONTROL.xStop := GVL_CELL_CONTROL.xStop OR SIMULATION_DYNAMICS.xCellStopRequest;
+xRobotHmiPermit := xRobotHmiPermit AND NOT SIMULATION_DYNAMICS.xBusy;
+GVL_CELL_SETTINGS.xSimulationAccelerationActive := SIMULATION_DYNAMICS.xAccelerationActive;
+GVL_CELL_SETTINGS.uiSimulationTimeFactorApplied := SIMULATION_DYNAMICS.uiAppliedFactor;
+GVL_CELL_SETTINGS.xSimulationAccelerationPending := SIMULATION_DYNAMICS.xPending;
+GVL_CELL_SETTINGS.xSimulationAccelerationBusy := SIMULATION_DYNAMICS.xBusy;
+GVL_CELL_SETTINGS.xSimulationAccelerationError := SIMULATION_DYNAMICS.xError;
+GVL_CELL_SETTINGS.udiSimulationAccelerationErrorId := SIMULATION_DYNAMICS.udiErrorId;
+
 rRobotManualEffectiveSpeedPercent := GVL_HMI.rRobotManualSpeedPercent;
 IF xMobileMotionLeaseActive THEN
 	// Последний рубеж лимита находится в PLC, а не в браузере или gateway.
@@ -191,22 +219,27 @@ GVL_AXIS_GROUP.AxisGroup.Command.xReset := xGroupResetPulse;
 GVL_AXIS.arrAxis[1].Command.xEnable := (GVL_CELL_CONTROL.xEnable
 	AND NOT GVL_HMI.xModbusMode
 	AND NOT GVL_HMI.xRobotControlModeApply)
-	OR xHmiDrivesEnableAccepted;
+	OR xHmiDrivesEnableAccepted
+	OR SIMULATION_DYNAMICS.xDrivesEnableRequest;
 GVL_AXIS.arrAxis[2].Command.xEnable := (GVL_CELL_CONTROL.xEnable
 	AND NOT GVL_HMI.xModbusMode
 	AND NOT GVL_HMI.xRobotControlModeApply)
-	OR xHmiDrivesEnableAccepted;
+	OR xHmiDrivesEnableAccepted
+	OR SIMULATION_DYNAMICS.xDrivesEnableRequest;
 GVL_AXIS.arrAxis[3].Command.xEnable := (GVL_CELL_CONTROL.xEnable
 	AND NOT GVL_HMI.xModbusMode
 	AND NOT GVL_HMI.xRobotControlModeApply)
-	OR xHmiDrivesEnableAccepted;
+	OR xHmiDrivesEnableAccepted
+	OR SIMULATION_DYNAMICS.xDrivesEnableRequest;
 GVL_AXIS_GROUP.AxisGroup.Command.xPowerEnable := (GVL_CELL_CONTROL.xEnable
 	AND NOT GVL_HMI.xModbusMode
 	AND NOT GVL_HMI.xRobotControlModeApply)
-	OR xHmiDrivesEnableAccepted;
+	OR xHmiDrivesEnableAccepted
+	OR SIMULATION_DYNAMICS.xDrivesEnableRequest;
 
 xPowerDisableRequest := GVL_CELL_CONTROL.xDisable OR xRobotAutoPowerOff
-	OR xHmiDrivesDisableAccepted;
+	OR xHmiDrivesDisableAccepted
+	OR SIMULATION_DYNAMICS.xGroupDisableRequest;
 GVL_AXIS_GROUP.AxisGroup.Command.xDisable := xPowerDisableRequest;
 // Сначала группа обязана перейти в GroupDisabled. Только её OFF_REQUEST
 // разрешает FB_AXIS снять DriveStart и RegulatorOn.
@@ -219,17 +252,22 @@ GVL_AXIS.arrAxis[3].Command.xDisable := GVL_AXIS.arrAxis[1].Command.xDisable;
 
 // Stop получает только текущий владелец движения: одна ось либо координатная группа.
 GVL_AXIS.arrAxis[1].Command.xStop := ((xHmiStopAccepted AND NOT GVL_HMI.xModbusMode)
-	OR xMobileMotionStopRequest)
+	OR xMobileMotionStopRequest
+	OR SIMULATION_DYNAMICS.xMotionStopRequest)
 	AND NOT xGroupMotionBusy AND (uiManualAxisOwner = UINT#1);
 GVL_AXIS.arrAxis[2].Command.xStop := ((xHmiStopAccepted AND NOT GVL_HMI.xModbusMode)
-	OR xMobileMotionStopRequest)
+	OR xMobileMotionStopRequest
+	OR SIMULATION_DYNAMICS.xMotionStopRequest)
 	AND NOT xGroupMotionBusy AND (uiManualAxisOwner = UINT#2);
 GVL_AXIS.arrAxis[3].Command.xStop := ((xHmiStopAccepted AND NOT GVL_HMI.xModbusMode)
-	OR xMobileMotionStopRequest)
+	OR xMobileMotionStopRequest
+	OR SIMULATION_DYNAMICS.xMotionStopRequest)
 	AND NOT xGroupMotionBusy AND (uiManualAxisOwner = UINT#3);
 GVL_AXIS_GROUP.AxisGroup.Command.xStopCmd :=
 	NOT GVL_HMI.xModbusMode
-	AND (xHmiStopAccepted OR xRobotProgramStopRequest OR xPointCheckStopRequest OR xPointCheckStopping) AND xGroupMotionBusy;
+	AND (xHmiStopAccepted OR xRobotProgramStopRequest OR xPointCheckStopRequest
+		OR xPointCheckStopping OR SIMULATION_DYNAMICS.xMotionStopRequest)
+	AND xGroupMotionBusy;
 
 // Из новых запросов также выбирается только одна ось. Если движение уже идёт,
 // запрос другой оси будет отклонён ниже без передачи в FB_AXIS.
@@ -516,7 +554,8 @@ FOR uiMachine := 1 TO 3 DO
 	END_IF;
 END_FOR;
 
-// Коэффициент симуляции применяется только к виртуальным таймерам.
+// Запрошенный коэффициент живёт отдельно от применённого. Таймеры моделей и
+// динамика осей получают только значение, подтверждённое отдельным FB на границе теста.
 IF GVL_CELL_SETTINGS.uiSimulationTimeFactor < UINT#1 THEN
 	GVL_CELL_SETTINGS.uiSimulationTimeFactor := UINT#1;
 ELSIF GVL_ROBOT_MODBUS.xModeActive
@@ -526,13 +565,6 @@ ELSIF NOT GVL_ROBOT_MODBUS.xModeActive
 AND (GVL_CELL_SETTINGS.uiSimulationTimeFactor > UINT#100) THEN
 	GVL_CELL_SETTINGS.uiSimulationTimeFactor := UINT#100;
 END_IF;
-GVL_CELL_SETTINGS.xSimulationAccelerationActive := GVL_CELL_SETTINGS.xSimulationAccelerationEnable;
-IF GVL_CELL_SETTINGS.xSimulationAccelerationActive THEN
-	GVL_CELL_SETTINGS.uiSimulationTimeFactorApplied := GVL_CELL_SETTINGS.uiSimulationTimeFactor;
-ELSE
-	GVL_CELL_SETTINGS.uiSimulationTimeFactorApplied := UINT#1;
-END_IF;
-GVL_CELL_SETTINGS.xSimulationAccelerationError := FALSE;
 
 // FB_AXIS являются единственными владельцами MC_Power. Группа получает только
 // подтверждение готовности физических осей и управляет состоянием GroupStandby.
@@ -589,7 +621,9 @@ xDrivesReady := GVL_AXIS.arrAxis[1].Status.xPowered
 	AND (GVL_AXIS_GROUP.AxisGroup.Diag.iStep = E_AXIS_GROUP_STATE.READY)
 	AND NOT GVL_AXIS_GROUP.AxisGroup.Status.xLocalError
 	AND NOT GVL_AXIS_GROUP.AxisGroup.Status.xLogicalError
-	AND NOT GVL_AXIS_GROUP.AxisGroup.Status.xGroupError;
+	AND NOT GVL_AXIS_GROUP.AxisGroup.Status.xGroupError
+	AND NOT SIMULATION_DYNAMICS.xBusy
+	AND NOT SIMULATION_DYNAMICS.xError;
 xAxisDriveError := GVL_AXIS.arrAxis[1].Status.xAxisError
 	OR GVL_AXIS.arrAxis[1].Status.xLogicalError
 	OR GVL_AXIS.arrAxis[2].Status.xAxisError
@@ -789,13 +823,6 @@ AND NOT xMotionBusy THEN
 	xMobileMotionConnectionAlive := FALSE;
 	GVL_HMI.xMobileMotionLeaseAlive := FALSE;
 END_IF;
-
-GVL_CELL_SETTINGS.xSimulationAccelerationChangeAllowed :=
-	NOT GVL_CELL_MANAGER.Status.xRunning
-	AND NOT GVL_HMI.xModbusMode
-	AND NOT GVL_CELL_CONTROL.xGlobalError
-	AND NOT xMotionBusy
-	AND NOT GVL_ROBOT.Status.xBusy;
 
 IF NOT GVL_HMI.xModbusMode THEN
 	GVL_HMI.lrActualX := GVL_AXIS_GROUP.AxisGroup.Status.ActualX;

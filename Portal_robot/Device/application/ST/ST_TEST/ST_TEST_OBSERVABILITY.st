@@ -5,6 +5,7 @@ STRUCT
 	uiRobotState : UINT;
 	uiRobotAction : UINT;
 	uiRobotPoint : UINT;
+	uiActiveMagazine : UINT;
 	uiMagazineState : UINT;
 	uiMagazineOperation : UINT;
 	uiTakeSlot : UINT;

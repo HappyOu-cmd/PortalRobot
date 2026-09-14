@@ -1,5 +1,9 @@
 import type { CellLayout, CellState, MachineState, MagazineData, ProductType, SlotType } from './types';
 import { CELL_LAYOUT_PRESET } from '../config/cellLayoutPreset';
+import { DEFAULT_ENCLOSURE_DOORS } from './enclosure';
+import { DEFAULT_BUTTON_STATIONS } from './buttonStations';
+import { DEFAULT_CONTROL_CABINETS } from './controlCabinets';
+import { DEFAULT_MPG_PENDANT } from './mpgPendant';
 
 const emptyMachine = (): MachineState => ({
   productType: 1,
@@ -14,12 +18,15 @@ const emptyMachine = (): MachineState => ({
   manualDoorCloseAllowed: false,
   manualHatchOpenAllowed: false,
   manualHatchCloseAllowed: false,
+  manualHatchUnlockAllowed: false,
+  manualHatchLockAllowed: false,
   manualChuckOpenAllowed: false,
   manualChuckCloseAllowed: false,
   doorOpen: false,
   doorClosed: true,
   hatchOpen: false,
   hatchClosed: true,
+  hatchLocked: true,
   chuckOpen: false,
   chuckClosed: true,
   partPresent: false,
@@ -36,7 +43,7 @@ const emptyMachine = (): MachineState => ({
   cycleElapsedS: 0,
   cycleRemainingS: 60,
   measuredCycleS: 64.2,
-  useHmiCycleTime: true,
+  useHmiCycleTime: false,
   cycleOvertime: false,
   activeErrors: [],
   lastErrors: [],
@@ -83,8 +90,6 @@ const initialMagazine = (id: 1 | 2): MagazineData => ({
     columns: 10,
     pitchX: 60,
     pitchY: 60,
-    safeAbove: 0,
-    safeInside: 1400,
     activeErrors: [],
     lastErrors: [],
   },
@@ -148,4 +153,8 @@ export const DEFAULT_STATE: CellState = {
     },
   ],
   magazines: [initialMagazine(1), initialMagazine(2)],
+  enclosureDoors: structuredClone(DEFAULT_ENCLOSURE_DOORS),
+  buttonStations: structuredClone(DEFAULT_BUTTON_STATIONS),
+  controlCabinets: structuredClone(DEFAULT_CONTROL_CABINETS),
+  mpgPendant: { ...DEFAULT_MPG_PENDANT },
 };

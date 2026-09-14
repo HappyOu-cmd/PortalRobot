@@ -4,7 +4,9 @@ STRUCT
 	X           : LREAL; // Координата X
 	Y           : LREAL; // Координата Y
 	Z           : LREAL; // Координата Z
+	MagazineSafeZ : LREAL; // Signed-смещение Safe Z; используется только базовой точкой магазина
+	MagazineChangeZ : LREAL; // Signed-смещение Change Z; используется только базовой точкой магазина
 	SpeedFactor : LREAL; // Коэффициент скорости движения
-	xConfigured : BOOL; // TRUE после подтверждённого сохранения инженерной точки
+	xConfigured : BOOL; // Для базы магазина TRUE только при ненулевых MagazineSafeZ и MagazineChangeZ
 END_STRUCT
 END_TYPE

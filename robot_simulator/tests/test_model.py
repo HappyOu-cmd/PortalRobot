@@ -181,6 +181,9 @@ def test_magazine_slot_math_and_validation() -> None:
     assert model.resolve_point(CommandCode.MAGAZINE_SAFE, 10, 1)[:3] == (4770.0, 200.0, 0.0)
     assert model.resolve_point(CommandCode.MAGAZINE_SAFE, 111, 1)[:3] == (4230.0, 860.0, 0.0)
     assert model.resolve_point(CommandCode.MAGAZINE_CHANGE, 120, 1)[:3] == (4770.0, 860.0, 1400.0)
+    model.config["magazine"]["base_z"] = 1700.0
+    assert model.resolve_point(CommandCode.MAGAZINE_SAFE, 1, 1)[2] == 100.0
+    assert model.resolve_point(CommandCode.MAGAZINE_CHANGE, 1, 1)[2] == 1500.0
     assert model.resolve_point(CommandCode.MAGAZINE_SAFE, 0, 1) is None
     assert model.resolve_point(CommandCode.MAGAZINE_SAFE, 121, 1) is None
     assert model.resolve_point(CommandCode.MAGAZINE_SAFE, 1, 0) is None

@@ -41,6 +41,10 @@ PLC работает как Modbus TCP Client, робот — как Server. Р�
 | 24 | `MAGAZINE_CHANGE` — высота смены захвата над `ActiveSlot` |
 | 25 | `MAGAZINE_IN_SLOT` — рабочая точка внутри `ActiveSlot` |
 
+Координаты `MAGAZINE_SAFE` и `MAGAZINE_CHANGE` строятся относительно базовой
+точки выбранного магазина: `Z цели = Z базы + смещение`. Отрицательное
+смещение поднимает портал; значения настраиваются отдельно для каждого магазина.
+
 `MAGAZINE_TAKE_DETAIL`, `PUT_DETAIL`, `CHANGE_DETAIL` и `RETURN_BLANK` не являются
 командами Modbus. Их пошагово выполняет `FB_MAGAZINE` одинаково для SoftMotion и
 Modbus, используя только элементарные коды выше.

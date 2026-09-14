@@ -7,6 +7,7 @@ METHOD PRIVATE RunAlarms
 // Диагностические защёлки симуляторов станков сюда не входят: они обслуживаются
 // отдельной командой «Сброс симулятора» на экране инъекций.
 xAlarmResetRequired := GVL_CELL_MANAGER.Status.xError
+	OR (CELL_SAFETY.Error.dwAlarmActive <> DWORD#0)
 	OR GVL_ROBOT.Status.xError
 	OR GVL_MACHINE.Status[1].xError
 	OR GVL_MACHINE.Status[2].xError
@@ -24,6 +25,7 @@ xAlarmResetRequired := GVL_CELL_MANAGER.Status.xError
 	OR (NOT GVL_HMI.xModbusMode AND (GVL_ROBOT.GripperError.dwAlarmActive <> DWORD#0));
 
 xAlarmResetAllowed := xAlarmResetRequired
+	AND (CELL_SAFETY.Error.dwAlarmActive = DWORD#0)
 	AND (NOT GVL_CELL_MANAGER.Status.xError OR GVL_CELL_MANAGER.Status.xResetAllowed)
 	AND (NOT GVL_ROBOT.Status.xError OR GVL_ROBOT.Status.xResetAllowed)
 	AND (NOT GVL_MACHINE.Status[1].xError OR GVL_MACHINE.Status[1].xResetAllowed)
@@ -156,6 +158,12 @@ ELSE astAlarmSource[16].dwAlarmActive := GVL_ROBOT.GripperError.dwAlarmActive; E
 astAlarmSource[16].xRobotStopRequired := FALSE;
 astAlarmSource[16].xGlobalError := GVL_CELL_CONTROL.xGlobalError;
 astAlarmSource[16].stWarning := GVL_ROBOT.GripperDiag.stWarning;
+
+astAlarmSource[17].eSource := E_ALARM_SOURCE.CELL_SAFETY;
+astAlarmSource[17].dwAlarmActive := CELL_SAFETY.Error.dwAlarmActive;
+astAlarmSource[17].xRobotStopRequired := TRUE;
+astAlarmSource[17].xGlobalError := CELL_SAFETY.Status.xGlobalError;
+astAlarmSource[17].stWarning := CELL_SAFETY.Diag.stWarning;
 
 ALARM_MANAGER(
 	xResetWarnings := GVL_ALARM.Command.xResetWarnings,

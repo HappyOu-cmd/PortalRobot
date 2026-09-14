@@ -11,12 +11,15 @@ VAR_GLOBAL
 	// Не RETAIN: после каждого запуска PLC тестовая среда всегда NORMAL.
 	eTestEnvironment : E_CELL_TEST_ENVIRONMENT := E_CELL_TEST_ENVIRONMENT.NORMAL;
 	eTestSpeedProfile : E_TEST_SPEED_PROFILE := E_TEST_SPEED_PROFILE.REALTIME;
-	xSimulationAccelerationEnable : BOOL := FALSE; // Запрос ускорения симуляции
-	uiSimulationTimeFactor : UINT := 1; // 1..100 вручную; x250 только в автоматическом Modbus FAST
-	xSimulationAccelerationActive : BOOL := FALSE; // Фактически применённое ускорение
-	uiSimulationTimeFactorApplied : UINT := 1; // Фактически применённый коэффициент
-	xSimulationAccelerationChangeAllowed : BOOL := FALSE; // Разрешение изменения из HMI
-	xSimulationAccelerationError : BOOL := FALSE; // Ошибка применения ускорения виртуальных таймеров
+	xSimulationAccelerationEnable : BOOL := FALSE; // Ускорять таймеры и динамику SoftMotion в тестовом профиле FAST
+	uiSimulationTimeFactor : UINT := 1; // Запрошенный коэффициент 1..100; можно менять в любой момент
+	xSimulationAccelerationActive : BOOL := FALSE; // Применён ускоренный комплект лимитов и таймеров
+	uiSimulationTimeFactorApplied : UINT := 1; // Коэффициент, подтверждённый транзакцией Dynamic Limits
+	xSimulationAccelerationChangeAllowed : BOOL := FALSE; // Разрешено запомнить новое требование из HMI
+	xSimulationAccelerationPending : BOOL := FALSE; // Новое значение ждёт следующего теста
+	xSimulationAccelerationBusy : BOOL := FALSE; // Stop/Disable/Change/Enable выполняется
+	xSimulationAccelerationError : BOOL := FALSE;
+	udiSimulationAccelerationErrorId : UDINT := UDINT#0;
 	xErrorSimulationEnabled : BOOL := FALSE; // Разрешение диагностической инъекции ошибок из HMI
 
 	// Безопасный повторный запуск после аварийной остановки.
@@ -37,6 +40,7 @@ VAR_GLOBAL
 		tRobotRelease := T#5S,
 		tDoorOpen := T#10S,
 		tDoorClose := T#10S,
+		tHatchUnlock := T#5S,
 		tChuckOpen := T#10S,
 		tChuckClose := T#10S,
 		tCycleStart := T#10S

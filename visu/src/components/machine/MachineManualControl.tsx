@@ -3,7 +3,7 @@ import { Disc3, DoorOpen, LockKeyhole, PackageOpen, ShieldAlert, UnlockKeyhole, 
 import type { CellState } from '../../model/types';
 import { Indicator } from '../ui/Indicator';
 
-export type MachineMechanism = 'door' | 'hatch' | 'chuck';
+export type MachineMechanism = 'door' | 'hatch' | 'lock' | 'chuck';
 export type MachineMechanismAction = 'open' | 'close';
 
 export interface MachineMotionRequest {
@@ -15,6 +15,7 @@ export interface MachineMotionRequest {
 const MECHANISM_LABELS: Record<MachineMechanism, string> = {
   door: 'Операторская дверь',
   hatch: 'Роботный люк',
+  lock: 'Замок люка',
   chuck: 'Патрон',
 };
 
@@ -26,6 +27,7 @@ const ACTION_LABELS: Record<MachineMechanismAction, string> = {
 function mechanismState(machine: CellState['machines'][number], mechanism: MachineMechanism) {
   if (mechanism === 'door') return machine.doorOpen ? 'Открыта' : machine.doorClosed ? 'Закрыта' : 'Нет данных';
   if (mechanism === 'hatch') return machine.hatchOpen ? 'Открыт' : machine.hatchClosed ? 'Закрыт' : 'Движение';
+  if (mechanism === 'lock') return machine.hatchLocked ? 'Закрыт' : 'Открыт';
   return machine.chuckOpen ? 'Разжат' : machine.chuckClosed ? 'Зажат' : 'Движение';
 }
 
@@ -38,6 +40,7 @@ export function isMachineMotionAllowed(
   if (usePlcData) {
     if (mechanism === 'door') return action === 'open' ? machine.manualDoorOpenAllowed : machine.manualDoorCloseAllowed;
     if (mechanism === 'hatch') return action === 'open' ? machine.manualHatchOpenAllowed : machine.manualHatchCloseAllowed;
+    if (mechanism === 'lock') return action === 'open' ? machine.manualHatchUnlockAllowed : machine.manualHatchLockAllowed;
     return action === 'open' ? machine.manualChuckOpenAllowed : machine.manualChuckCloseAllowed;
   }
 
@@ -45,6 +48,7 @@ export function isMachineMotionAllowed(
   if (!commonAllowed) return false;
   if (mechanism === 'door') return action === 'open' ? machine.doorClosed : machine.doorOpen;
   if (mechanism === 'hatch') return action === 'open' ? machine.hatchClosed : machine.hatchOpen;
+  if (mechanism === 'lock') return action === 'open' ? machine.hatchLocked : !machine.hatchLocked && machine.hatchClosed;
   return action === 'open' ? machine.chuckClosed : machine.chuckOpen;
 }
 
@@ -63,12 +67,12 @@ export function MachineManualControlMenu({
   onRequest: (action: MachineMechanismAction) => void;
   onClose: () => void;
 }) {
-  const Icon = mechanism === 'door' ? DoorOpen : mechanism === 'hatch' ? PackageOpen : Disc3;
-  const opened = mechanism === 'door' ? machine.doorOpen : mechanism === 'hatch' ? machine.hatchOpen : machine.chuckOpen;
-  const closed = mechanism === 'door' ? machine.doorClosed : mechanism === 'hatch' ? machine.hatchClosed : machine.chuckClosed;
+  const Icon = mechanism === 'door' ? DoorOpen : mechanism === 'hatch' ? PackageOpen : mechanism === 'lock' ? LockKeyhole : Disc3;
+  const opened = mechanism === 'door' ? machine.doorOpen : mechanism === 'hatch' ? machine.hatchOpen : mechanism === 'lock' ? !machine.hatchLocked : machine.chuckOpen;
+  const closed = mechanism === 'door' ? machine.doorClosed : mechanism === 'hatch' ? machine.hatchClosed : mechanism === 'lock' ? machine.hatchLocked : machine.chuckClosed;
   const openAllowed = isMachineMotionAllowed(machine, mechanism, 'open', usePlcData);
   const closeAllowed = isMachineMotionAllowed(machine, mechanism, 'close', usePlcData);
-  const OpenIcon = mechanism === 'chuck' ? UnlockKeyhole : DoorOpen;
+  const OpenIcon = mechanism === 'chuck' || mechanism === 'lock' ? UnlockKeyhole : DoorOpen;
 
   return <aside className="machine-mechanism-card" role="dialog" aria-label={`Ручное управление: ${MECHANISM_LABELS[mechanism]}`}>
     <header>

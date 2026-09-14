@@ -40,7 +40,8 @@ Status.xActive := Request.xEnabled AND (
 	OR Request.xTimeoutRobotAction
 	OR Request.xTimeoutRobotRelease
 	OR Request.xTimeoutDoorOpen
-	OR Request.xTimeoutDoorClose
+		OR Request.xTimeoutDoorClose
+		OR Request.xTimeoutHatchUnlock
 	OR Request.xTimeoutChuckOpen
 	OR Request.xTimeoutChuckClose
 	OR Request.xTimeoutCycleStart
@@ -79,6 +80,11 @@ IF Request.xEnabled THEN
 	IF Request.xTimeoutDoorClose THEN
 		MachineStatus.xDoorClosed := FALSE;
 		Timeouts.tDoorClose := SIMULATION_TIMEOUT;
+	END_IF;
+
+	IF Request.xTimeoutHatchUnlock THEN
+		MachineStatus.xHatchLocked := TRUE;
+		Timeouts.tHatchUnlock := SIMULATION_TIMEOUT;
 	END_IF;
 
 	IF Request.xTimeoutChuckOpen THEN

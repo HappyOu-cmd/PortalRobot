@@ -7,6 +7,7 @@ import { watchMobileSession, type MobileSession as Session } from './session';
 import { MobileHoldButton } from './MobileHoldButton';
 import { createPointCheckHold, type CheckPhase } from './pointCheckHold';
 import './mobile-points.css';
+import './mobile-magazine-points.css';
 import './mobile-controls.css';
 import './mobile-points-theme-bridge.css';
 
@@ -17,7 +18,7 @@ const labels = [
   'HOME_SAFETY', 'Магазин 1 — базовая точка детали', 'Магазин 2 — базовая точка детали',
 ];
 
-type PointState = { index: number; x: number; y: number; z: number; speedFactor: number; configured: boolean; checkAllowed: boolean; checkRejectCode: number };
+type PointState = { index: number; x: number; y: number; z: number; magazineSafeZ: number; magazineChangeZ: number; speedFactor: number; configured: boolean; checkAllowed: boolean; checkRejectCode: number };
 type JogDirection = 'positive' | 'negative';
 type MobileAxisState = {
   jogPositiveAllowed: boolean; jogNegativeAllowed: boolean;
@@ -40,10 +41,10 @@ type MobileState = {
   active: boolean; activeIndex: number; checkState: number; runSeq: number;
   owned: boolean; activeJog: { axis: number; direction: JogDirection } | null;
 };
-type Draft = { x: string; y: string; z: string; speed: string };
+type Draft = { x: string; y: string; z: string; magazineSafeZ: string; magazineChangeZ: string; speed: string };
 type ActionResult = {
   ok: boolean; sequence?: number;
-  point?: { x: number; y: number; z: number; speedFactor: number; configured: boolean };
+  point?: { x: number; y: number; z: number; magazineSafeZ: number; magazineChangeZ: number; speedFactor: number; configured: boolean };
   phoneSpeedLimitPercent?: number; appliedValue?: number; released?: boolean; leaseId?: string;
 };
 type RobotCommand = {
@@ -73,6 +74,7 @@ const createMotionLeaseId = () => {
 };
 const pointDraft = (point?: PointState | ActionResult['point']): Draft => ({
   x: formatNumber(Number(point?.x ?? 0)), y: formatNumber(Number(point?.y ?? 0)), z: formatNumber(Number(point?.z ?? 0)),
+  magazineSafeZ: formatNumber(Number(point?.magazineSafeZ ?? 0)), magazineChangeZ: formatNumber(Number(point?.magazineChangeZ ?? 0)),
   speed: formatNumber(Number(point?.speedFactor ?? 0), 2),
 });
 
@@ -330,9 +332,16 @@ export function MobilePointsApp() {
   const sessionRef = useRef(session);
   const sessionRevisionRef = useRef(0);
   const sessionMonitorRef = useRef<ReturnType<typeof watchMobileSession> | null>(null);
-  const dirty = draft.x !== baseline.x || draft.y !== baseline.y || draft.z !== baseline.z || draft.speed !== baseline.speed;
+  const magazinePointSelected = index === 10 || index === 11;
+  const dirty = draft.x !== baseline.x || draft.y !== baseline.y || draft.z !== baseline.z
+    || draft.magazineSafeZ !== baseline.magazineSafeZ || draft.magazineChangeZ !== baseline.magazineChangeZ
+    || draft.speed !== baseline.speed;
   const valid = [draft.x, draft.y, draft.z, draft.speed].every((value) => value.trim() && Number.isFinite(parseNumber(value)))
-    && parseNumber(draft.speed) > 0.1 && parseNumber(draft.speed) <= 1;
+    && parseNumber(draft.speed) > 0.1 && parseNumber(draft.speed) <= 1
+    && (!magazinePointSelected || ([draft.magazineSafeZ, draft.magazineChangeZ].every((value) => value.trim() && Number.isFinite(parseNumber(value)))
+      && Math.abs(parseNumber(draft.magazineSafeZ)) <= 10000 && Math.abs(parseNumber(draft.magazineChangeZ)) <= 10000));
+  const magazineOffsetsConfigured = !magazinePointSelected
+    || (parseNumber(draft.magazineSafeZ) !== 0 && parseNumber(draft.magazineChangeZ) !== 0);
   const selected = state?.points[index];
   const running = Boolean(state?.active && state.owned);
   const controlled = Boolean(state?.owned);
@@ -413,7 +422,10 @@ export function MobilePointsApp() {
     try {
       const result = await api<ActionResult>('/api/mobile-points/action', {
         method: 'POST', body: JSON.stringify({ action, index: index + 1, speedFactor: parseNumber(draft.speed), draft: {
-          x: parseNumber(draft.x), y: parseNumber(draft.y), z: parseNumber(draft.z), speedFactor: parseNumber(draft.speed),
+          x: parseNumber(draft.x), y: parseNumber(draft.y), z: parseNumber(draft.z),
+          magazineSafeZ: magazinePointSelected ? parseNumber(draft.magazineSafeZ) : 0,
+          magazineChangeZ: magazinePointSelected ? parseNumber(draft.magazineChangeZ) : 0,
+          speedFactor: parseNumber(draft.speed),
         } }),
       });
       if (result.point && action === 'capture') setDraft((current) => ({ ...current, x: formatNumber(result.point!.x), y: formatNumber(result.point!.y), z: formatNumber(result.point!.z) }));
@@ -421,7 +433,9 @@ export function MobilePointsApp() {
         const saved = pointDraft(result.point); setDraft(saved); setBaseline(saved);
       }
       setMessage(action === 'capture' ? 'Текущие координаты перенесены в черновик.'
-        : action === 'save' ? 'Точка сохранена и подтверждена PLC.'
+        : action === 'save' ? (result.point?.configured
+          ? 'Точка сохранена и подтверждена PLC.'
+          : 'Точка сохранена, но не настроена: задайте ненулевые Safe Z и Change Z.')
           : 'Остановка передана в PLC.');
       await refresh();
     } catch (nextError) { setError(nextError instanceof Error ? nextError.message : String(nextError)); }
@@ -519,8 +533,10 @@ export function MobilePointsApp() {
       <div className="mobile-points__meta"><span>Точка {index + 1} из 12</span><span className={dirty || !selected?.configured ? 'is-dirty' : 'is-saved'}>{dirty || !selected?.configured ? 'Не сохранена' : 'Сохранена'}</span></div>
       <h2>Координаты точки</h2>
       <div className="mobile-points__coordinates">{(['x', 'y', 'z'] as const).map((axis) => <label className="mobile-points__coordinate" key={axis}><span>{axis.toUpperCase()}</span><input aria-label={`Координата ${axis.toUpperCase()}`} inputMode="decimal" value={draft[axis]} disabled={busy || running || controlled} onChange={(event) => { setDraft((current) => ({ ...current, [axis]: event.target.value })); setMessage(''); }} /><span>мм</span></label>)}</div>
+      {magazinePointSelected && <div className="mobile-points__coordinates mobile-points__magazine-offsets"><label className="mobile-points__coordinate"><span>Safe Z</span><input aria-label="Смещение Safe Z" inputMode="decimal" value={draft.magazineSafeZ} disabled={busy || running || controlled} onChange={(event) => { setDraft((current) => ({ ...current, magazineSafeZ: event.target.value })); setMessage(''); }} /><span>мм</span></label><label className="mobile-points__coordinate"><span>Change Z</span><input aria-label="Смещение Change Z" inputMode="decimal" value={draft.magazineChangeZ} disabled={busy || running || controlled} onChange={(event) => { setDraft((current) => ({ ...current, magazineChangeZ: event.target.value })); setMessage(''); }} /><span>мм</span></label></div>}
       <label className="mobile-points__field mobile-points__speed">Коэффициент скорости точки<div><input aria-label="Коэффициент скорости точки" inputMode="decimal" value={draft.speed} disabled={busy || running || controlled} onChange={(event) => setDraft((current) => ({ ...current, speed: event.target.value }))} /><span>×</span></div></label>
-      {!valid && <p className="mobile-points__notice is-error" role="alert">XYZ должны быть числами. Коэффициент скорости: от 0,11 до 1,00.</p>}
+      {!valid && <p className="mobile-points__notice is-error" role="alert">XYZ должны быть числами. Скорость: от 0,11 до 1,00{magazinePointSelected ? '. Смещения Z: от −10000 до 10000 мм' : ''}.</p>}
+      {valid && !magazineOffsetsConfigured && <p className="mobile-points__notice is-error" role="alert">Точка останется ненастроенной, пока хотя бы одно из смещений Safe Z или Change Z равно нулю.</p>}
       <button className={cn(button(), !state?.captureAllowed && 'is-unavailable')} disabled={busy || running || controlled || !state?.online} aria-disabled={!state?.captureAllowed} onClick={() => void perform('capture')}>Взять текущие координаты</button>
       <div className="mobile-points__check-speed"><span>Скорость проверки</span><strong>{formatNumber(state?.checkSpeedPercent ?? 10, 1)} %</strong></div>
       {running ? <section className="mobile-points__running" aria-live="polite"><strong>Проверка точки выполняется</strong><p>Дождитесь останова робота.</p><button className={button({ tone: 'danger' })} disabled={busy} onClick={() => void perform('stop')}>Остановить проверку</button></section> : <div className="mobile-points__actions">
@@ -535,7 +551,7 @@ export function MobilePointsApp() {
     <Dialog.Root open={dialog !== null} onOpenChange={(open) => { if (!open) { checkHold.release(); setDialog(null); } }}><Dialog.Portal><Dialog.Overlay className="mobile-points-dialog__overlay" /><Dialog.Content className="mobile-points-dialog" onCloseAutoFocus={(event) => { event.preventDefault(); lastFocus.current?.focus(); }}>
       <Dialog.Title>{dialogKind === 'check' ? 'Проверка точки' : 'Изменения не сохранены'}</Dialog.Title>
       <Dialog.Description>{dialogKind === 'check' ? 'Освободите рабочую зону. Движение разрешено только пока вы удерживаете кнопку. Отпускание передаёт команду остановки.' : 'Отбросить изменения текущей точки?'}</Dialog.Description>
-      {dialogKind === 'check' && selected && <div className="mobile-points-dialog__summary"><strong>{labels[index]}</strong><span>X {baseline.x} · Y {baseline.y} · Z {baseline.z}</span><span>Скорость проверки: {formatNumber(state?.checkSpeedPercent ?? 10, 1)} %</span></div>}
+      {dialogKind === 'check' && selected && <div className="mobile-points-dialog__summary"><strong>{labels[index]}</strong><span>X {baseline.x} · Y {baseline.y} · Z {baseline.z}</span>{magazinePointSelected && <span>Safe Z {baseline.magazineSafeZ} · Change Z {baseline.magazineChangeZ}</span>}<span>Скорость проверки: {formatNumber(state?.checkSpeedPercent ?? 10, 1)} %</span></div>}
       {dialogKind === 'check' ? <section className="mobile-point-check">
         <p role="status" aria-live="polite">{{ ready: 'Готово к удержанию', starting: 'Передаём команду — удерживайте', moving: 'Движение — удерживайте кнопку', stopping: 'Палец отпущен. Ожидаем остановки PLC…', completed: 'Точка достигнута. Проверка завершена.', stopped: 'Проверка остановлена.', error: 'Проверка прервана. Проверьте сообщение ниже.' }[checkPhase]}</p>
         <MobileHoldButton className="mobile-point-check__hold"
@@ -544,7 +560,7 @@ export function MobilePointsApp() {
           onHold={(held) => {
             if (!held) { checkHold.release(); return; }
             setError('');
-            checkHold.press({ index: index + 1, draft: { x: parseNumber(baseline.x), y: parseNumber(baseline.y), z: parseNumber(baseline.z), speedFactor: parseNumber(baseline.speed) } });
+            checkHold.press({ index: index + 1, draft: { x: parseNumber(baseline.x), y: parseNumber(baseline.y), z: parseNumber(baseline.z), magazineSafeZ: magazinePointSelected ? parseNumber(baseline.magazineSafeZ) : 0, magazineChangeZ: magazinePointSelected ? parseNumber(baseline.magazineChangeZ) : 0, speedFactor: parseNumber(baseline.speed) } });
           }}>
           <strong>{checkPhase === 'completed' ? 'Проверка завершена' : 'Удерживайте для движения'}</strong>
           <span>Отпустите палец — остановка</span>

@@ -62,7 +62,16 @@ function EffectsPreview({ alarm = false }: { alarm?: boolean }) {
       selectedMachine={null}
       cameraPreset="front"
       onMachineSelect={() => {}}
-      visualEffects={{ operationHighlight: true, cameraFocus: false, alarmBeacons: true }}
+      visualEffects={{
+        cameraFocus: false,
+        alarmBeacons: true,
+        enclosureOpacity: 1,
+        indicators: {
+          machines: [0, 1, 2].map(() => ({ offset: { x: 0, y: 0, z: 0 }, scale: 1 })),
+          magazines: [0, 1].map(() => ({ offset: { x: 0, y: 0, z: 0 }, scale: 1 })),
+          portal: { offset: { x: 0, y: 0, z: 0 }, scale: 1 },
+        },
+      }}
       sceneActivity={activity}
     />
   </div>;

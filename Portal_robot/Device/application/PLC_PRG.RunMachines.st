@@ -21,7 +21,7 @@ MACHINE_1.stPoints.eNone := E_POINT_NAME.NONE;
 // Виртуальные устройства исполняют команду предыдущего цикла. Затем слой
 // инъекции формирует обратную связь, которую увидит технологический автомат.
 MACHINE_1_SIM(
-	xTestInitialize := xTestInitializePulse,
+	xTestInitialize := xTestInitializePulse OR xTestAbortActive,
 	uiTestInitialState := GVL_HMI.stTestScenario.auiMachineState[1],
 	xSafetyDoorOpen := GVL_CELL_SETTINGS.xErrorSimulationEnabled
 		AND GVL_HMI.axMachineSimSafetyDoorOpen[1],
@@ -36,7 +36,7 @@ MACHINE_1_SIM(
 	tCycleTime := GVL_HMI.tMachineCycleTime[1]
 );
 MACHINE_2_SIM(
-	xTestInitialize := xTestInitializePulse,
+	xTestInitialize := xTestInitializePulse OR xTestAbortActive,
 	uiTestInitialState := GVL_HMI.stTestScenario.auiMachineState[2],
 	xSafetyDoorOpen := GVL_CELL_SETTINGS.xErrorSimulationEnabled
 		AND GVL_HMI.axMachineSimSafetyDoorOpen[2],
@@ -51,7 +51,7 @@ MACHINE_2_SIM(
 	tCycleTime := GVL_HMI.tMachineCycleTime[2]
 );
 MACHINE_3_SIM(
-	xTestInitialize := xTestInitializePulse,
+	xTestInitialize := xTestInitializePulse OR xTestAbortActive,
 	uiTestInitialState := GVL_HMI.stTestScenario.auiMachineState[3],
 	xSafetyDoorOpen := GVL_CELL_SETTINGS.xErrorSimulationEnabled
 		AND GVL_HMI.axMachineSimSafetyDoorOpen[3],
@@ -86,7 +86,7 @@ MACHINE_3_FAULT(
 );
 
 MACHINE_1(
-	xTestInitialize := xTestInitializePulse,
+	xTestInitialize := xTestInitializePulse OR xTestAbortActive,
 	uiTestInitialState := GVL_HMI.stTestScenario.auiMachineState[1],
 	uiTestProductType := GVL_HMI.stTestScenario.auiMachineType[1],
 	xExecute := GVL_CELL_MANAGER.Command.axMachineExecute[1],
@@ -99,6 +99,8 @@ MACHINE_1(
 	xHmiCloseSafetyDoor := GVL_HMI.axMachineManualSafetyDoorClose[1],
 	xHmiOpenHatch := GVL_HMI.axMachineManualHatchOpen[1],
 	xHmiCloseHatch := GVL_HMI.axMachineManualHatchClose[1],
+	xHmiUnlockHatch := GVL_HMI.axMachineManualHatchUnlock[1],
+	xHmiLockHatch := GVL_HMI.axMachineManualHatchLock[1],
 	xHmiOpenChuck := GVL_HMI.axMachineManualChuckOpen[1],
 	xHmiCloseChuck := GVL_HMI.axMachineManualChuckClose[1],
 	xHmiEnable := GVL_HMI.axMachineEnable[1] AND GVL_HMI.axMachineUsed[1],
@@ -132,7 +134,7 @@ MACHINE_2.stPoints.eInside := E_POINT_NAME.MACHINE_2_INSIDE;
 MACHINE_2.stPoints.eNone := E_POINT_NAME.NONE;
 
 MACHINE_2(
-	xTestInitialize := xTestInitializePulse,
+	xTestInitialize := xTestInitializePulse OR xTestAbortActive,
 	uiTestInitialState := GVL_HMI.stTestScenario.auiMachineState[2],
 	uiTestProductType := GVL_HMI.stTestScenario.auiMachineType[2],
 	xExecute := GVL_CELL_MANAGER.Command.axMachineExecute[2],
@@ -145,6 +147,8 @@ MACHINE_2(
 	xHmiCloseSafetyDoor := GVL_HMI.axMachineManualSafetyDoorClose[2],
 	xHmiOpenHatch := GVL_HMI.axMachineManualHatchOpen[2],
 	xHmiCloseHatch := GVL_HMI.axMachineManualHatchClose[2],
+	xHmiUnlockHatch := GVL_HMI.axMachineManualHatchUnlock[2],
+	xHmiLockHatch := GVL_HMI.axMachineManualHatchLock[2],
 	xHmiOpenChuck := GVL_HMI.axMachineManualChuckOpen[2],
 	xHmiCloseChuck := GVL_HMI.axMachineManualChuckClose[2],
 	xHmiEnable := GVL_HMI.axMachineEnable[2] AND GVL_HMI.axMachineUsed[2],
@@ -178,7 +182,7 @@ MACHINE_3.stPoints.eInside := E_POINT_NAME.MACHINE_3_INSIDE;
 MACHINE_3.stPoints.eNone := E_POINT_NAME.NONE;
 
 MACHINE_3(
-	xTestInitialize := xTestInitializePulse,
+	xTestInitialize := xTestInitializePulse OR xTestAbortActive,
 	uiTestInitialState := GVL_HMI.stTestScenario.auiMachineState[3],
 	uiTestProductType := GVL_HMI.stTestScenario.auiMachineType[3],
 	xExecute := GVL_CELL_MANAGER.Command.axMachineExecute[3],
@@ -191,6 +195,8 @@ MACHINE_3(
 	xHmiCloseSafetyDoor := GVL_HMI.axMachineManualSafetyDoorClose[3],
 	xHmiOpenHatch := GVL_HMI.axMachineManualHatchOpen[3],
 	xHmiCloseHatch := GVL_HMI.axMachineManualHatchClose[3],
+	xHmiUnlockHatch := GVL_HMI.axMachineManualHatchUnlock[3],
+	xHmiLockHatch := GVL_HMI.axMachineManualHatchLock[3],
 	xHmiOpenChuck := GVL_HMI.axMachineManualChuckOpen[3],
 	xHmiCloseChuck := GVL_HMI.axMachineManualChuckClose[3],
 	xHmiEnable := GVL_HMI.axMachineEnable[3] AND GVL_HMI.axMachineUsed[3],

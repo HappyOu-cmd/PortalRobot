@@ -1,6 +1,7 @@
 import * as THREE from 'three';
-import type { SceneActivity, SceneAlarmTarget, SceneEquipmentTarget, VisualEffectSettings } from '../model/visualEffects';
+import type { SceneActivity, VisualEffectSettings } from '../model/visualEffects';
 import { COLORS } from './primitives';
+import { createButtonGlow } from './buttonParts';
 
 export interface SceneEffectAnchor {
   ground: THREE.Vector3;
@@ -17,28 +18,9 @@ export interface SceneEffectAnchors {
   cell: { center: THREE.Vector3; length: number; width: number };
 }
 
-interface GroundMarker {
-  root: THREE.Group;
-  core: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>;
-  pulse: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>;
-}
-
-function keyForTarget(target: SceneAlarmTarget | SceneEquipmentTarget): string {
-  return target.kind === 'machine' || target.kind === 'magazine'
-    ? `${target.kind}:${target.index}`
-    : target.kind;
-}
-
-function copyTargetAnchor(target: SceneEquipmentTarget, anchors: SceneEffectAnchors): SceneEffectAnchor | null {
-  const values = target.kind === 'machine' ? anchors.machines : anchors.magazines;
-  return values[target.index] ?? null;
-}
-
 export class OperationalEffects {
   readonly root = new THREE.Group();
 
-  private readonly operationMarkers = new Map<string, GroundMarker>();
-  private readonly alarmMarkers = new Map<string, GroundMarker>();
   private readonly cellBoundaryPositions = new Float32Array(5 * 3);
   private readonly cellBoundaryGeometry = new THREE.BufferGeometry();
   private readonly cellBoundaryMaterial = new THREE.LineBasicMaterial({
@@ -48,6 +30,9 @@ export class OperationalEffects {
     depthWrite: false,
   });
   private readonly cellBoundary = new THREE.Line(this.cellBoundaryGeometry, this.cellBoundaryMaterial);
+  private readonly machineAlarmGlows: THREE.Group[] = [];
+  private readonly magazineAlarmGlows: THREE.Group[] = [];
+  private readonly portalAlarmGlow: THREE.Group;
   private time = 0;
   private settings: VisualEffectSettings;
   private reducedMotion = false;
@@ -58,18 +43,22 @@ export class OperationalEffects {
     this.root.name = 'operational_effects';
     this.root.renderOrder = 8;
 
-    for (const kind of ['machine', 'magazine'] as const) {
-      const count = kind === 'machine' ? 3 : 2;
-      for (let index = 0; index < count; index += 1) {
-        this.operationMarkers.set(`${kind}:${index}`, this.createMarker());
-        this.alarmMarkers.set(`${kind}:${index}`, this.createMarker());
-      }
-    }
-    this.alarmMarkers.set('portal', this.createMarker());
-
     this.cellBoundaryGeometry.setAttribute('position', new THREE.BufferAttribute(this.cellBoundaryPositions, 3));
     this.cellBoundary.visible = false;
     this.root.add(this.cellBoundary);
+
+    for (let index = 0; index < 3; index++) {
+      const glow = this.createAlarmGlow(`machine_alarm_glow_${index + 1}`, 1.18);
+      this.machineAlarmGlows.push(glow);
+      this.root.add(glow);
+    }
+    for (let index = 0; index < 2; index++) {
+      const glow = this.createAlarmGlow(`magazine_alarm_glow_${index + 1}`, 0.82);
+      this.magazineAlarmGlows.push(glow);
+      this.root.add(glow);
+    }
+    this.portalAlarmGlow = this.createAlarmGlow('robot_alarm_glow', 0.72);
+    this.root.add(this.portalAlarmGlow);
 
     if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
       this.motionMedia = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -84,13 +73,12 @@ export class OperationalEffects {
 
   update(dt: number, activity: SceneActivity, anchors: SceneEffectAnchors): void {
     this.time += dt;
+    this.updateObjectAlarmGlows(activity, anchors);
     if (!activity.live) {
-      this.hideOperationEffects();
-      this.hideAlarmEffects();
+      this.cellBoundary.visible = false;
       return;
     }
 
-    this.updateOperationEffects(activity, anchors);
     this.updateAlarmEffects(activity, anchors);
   }
 
@@ -110,110 +98,70 @@ export class OperationalEffects {
     this.reducedMotion = event.matches;
   };
 
-  private createMarker(): GroundMarker {
-    const root = new THREE.Group();
-    const core = new THREE.Mesh(
-      new THREE.RingGeometry(0.38, 0.46, 40),
-      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }),
-    );
-    const pulse = new THREE.Mesh(
-      new THREE.RingGeometry(0.48, 0.52, 40),
-      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }),
-    );
-    core.rotation.x = -Math.PI / 2;
-    pulse.rotation.x = -Math.PI / 2;
-    root.visible = false;
-    root.add(core, pulse);
-    this.root.add(root);
-    return { root, core, pulse };
-  }
-
-  private updateOperationEffects(activity: SceneActivity, anchors: SceneEffectAnchors): void {
-    if (!this.settings.operationHighlight) {
-      this.hideOperationEffects();
-      return;
-    }
-
-    const visibleKeys = new Set<string>();
-    const target = activity.operationTarget;
-    if (target) {
-      const anchor = copyTargetAnchor(target, anchors);
-      if (anchor) {
-        const key = keyForTarget(target);
-        this.updateMarker(
-          this.operationMarkers.get(key),
-          anchor,
-          COLORS.blue,
-          1,
-          target.kind === 'machine' ? anchor.operationRadius : undefined,
-          target.kind === 'magazine' ? anchor.operation : undefined,
-        );
-        visibleKeys.add(key);
-      }
-    }
-    this.operationMarkers.forEach((marker, key) => {
-      if (!visibleKeys.has(key)) marker.root.visible = false;
-    });
-
-  }
-
   private updateAlarmEffects(activity: SceneActivity, anchors: SceneEffectAnchors): void {
     if (!this.settings.alarmBeacons) {
-      this.hideAlarmEffects();
+      // Object halos are the primary alarm indication and stay available even
+      // when the optional full-cell boundary is disabled in settings.
+      this.cellBoundary.visible = false;
       return;
     }
 
-    const visibleKeys = new Set<string>();
-    let cellAlarm = false;
-    activity.alarmTargets.forEach((target) => {
-      if (target.kind === 'cell') {
-        cellAlarm = true;
-        return;
-      }
-      const key = keyForTarget(target);
-      const anchor = target.kind === 'portal'
-        ? anchors.portal
-        : 'index' in target
-          ? copyTargetAnchor(target, anchors)
-          : null;
-      if (!anchor) return;
-      this.updateMarker(
-        this.alarmMarkers.get(key),
-        anchor,
-        COLORS.red,
-        1.25,
-        target.kind === 'machine' ? anchor.operationRadius : undefined,
-        target.kind === 'magazine' ? anchor.operation : undefined,
-      );
-      visibleKeys.add(key);
-    });
-    this.alarmMarkers.forEach((marker, key) => {
-      if (!visibleKeys.has(key)) marker.root.visible = false;
-    });
-    this.updateCellBoundary(cellAlarm, anchors.cell);
+    this.updateCellBoundary(activity.alarmTargets.some((target) => target.kind === 'cell'), anchors.cell);
   }
 
-  private updateMarker(
-    marker: GroundMarker | undefined,
-    anchor: SceneEffectAnchor,
-    color: number,
-    intensity: number,
-    outerRadius = 0.52,
-    position = anchor.ground,
-  ): void {
-    if (!marker) return;
-    marker.root.visible = true;
-    marker.root.position.copy(position);
-    marker.root.position.y += 0.015;
-    marker.root.scale.setScalar(outerRadius / 0.52);
-    marker.core.material.color.setHex(color);
-    marker.pulse.material.color.setHex(color);
-    const wave = this.reducedMotion ? 0.35 : (Math.sin(this.time * 4.6) + 1) / 2;
-    marker.core.material.opacity = 0.18 + wave * 0.18 * intensity;
-    marker.pulse.material.opacity = this.reducedMotion ? 0 : (1 - wave) * 0.36 * intensity;
-    const pulseScale = this.reducedMotion ? 1 : 1 + wave * 0.68;
-    marker.core.scale.setScalar(this.reducedMotion ? 1 : 1 + wave * 0.08);
-    marker.pulse.scale.setScalar(pulseScale);
+  private createAlarmGlow(name: string, diameter: number): THREE.Group {
+    const root = new THREE.Group();
+    root.name = name;
+    root.visible = false;
+    // Two crossed planes keep the same red-button halo readable from front,
+    // iso and side camera presets. Alarm intensity is intentionally lower than
+    // the illuminated red pushbutton (0.48).
+    for (const rotationY of [0, Math.PI / 2]) {
+      const glow = createButtonGlow(0xff3020, diameter);
+      glow.material.side = THREE.DoubleSide;
+      glow.material.depthTest = false;
+      glow.material.uniforms.strength.value = 0;
+      // The same halo shader is used by the buttons.  Equipment is viewed
+      // from farther away, so make the ring a little wider without making it
+      // brighter than a lit button.
+      glow.scale.setScalar(1.35);
+      glow.rotation.y = rotationY;
+      glow.renderOrder = 10;
+      root.add(glow);
+    }
+    return root;
+  }
+
+  private setObjectAlarmGlow(root: THREE.Group, position: THREE.Vector3, active: boolean, pulse: number): void {
+    root.position.copy(position);
+    root.visible = active;
+    // Keep the equipment alarm glow below the button glow (0.48), but make
+    // it readable in the wide cell view: 0.10..0.20.
+    const strength = active ? 0.10 + pulse * 0.10 : 0;
+    root.children.forEach((child) => {
+      if (!(child instanceof THREE.Mesh) || !(child.material instanceof THREE.ShaderMaterial)) return;
+      child.material.uniforms.strength.value = strength;
+    });
+  }
+
+  private updateObjectAlarmGlows(activity: SceneActivity, anchors: SceneEffectAnchors): void {
+    const pulse = this.reducedMotion ? 0.45 : (Math.sin(this.time * 3.2) + 1) / 2;
+    this.machineAlarmGlows.forEach((glow, index) => {
+      const anchor = anchors.machines[index];
+      const active = activity.alarmTargets.some((target) => target.kind === 'machine' && target.index === index);
+      if (anchor) this.setObjectAlarmGlow(glow, anchor.service, active, pulse);
+    });
+    this.magazineAlarmGlows.forEach((glow, index) => {
+      const anchor = anchors.magazines[index];
+      const active = activity.alarmTargets.some((target) => target.kind === 'magazine' && target.index === index);
+      if (anchor) this.setObjectAlarmGlow(glow, anchor.service, active, pulse);
+    });
+    this.setObjectAlarmGlow(
+      this.portalAlarmGlow,
+      anchors.portal.service,
+      activity.alarmTargets.some((target) => target.kind === 'portal'),
+      pulse,
+    );
   }
 
   private updateCellBoundary(visible: boolean, cell: SceneEffectAnchors['cell']): void {
@@ -244,15 +192,6 @@ export class OperationalEffects {
     (this.cellBoundaryGeometry.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
     const wave = this.reducedMotion ? 0.45 : (Math.sin(this.time * 4.6) + 1) / 2;
     this.cellBoundaryMaterial.opacity = 0.32 + wave * 0.42;
-  }
-
-  private hideOperationEffects(): void {
-    this.operationMarkers.forEach((marker) => { marker.root.visible = false; });
-  }
-
-  private hideAlarmEffects(): void {
-    this.alarmMarkers.forEach((marker) => { marker.root.visible = false; });
-    this.cellBoundary.visible = false;
   }
 
 }

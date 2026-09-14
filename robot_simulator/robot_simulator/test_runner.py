@@ -21,6 +21,7 @@ from .control_api import (
 from .test_scenarios import (
     expected_error_owner,
     expected_first_decision,
+    general_scenarios,
     generated_scenarios,
     regression_scenarios,
     smoke_scenarios,
@@ -51,6 +52,8 @@ class GatewayRunner:
         self._cleanup_active = False
         self.speed_profile = "realtime"
         self.environment = "simulation"
+        self.robot_interface = "softmotion"
+        self.simulation_factor = 1
         self._hmi_heartbeat = 0
         self._initial_modbus_mode = False
         self._initial_simulator_mode = RobotMode.STOPPED
@@ -60,6 +63,7 @@ class GatewayRunner:
         self._environment_changed = False
         self._speed_changed = False
         self._plc_control_started = False
+        self._abort_requested = False
 
     async def send(self, socket: Any, payload: dict[str, Any]) -> None:
         await socket.send(json.dumps(payload, ensure_ascii=False))
@@ -83,6 +87,7 @@ class GatewayRunner:
                 remaining = max(0.1, deadline - time.monotonic())
                 message = json.loads(await asyncio.wait_for(socket.recv(), timeout=remaining))
                 if message.get("type") == "test-abort-requested":
+                    self._abort_requested = True
                     raise RunAborted("test run was aborted by the operator")
                 if message.get("type") == "snapshot":
                     self.values.update(message.get("values", {}))
@@ -209,6 +214,8 @@ class GatewayRunner:
             return config["scenarios"]
         if suite == "regression":
             return regression_scenarios()
+        if suite == "general":
+            return general_scenarios()
         if suite == "generated":
             return generated_scenarios(int(config.get("seed", 1)), int(config.get("count", 100)))
         return smoke_scenarios()
@@ -251,12 +258,19 @@ class GatewayRunner:
 
     async def configure_run(self, socket: Any, config: dict[str, Any]) -> None:
         robot_interface = str(config.get("robotInterface", "softmotion")).lower()
+        self.robot_interface = robot_interface
         self.environment = str(config.get("environment", "simulation")).lower()
         self.speed_profile = str(config.get("speedProfile", "realtime")).lower()
+        default_factor = 25 if self.speed_profile == "fast" else 1
+        self.simulation_factor = max(
+            1, min(100, int(config.get("simulationTimeFactor", default_factor))),
+        )
         if self.environment == "sc500_bench" and robot_interface != "sc500-modbus":
             raise ValueError("SC-500 bench requires the sc500-modbus interface")
         if self.environment == "sc500_bench" and self.speed_profile == "fast":
             raise ValueError("FAST is forbidden on the SC-500 bench")
+        if str(config.get("suite", "smoke")).lower() == "general" and self.environment != "simulation":
+            raise ValueError("General tests with automatic magazine reload are simulation-only")
 
         if robot_interface == "python-modbus":
             await self.attach_python_simulator(self.speed_profile == "fast")
@@ -303,7 +317,23 @@ class GatewayRunner:
             )
             self._speed_changed = True
 
-        if interface_code == 0:
+        if robot_interface == "softmotion" and int(
+            self.values.get("uiSimulationTimeFactor", 1)
+        ) != self.simulation_factor:
+            await self.command(
+                socket, "simulation.accelerationFactor", value=self.simulation_factor,
+            )
+            await self.wait_value(
+                socket,
+                lambda values: int(values.get("uiSimulationTimeFactor", 0))
+                == self.simulation_factor,
+                10.0,
+                "PLC did not remember the requested simulation factor",
+            )
+
+        if interface_code == 0 and not bool(
+            self.values.get("stRobotHmiStatus.xDrivesPowered", False)
+        ):
             await self.command(socket, "robot.enableDrives")
             await self.wait_value(
                 socket, lambda values: bool(values.get("stRobotHmiStatus.xDrivesPowered", False)),
@@ -323,6 +353,17 @@ class GatewayRunner:
         }[action]
 
     async def ensure_manual_control(self, socket: Any) -> None:
+        # Не спамить Manual в работающую ячейку: PLC штатно отклоняет такой
+        # запрос и на каждый фронт создаёт предупреждение. Сначала завершаем
+        # активный цикл, и только потом меняем режим.
+        if bool(self.values.get("stCellStatus.xRunning", False)):
+            await self.stop_cell_if_running(socket)
+            await self.wait_value(
+                socket,
+                lambda values: not bool(values.get("stCellStatus.xRunning", False)),
+                45.0,
+                "cell did not stop before entering manual mode",
+            )
         await self.write_level_until_acknowledged(
             socket,
             "cell.manual",
@@ -342,7 +383,39 @@ class GatewayRunner:
             "manual test control is not ready (HMI heartbeat, manual mode or robot idle)",
         )
 
-    async def begin_robot_action(self, socket: Any, action: int, *, point: int = 0) -> None:
+    async def ensure_softmotion_drives(self, socket: Any) -> None:
+        """Restore drives that a failed SoftMotion case may have powered down."""
+        if self.robot_interface != "softmotion" or bool(
+            self.values.get("xModbusMode", False)
+        ):
+            return
+        if not bool(self.values.get("stRobotHmiStatus.xDrivesPowered", False)):
+            await self.ensure_manual_control(socket)
+            await self.wait_value(
+                socket,
+                lambda values: bool(
+                    values.get("stRobotHmiStatus.xDrivesEnableAllowed", False)
+                ),
+                20.0,
+                "PLC did not allow restoring SoftMotion drives after test recovery",
+            )
+            await self.command(socket, "robot.enableDrives")
+        await self.wait_value(
+            socket,
+            lambda values: bool(values.get("stRobotHmiStatus.xDrivesPowered", False))
+            and bool(values.get("stCellStatus.xDrivesReady", False)),
+            30.0,
+            "SoftMotion drives did not return to ready after test recovery",
+        )
+
+    async def begin_robot_action(
+        self,
+        socket: Any,
+        action: int,
+        *,
+        point: int = 0,
+        completion_predicate: Callable[[dict[str, Any]], bool] | None = None,
+    ) -> None:
         await self.ensure_manual_control(socket)
         await self.wait_value(
             socket,
@@ -364,6 +437,10 @@ class GatewayRunner:
             socket,
             lambda values: bool(values.get("stRobotStatus.xBusy", False))
             or bool(values.get("stRobotHmiStatus.xCommandBusy", False))
+            # В FAST пневматика успевает полностью отработать между двумя
+            # OPC UA снимками. Конечный feedback в таком случае надёжнее
+            # пропущенного промежуточного Busy.
+            or (completion_predicate is not None and completion_predicate(values))
             or (
                 bool(values.get("xModbusMode", False))
                 and int(values.get("stRobotModbusStatus.uiAckSeq", 0)) != previous_ack
@@ -385,7 +462,12 @@ class GatewayRunner:
     ) -> None:
         if predicate(self.values):
             return
-        await self.begin_robot_action(socket, action, point=point)
+        await self.begin_robot_action(
+            socket,
+            action,
+            point=point,
+            completion_predicate=predicate,
+        )
         await self.wait_value(socket, predicate, 45.0, f"robot action {action} did not reach feedback")
         await self.wait_value(
             socket,
@@ -576,7 +658,7 @@ class GatewayRunner:
         )
 
     async def start_automatic_cycle(self, socket: Any) -> None:
-        """Never pulse Start until the PLC itself reports that Start is allowed."""
+        """Start only when allowed and wait until PLC runs or asks a prestart question."""
         await self.enter_automatic_mode(socket)
         try:
             await self.wait_value(
@@ -589,6 +671,15 @@ class GatewayRunner:
             blockers = ", ".join(self.start_blockers(self.values)) or "unknown"
             raise AssertionError(f"PLC start is blocked by: {blockers}") from error
         await self.command(socket, "cell.start")
+        # Без этого ACK быстрый runner мог принять старую observability прошлого
+        # кейса, объявить PASS и уйти в recovery раньше, чем PLC увидел Start.
+        await self.wait_value(
+            socket,
+            lambda values: bool(values.get("stCellStatus.xRunning", False))
+            or bool(values.get("stCellStatus.xOperatorPromptActive", False)),
+            10.0,
+            "PLC did not acknowledge automatic cycle start",
+        )
 
     async def set_test_speed_profile(
         self,
@@ -605,12 +696,6 @@ class GatewayRunner:
             5.0,
             "previous test speed pulse did not return to zero",
         )
-        await self.wait_value(
-            socket,
-            lambda values: bool(values.get("xTestEnvironmentChangeAllowed", False)),
-            timeout,
-            "PLC equipment did not become idle for the test speed change",
-        )
         await self.command(socket, "test.speed.set", value=profile)
         await self.wait_value(
             socket,
@@ -624,6 +709,47 @@ class GatewayRunner:
             5.0,
             "test speed pulse did not return to zero",
         )
+
+    async def wait_softmotion_acceleration(
+        self, socket: Any, expected_factor: int, timeout: float,
+    ) -> None:
+        await self.wait_value(
+            socket,
+            lambda values: bool(values.get("xSimulationAccelerationError", False))
+            or (
+                not bool(values.get("xSimulationAccelerationBusy", False))
+                and bool(values.get("xSimulationAccelerationActive", False))
+                == (expected_factor > 1)
+                and int(values.get("uiSimulationTimeFactorApplied", 0)) == expected_factor
+            ),
+            timeout,
+            "SoftMotion dynamic limits were not applied before the test",
+        )
+        if bool(self.values.get("xSimulationAccelerationError", False)):
+            error_id = int(self.values.get("udiSimulationAccelerationErrorId", 0))
+            raise RuntimeError(f"PLC could not apply SoftMotion dynamic limits: {error_id:#x}")
+
+    async def restore_test_environment(self, socket: Any) -> None:
+        """Restore the pre-run environment only after all equipment becomes stable."""
+        await self.wait_value(
+            socket,
+            lambda values: bool(values.get("xTestEnvironmentChangeAllowed", False)),
+            90.0,
+            "PLC did not allow restoring the initial test environment",
+        )
+        await self.command(socket, "test.environment.set", value=self._initial_environment)
+        await self.wait_value(
+            socket,
+            lambda values: int(values.get("uiTestEnvironmentApplied", -1))
+            == self._initial_environment,
+            15.0,
+            "test environment did not return to its initial value",
+        )
+        if (
+            not bool(self.values.get("xModbusMode", False))
+            and self._initial_environment != 1
+        ):
+            await self.wait_softmotion_acceleration(socket, 1, 90.0)
 
     async def answer_operator_prompts(self, socket: Any, initial_state: dict[str, Any]) -> None:
         """Answer only the active PLC-owned prestart prompt, then wait for its acknowledgement."""
@@ -702,9 +828,13 @@ class GatewayRunner:
     @staticmethod
     def initial_inventory(initial_state: dict[str, Any]) -> dict[int, int]:
         counts = {1: 0, 2: 0, 3: 0}
-        for slot in initial_state["slots"]:
-            if int(slot["content"]):
-                counts[int(slot["productType"])] += 1
+        magazines = initial_state.get("magazines")
+        if not isinstance(magazines, list):
+            magazines = [{"slots": initial_state.get("slots", [])}]
+        for magazine in magazines:
+            for slot in magazine["slots"]:
+                if int(slot["content"]):
+                    counts[int(slot["productType"])] += 1
         for machine in initial_state["machines"]:
             if int(machine["state"]) in (2, 3):
                 counts[int(machine["productType"])] += 1
@@ -717,13 +847,12 @@ class GatewayRunner:
     def observed_inventory(values: dict[str, Any]) -> dict[int, int]:
         counts = {1: 0, 2: 0, 3: 0}
         for magazine in range(1, 3):
-            for zone, slot_count in ((1, 120), (2, 120), (3, 60)):
-                for index in range(1, slot_count + 1):
-                    root = f"astMagazineInventory[{magazine}].aZone{zone}[{index}]"
-                    if bool(values.get(f"{root}.xInPosition", False)):
-                        product_type = int(values.get(f"{root}.uiProductType", 0))
-                        if product_type in counts:
-                            counts[product_type] += 1
+            for index in range(1, 121):
+                root = f"astMagazineInventory[{magazine}].aSlots[{index}]"
+                if bool(values.get(f"{root}.xInPosition", False)):
+                    product_type = int(values.get(f"{root}.uiProductType", 0))
+                    if product_type in counts:
+                        counts[product_type] += 1
         for index in range(1, 4):
             if int(values.get(f"astMachineStatus[{index}].ePartType", 0)) != 0:
                 product_type = int(values.get(f"stMultiType.Config.auiMachineType[{index}]", 0))
@@ -738,6 +867,398 @@ class GatewayRunner:
             if product_type in counts:
                 counts[product_type] += 1
         return counts
+
+    @staticmethod
+    def magazine_inventory_counts(values: dict[str, Any], magazine: int) -> tuple[int, int, int]:
+        """Return BLANK, DETAIL and invalid occupied slot counts for one magazine."""
+        blanks = 0
+        details = 0
+        invalid = 0
+        for index in range(1, 121):
+            root = f"astMagazineInventory[{magazine}].aSlots[{index}]"
+            if not bool(values.get(f"{root}.xInPosition", False)):
+                continue
+            content = int(values.get(f"{root}.eDetailType", 0))
+            product_type = int(values.get(f"{root}.uiProductType", 0))
+            if content == 1 and product_type == 1:
+                blanks += 1
+            elif content == 2 and product_type == 1:
+                details += 1
+            else:
+                invalid += 1
+        return blanks, details, invalid
+
+    @classmethod
+    def general_progress_signature(cls, values: dict[str, Any]) -> tuple[Any, ...]:
+        """Only physical/technological changes reset the long-cycle stall watchdog."""
+        return (
+            int(values.get("stCellStatus.uiActiveMagazine", 0)),
+            int(values.get("astMagazineStatus[1].udiProducedPartsTotal", 0)),
+            int(values.get("astMagazineStatus[2].udiProducedPartsTotal", 0)),
+            cls.magazine_inventory_counts(values, 1),
+            cls.magazine_inventory_counts(values, 2),
+            bool(values.get("stRobotStatus.xGripper1Closed", False)),
+            bool(values.get("stRobotStatus.xGripper2Closed", False)),
+            *(
+                item
+                for index in range(1, 4)
+                for item in (
+                    int(values.get(f"astMachineStatus[{index}].ePartType", 0)),
+                    bool(values.get(f"astMachineStatus[{index}].xProcessing", False)),
+                )
+            ),
+        )
+
+    @staticmethod
+    def general_batch_state_valid(
+        values: dict[str, Any],
+        magazine: int,
+        next_magazine: int,
+        produced_at_start: int,
+        target: int,
+    ) -> bool:
+        """Allow the PLC publication scan between magazine handover and Finished."""
+        produced = int(values.get(
+            f"astMagazineStatus[{magazine}].udiProducedPartsTotal", 0,
+        )) - produced_at_start
+        active_magazine = int(values.get("stCellStatus.uiActiveMagazine", 0))
+        return (
+            0 <= produced <= target
+            and active_magazine in (magazine, next_magazine)
+            and (active_magazine == magazine or produced == target)
+        )
+
+    async def wait_general_condition(
+        self,
+        socket: Any,
+        predicate: Callable[[dict[str, Any]], bool],
+        label: str,
+        *,
+        warning_baseline: int,
+        allow_stopped: bool = False,
+        invariant: Callable[[dict[str, Any]], bool] | None = None,
+    ) -> None:
+        """Wait for a long production phase while failing on a real lack of progress."""
+        if invariant is not None and not invariant(self.values):
+            raise AssertionError(f"{label}: invalid initial phase state")
+        if predicate(self.values):
+            return
+        factor = max(1, int(self.simulation_factor))
+        stall_timeout = max(90.0, 900.0 / factor)
+        phase_timeout = max(1800.0, 14400.0 / factor)
+        phase_deadline = time.monotonic() + phase_timeout
+        signature = self.general_progress_signature(self.values)
+
+        while time.monotonic() < phase_deadline:
+            def changed_or_terminal(_message: dict[str, Any], values: dict[str, Any]) -> bool:
+                return (
+                    predicate(values)
+                    or self.general_progress_signature(values) != signature
+                    or bool(values.get("xGlobalError", False))
+                    or bool(values.get("stCellStatus.xError", False))
+                    or int(values.get("stTestObservability.uiErrorSource", 0)) != 0
+                    or int(values.get("stAlarmStatus.uiActiveAlarmCount", 0)) != 0
+                    or int(values.get("stAlarmStatus.uiActiveWarningCount", 0)) > warning_baseline
+                    or (not allow_stopped and not bool(values.get("stCellStatus.xRunning", False)))
+                    or (invariant is not None and not invariant(values))
+                )
+
+            remaining = phase_deadline - time.monotonic()
+            await self.wait_for(
+                socket,
+                changed_or_terminal,
+                min(stall_timeout, remaining),
+                f"{label}: no technological progress",
+            )
+            if bool(self.values.get("xGlobalError", False)) or bool(
+                self.values.get("stCellStatus.xError", False)
+            ) or int(self.values.get("stTestObservability.uiErrorSource", 0)) != 0 or int(
+                self.values.get("stAlarmStatus.uiActiveAlarmCount", 0)
+            ) != 0:
+                raise AssertionError(
+                    f"{label}: PLC error source="
+                    f"{self.values.get('stTestObservability.uiErrorSource', 0)} code="
+                    f"{self.values.get('stTestObservability.dwErrorCode', 0)}"
+                )
+            warnings = int(self.values.get("stAlarmStatus.uiActiveWarningCount", 0))
+            if warnings > warning_baseline:
+                raise AssertionError(f"{label}: PLC created an unexpected warning ({warnings})")
+            if invariant is not None and not invariant(self.values):
+                raise AssertionError(f"{label}: magazine sequence or batch counter is invalid")
+            if predicate(self.values):
+                return
+            if not allow_stopped and not bool(self.values.get("stCellStatus.xRunning", False)):
+                raise AssertionError(f"{label}: automatic cycle stopped before the batch completed")
+            signature = self.general_progress_signature(self.values)
+        raise TimeoutError(f"{label}: phase timeout")
+
+    async def reload_general_magazine(
+        self,
+        socket: Any,
+        magazine: int,
+        *,
+        active_magazine: int,
+        warning_baseline: int,
+    ) -> None:
+        """Emulate operator Clear -> Fill -> Enable without stopping the running cell."""
+        root = f"astMagazineStatus[{magazine}]"
+        if int(self.values.get("stCellStatus.uiActiveMagazine", 0)) != active_magazine:
+            raise AssertionError(
+                f"magazine {magazine} reload started outside magazine {active_magazine} processing"
+            )
+        await self.wait_general_condition(
+            socket,
+            lambda values: bool(values.get(f"{root}.xFinished", False))
+            and bool(values.get(f"{root}.xClearAllowed", False)),
+            f"magazine {magazine} did not become editable",
+            warning_baseline=warning_baseline,
+        )
+        if self.magazine_inventory_counts(self.values, magazine) != (0, 120, 0):
+            raise AssertionError(
+                f"magazine {magazine} is not a completed 120-detail batch before reload: "
+                f"{self.magazine_inventory_counts(self.values, magazine)}"
+            )
+
+        await self.command(socket, "magazine.clear", magazine=magazine)
+        await self.wait_value(
+            socket,
+            lambda values: self.magazine_inventory_counts(values, magazine) == (0, 0, 0),
+            15.0,
+            f"magazine {magazine} did not clear",
+        )
+        await self.wait_value(
+            socket,
+            lambda values: bool(values.get(f"{root}.xFillAllowed", False)),
+            10.0,
+            f"magazine {magazine} does not allow filling",
+        )
+        await self.command(socket, "magazine.fill", magazine=magazine)
+        await self.wait_value(
+            socket,
+            lambda values: self.magazine_inventory_counts(values, magazine) == (120, 0, 0),
+            15.0,
+            f"magazine {magazine} did not fill with 120 type-1 blanks",
+        )
+        await self.wait_value(
+            socket,
+            lambda values: bool(values.get(f"{root}.xEnableSequenceAllowed", False)),
+            20.0,
+            f"magazine {magazine} does not allow Enable after reload",
+        )
+        await self.command(socket, "magazine.enable", magazine=magazine)
+        await self.wait_value(
+            socket,
+            lambda values: bool(values.get(f"{root}.xEnabled", False))
+            and bool(values.get(f"{root}.xReady", False))
+            and not bool(values.get(f"{root}.xFinished", True)),
+            20.0,
+            f"magazine {magazine} did not return to automatic service",
+        )
+        if int(self.values.get("stCellStatus.uiActiveMagazine", 0)) != active_magazine:
+            raise AssertionError(
+                f"cell left magazine {active_magazine} while magazine {magazine} was reloaded"
+            )
+
+    async def prepare_general_cycle(self, socket: Any) -> None:
+        """Make the first magazine deterministic without changing the test inventory."""
+        if int(self.values.get("stAlarmStatus.uiActiveWarningCount", 0)):
+            await self.command(socket, "alarms.resetWarnings")
+            await self.wait_value(
+                socket,
+                lambda values: int(values.get("stAlarmStatus.uiActiveWarningCount", 0)) == 0,
+                10.0,
+                "old PLC warnings did not reset before the general test",
+            )
+
+        if int(self.values.get("stCellStatus.uiActiveMagazine", 0)) != 1:
+            if bool(self.values.get("astMagazineStatus[2].xEnabled", False)):
+                await self.command(socket, "magazine.disable", magazine=2)
+                await self.wait_value(
+                    socket,
+                    lambda values: not bool(values.get("astMagazineStatus[2].xEnabled", True))
+                    and int(values.get("stCellStatus.uiActiveMagazine", 0)) == 1,
+                    20.0,
+                    "PLC did not select magazine 1 for the general test",
+                )
+            else:
+                await self.wait_value(
+                    socket,
+                    lambda values: int(values.get("stCellStatus.uiActiveMagazine", 0)) == 1,
+                    10.0,
+                    "PLC did not select available magazine 1 for the general test",
+                )
+            await self.wait_value(
+                socket,
+                lambda values: bool(values.get(
+                    "astMagazineStatus[2].xEnableSequenceAllowed", False,
+                )),
+                20.0,
+                "magazine 2 could not be re-enabled before the general test",
+            )
+            await self.command(socket, "magazine.enable", magazine=2)
+            await self.wait_value(
+                socket,
+                lambda values: bool(values.get("astMagazineStatus[2].xEnabled", False))
+                and bool(values.get("astMagazineStatus[2].xReady", False))
+                and int(values.get("stCellStatus.uiActiveMagazine", 0)) == 1,
+                20.0,
+                "magazine 2 did not become ready while magazine 1 kept priority",
+            )
+
+        if not (
+            bool(self.values.get("astMagazineStatus[1].xEnabled", False))
+            and bool(self.values.get("astMagazineStatus[1].xReady", False))
+            and bool(self.values.get("astMagazineStatus[2].xEnabled", False))
+            and bool(self.values.get("astMagazineStatus[2].xReady", False))
+        ):
+            raise AssertionError("both magazines are not ready before the general test")
+
+    async def run_general_cycle(
+        self,
+        socket: Any,
+        case: dict[str, Any],
+        index: int,
+        total: int,
+        initial_counts: dict[int, int],
+    ) -> None:
+        batch_size = int(case.get("expectations", {}).get("batchSize", 120))
+        initial_loaded = int(
+            case.get("expectations", {}).get("initialLoadedMachineCount", 0)
+        )
+        produced_at_start = {
+            magazine: int(
+                self.values.get(f"astMagazineStatus[{magazine}].udiProducedPartsTotal", 0)
+            )
+            for magazine in (1, 2)
+        }
+        warning_baseline = 0
+        warning_count = int(self.values.get("stAlarmStatus.uiActiveWarningCount", 0))
+        if warning_count:
+            raise AssertionError(
+                f"general test started with {warning_count} active PLC warnings"
+            )
+
+        async def wait_batch(
+            magazine: int,
+            batch_number: int,
+            next_magazine: int,
+            stage: str,
+        ) -> None:
+            target = batch_size * batch_number
+            await self.send(socket, {
+                "type": "test-progress", "caseIndex": index, "caseCount": total,
+                "stage": stage, "name": case["name"],
+            })
+            await self.wait_general_condition(
+                socket,
+                lambda values: (
+                    int(values.get(
+                        f"astMagazineStatus[{magazine}].udiProducedPartsTotal", 0,
+                    )) - produced_at_start[magazine] == target
+                    and bool(values.get(f"astMagazineStatus[{magazine}].xFinished", False))
+                    and bool(values.get(f"astMagazineStatus[{magazine}].xEditAllowed", False))
+                    and int(values.get("stCellStatus.uiActiveMagazine", 0)) == next_magazine
+                ),
+                f"magazine {magazine} batch {batch_number}",
+                warning_baseline=warning_baseline,
+                invariant=lambda values: self.general_batch_state_valid(
+                    values,
+                    magazine,
+                    next_magazine,
+                    produced_at_start[magazine],
+                    target,
+                ),
+            )
+            if self.magazine_inventory_counts(self.values, magazine) != (0, batch_size, 0):
+                raise AssertionError(
+                    f"magazine {magazine} batch {batch_number} finished with invalid inventory: "
+                    f"{self.magazine_inventory_counts(self.values, magazine)}"
+                )
+
+        await wait_batch(1, 1, 2, "general-m1-a")
+        await self.send(socket, {
+            "type": "test-progress", "caseIndex": index, "caseCount": total,
+            "stage": "general-reload-m1", "name": case["name"],
+        })
+        await self.reload_general_magazine(
+            socket, 1, active_magazine=2, warning_baseline=warning_baseline,
+        )
+
+        await wait_batch(2, 1, 1, "general-m2-a")
+        await self.send(socket, {
+            "type": "test-progress", "caseIndex": index, "caseCount": total,
+            "stage": "general-reload-m2", "name": case["name"],
+        })
+        await self.reload_general_magazine(
+            socket, 2, active_magazine=1, warning_baseline=warning_baseline,
+        )
+
+        await wait_batch(1, 2, 2, "general-m1-b")
+        await self.send(socket, {
+            "type": "test-progress", "caseIndex": index, "caseCount": total,
+            "stage": "general-m2-b", "name": case["name"],
+        })
+        await self.wait_general_condition(
+            socket,
+            lambda values: (
+                int(values.get("astMagazineStatus[2].udiProducedPartsTotal", 0))
+                - produced_at_start[2] == batch_size * 2
+                and bool(values.get("astMagazineStatus[2].xFinished", False))
+                and not bool(values.get("stCellStatus.xRunning", True))
+                and not bool(values.get("stRobotStatus.xGripper1Closed", True))
+                and not bool(values.get("stRobotStatus.xGripper2Closed", True))
+                and all(
+                    not bool(values.get(f"astMachineStatus[{machine}].xProcessing", False))
+                    for machine in range(1, 4)
+                )
+            ),
+            "magazine 2 batch 2 and final cell state",
+            warning_baseline=warning_baseline,
+            allow_stopped=True,
+            invariant=lambda values: (
+                int(values.get("stCellStatus.uiActiveMagazine", 0)) in (0, 2)
+                and (
+                    int(values.get("stCellStatus.uiActiveMagazine", 0)) == 2
+                    or (
+                        int(values.get("astMagazineStatus[2].udiProducedPartsTotal", 0))
+                        - produced_at_start[2] == batch_size * 2
+                        and bool(values.get("astMagazineStatus[2].xFinished", False))
+                    )
+                )
+            ),
+        )
+
+        for magazine in (1, 2):
+            if self.magazine_inventory_counts(self.values, magazine) != (0, batch_size, 0):
+                raise AssertionError(
+                    f"final magazine {magazine} inventory is invalid: "
+                    f"{self.magazine_inventory_counts(self.values, magazine)}"
+                )
+            produced = int(
+                self.values.get(f"astMagazineStatus[{magazine}].udiProducedPartsTotal", 0)
+            ) - produced_at_start[magazine]
+            if produced != batch_size * 2:
+                raise AssertionError(
+                    f"magazine {magazine} produced {produced}, expected {batch_size * 2}"
+                )
+        loaded_part_types = [
+            int(self.values.get(f"astMachineStatus[{machine}].ePartType", 0))
+            for machine in range(1, 4)
+            if int(self.values.get(f"astMachineStatus[{machine}].ePartType", 0)) != 0
+        ]
+        if len(loaded_part_types) != initial_loaded or any(
+            part_type != 1 for part_type in loaded_part_types
+        ):
+            raise AssertionError(
+                f"final machine WIP is invalid: types={loaded_part_types}, "
+                f"expected {initial_loaded} finished details"
+            )
+        observed_counts = self.observed_inventory(self.values)
+        if observed_counts != initial_counts:
+            raise AssertionError(
+                f"general-cycle inventory balance changed: initial={initial_counts}, "
+                f"observed={observed_counts}"
+            )
 
     async def apply_scenario(self, socket: Any, case: dict[str, Any]) -> bool:
         expected_rejection = bool(case.get("expectations", {}).get("applyRejected"))
@@ -772,6 +1293,7 @@ class GatewayRunner:
             )
 
             previous_load = int(self.values.get("stTestScenario.udiLoadSeq", 0))
+            requested_factor = int(self.values.get("uiSimulationTimeFactor", 1))
             await self.command(socket, "test.scenario.apply", scenario=case["initialState"])
             try:
                 await self.wait_for(
@@ -791,6 +1313,13 @@ class GatewayRunner:
                 raise
 
             result = int(self.values.get("uiTestScenarioResult", 255))
+            if (
+                result == 0
+                and self.robot_interface == "softmotion"
+                and self.environment == "simulation"
+            ):
+                expected_factor = requested_factor if self.speed_profile == "fast" else 1
+                await self.wait_softmotion_acceleration(socket, expected_factor, 90.0)
             await self.wait_value(
                 socket,
                 lambda values: not bool(values.get("xTestScenarioApply", False)),
@@ -889,6 +1418,7 @@ class GatewayRunner:
                 45.0,
                 "previous test case did not return to a clean idle state",
             )
+            await self.ensure_softmotion_drives(socket)
             await self.ensure_safety_home(socket)
             await self.wait_value(
                 socket,
@@ -944,6 +1474,8 @@ class GatewayRunner:
         )
         if expected == "robot-error-reset":
             await self.exercise_robot_error_reset(socket)
+        if case.get("expectations", {}).get("testKind") == "general-four-batches":
+            await self.prepare_general_cycle(socket)
 
         await self.send(socket, {
             "type": "test-progress", "caseIndex": index, "caseCount": total,
@@ -986,6 +1518,12 @@ class GatewayRunner:
         has_initial_payload = any(int(item["content"]) for item in case["initialState"]["grippers"])
         if has_initial_payload:
             await self.answer_operator_prompts(socket, case["initialState"])
+        await self.wait_value(
+            socket,
+            lambda values: bool(values.get("stCellStatus.xRunning", False)),
+            15.0,
+            "PLC did not enter automatic cycle after prestart confirmation",
+        )
         if expected == "operator-type-choice":
             payload_type = int(case["initialState"]["grippers"][0]["productType"])
             expected_machine = next(
@@ -1020,10 +1558,17 @@ class GatewayRunner:
                     f"operator decision changed inventory: initial={initial_counts}, observed={observed_counts}"
                 )
             return
+        expected_magazine = int(case.get("expectations", {}).get("expectedMagazine", 0))
         await self.wait_value(
-            socket, lambda values: self.decision_matches(expected, values),
+            socket,
+            lambda values: bool(values.get("stCellStatus.xRunning", False))
+            and self.decision_matches(expected, values)
+            and (
+                expected_magazine == 0
+                or int(values.get("stTestObservability.uiActiveMagazine", 0)) == expected_magazine
+            ),
             120.0 if self.speed_profile == "realtime" else 40.0,
-            f"unexpected first PLC decision; expected {expected}",
+            f"unexpected first PLC decision; expected {expected}, magazine={expected_magazine or 'any'}",
         )
 
         if expected == "safe-stop":
@@ -1032,6 +1577,8 @@ class GatewayRunner:
                 socket, lambda values: not bool(values.get("stCellStatus.xRunning", True)),
                 45.0, "safe stop did not finish",
             )
+        elif case.get("expectations", {}).get("testKind") == "general-four-batches":
+            await self.run_general_cycle(socket, case, index, total, initial_counts)
         elif bool(case.get("expectations", {}).get("fullCycle", True)):
             await self.wait_value(
                 socket, lambda values: not bool(values.get("stCellStatus.xRunning", True)),
@@ -1057,6 +1604,7 @@ class GatewayRunner:
     async def cleanup_run(self, socket: Any) -> None:
         self._cleanup_active = True
         errors: list[str] = []
+        aborted = bool(getattr(self, "_abort_requested", False))
 
         async def cleanup_step(label: str, operation: Any) -> None:
             try:
@@ -1064,8 +1612,15 @@ class GatewayRunner:
             except Exception as error:
                 errors.append(f"{label}: {error}")
 
+        if aborted:
+            await cleanup_step("test abort", self.command(socket, "test.abort", value=True))
+
         if not self._plc_control_started:
             try:
+                if aborted:
+                    await cleanup_step(
+                        "test abort release", self.command(socket, "test.abort", value=False),
+                    )
                 await cleanup_step("test session", self.command(socket, "test.session", value=False))
             finally:
                 await self.release_python_simulator()
@@ -1090,7 +1645,8 @@ class GatewayRunner:
                     socket, lambda values: not bool(values.get("stRobotStatus.xBusy", False)),
                     30.0, "robot did not become idle during cleanup",
                 ))
-                await cleanup_step("robot HOME_SAFETY", self.ensure_safety_home(socket))
+                if not aborted:
+                    await cleanup_step("robot HOME_SAFETY", self.ensure_safety_home(socket))
                 simulator_target_mode = (
                     RobotMode.STOPPED if self._interface_changed else self._initial_simulator_mode
                 )
@@ -1098,7 +1654,14 @@ class GatewayRunner:
                     "simulator mode",
                     asyncio.to_thread(self.simulator_control.set_mode, simulator_target_mode),
                 )
-            if self._speed_changed:
+            if self._environment_changed:
+                await cleanup_step(
+                    "test environment",
+                    self.restore_test_environment(socket),
+                )
+            elif self._speed_changed:
+                # Changing the environment already resets the PLC speed profile
+                # to REALTIME. A separate request in NORMAL would be rejected.
                 await cleanup_step(
                     "speed profile",
                     self.set_test_speed_profile(
@@ -1108,17 +1671,6 @@ class GatewayRunner:
                         label="test speed profile did not return to its initial value",
                     ),
                 )
-            if self._environment_changed:
-                await cleanup_step(
-                    "test environment",
-                    self.command(socket, "test.environment.set", value=self._initial_environment),
-                )
-                await cleanup_step("environment confirmation", self.wait_value(
-                    socket,
-                    lambda values: int(values.get("uiTestEnvironmentApplied", -1)) == self._initial_environment,
-                    15.0,
-                    "test environment did not return to its initial value",
-                ))
             if self._interface_changed:
                 initial_mode = 1 if self._initial_modbus_mode else 0
                 mode_name = "Modbus" if initial_mode else "SoftMotion"
@@ -1133,6 +1685,10 @@ class GatewayRunner:
                 ))
         finally:
             try:
+                if aborted:
+                    await cleanup_step(
+                        "test abort release", self.command(socket, "test.abort", value=False),
+                    )
                 await cleanup_step("test session", self.command(socket, "test.session", value=False))
             finally:
                 await self.release_python_simulator()
@@ -1155,12 +1711,16 @@ class GatewayRunner:
             )
             config = hello["config"]
             cases = self.suite(config)
+            fail_fast = str(config.get("suite", "smoke")).lower() == "general"
             self._initial_modbus_mode = bool(self.values.get("xModbusMode", False))
             self._initial_environment = int(self.values.get("uiTestEnvironmentApplied", 0))
             self._initial_speed = int(self.values.get("uiTestSpeedProfileApplied", 0))
             heartbeat_task = asyncio.create_task(self.maintain_hmi_heartbeat(socket))
             simulator_heartbeat_task = asyncio.create_task(self.maintain_simulator_session())
             try:
+                # Не активировать случайно удержанный бит от аварийно убитого
+                # предыдущего runner при включении новой тестовой сессии.
+                await self.command(socket, "test.abort", value=False)
                 await self.command(socket, "test.session", value=True)
                 try:
                     await self.configure_run(socket, config)
@@ -1188,6 +1748,8 @@ class GatewayRunner:
                                 "snapshot": self.values, "scenario": case,
                             })
                             await self.stop_cell_if_running(socket)
+                            if fail_fast:
+                                break
                 finally:
                     await self.cleanup_run(socket)
             finally:

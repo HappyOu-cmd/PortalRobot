@@ -11,6 +11,8 @@ VAR_GLOBAL
 	{attribute 'symbol' := 'readwrite'}
 	xTestSessionActive : BOOL;
 	{attribute 'symbol' := 'readwrite'}
+	xTestAbort : BOOL; // Удерживаемая отмена теста: немедленно прекращает тестовую команду
+	{attribute 'symbol' := 'readwrite'}
 	stTestScenario : ST_TEST_SCENARIO_BUFFER;
 	{attribute 'symbol' := 'readwrite'}
 	xTestScenarioApply : BOOL;
@@ -25,13 +27,19 @@ VAR_GLOBAL
 	uiTestScenarioResult : UINT;
 	stTestObservability : ST_TEST_OBSERVABILITY;
 	{attribute 'symbol' := 'readwrite'}
-	xSimulationAccelerationEnable : BOOL := FALSE; // Разрешить ускорение только для симуляции
+	xSimulationAccelerationEnable : BOOL := FALSE; // Разрешить ускорение тестовой симуляции
 	{attribute 'symbol' := 'readwrite'}
-	uiSimulationTimeFactor : UINT := 1; // Коэффициент виртуального времени симуляции 1..100
-	xSimulationAccelerationActive : BOOL; // Фактически применённое ускорение
-	xSimulationAccelerationChangeAllowed : BOOL; // PLC разрешает менять настройки ускорения
+	uiSimulationTimeFactor : UINT := 1; // Запрошенный коэффициент симуляции 1..100
+	xSimulationAccelerationActive : BOOL; // Динамика XYZ и таймеры применены с одним коэффициентом
+	xSimulationAccelerationChangeAllowed : BOOL; // Ползунок разрешён; изменение ставится в очередь
 	uiSimulationTimeFactorApplied : UINT := 1; // Фактически применённый коэффициент
-	xSimulationAccelerationError : BOOL; // Ошибка применения ускорения виртуальных таймеров
+	{attribute 'symbol' := 'read'}
+	xSimulationAccelerationPending : BOOL; // Новое значение применится перед следующим тестом
+	{attribute 'symbol' := 'read'}
+	xSimulationAccelerationBusy : BOOL; // Перенастройка Dynamic Limits выполняется
+	xSimulationAccelerationError : BOOL;
+	{attribute 'symbol' := 'read'}
+	udiSimulationAccelerationErrorId : UDINT;
 	{attribute 'symbol' := 'read'}
 	lrSafetyHomeX : LREAL := 0.0; // Координата X точки HOME_SAFETY
 	{attribute 'symbol' := 'read'}
@@ -55,6 +63,8 @@ VAR_GLOBAL
 	xCellStart        : BOOL; // Импульс запуска цикла или отмены ожидающей остановки
 	xCellStop         : BOOL; // Импульс остановки автоматического цикла
 	xCellReset        : BOOL; // Общий сброс ошибок ячейки
+	{attribute 'symbol' := 'readwrite'}
+	xSafetyRelayReset : BOOL; // Импульс отдельного сброса реле безопасности
 	{attribute 'symbol' := 'readwrite'}
 	uiCellOperatorChoice : UINT; // Ответ активному предпусковому опросу PLC
 	{attribute 'symbol' := 'readwrite'}
@@ -124,6 +134,10 @@ VAR_GLOBAL
 	{attribute 'symbol' := 'readwrite'}
 	lrPointEditorDraftSpeedFactor : LREAL;
 	{attribute 'symbol' := 'readwrite'}
+	lrPointEditorDraftMagazineSafeZ : LREAL; // Смещение Safe Z базовой точки магазина
+	{attribute 'symbol' := 'readwrite'}
+	lrPointEditorDraftMagazineChangeZ : LREAL; // Смещение Change Z базовой точки магазина
+	{attribute 'symbol' := 'readwrite'}
 	uiPointEditorCommand : UINT; // 1 CAPTURE, 2 SAVE, 3 CHECK сохранённой точки
 	{attribute 'symbol' := 'readwrite'}
 	udiPointEditorCommandSeq : UDINT;
@@ -162,6 +176,13 @@ VAR_GLOBAL
 	xSimMagazineInvalidSlot    : BOOL; // Импульс недопустимого номера слота
 	xSimMagazineSlotContent    : BOOL; // Импульс несоответствия содержимого слота
 	xSimMagazineGeometry       : BOOL; // Импульс недопустимой геометрии магазина
+	axSimSafetyEmergencyStopStation : ARRAY [1..4] OF BOOL; // Удерживаемые инъекции грибков постов
+	axSimSafetyEmergencyStopCabinet : ARRAY [1..2] OF BOOL; // Удерживаемые инъекции грибков шкафов
+	xSimSafetyEmergencyStopMpg : BOOL; // Инъекция грибка MPG-пульта
+	xSimSafetyPhaseRelayFault : BOOL; // Инъекция отказа контроля фаз
+	xSimSafetyPressureRelayFault : BOOL; // Инъекция отказа контроля давления
+	xSimSafetyRelayFault : BOOL; // Инъекция невзведённого реле безопасности
+	axSimSafetyDoorUnlocked : ARRAY [1..4] OF BOOL; // Инъекция открытого замка двери
 	xMagazineEnable    : BOOL; // Импульс включения магазина
 	xMagazineDisable   : BOOL; // Импульс отключения магазина
 	xMagazineFillBlanks: BOOL; // Заполнить активные слоты магазина заготовками
@@ -186,6 +207,10 @@ VAR_GLOBAL
 	{attribute 'symbol' := 'readwrite'}
 	axMachineManualHatchClose      : ARRAY [1..3] OF BOOL; // Ручное закрытие роботного люка
 	{attribute 'symbol' := 'readwrite'}
+	axMachineManualHatchUnlock     : ARRAY [1..3] OF BOOL; // Ручное открытие замка роботного люка
+	{attribute 'symbol' := 'readwrite'}
+	axMachineManualHatchLock       : ARRAY [1..3] OF BOOL; // Ручное закрытие замка роботного люка
+	{attribute 'symbol' := 'readwrite'}
 	axMachineManualChuckOpen       : ARRAY [1..3] OF BOOL; // Ручной разжим патрона
 	{attribute 'symbol' := 'readwrite'}
 	axMachineManualChuckClose      : ARRAY [1..3] OF BOOL; // Ручной зажим патрона
@@ -200,6 +225,7 @@ VAR_GLOBAL
 	axMachineTimeoutRobotRelease : ARRAY [1..3] OF BOOL; // Игнорировать освобождение интерфейса робота до TIMEOUT
 	axMachineTimeoutDoorOpen     : ARRAY [1..3] OF BOOL; // Игнорировать подтверждение открытия двери до TIMEOUT
 	axMachineTimeoutDoorClose    : ARRAY [1..3] OF BOOL; // Игнорировать подтверждение закрытия двери до TIMEOUT
+	axMachineTimeoutHatchUnlock  : ARRAY [1..3] OF BOOL; // Игнорировать подтверждение открытия замка до TIMEOUT
 	axMachineTimeoutChuckOpen    : ARRAY [1..3] OF BOOL; // Игнорировать подтверждение разжима патрона до TIMEOUT
 	axMachineTimeoutChuckClose   : ARRAY [1..3] OF BOOL; // Игнорировать подтверждение зажима патрона до TIMEOUT
 	axMachineTimeoutCycleStart   : ARRAY [1..3] OF BOOL; // Игнорировать подтверждение запуска цикла до TIMEOUT
@@ -216,7 +242,7 @@ VAR_GLOBAL
 	{attribute 'symbol' := 'readwrite'}
 	axMachineRejectRun : ARRAY [1..3] OF BOOL; // Отказаться от запуска обработки
 	axMachineUsed      : ARRAY [1..3] OF BOOL := [FALSE, FALSE, FALSE]; // Выбор станков для авто; FB_MACHINE после старта находится в DISABLED
-	xUseHmiCycleTime   : ARRAY [1..3] OF BOOL := [TRUE, TRUE, TRUE]; // Использовать заданное время цикла
+	xUseHmiCycleTime   : ARRAY [1..3] OF BOOL := [FALSE, FALSE, FALSE]; // Использовать заданное время цикла
 	tMachineCycleTime  : ARRAY [1..3] OF TIME := [T#60S, T#60S, T#60S]; // Время цикла станков
 	tMachineDoorOpenTime   : TIME := T#1S; // Время открытия люка в симуляторе станка
 	tMachineDoorCloseTime  : TIME := T#1S; // Время закрытия люка в симуляторе станка
@@ -235,14 +261,6 @@ VAR_GLOBAL
 	MagazinePitchX     : LREAL := 60.0; // Шаг слотов по оси X
 	{attribute 'symbol' := 'read'}
 	MagazinePitchY     : LREAL := 60.0; // Шаг слотов по оси Y
-	{attribute 'symbol' := 'read'}
-	MagazineSafeZ_1    : LREAL := 0.0; // Безопасная высота над магазином
-	{attribute 'symbol' := 'read'}
-	MagazineSafeZ_2    : LREAL := 1400.0; // Безопасная высота внутри магазина при смене
-	{attribute 'symbol' := 'read'}
-	alrMagazineSafeZ_1 : ARRAY [1..GVL_CELL_SETTINGS.MagazineCount] OF LREAL := [0.0, 0.0];
-	{attribute 'symbol' := 'read'}
-	alrMagazineSafeZ_2 : ARRAY [1..GVL_CELL_SETTINGS.MagazineCount] OF LREAL := [1400.0, 1400.0];
 	stRobotCommand     : ST_ROBOT_COMMAND; // Ручная команда роботу или магазину
 	{attribute 'symbol' := 'readwrite'}
 	stMultiType        : ST_MULTI_TYPE_HMI; // Конфигурация типов и диагностика универсального цикла
@@ -261,6 +279,7 @@ VAR_GLOBAL
 	stGripperFaultStatus   : ST_FAULT_INJECTION_STATUS; // Состояние инжектора захвата
 	stRobotFaultStatus     : ST_FAULT_INJECTION_STATUS; // Состояние локального инжектора робота
 	stCellFaultStatus      : ST_FAULT_INJECTION_STATUS; // Состояние инжектора менеджера ячейки
+	stSafetyFaultStatus    : ST_FAULT_INJECTION_STATUS; // Состояние инжектора дискретной безопасности
 	stPointFaultStatus     : ST_FAULT_INJECTION_STATUS; // Состояние инжектора проверки точки
 	stMagazineFaultStatus  : ST_FAULT_INJECTION_STATUS; // Legacy: первый магазин
 	astMagazineFaultStatus : ARRAY [1..GVL_CELL_SETTINGS.MagazineCount] OF ST_FAULT_INJECTION_STATUS;
@@ -297,6 +316,14 @@ VAR_GLOBAL
 	stCellStatus : ST_CELL_STATUS; // Рабочее состояние автоматического цикла
 	stCellDiag   : ST_CELL_DIAG; // Текущий шаг менеджера ячейки
 	stCellError  : ST_CELL_ERRORS; // Активные и последние ошибки менеджера ячейки
+	stCellSafetyStatus : ST_CELL_SAFETY_STATUS; // Готовность грибков, реле и дверей
+	stCellSafetyDiag   : ST_CELL_SAFETY_DIAG; // Отклонённые команды безопасности
+	stCellSafetyError  : ST_CELL_SAFETY_ERRORS; // Отдельные Safety-аварии
+	astButtonStationIoStatus : ARRAY [1..4] OF ST_BUTTON_STATION_IO_STATUS;
+	stFrontControlCabinetIoStatus : ST_CONTROL_CABINET_IO_STATUS;
+	stRearControlCabinetIoStatus : ST_CONTROL_CABINET_IO_STATUS;
+	stMpgIoStatus : ST_MPG_IO_STATUS;
+	astEnclosureDoorStatus : ARRAY [1..4] OF ST_ENCLOSURE_DOOR_STATUS;
 
 	stRobotStatus : ST_ROBOT_STATUS; // Состояние робота и двух захватов
 	stRobotDiag   : ST_ROBOT_DIAG; // Текущее действие и целевая точка робота
@@ -318,7 +345,7 @@ VAR_GLOBAL
 
 	{attribute 'symbol' := 'read'}
 	astMachineStatus   : ARRAY [1..3] OF ST_MACHINE_PUBLIC; // Рабочие состояния станков
-	astMachineIoStatus : ARRAY [1..3] OF ST_MACHINE_IO_STATUS; // Двери, патроны и циклы станков
+	astMachineIoStatus : ARRAY [1..3] OF ST_MACHINE_IO_STATUS; // Двери, замки, патроны и циклы станков
 	astMachineRawIoStatus : ARRAY [1..3] OF ST_MACHINE_IO_STATUS; // Обратная связь до инжектора
 	astMachineDiag     : ARRAY [1..3] OF ST_MACHINE_DIAG; // Текущие шаги и операции станков
 	astMachineError    : ARRAY [1..3] OF ST_MACHINE_ERRORS; // Активные и последние ошибки станков

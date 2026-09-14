@@ -1,4 +1,9 @@
-import { useEffect, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import alarmCatalog from '../../alarm-catalog.json';
+import { EquipmentInspector } from './EquipmentInspector';
+import { equipmentIssues, inspectionKey, inspectionSlot, type InspectionTarget, type InspectionNode, type EquipmentInspection } from '../model/equipmentInspection';
+import type { CellLogEvent, PlcAlarmEvent } from '../plc/client';
+import { Camera, LayoutPanelLeft, LayoutPanelTop, PanelBottom, ZoomIn, ZoomOut } from 'lucide-react';
 import type {
   CellLayout,
   CellState,
@@ -26,6 +31,7 @@ interface CellViewportProps {
   robotCoordinatesRef?: RefObject<RobotCoordinateFrame>;
   selectedMachine: number | null;
   cameraPreset: CameraPreset;
+  controlsVisible?: boolean;
   onMachineSelect: (index: number) => void;
   onMagazineSelect?: (magazineId: 1 | 2) => void;
   easterEggMode?: EasterEggMode;
@@ -34,6 +40,11 @@ interface CellViewportProps {
   visualEffects?: VisualEffectSettings;
   sceneActivity?: SceneActivity;
   focusTarget?: SceneEquipmentTarget | null;
+  inspectionAvailable?: boolean;
+  inspectionEvents?: PlcAlarmEvent[];
+  inspectionDataMode?: 'live' | 'stale' | 'local';
+  latestCellLogEvent?: CellLogEvent | null;
+  onInspectionOpenChange?: (open: boolean) => void;
   equipmentStatuses?: {
     machines: EquipmentStatus[];
     magazines: [EquipmentStatus, EquipmentStatus];
@@ -46,6 +57,7 @@ export function CellViewport({
   robotCoordinatesRef,
   selectedMachine,
   cameraPreset,
+  controlsVisible = true,
   onMachineSelect,
   onMagazineSelect,
   easterEggMode = 'off',
@@ -54,11 +66,55 @@ export function CellViewport({
   visualEffects = DEFAULT_VISUAL_EFFECT_SETTINGS,
   sceneActivity = EMPTY_SCENE_ACTIVITY,
   focusTarget = null,
+  inspectionAvailable = false,
+  inspectionEvents = [],
+  inspectionDataMode = 'local',
+  latestCellLogEvent = null,
+  onInspectionOpenChange,
   equipmentStatuses,
 }: CellViewportProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<CellScene>();
+  const [inspectionTarget, setInspectionTarget] = useState<InspectionTarget | null>(null);
+  const [inspectionClosing, setInspectionClosing] = useState(false);
+  const [inspectionNode, setInspectionNode] = useState<InspectionNode | null>(null);
+  const [inspectionXray, setInspectionXray] = useState(true);
+  const inspection = useMemo<EquipmentInspection | null>(() => inspectionTarget ? {
+    target: inspectionTarget, selectedNode: inspectionNode, xray: inspectionXray,
+    issues: equipmentIssues(inspectionTarget, inspectionEvents, state, inspectionDataMode !== 'local', alarmCatalog.alarms),
+  } : null, [inspectionTarget, inspectionNode, inspectionXray, inspectionEvents, state, inspectionDataMode]);
+  const openInspection = (target: InspectionTarget, node?: InspectionNode) => {
+    if (!inspectionAvailable || easterEggMode !== 'off') return;
+    setInspectionClosing(false);
+    if (!inspectionTarget || inspectionKey(target) !== inspectionKey(inspectionTarget)) setInspectionNode(null);
+    else if (node) setInspectionNode(node);
+    setInspectionTarget(target);
+  };
+  const inspectRef = useRef(openInspection);
+  inspectRef.current = openInspection;
+  const closeInspection = useCallback(() => setInspectionClosing(true), []);
+
+  useEffect(() => {
+    onInspectionOpenChange?.(inspectionTarget !== null);
+  }, [inspectionTarget !== null, onInspectionOpenChange]);
+  useEffect(() => {
+    if (inspectionTarget && (!inspectionAvailable || easterEggMode !== 'off')) closeInspection();
+  }, [inspectionAvailable, easterEggMode, inspectionTarget, closeInspection]);
+  useEffect(() => {
+    if (!inspectionClosing) return;
+    const timeout = window.setTimeout(() => {
+      setInspectionTarget(null);
+      setInspectionClosing(false);
+    }, window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 260);
+    return () => window.clearTimeout(timeout);
+  }, [inspectionClosing]);
   const [driftTelemetry, setDriftTelemetry] = useState<DriftTelemetry>(EMPTY_DRIFT_TELEMETRY);
+  const [cameraViewOpen, setCameraViewOpen] = useState(false);
+  const [cameraViewMounted, setCameraViewMounted] = useState(false);
+  const [zoomOpen, setZoomOpen] = useState(false);
+  const [zoomMounted, setZoomMounted] = useState(false);
+  const [activeCameraPreset, setActiveCameraPreset] = useState<CameraPreset>(cameraPreset);
+  const [zoomLevel, setZoomLevel] = useState(0.42);
   const fallbackRobotCoordinatesRef = useRef<RobotCoordinateFrame>({
     sequence: 0,
     timestampMs: Date.now(),
@@ -115,6 +171,7 @@ export function CellViewport({
       (magazineId) => magazineSelectRef.current?.(magazineId),
       updateAnchors,
       setDriftTelemetry,
+      (target, node) => inspectRef.current(target, node),
     );
     sceneRef.current = scene;
     scene.setDriftSettings(driftSettings);
@@ -129,6 +186,8 @@ export function CellViewport({
   }, []);
 
   useEffect(() => sceneRef.current?.setState(state), [state]);
+  useEffect(() => sceneRef.current?.setInspectionEnabled(inspectionAvailable && easterEggMode === 'off'), [inspectionAvailable, easterEggMode]);
+  useEffect(() => sceneRef.current?.setInspection(inspectionClosing ? null : inspection), [inspection, inspectionClosing]);
   useEffect(() => sceneRef.current?.setEasterEgg(easterEggMode, easterEggRevision), [easterEggMode, easterEggRevision]);
   useEffect(() => sceneRef.current?.setDriftSettings(driftSettings), [driftSettings]);
   useEffect(() => sceneRef.current?.setVisualEffects(visualEffects), [visualEffects]);
@@ -136,11 +195,124 @@ export function CellViewport({
   useEffect(() => sceneRef.current?.setFocusTarget(focusTarget), [focusTarget]);
   useEffect(() => sceneRef.current?.rebuild(layout), [layout]);
   useEffect(() => sceneRef.current?.setSelectedMachine(selectedMachine), [selectedMachine]);
-  useEffect(() => sceneRef.current?.setCamera(cameraPreset), [cameraPreset]);
+  useEffect(() => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+    scene.setCamera(cameraPreset);
+    setActiveCameraPreset(cameraPreset);
+    setZoomLevel(scene.getZoomLevel());
+  }, [cameraPreset]);
+
+  useEffect(() => {
+    if (controlsVisible && easterEggMode !== 'drift') return;
+    setCameraViewOpen(false);
+    setCameraViewMounted(false);
+    setZoomOpen(false);
+    setZoomMounted(false);
+  }, [controlsVisible, easterEggMode]);
+
+  useEffect(() => {
+    if (cameraViewOpen) {
+      setCameraViewMounted(true);
+      return;
+    }
+    if (!cameraViewMounted) return;
+    const timeoutId = window.setTimeout(() => setCameraViewMounted(false), 280);
+    return () => window.clearTimeout(timeoutId);
+  }, [cameraViewMounted, cameraViewOpen]);
+
+  useEffect(() => {
+    if (zoomOpen) {
+      setZoomMounted(true);
+      return;
+    }
+    if (!zoomMounted) return;
+    const timeoutId = window.setTimeout(() => setZoomMounted(false), 260);
+    return () => window.clearTimeout(timeoutId);
+  }, [zoomMounted, zoomOpen]);
+
+  const selectCameraPreset = (preset: CameraPreset): void => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+    scene.setCamera(preset);
+    setActiveCameraPreset(preset);
+    setZoomLevel(scene.getZoomLevel());
+    setCameraViewOpen(false);
+  };
+
+  const toggleCameraView = (): void => {
+    setZoomOpen(false);
+    setCameraViewOpen((open) => !open);
+  };
+
+  const toggleZoom = (): void => {
+    if (!zoomOpen) setZoomLevel(sceneRef.current?.getZoomLevel() ?? zoomLevel);
+    setCameraViewOpen(false);
+    setZoomOpen((open) => !open);
+  };
+
+  const changeZoom = (value: number): void => {
+    const normalized = Math.max(0, Math.min(1, value));
+    setZoomLevel(normalized);
+    sceneRef.current?.setZoomLevel(normalized);
+  };
 
   const driftActive = easterEggMode === 'drift';
-  return <div ref={hostRef} className={`cell-viewport${driftActive ? ' drift-mode' : ''}`} aria-label="Трехмерная модель ячейки">
-    {equipmentStatuses && !driftActive && <div className="equipment-status-layer" aria-label="Состояния оборудования">
+  return <div ref={hostRef} className={`cell-viewport${driftActive ? ' drift-mode' : ''}${inspection ? ' inspection-mode' : ''}`} aria-label="Трехмерная модель ячейки">
+    {inspection && <EquipmentInspector inspection={inspection} closing={inspectionClosing} dataMode={inspectionDataMode} liveEvent={latestCellLogEvent}
+      slot={inspectionSlot(state, inspection.target)} onTarget={openInspection} onNode={(node) => { setInspectionNode(node); sceneRef.current?.refocusInspection(); }} onXray={setInspectionXray} onClose={closeInspection} />}
+    {controlsVisible && !driftActive && !inspection && <div className="scene-view-controls" aria-label="Управление видом и масштабом">
+      <div className="scene-view-control-cluster">
+        <button
+          className={`scene-view-control${cameraViewOpen ? ' active' : ''}`}
+          type="button"
+          aria-label="Выбрать вид камеры"
+          aria-expanded={cameraViewOpen}
+          title="Вид"
+          onClick={toggleCameraView}
+        >
+          <Camera aria-hidden="true" />
+        </button>
+        {cameraViewMounted && <div className={`scene-view-control-panel scene-view-preset-panel ${cameraViewOpen ? 'ios-motion' : 'ios-motion-exiting'}`} role="group" aria-label="Вид камеры">
+          <button className={activeCameraPreset === 'top' ? 'active' : ''} type="button" aria-pressed={activeCameraPreset === 'top'} onClick={() => selectCameraPreset('top')} title="Вид сверху">
+            <LayoutPanelTop aria-hidden="true" /><span>Сверху</span>
+          </button>
+          <button className={activeCameraPreset === 'side' ? 'active' : ''} type="button" aria-pressed={activeCameraPreset === 'side'} onClick={() => selectCameraPreset('side')} title="Вид сбоку">
+            <LayoutPanelLeft aria-hidden="true" /><span>Сбоку</span>
+          </button>
+          <button className={activeCameraPreset === 'front' ? 'active' : ''} type="button" aria-pressed={activeCameraPreset === 'front'} onClick={() => selectCameraPreset('front')} title="Вид спереди">
+            <PanelBottom aria-hidden="true" /><span>Спереди</span>
+          </button>
+        </div>}
+      </div>
+      <div className="scene-view-control-cluster">
+        <button
+          className={`scene-view-control${zoomOpen ? ' active' : ''}`}
+          type="button"
+          aria-label="Настроить масштаб"
+          aria-expanded={zoomOpen}
+          title="Масштаб"
+          onClick={toggleZoom}
+        >
+          <ZoomIn aria-hidden="true" />
+        </button>
+        {zoomMounted && <div className={`scene-view-control-panel scene-view-zoom-panel ${zoomOpen ? 'ios-motion' : 'ios-motion-exiting'}`} role="group" aria-label="Масштаб сцены">
+          <ZoomOut aria-hidden="true" />
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.01"
+            value={zoomLevel}
+            onChange={(event) => changeZoom(Number(event.currentTarget.value))}
+            aria-label="Масштаб от минимального до максимального"
+          />
+          <ZoomIn aria-hidden="true" />
+          <output>{Math.round(zoomLevel * 100)}%</output>
+        </div>}
+      </div>
+    </div>}
+    {equipmentStatuses && !driftActive && !inspection && <div className="equipment-status-layer" aria-label="Состояния оборудования">
       {equipmentStatuses.machines.map((status, index) => <button
         key={index}
         ref={(element) => { machineStatusRefs.current[index] = element; }}

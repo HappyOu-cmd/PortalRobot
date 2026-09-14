@@ -2,6 +2,7 @@ FUNCTION_BLOCK FB_CELL_MANAGER
 VAR_INPUT
 	xStart            : BOOL; // Импульс запуска цикла или отмены остановки
 	xStop             : BOOL; // Импульс контролируемой остановки
+	xTestAbort        : BOOL; // Немедленная отмена только тестового прогона
 	xResetRequest     : BOOL; // Необработанный запрос сброса от HMI
 	xReset            : BOOL; // Общий сброс владельцев ошибок
 	xOperatorChoice   : BOOL; // Импульс ответа активному предпусковому опросу
@@ -10,6 +11,7 @@ VAR_INPUT
 	xManual           : BOOL; // Ручной режим ячейки
 	xManualRequest    : BOOL; // Необработанный запрос HMI на ручной режим
 	xGlobalError      : BOOL; // Глобальная ошибка ячейки
+	xSafetyReady      : BOOL; // Все дискретные условия безопасности выполнены
 	xDrivesReady      : BOOL; // Приводы готовы
 	xMotionBusy       : BOOL; // Оси ещё движутся
 	xRobotInterfaceReady : BOOL; // Выбранный интерфейс робота готов к работе
@@ -76,6 +78,7 @@ VAR
 	xStartCheckMagazineReady      : BOOL;
 	xStartCheckTaskAvailable      : BOOL;
 	xStartCheckSafetyHome         : BOOL;
+	xStartCheckSafety             : BOOL;
 	xOperatorPromptState          : BOOL; // Текущий шаг ожидает ответ HMI
 	xOperatorChoiceAllowed        : BOOL;
 	xOperatorCancelAllowed        : BOOL;
@@ -387,6 +390,7 @@ xStartCheckTaskAvailable := stRobotStatus.xBlankAvailable
 		OR stRobotStatus.xDetailAvailable
 		OR (uiCandidateMachine > UINT#0);
 xStartCheckSafetyHome := NOT xSafetyHomeRequired OR xRobotAtSafetyHome;
+xStartCheckSafety := xSafetyReady;
 
 xReadyToStart := xStartCheckCellIdle
 	AND xStartCheckAutomaticMode
@@ -398,7 +402,8 @@ xReadyToStart := xStartCheckCellIdle
 	AND xStartCheckRobotReady
 	AND xStartCheckMagazineReady
 	AND xStartCheckTaskAvailable
-	AND xStartCheckSafetyHome;
+	AND xStartCheckSafetyHome
+	AND xStartCheckSafety;
 
 uiStartConditionsMet := UINT#0;
 IF xStartCheckCellIdle THEN
@@ -432,6 +437,9 @@ IF xStartCheckTaskAvailable THEN
 	uiStartConditionsMet := uiStartConditionsMet + UINT#1;
 END_IF;
 IF xStartCheckSafetyHome THEN
+	uiStartConditionsMet := uiStartConditionsMet + UINT#1;
+END_IF;
+IF xStartCheckSafety THEN
 	uiStartConditionsMet := uiStartConditionsMet + UINT#1;
 END_IF;
 
@@ -595,6 +603,13 @@ AND (eState <> E_CELL_MANAGER_STATE.ERROR) THEN
 	eState := E_CELL_MANAGER_STATE.ERROR;
 END_IF;
 
+// Штатный Stop ждёт безопасную технологическую границу. Тестовый Abort ждать
+// её не должен: удерживаем Stop владельцев и не даём автоматам выдать новую
+// команду, пока Motion фактически не закончил торможение.
+IF xTestAbort THEN
+	eState := E_CELL_MANAGER_STATE.TEST_ABORT_STOP;
+END_IF;
+
 CASE eState OF
 	E_CELL_MANAGER_STATE.IDLE:
 		xRunning := FALSE;
@@ -614,6 +629,12 @@ CASE eState OF
 				uiSelectedMachine := UINT#0;
 				uiSelectedType := UINT#0;
 				eMachineOperation := E_MACHINE_OPERATION.NONE;
+				// Новый Start заново идентифицирует уже находящийся в захвате груз.
+				// Слот происхождения прошлого цикла к нему не относится: иначе
+				// RETURN_BLANK может попытаться положить груз в занятый чужой слот.
+				iTakeSlot := SINT#0;
+				iPutSlot := SINT#0;
+				iTakeOriginSlot := SINT#0;
 				eState := E_CELL_MANAGER_STATE.PRESTART_IDENTIFY;
 			END_IF;
 		END_IF;
@@ -1300,6 +1321,27 @@ CASE eState OF
 			END_IF;
 			eState := E_CELL_MANAGER_STATE.IDLE;
 		END_IF;
+
+	E_CELL_MANAGER_STATE.TEST_ABORT_STOP:
+		xStopRequested := TRUE;
+		Command.stRobot.xStop := TRUE;
+		Command.stMagazine.xStop := TRUE;
+		FOR uiMachine := FIRST_MACHINE TO LAST_MACHINE DO
+			Command.axMachineExecute[uiMachine] := FALSE;
+		END_FOR;
+		IF NOT stRobotStatus.xBusy
+		AND NOT xMotionBusy
+		AND NOT stMagazineStatus.xBusy THEN
+			xRunning := FALSE;
+			xStopRequested := FALSE;
+			xMachineServiceStarted := FALSE;
+			xReselectAfterRobotRelease := FALSE;
+			uiSelectedMachine := UINT#0;
+			uiSelectedType := UINT#0;
+			eMachineOperation := E_MACHINE_OPERATION.NONE;
+			eMagazineOperation := E_MAGAZINE_OPERATION.NONE;
+			eState := E_CELL_MANAGER_STATE.IDLE;
+		END_IF;
 END_CASE;
 
 // Фиксируем позу только после завершённой штатной остановки или нормального
@@ -1357,8 +1399,9 @@ Status.xStartCheckRobotReady := xStartCheckRobotReady;
 Status.xStartCheckMagazineReady := xStartCheckMagazineReady;
 Status.xStartCheckTaskAvailable := xStartCheckTaskAvailable;
 Status.xStartCheckSafetyHome := xStartCheckSafetyHome;
+Status.xStartCheckSafety := xStartCheckSafety;
 Status.uiStartConditionsMet := uiStartConditionsMet;
-Status.uiStartConditionsTotal := UINT#11;
+Status.uiStartConditionsTotal := UINT#12;
 Status.uiReadyMachines := uiReadyMachines;
 Status.uiSelectedMachine := uiSelectedMachine;
 Status.uiActiveMagazine := uiActiveMagazine;
@@ -1419,6 +1462,7 @@ CASE eState OF
 	E_CELL_MANAGER_STATE.SERVICE_TARGET: Diag.eState := E_CELL_STATE.SERVICE_MACHINE;
 	E_CELL_MANAGER_STATE.MACHINE_FAULT_STOP: Diag.eState := E_CELL_STATE.SERVICE_MACHINE;
 	E_CELL_MANAGER_STATE.WAIT_MAGAZINE: Diag.eState := E_CELL_STATE.WAIT_MAGAZINE;
+	E_CELL_MANAGER_STATE.TEST_ABORT_STOP: Diag.eState := E_CELL_STATE.IDLE;
 	E_CELL_MANAGER_STATE.ERROR: Diag.eState := E_CELL_STATE.ERROR;
 END_CASE;
 

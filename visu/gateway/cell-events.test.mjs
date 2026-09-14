@@ -14,6 +14,51 @@ const snapshot = (overrides = {}) => ({
   ...overrides,
 });
 
+test('equipment inspection history filters exact source prefixes and activation time', () => {
+  const store = new CellEventStore({ databasePath: ':memory:' });
+  try {
+    for (const [code, status, timestampMs] of [['2:4', 'active', 1000], ['12:4', 'active', 2000], ['2:4', 'restored', 3000], ['io:cabinet:rear:emergency-stop', 'active', 4000]]) {
+      store.record({ code, status, timestampMs, sourceId: 7, eventType: code.startsWith('io:') ? 'equipment-diagnostic' : 'alarm', message: 'test' });
+    }
+    assert.deepEqual(store.query({ codePrefixes: ['2:'], statuses: ['active'] }).events.map((event) => event.timestampMs), [1000]);
+    assert.deepEqual(store.query({ codePrefixes: ['2:', 'io:cabinet:rear:'], statuses: ['active'] }).events.map((event) => event.timestampMs), [4000, 1000]);
+  } finally { store.close(); }
+});
+
+test('inspection logs E-stop edges and observes already pressed buttons on connection without inventing absent signals', () => {
+  const classifier = new CellEventClassifier();
+  const path = 'stRearControlCabinetIoStatus.xEmergencyStopPressed';
+  const initial = classifier.process(snapshot({ [path]: true }), 1000).filter((event) => event.eventType === 'equipment-diagnostic');
+  assert.equal(initial.length, 1);
+  assert.equal(initial[0].code, 'io:cabinet:rear:emergency-stop');
+  assert.equal(initial[0].details.observedOnConnect, true);
+  assert.equal(classifier.process(snapshot({ [path]: true }), 2000).filter((event) => event.eventType === 'equipment-diagnostic').length, 0);
+  const released = classifier.process(snapshot({ [path]: false }), 3000).filter((event) => event.eventType === 'equipment-diagnostic');
+  assert.equal(released[0].status, 'restored');
+  assert.equal(released[0].details.observedOnConnect, false);
+  const pressed = classifier.process(snapshot({ [path]: true }), 4000).filter((event) => event.eventType === 'equipment-diagnostic');
+  assert.equal(pressed[0].status, 'active');
+  assert.equal(pressed[0].timestampMs, 4000);
+  assert.equal(pressed[0].details.observedOnConnect, false);
+});
+
+test('inspection logs unsafe relay and enabled-magazine door conditions with inverted OK polarity', () => {
+  const classifier = new CellEventClassifier();
+  const phase = 'stCellSafetyStatus.xPhaseRelayOk';
+  const door = 'stCellSafetyStatus.axDoorReady[1]';
+  assert.equal(classifier.process(snapshot({ [phase]: true, [door]: true }), 1000)
+    .filter((event) => event.eventType === 'equipment-diagnostic').length, 0);
+  const active = classifier.process(snapshot({ [phase]: false, [door]: false }), 2000)
+    .filter((event) => event.eventType === 'equipment-diagnostic');
+  assert.deepEqual(active.map((event) => [event.code, event.status]), [
+    ['io:station:magazine-1-front:door-lock', 'active'],
+    ['io:cabinet:rear:phase-relay', 'active'],
+  ]);
+  const restored = classifier.process(snapshot({ [phase]: true, [door]: true }), 3000)
+    .filter((event) => event.eventType === 'equipment-diagnostic');
+  assert.deepEqual(restored.map((event) => event.status), ['restored', 'restored']);
+});
+
 test('stores persistent events with source, operation and command correlation', () => {
   const store = new CellEventStore({ databasePath: ':memory:', retentionDays: 90 });
   const saved = store.record({

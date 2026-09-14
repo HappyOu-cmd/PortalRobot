@@ -1,0 +1,7 @@
+.mobile-points__magazine-offsets {
+  margin-top: 11px;
+}
+
+.mobile-points__magazine-offsets .mobile-points__coordinate {
+  grid-template-columns: 82px minmax(0, 1fr) 44px;
+}

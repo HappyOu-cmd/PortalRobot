@@ -2,6 +2,7 @@ from robot_simulator.test_scenarios import (
     error_owner_scenarios,
     expected_error_owner,
     expected_first_decision,
+    general_scenarios,
     generated_scenarios,
     operator_cancel_scenario,
     regression_scenarios,
@@ -10,10 +11,41 @@ from robot_simulator.test_scenarios import (
 )
 
 
-def test_smoke_suite_has_ten_valid_cases() -> None:
+def test_smoke_suite_has_twelve_valid_cases() -> None:
     cases = smoke_scenarios()
-    assert len(cases) == 10
+    assert len(cases) == 12
     assert all(not validate_inventory(case["initialState"]) for case in cases)
+    assert [case["expectations"].get("expectedMagazine") for case in cases[-2:]] == [2, 2]
+    assert all(
+        [magazine["enabled"] for magazine in case["initialState"]["magazines"]] == [False, True]
+        for case in cases[-2:]
+    )
+
+
+def test_general_suite_covers_all_machine_masks_and_four_full_batches() -> None:
+    cases = general_scenarios()
+    expected_masks = [
+        [3, 3, 3],
+        [1, 1, 1],
+        [3, 1, 1],
+        [1, 3, 1],
+        [1, 1, 3],
+        [3, 3, 1],
+        [3, 1, 3],
+        [1, 3, 3],
+    ]
+    assert len(cases) == 8
+    assert [[item["state"] for item in case["initialState"]["machines"]] for case in cases] == expected_masks
+    assert all(not validate_inventory(case["initialState"]) for case in cases)
+    for case in cases:
+        assert case["expectations"]["testKind"] == "general-four-batches"
+        assert case["expectations"]["expectedMagazineSequence"] == [1, 2, 1, 2]
+        assert [magazine["enabled"] for magazine in case["initialState"]["magazines"]] == [True, True]
+        assert all(
+            slot == {"content": 1, "productType": 1}
+            for magazine in case["initialState"]["magazines"]
+            for slot in magazine["slots"]
+        )
 
 
 def test_generator_is_reproducible() -> None:
@@ -24,7 +56,9 @@ def test_generator_is_reproducible() -> None:
 def test_generator_has_fixed_opc_buffer_shape() -> None:
     cases = generated_scenarios(7, 100)
     for case in cases:
-        assert len(case["initialState"]["slots"]) == 120
+        assert case["schemaVersion"] == 2
+        assert len(case["initialState"]["magazines"]) == 2
+        assert all(len(magazine["slots"]) == 120 for magazine in case["initialState"]["magazines"])
         assert len(case["initialState"]["machines"]) == 3
         assert len(case["initialState"]["grippers"]) == 2
         if case["expectations"].get("applyRejected"):
@@ -32,6 +66,12 @@ def test_generator_has_fixed_opc_buffer_shape() -> None:
         else:
             assert not validate_inventory(case["initialState"])
     assert sum(bool(case["expectations"].get("applyRejected")) for case in cases) == 10
+    for case in cases:
+        if case["expectations"].get("applyRejected"):
+            assert [
+                magazine["slots"][-1]["productType"]
+                for magazine in case["initialState"]["magazines"]
+            ] == [0, 0]
     assert any(case["initialState"]["grippers"][0]["content"] for case in cases)
     assert any(case["initialState"]["grippers"][1]["content"] for case in cases)
     assert any(all(item["content"] for item in case["initialState"]["grippers"]) for case in cases)
@@ -53,7 +93,11 @@ def test_multitype_smoke_cases_assign_every_type_to_machine_and_magazine() -> No
         state = case["initialState"]
         expected_types = set(range(1, state["typeCount"] + 1))
         assert expected_types <= {item["productType"] for item in state["machines"]}
-        assert expected_types <= {item["productType"] for item in state["slots"]}
+        assert expected_types <= {
+            item["productType"]
+            for magazine in state["magazines"]
+            for item in magazine["slots"]
+        }
 
 
 def test_first_decision_oracle_routes_known_payloads_after_operator_identification() -> None:
@@ -81,12 +125,13 @@ def test_return_blank_smoke_case_checks_decision_without_waiting_for_an_impossib
     assert item["expectations"]["fullCycle"] is False
 
 
-def test_regression_suite_has_fixed_owner_cases_and_seventy_total() -> None:
+def test_regression_suite_has_fixed_owner_cases_and_seventy_three_total() -> None:
     owners = error_owner_scenarios()
-    assert [case["expectations"]["expectedErrorSource"] for case in owners] == [1, 2, 3, 4, 5, 6]
-    assert owners[4]["initialState"]["machines"][1]["state"] == 1
-    assert owners[5]["initialState"]["machines"][2]["state"] == 1
-    assert len(regression_scenarios()) == 70
+    assert [case["expectations"]["expectedErrorSource"] for case in owners] == [1, 2, 3, 7, 4, 5, 6]
+    assert [magazine["enabled"] for magazine in owners[3]["initialState"]["magazines"]] == [False, True]
+    assert owners[5]["initialState"]["machines"][1]["state"] == 1
+    assert owners[6]["initialState"]["machines"][2]["state"] == 1
+    assert len(regression_scenarios()) == 73
     assert operator_cancel_scenario()["expectations"]["testKind"] == "operator-cancel"
 
 

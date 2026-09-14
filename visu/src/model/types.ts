@@ -75,12 +75,14 @@ export interface CellLayout {
     frameBottomZ: number;
     supportSize: number;
     supportInsetX: number;
+    bayClearSpansX?: number[];
   };
   robot: {
     yBeamHeight: number;
     yBeamWidthX: number;
     zBaseLength: number;
     zColumnWidth: number;
+    zProfileLength?: number;
   };
   partGeometry: PartGeometryLayout;
   productPartMaterials: [ProductPartMaterials, ProductPartMaterials, ProductPartMaterials];
@@ -105,12 +107,15 @@ export interface MachineState {
   manualDoorCloseAllowed: boolean;
   manualHatchOpenAllowed: boolean;
   manualHatchCloseAllowed: boolean;
+  manualHatchUnlockAllowed: boolean;
+  manualHatchLockAllowed: boolean;
   manualChuckOpenAllowed: boolean;
   manualChuckCloseAllowed: boolean;
   doorOpen: boolean;
   doorClosed: boolean;
   hatchOpen: boolean;
   hatchClosed: boolean;
+  hatchLocked: boolean;
   chuckOpen: boolean;
   chuckClosed: boolean;
   partPresent: boolean;
@@ -188,8 +193,6 @@ export interface MagazineState {
   columns: number;
   pitchX: number;
   pitchY: number;
-  safeAbove: number;
-  safeInside: number;
   activeErrors: string[];
   lastErrors: string[];
 }
@@ -200,8 +203,21 @@ export interface MagazineData {
   state: MagazineState;
 }
 
+export type EnclosureDoorId = 'magazine-1-front' | 'magazine-1-rear' | 'magazine-2-front' | 'magazine-2-rear';
+
+export interface EnclosureDoorState {
+  closed: boolean;
+  locked: boolean;
+}
+
+export type EnclosureDoorStates = Record<EnclosureDoorId, EnclosureDoorState>;
+
 export interface CellState {
 	robot: RobotState;
   machines: MachineState[];
   magazines: [MagazineData, MagazineData];
+  enclosureDoors: EnclosureDoorStates;
+  buttonStations: import('./buttonStations').ButtonStationStates;
+  controlCabinets: import('./controlCabinets').ControlCabinetStates;
+  mpgPendant: import('./mpgPendant').MpgPendantState;
 }

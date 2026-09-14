@@ -113,16 +113,11 @@ GVL_ALARM.Command.xResetWarnings := GVL_HMI.xAlarmResetWarnings;
 // Режим инъекции ошибок включается отдельным переключателем страницы CELL_SETTINGS.
 GVL_CELL_SETTINGS.xErrorSimulationEnabled := GVL_HMI.xErrorSimulationEnable;
 
-// Ускорение относится только к симуляции. Разрешаем менять его, когда ячейка
-// остановлена, нет активного движения/ошибки и выбран режим SoftMotion.
+// Ползунок меняет только запрошенное значение. Отдельный FB применяет его к
+// таймерам и Dynamic Limits безопасной транзакцией перед следующим тестом.
 GVL_CELL_SETTINGS.xSimulationAccelerationChangeAllowed :=
-	NOT GVL_CELL_MANAGER.Status.xRunning
-	AND NOT GVL_HMI.xModbusMode
-	AND NOT GVL_CELL_CONTROL.xGlobalError
-	AND NOT GVL_AXIS.arrAxis[1].Status.xMotionBusy
-	AND NOT GVL_AXIS.arrAxis[2].Status.xMotionBusy
-	AND NOT GVL_AXIS.arrAxis[3].Status.xMotionBusy
-	AND NOT GVL_ROBOT.Status.xBusy;
+	xHmiConnectionAlive
+	AND NOT GVL_CELL_CONTROL.xGlobalError;
 
 IF GVL_CELL_SETTINGS.xSimulationAccelerationChangeAllowed THEN
 	GVL_CELL_SETTINGS.xSimulationAccelerationEnable := GVL_HMI.xSimulationAccelerationEnable;
@@ -133,9 +128,9 @@ IF GVL_CELL_SETTINGS.xSimulationAccelerationChangeAllowed THEN
 		GVL_CELL_SETTINGS.uiSimulationTimeFactor := UINT#100;
 	END_IF;
 ELSE
-	// Запрещённые изменения не накапливаются: HMI получает фактически применённое состояние.
+	// При потере разрешения сохраняем последнее принятое требование.
 	GVL_HMI.xSimulationAccelerationEnable := GVL_CELL_SETTINGS.xSimulationAccelerationActive;
-	GVL_HMI.uiSimulationTimeFactor := GVL_CELL_SETTINGS.uiSimulationTimeFactorApplied;
+	GVL_HMI.uiSimulationTimeFactor := GVL_CELL_SETTINGS.uiSimulationTimeFactor;
 END_IF;
 
 // Общие технологические TIMEOUT и допуски HOME принимаются только при полностью
@@ -165,6 +160,7 @@ IF GVL_CELL_SETTINGS.xCellSettingsChangeAllowed THEN
 	GVL_CELL_SETTINGS.stMachineTimeouts.tRobotRelease := LIMIT(T#1S, GVL_HMI.stCellMachineTimeouts.tRobotRelease, T#600S);
 	GVL_CELL_SETTINGS.stMachineTimeouts.tDoorOpen := LIMIT(T#1S, GVL_HMI.stCellMachineTimeouts.tDoorOpen, T#600S);
 	GVL_CELL_SETTINGS.stMachineTimeouts.tDoorClose := LIMIT(T#1S, GVL_HMI.stCellMachineTimeouts.tDoorClose, T#600S);
+	GVL_CELL_SETTINGS.stMachineTimeouts.tHatchUnlock := LIMIT(T#1S, GVL_HMI.stCellMachineTimeouts.tHatchUnlock, T#600S);
 	GVL_CELL_SETTINGS.stMachineTimeouts.tChuckOpen := LIMIT(T#1S, GVL_HMI.stCellMachineTimeouts.tChuckOpen, T#600S);
 	GVL_CELL_SETTINGS.stMachineTimeouts.tChuckClose := LIMIT(T#1S, GVL_HMI.stCellMachineTimeouts.tChuckClose, T#600S);
 	GVL_CELL_SETTINGS.stMachineTimeouts.tCycleStart := LIMIT(T#1S, GVL_HMI.stCellMachineTimeouts.tCycleStart, T#600S);
@@ -200,6 +196,7 @@ AND (GVL_HMI.udiPointEditorCommandSeq <> udiLastPointEditorCommandSeq) THEN
 	GVL_HMI.uiPointEditorResult := UINT#2;
 	GVL_HMI.uiPointEditorRejectReason := UINT#0;
 	xPointEditorRequestValid := FALSE;
+	xPointEditorMagazinePoint := FALSE;
 	ePointEditorName := E_POINT_NAME.NONE;
 	uiPointStorageIndex := UINT#0;
 
@@ -219,6 +216,8 @@ AND (GVL_HMI.udiPointEditorCommandSeq <> udiLastPointEditorCommandSeq) THEN
 	END_CASE;
 	xPointEditorRequestValid := (ePointEditorName <> E_POINT_NAME.NONE)
 		AND (uiPointStorageIndex <> UINT#0);
+	xPointEditorMagazinePoint := (ePointEditorName = E_POINT_NAME.MAGAZINE_1_DETAIL)
+		OR (ePointEditorName = E_POINT_NAME.MAGAZINE_2_DETAIL);
 
 	IF (GVL_HMI.uiPointEditorCommand <> UINT#1)
 	AND (GVL_HMI.uiPointEditorCommand <> UINT#2)
@@ -258,6 +257,10 @@ AND (GVL_HMI.udiPointEditorCommandSeq <> udiLastPointEditorCommandSeq) THEN
 			GVL_HMI.stPointEditorResultPoint.X := GVL_AXIS_GROUP.AxisGroup.Status.ActualX;
 			GVL_HMI.stPointEditorResultPoint.Y := GVL_AXIS_GROUP.AxisGroup.Status.ActualY;
 			GVL_HMI.stPointEditorResultPoint.Z := GVL_AXIS_GROUP.AxisGroup.Status.ActualZ;
+			GVL_HMI.stPointEditorResultPoint.MagazineSafeZ :=
+				GVL_HMI.lrPointEditorDraftMagazineSafeZ;
+			GVL_HMI.stPointEditorResultPoint.MagazineChangeZ :=
+				GVL_HMI.lrPointEditorDraftMagazineChangeZ;
 			GVL_HMI.stPointEditorResultPoint.SpeedFactor :=
 				GVL_HMI.lrPointEditorDraftSpeedFactor;
 			GVL_HMI.stPointEditorResultPoint.xConfigured := FALSE;
@@ -270,7 +273,12 @@ AND (GVL_HMI.udiPointEditorCommandSeq <> udiLastPointEditorCommandSeq) THEN
 			ELSIF (GVL_POINT.Points[ePointEditorName].X <> GVL_HMI.alrPointEditorDraftXYZ[1])
 			OR (GVL_POINT.Points[ePointEditorName].Y <> GVL_HMI.alrPointEditorDraftXYZ[2])
 			OR (GVL_POINT.Points[ePointEditorName].Z <> GVL_HMI.alrPointEditorDraftXYZ[3])
-			OR (GVL_POINT.Points[ePointEditorName].SpeedFactor <> GVL_HMI.lrPointEditorDraftSpeedFactor) THEN
+			OR (GVL_POINT.Points[ePointEditorName].SpeedFactor <> GVL_HMI.lrPointEditorDraftSpeedFactor)
+			OR (xPointEditorMagazinePoint
+				AND ((GVL_POINT.Points[ePointEditorName].MagazineSafeZ <>
+					GVL_HMI.lrPointEditorDraftMagazineSafeZ)
+				OR (GVL_POINT.Points[ePointEditorName].MagazineChangeZ <>
+					GVL_HMI.lrPointEditorDraftMagazineChangeZ))) THEN
 				GVL_HMI.uiPointEditorRejectReason := UINT#21;
 			ELSE
 				xPointCheckRequest := TRUE; // Финальное разрешение после RunMotion/RunCellControl
@@ -288,6 +296,12 @@ AND (GVL_HMI.udiPointEditorCommandSeq <> udiLastPointEditorCommandSeq) THEN
 			ELSIF NOT ((GVL_HMI.lrPointEditorDraftSpeedFactor > 0.1)
 			AND (GVL_HMI.lrPointEditorDraftSpeedFactor <= 1.0)) THEN
 				GVL_HMI.uiPointEditorRejectReason := UINT#15; // Недопустимая скорость
+			ELSIF xPointEditorMagazinePoint
+			AND ((GVL_HMI.lrPointEditorDraftMagazineSafeZ < -LREAL#10000.0)
+				OR (GVL_HMI.lrPointEditorDraftMagazineSafeZ > LREAL#10000.0)
+				OR (GVL_HMI.lrPointEditorDraftMagazineChangeZ < -LREAL#10000.0)
+				OR (GVL_HMI.lrPointEditorDraftMagazineChangeZ > LREAL#10000.0)) THEN
+				GVL_HMI.uiPointEditorRejectReason := UINT#22; // Смещения магазина вне диапазона
 			ELSE
 				GVL_POINT.astRetainPoints[uiPointStorageIndex].Name := '';
 				GVL_POINT.astRetainPoints[uiPointStorageIndex].X :=
@@ -296,9 +310,21 @@ AND (GVL_HMI.udiPointEditorCommandSeq <> udiLastPointEditorCommandSeq) THEN
 					GVL_HMI.alrPointEditorDraftXYZ[2];
 				GVL_POINT.astRetainPoints[uiPointStorageIndex].Z :=
 					GVL_HMI.alrPointEditorDraftXYZ[3];
+				IF xPointEditorMagazinePoint THEN
+					GVL_POINT.astRetainPoints[uiPointStorageIndex].MagazineSafeZ :=
+						GVL_HMI.lrPointEditorDraftMagazineSafeZ;
+					GVL_POINT.astRetainPoints[uiPointStorageIndex].MagazineChangeZ :=
+						GVL_HMI.lrPointEditorDraftMagazineChangeZ;
+				ELSE
+					GVL_POINT.astRetainPoints[uiPointStorageIndex].MagazineSafeZ := LREAL#0.0;
+					GVL_POINT.astRetainPoints[uiPointStorageIndex].MagazineChangeZ := LREAL#0.0;
+				END_IF;
 				GVL_POINT.astRetainPoints[uiPointStorageIndex].SpeedFactor :=
 					GVL_HMI.lrPointEditorDraftSpeedFactor;
-				GVL_POINT.astRetainPoints[uiPointStorageIndex].xConfigured := TRUE;
+				GVL_POINT.astRetainPoints[uiPointStorageIndex].xConfigured :=
+					NOT xPointEditorMagazinePoint
+					OR ((GVL_HMI.lrPointEditorDraftMagazineSafeZ <> LREAL#0.0)
+						AND (GVL_HMI.lrPointEditorDraftMagazineChangeZ <> LREAL#0.0));
 				GVL_POINT.Points[ePointEditorName] :=
 					GVL_POINT.astRetainPoints[uiPointStorageIndex];
 				GVL_HMI.stPointEditorResultPoint := GVL_POINT.Points[ePointEditorName];
@@ -332,6 +358,7 @@ FOR uiMachine := 1 TO 3 DO
 	astMachineFaultRequest[uiMachine].xTimeoutRobotRelease := GVL_HMI.axMachineTimeoutRobotRelease[uiMachine];
 	astMachineFaultRequest[uiMachine].xTimeoutDoorOpen := GVL_HMI.axMachineTimeoutDoorOpen[uiMachine];
 	astMachineFaultRequest[uiMachine].xTimeoutDoorClose := GVL_HMI.axMachineTimeoutDoorClose[uiMachine];
+	astMachineFaultRequest[uiMachine].xTimeoutHatchUnlock := GVL_HMI.axMachineTimeoutHatchUnlock[uiMachine];
 	astMachineFaultRequest[uiMachine].xTimeoutChuckOpen := GVL_HMI.axMachineTimeoutChuckOpen[uiMachine];
 	astMachineFaultRequest[uiMachine].xTimeoutChuckClose := GVL_HMI.axMachineTimeoutChuckClose[uiMachine];
 	astMachineFaultRequest[uiMachine].xTimeoutCycleStart := GVL_HMI.axMachineTimeoutCycleStart[uiMachine];
@@ -357,17 +384,56 @@ stRobotFaultRequest.stPoint.xYOutOfLimit := GVL_HMI.xSimPointYOutOfLimit;
 stRobotFaultRequest.stPoint.xZOutOfLimit := GVL_HMI.xSimPointZOutOfLimit;
 stRobotFaultRequest.stPoint.xInvalidVelocity := GVL_HMI.xSimPointInvalidVelocity;
 
+IF NOT GVL_CELL_SETTINGS.xErrorSimulationEnabled THEN
+	adwTestMagazineFaultMask[1] := DWORD#0;
+	adwTestMagazineFaultMask[2] := DWORD#0;
+END_IF;
 astMagazineFaultRequest[1].xEnabled := GVL_CELL_SETTINGS.xErrorSimulationEnabled;
-astMagazineFaultRequest[1].xWrongOperation := GVL_HMI.xSimMagazineWrongOperation;
-astMagazineFaultRequest[1].xNoBlank := GVL_HMI.xSimMagazineNoBlank;
-astMagazineFaultRequest[1].xNoFreeSlot := GVL_HMI.xSimMagazineNoFreeSlot;
-astMagazineFaultRequest[1].xInvalidSlot := GVL_HMI.xSimMagazineInvalidSlot;
-astMagazineFaultRequest[1].xSlotContent := GVL_HMI.xSimMagazineSlotContent;
-astMagazineFaultRequest[1].xGeometry := GVL_HMI.xSimMagazineGeometry;
-astMagazineFaultRequest[2].xEnabled := FALSE;
+astMagazineFaultRequest[1].xWrongOperation := GVL_HMI.xSimMagazineWrongOperation
+	OR ((adwTestMagazineFaultMask[1] AND DWORD#16#0000_0001) <> DWORD#0);
+astMagazineFaultRequest[1].xNoBlank := GVL_HMI.xSimMagazineNoBlank
+	OR ((adwTestMagazineFaultMask[1] AND DWORD#16#0000_0002) <> DWORD#0);
+astMagazineFaultRequest[1].xNoFreeSlot := GVL_HMI.xSimMagazineNoFreeSlot
+	OR ((adwTestMagazineFaultMask[1] AND DWORD#16#0000_0004) <> DWORD#0);
+astMagazineFaultRequest[1].xInvalidSlot := GVL_HMI.xSimMagazineInvalidSlot
+	OR ((adwTestMagazineFaultMask[1] AND DWORD#16#0000_0008) <> DWORD#0);
+astMagazineFaultRequest[1].xSlotContent := GVL_HMI.xSimMagazineSlotContent
+	OR ((adwTestMagazineFaultMask[1] AND DWORD#16#0000_0010) <> DWORD#0);
+astMagazineFaultRequest[1].xGeometry := GVL_HMI.xSimMagazineGeometry
+	OR ((adwTestMagazineFaultMask[1] AND DWORD#16#0000_0020) <> DWORD#0);
+astMagazineFaultRequest[2].xEnabled := GVL_CELL_SETTINGS.xErrorSimulationEnabled
+	AND (adwTestMagazineFaultMask[2] <> DWORD#0);
+astMagazineFaultRequest[2].xWrongOperation :=
+	(adwTestMagazineFaultMask[2] AND DWORD#16#0000_0001) <> DWORD#0;
+astMagazineFaultRequest[2].xNoBlank :=
+	(adwTestMagazineFaultMask[2] AND DWORD#16#0000_0002) <> DWORD#0;
+astMagazineFaultRequest[2].xNoFreeSlot :=
+	(adwTestMagazineFaultMask[2] AND DWORD#16#0000_0004) <> DWORD#0;
+astMagazineFaultRequest[2].xInvalidSlot :=
+	(adwTestMagazineFaultMask[2] AND DWORD#16#0000_0008) <> DWORD#0;
+astMagazineFaultRequest[2].xSlotContent :=
+	(adwTestMagazineFaultMask[2] AND DWORD#16#0000_0010) <> DWORD#0;
+astMagazineFaultRequest[2].xGeometry :=
+	(adwTestMagazineFaultMask[2] AND DWORD#16#0000_0020) <> DWORD#0;
 
 stCellFaultRequest.xEnabled := GVL_CELL_SETTINGS.xErrorSimulationEnabled;
 stCellFaultRequest.xBothGrippers := GVL_HMI.xSimCellBothGrippers;
+
+stSafetyFaultRequest.xEnabled := GVL_CELL_SETTINGS.xErrorSimulationEnabled;
+FOR uiMachine := UINT#1 TO UINT#4 DO
+	stSafetyFaultRequest.axEmergencyStopStation[uiMachine] :=
+		GVL_HMI.axSimSafetyEmergencyStopStation[uiMachine];
+	stSafetyFaultRequest.axDoorUnlocked[uiMachine] :=
+		GVL_HMI.axSimSafetyDoorUnlocked[uiMachine];
+END_FOR;
+FOR uiMachine := UINT#1 TO UINT#2 DO
+	stSafetyFaultRequest.axEmergencyStopCabinet[uiMachine] :=
+		GVL_HMI.axSimSafetyEmergencyStopCabinet[uiMachine];
+END_FOR;
+stSafetyFaultRequest.xEmergencyStopMpg := GVL_HMI.xSimSafetyEmergencyStopMpg;
+stSafetyFaultRequest.xPhaseRelayFault := GVL_HMI.xSimSafetyPhaseRelayFault;
+stSafetyFaultRequest.xPressureRelayFault := GVL_HMI.xSimSafetyPressureRelayFault;
+stSafetyFaultRequest.xSafetyRelayFault := GVL_HMI.xSimSafetyRelayFault;
 
 
 // Ручные команды робота разрешены только вне автоматического цикла.

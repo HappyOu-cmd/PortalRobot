@@ -13,11 +13,12 @@ MACHINE_DISABLED = 0
 MACHINE_EMPTY_READY = 1
 MACHINE_BLANK_PROCESSING = 2
 MACHINE_DETAIL_READY = 3
-FAULT_MASK_LIMITS = {"cell": 0x0001, "robot": 0x01FF, "magazine": 0x003F}
+FAULT_MASK_LIMITS = {"cell": 0x0001, "robot": 0x01FF}
+MAGAZINE_COUNT = 2
 
 
 def _slots(*items: tuple[int, int, int]) -> list[dict[str, int]]:
-    # Это снимок рабочей Zone 2: тип пустого слота используется только при загрузке теста.
+    # Снимок статичной кассеты: тип пустого слота используется при загрузке теста.
     result = [{"content": EMPTY, "productType": 1} for _ in range(120)]
     for slot, content, product_type in items:
         result[slot - 1] = {"content": content, "productType": product_type}
@@ -63,35 +64,49 @@ def _ensure_machine_types(
 def scenario(
     name: str,
     *,
+    description: str = "Встроенный сценарий автоматизированной проверки",
     type_count: int = 1,
     machines: Iterable[tuple[int, int]] = ((MACHINE_EMPTY_READY, 1), (MACHINE_DISABLED, 0), (MACHINE_DISABLED, 0)),
     slots: list[dict[str, int]] | None = None,
+    magazine_2_slots: list[dict[str, int]] | None = None,
+    magazine_enabled: tuple[bool, bool] = (True, False),
     gripper_1: tuple[int, int] = (EMPTY, 0),
     gripper_2: tuple[int, int] = (EMPTY, 0),
     orientation: int = 0,
     expected: str = "cycle-completes",
+    expected_magazine: int | None = None,
     full_cycle: bool = True,
 ) -> dict[str, Any]:
-    scenario_slots = _distribute_slot_types(
+    magazine_1_slots = _distribute_slot_types(
         slots if slots is not None else _slots((1, BLANK, 1)), type_count,
     )
+    magazine_2_state = _distribute_slot_types(
+        magazine_2_slots if magazine_2_slots is not None else _slots(), type_count,
+    )
+    for index, item in enumerate(magazine_2_state):
+        item["productType"] = magazine_1_slots[index]["productType"]
+    expectations: dict[str, Any] = {"firstDecision": expected, "fullCycle": full_cycle}
+    if expected_magazine is not None:
+        expectations["expectedMagazine"] = expected_magazine
     return {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "name": name,
-        "description": "Встроенный сценарий автоматизированной проверки",
+        "description": description,
         "initialState": {
             "typeCount": type_count,
-            "magazineEnabled": True,
             "machines": _ensure_machine_types(machines, type_count),
-            "slots": scenario_slots,
+            "magazines": [
+                {"enabled": bool(magazine_enabled[0]), "slots": magazine_1_slots},
+                {"enabled": bool(magazine_enabled[1]), "slots": magazine_2_state},
+            ],
             "grippers": [
                 {"content": gripper_1[0], "productType": gripper_1[1]},
                 {"content": gripper_2[0], "productType": gripper_2[1]},
             ],
             "orientation": orientation,
-            "faultMasks": {"cell": 0, "robot": 0, "magazine": 0, "machines": [0, 0, 0]},
+            "faultMasks": {"cell": 0, "robot": 0, "magazines": [0, 0], "machines": [0, 0, 0]},
         },
-        "expectations": {"firstDecision": expected, "fullCycle": full_cycle},
+        "expectations": expectations,
     }
 
 
@@ -111,6 +126,25 @@ def smoke_scenarios() -> list[dict[str, Any]]:
         scenario("Три типа и совместимый станок", type_count=3, machines=((1, 1), (1, 2), (1, 3)), slots=_slots((1, EMPTY, 1)), gripper_1=(BLANK, 3), expected="operator-type-choice", full_cycle=False),
         scenario("Штатный Stop в безопасной точке", slots=_slots((1, BLANK, 1)), expected="safe-stop", full_cycle=False),
         scenario("Авария робота и Reset", slots=_slots((1, BLANK, 1)), expected="robot-error-reset", full_cycle=False),
+        scenario(
+            "Загрузить станок из магазина 2",
+            slots=_slots(),
+            magazine_2_slots=_slots((1, BLANK, 1)),
+            magazine_enabled=(False, True),
+            expected="magazine-take",
+            expected_magazine=2,
+        ),
+        scenario(
+            "Уложить готовую деталь в магазин 2",
+            slots=_slots(),
+            magazine_2_slots=_slots((1, EMPTY, 1)),
+            magazine_enabled=(False, True),
+            gripper_2=(DETAIL, 1),
+            orientation=1,
+            expected="magazine-put",
+            expected_magazine=2,
+            full_cycle=False,
+        ),
     ]
 
 
@@ -119,16 +153,24 @@ def validate_inventory(initial_state: dict[str, Any]) -> list[str]:
     type_count = int(initial_state.get("typeCount", 0))
     if type_count not in (1, 2, 3):
         errors.append("typeCount must be 1..3")
-    slots = initial_state.get("slots", [])
-    if len(slots) != 120:
-        errors.append("exactly 120 slots are required")
-    for index, item in enumerate(slots, 1):
-        content = int(item.get("content", -1))
-        product_type = int(item.get("productType", -1))
-        if content not in (EMPTY, BLANK, DETAIL):
-            errors.append(f"slot {index}: invalid content")
-        if product_type not in range(1, type_count + 1):
-            errors.append(f"slot {index}: invalid configured type")
+    magazines = initial_state.get("magazines", [])
+    if len(magazines) != MAGAZINE_COUNT:
+        errors.append("exactly 2 magazines are required")
+    for magazine_index, magazine in enumerate(magazines, 1):
+        slots = magazine.get("slots", [])
+        if len(slots) != 120:
+            errors.append(f"magazine {magazine_index}: exactly 120 slots are required")
+        for index, item in enumerate(slots, 1):
+            content = int(item.get("content", -1))
+            product_type = int(item.get("productType", -1))
+            if content not in (EMPTY, BLANK, DETAIL):
+                errors.append(f"magazine {magazine_index} slot {index}: invalid content")
+            if product_type not in range(1, type_count + 1):
+                errors.append(f"magazine {magazine_index} slot {index}: invalid configured type")
+    if len(magazines) == MAGAZINE_COUNT and all(len(item.get("slots", [])) == 120 for item in magazines):
+        for index, (first, second) in enumerate(zip(magazines[0]["slots"], magazines[1]["slots"]), 1):
+            if int(first.get("productType", -1)) != int(second.get("productType", -1)):
+                errors.append(f"slot {index}: configured type must match in both magazines")
     machines = initial_state.get("machines", [])
     if len(machines) != 3:
         errors.append("exactly 3 machines are required")
@@ -151,7 +193,11 @@ def validate_inventory(initial_state: dict[str, Any]) -> list[str]:
             errors.append(f"gripper {index}: invalid payload type")
     if type_count in (1, 2, 3):
         machine_types = {int(item.get("productType", 0)) for item in machines}
-        slot_types = {int(item.get("productType", 0)) for item in slots}
+        slot_types = {
+            int(item.get("productType", 0))
+            for magazine in magazines
+            for item in magazine.get("slots", [])
+        }
         for product_type in range(1, type_count + 1):
             if product_type not in machine_types:
                 errors.append(f"product type {product_type}: no assigned machine")
@@ -165,6 +211,16 @@ def validate_inventory(initial_state: dict[str, Any]) -> list[str]:
             errors.append(f"{owner} fault mask is outside 0..0x{limit:04X}")
         if value:
             owner_count += 1
+    magazine_masks = masks.get("magazines", [])
+    if len(magazine_masks) != MAGAZINE_COUNT:
+        errors.append("exactly 2 magazine fault masks are required")
+    else:
+        for index, raw_value in enumerate(magazine_masks, 1):
+            value = int(raw_value)
+            if value < 0 or value > 0x003F:
+                errors.append(f"magazine {index} fault mask is outside 0..0x003F")
+            if value:
+                owner_count += 1
     machine_masks = masks.get("machines", [])
     if len(machine_masks) != 3:
         errors.append("exactly 3 machine fault masks are required")
@@ -187,9 +243,12 @@ def expected_error_owner(initial_state: dict[str, Any]) -> int:
         owners.append(1)
     if int(masks.get("robot", 0)):
         owners.append(2)
-    if int(masks.get("magazine", 0)):
+    magazine_masks = masks.get("magazines", [])
+    if len(magazine_masks) > 0 and int(magazine_masks[0]):
         owners.append(3)
     owners.extend(index + 3 for index, value in enumerate(masks.get("machines", []), 1) if int(value))
+    if len(magazine_masks) > 1 and int(magazine_masks[1]):
+        owners.append(7)
     return owners[0] if len(owners) == 1 else 0
 
 
@@ -223,14 +282,18 @@ def expected_first_decision(initial_state: dict[str, Any]) -> str:
     if grippers[1]["content"] == DETAIL:
         return "magazine-put"
 
+    active_magazine = next(
+        (item for item in initial_state["magazines"] if bool(item.get("enabled", False))),
+        initial_state["magazines"][0],
+    )
     blank_types = {
         int(slot["productType"])
-        for slot in initial_state["slots"]
+        for slot in active_magazine["slots"]
         if int(slot["content"]) == BLANK
     }
     free_types = {
         int(slot["productType"])
-        for slot in initial_state["slots"]
+        for slot in active_magazine["slots"]
         if int(slot["content"]) == EMPTY
     }
     enabled = [
@@ -301,7 +364,12 @@ def generated_scenarios(seed: int, count: int) -> list[dict[str, Any]]:
         )
         item["expectations"]["firstDecision"] = expected_first_decision(item["initialState"])
         if rejected:
-            item["initialState"]["slots"][-1]["productType"] = 0
+            # Тип слота является общей конфигурацией двух магазинов. Оставляем
+            # одинаковое намеренно неверное значение в обоих снимках, чтобы
+            # gateway пропустил буфер до PLC, а проверялась именно PLC-валидация
+            # диапазона типа, а не транспортный контракт JSON.
+            for magazine in item["initialState"]["magazines"]:
+                magazine["slots"][-1]["productType"] = 0
             item["expectations"] = {
                 "firstDecision": "scenario-rejected", "fullCycle": False, "applyRejected": True,
             }
@@ -312,12 +380,13 @@ def generated_scenarios(seed: int, count: int) -> list[dict[str, Any]]:
 def error_owner_scenarios() -> list[dict[str, Any]]:
     cases: list[dict[str, Any]] = []
     definitions = [
-        ("Cell fault owner", {"cell": 1, "robot": 0, "magazine": 0, "machines": [0, 0, 0]}, 1),
-        ("Robot fault owner", {"cell": 0, "robot": 1, "magazine": 0, "machines": [0, 0, 0]}, 2),
-        ("Magazine fault owner", {"cell": 0, "robot": 0, "magazine": 1, "machines": [0, 0, 0]}, 3),
-        ("Machine 1 fault owner", {"cell": 0, "robot": 0, "magazine": 0, "machines": [1, 0, 0]}, 4),
-        ("Machine 2 fault owner", {"cell": 0, "robot": 0, "magazine": 0, "machines": [0, 1, 0]}, 5),
-        ("Machine 3 fault owner", {"cell": 0, "robot": 0, "magazine": 0, "machines": [0, 0, 1]}, 6),
+        ("Cell fault owner", {"cell": 1, "robot": 0, "magazines": [0, 0], "machines": [0, 0, 0]}, 1),
+        ("Robot fault owner", {"cell": 0, "robot": 1, "magazines": [0, 0], "machines": [0, 0, 0]}, 2),
+        ("Magazine 1 fault owner", {"cell": 0, "robot": 0, "magazines": [1, 0], "machines": [0, 0, 0]}, 3),
+        ("Magazine 2 fault owner", {"cell": 0, "robot": 0, "magazines": [0, 1], "machines": [0, 0, 0]}, 7),
+        ("Machine 1 fault owner", {"cell": 0, "robot": 0, "magazines": [0, 0], "machines": [1, 0, 0]}, 4),
+        ("Machine 2 fault owner", {"cell": 0, "robot": 0, "magazines": [0, 0], "machines": [0, 1, 0]}, 5),
+        ("Machine 3 fault owner", {"cell": 0, "robot": 0, "magazines": [0, 0], "machines": [0, 0, 1]}, 6),
     ]
     for name, masks, source in definitions:
         machines = [(MACHINE_EMPTY_READY, 1), (MACHINE_DISABLED, 1), (MACHINE_DISABLED, 1)]
@@ -328,6 +397,7 @@ def error_owner_scenarios() -> list[dict[str, Any]]:
         item = scenario(
             name,
             machines=machines,
+            magazine_enabled=(False, True) if source == 7 else (True, False),
             full_cycle=False,
             expected="initial-error",
         )
@@ -349,6 +419,50 @@ def operator_cancel_scenario() -> dict[str, Any]:
     )
     item["expectations"]["testKind"] = "operator-cancel"
     return item
+
+
+def general_scenarios() -> list[dict[str, Any]]:
+    """Four full magazine batches for every occupancy mask of three machines."""
+    definitions = (
+        ("Все три станка загружены", (True, True, True)),
+        ("Все три станка пустые", (False, False, False)),
+        ("Загружен только станок 1", (True, False, False)),
+        ("Загружен только станок 2", (False, True, False)),
+        ("Загружен только станок 3", (False, False, True)),
+        ("Загружены станки 1 и 2", (True, True, False)),
+        ("Загружены станки 1 и 3", (True, False, True)),
+        ("Загружены станки 2 и 3", (False, True, True)),
+    )
+    full_blanks = _slots(*(
+        (slot, BLANK, 1) for slot in range(1, 121)
+    ))
+    result: list[dict[str, Any]] = []
+    for label, loaded in definitions:
+        machines = tuple(
+            (MACHINE_DETAIL_READY if has_detail else MACHINE_EMPTY_READY, 1)
+            for has_detail in loaded
+        )
+        item = scenario(
+            f"Генеральный цикл — {label}",
+            description=(
+                "Четыре полные партии одного типа: М1-A → М2-A → М1-B → М2-B; "
+                "неактивный магазин перезагружается штатными командами."
+            ),
+            machines=machines,
+            slots=copy.deepcopy(full_blanks),
+            magazine_2_slots=copy.deepcopy(full_blanks),
+            magazine_enabled=(True, True),
+            full_cycle=False,
+        )
+        item["expectations"]["firstDecision"] = expected_first_decision(item["initialState"])
+        item["expectations"].update({
+            "testKind": "general-four-batches",
+            "initialLoadedMachineCount": sum(loaded),
+            "batchSize": 120,
+            "expectedMagazineSequence": [1, 2, 1, 2],
+        })
+        result.append(item)
+    return result
 
 
 def regression_scenarios() -> list[dict[str, Any]]:

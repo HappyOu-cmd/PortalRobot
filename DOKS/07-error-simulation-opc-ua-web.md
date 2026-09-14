@@ -40,6 +40,7 @@
 - TIMEOUT станков: `GVL_HMI.axMachineTimeoutRobotMove[1..3]`,
   `axMachineTimeoutRobotAction[1..3]`, `axMachineTimeoutRobotRelease[1..3]`,
   `axMachineTimeoutDoorOpen[1..3]`, `axMachineTimeoutDoorClose[1..3]`,
+  `axMachineTimeoutHatchUnlock[1..3]`,
   `axMachineTimeoutChuckOpen[1..3]`, `axMachineTimeoutChuckClose[1..3]`,
   `axMachineTimeoutCycleStart[1..3]`.
 

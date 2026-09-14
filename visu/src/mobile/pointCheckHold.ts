@@ -1,5 +1,5 @@
 export type CheckPhase = 'ready' | 'starting' | 'moving' | 'stopping' | 'completed' | 'stopped' | 'error';
-type CheckPayload = { index: number; draft: { x: number; y: number; z: number; speedFactor: number } };
+type CheckPayload = { index: number; draft: { x: number; y: number; z: number; magazineSafeZ?: number; magazineChangeZ?: number; speedFactor: number } };
 type CheckSnapshot = { online: boolean; active: boolean; runSeq: number; checkState: number };
 type Dependencies = {
   prepare: () => Promise<{ holdId: string }>;

@@ -17,7 +17,26 @@ test('validates and normalizes a point backup', () => {
   const value = validatePointBackup(backup());
   assert.equal(value.points.length, 2);
   assert.equal(value.points[0].configured, true);
+  assert.equal(value.points[0].magazineSafeZ, 0);
+  assert.equal(value.points[0].magazineChangeZ, 0);
   assert.equal(value.exportedAt, '2026-09-01T10:00:00.000Z');
+});
+
+test('migrates legacy magazine points with zero offsets and preserves new values', () => {
+  const legacy = backup();
+  legacy.points.push({
+    index: 11, pointId: 22, label: 'Магазин 1 — базовая точка детали',
+    x: 100, y: 200, z: 300, speedFactor: 0.5, configured: true,
+  });
+  const migrated = validatePointBackup(legacy);
+  assert.equal(migrated.points[2].magazineSafeZ, 0);
+  assert.equal(migrated.points[2].magazineChangeZ, 0);
+
+  legacy.points[2].magazineSafeZ = -300;
+  legacy.points[2].magazineChangeZ = -100;
+  const current = validatePointBackup(legacy);
+  assert.equal(current.points[2].magazineSafeZ, -300);
+  assert.equal(current.points[2].magazineChangeZ, -100);
 });
 
 test('rejects duplicate point ids and unsafe speed factors', () => {

@@ -5,9 +5,53 @@ import { DatabaseSync } from 'node:sqlite';
 const stringify = (value) => JSON.stringify(value ?? null);
 const parse = (value) => value ? JSON.parse(value) : null;
 
+const emptySlots = (types = []) => Array.from({ length: 120 }, (_, index) => ({
+  content: 0,
+  productType: Number(types[index]?.productType ?? 1),
+}));
+
+export function normalizeScenarioState(input) {
+  if (!input || typeof input !== 'object') throw new Error('Сценарий не содержит initialState');
+  const state = structuredClone(input);
+  if (!Array.isArray(state.magazines)) {
+    if (!Array.isArray(state.slots) || state.slots.length !== 120) {
+      throw new Error('Сценарий должен содержать два магазина по 120 слотов');
+    }
+    state.magazines = [
+      { enabled: Boolean(state.magazineEnabled), slots: state.slots },
+      { enabled: false, slots: emptySlots(state.slots) },
+    ];
+    delete state.magazineEnabled;
+    delete state.slots;
+  }
+  if (state.magazines.length !== 2
+    || state.magazines.some((magazine) => !Array.isArray(magazine?.slots) || magazine.slots.length !== 120)) {
+    throw new Error('Сценарий должен содержать два магазина по 120 слотов');
+  }
+  state.magazines = state.magazines.map((magazine) => ({
+    enabled: Boolean(magazine.enabled),
+    slots: magazine.slots.map((slot) => ({ content: Number(slot.content ?? 0), productType: Number(slot.productType ?? 1) })),
+  }));
+  for (let index = 0; index < 120; index += 1) {
+    if (state.magazines[0].slots[index].productType !== state.magazines[1].slots[index].productType) {
+      throw new Error(`Тип слота ${index + 1} должен совпадать в обоих магазинах`);
+    }
+  }
+  const masks = state.faultMasks ?? {};
+  state.faultMasks = {
+    cell: Number(masks.cell ?? 0),
+    robot: Number(masks.robot ?? 0),
+    magazines: Array.isArray(masks.magazines)
+      ? [Number(masks.magazines[0] ?? 0), Number(masks.magazines[1] ?? 0)]
+      : [Number(masks.magazine ?? 0), 0],
+    machines: [0, 1, 2].map((index) => Number(masks.machines?.[index] ?? 0)),
+  };
+  return state;
+}
+
 const scenarioRow = (row) => row && ({
   id: Number(row.id), name: row.name, description: row.description ?? '',
-  schemaVersion: Number(row.schema_version), initialState: parse(row.initial_state_json),
+  schemaVersion: 2, initialState: normalizeScenarioState(parse(row.initial_state_json)),
   expectations: parse(row.expectations_json), createdAt: Number(row.created_at), updatedAt: Number(row.updated_at),
 });
 const caseRow = (row) => row && ({
@@ -61,16 +105,15 @@ export class TestStore {
     const now = Date.now();
     const name = String(input.name ?? '').trim();
     if (!name) throw new Error('Укажите имя сценария');
-    const initialState = input.initialState;
-    if (!initialState || !Array.isArray(initialState.slots) || initialState.slots.length !== 120) throw new Error('Сценарий должен содержать 120 слотов Zone 2');
+    const initialState = normalizeScenarioState(input.initialState);
     if (id === null) {
       const result = this.db.prepare(`INSERT INTO test_scenario
         (name, description, schema_version, initial_state_json, expectations_json, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)`).run(name, String(input.description ?? ''), Number(input.schemaVersion ?? 1), stringify(initialState), stringify(input.expectations ?? {}), now, now);
+        VALUES (?, ?, ?, ?, ?, ?, ?)`).run(name, String(input.description ?? ''), 2, stringify(initialState), stringify(input.expectations ?? {}), now, now);
       return this.getScenario(result.lastInsertRowid);
     }
     this.db.prepare(`UPDATE test_scenario SET name=?, description=?, schema_version=?, initial_state_json=?,
-      expectations_json=?, updated_at=? WHERE id=?`).run(name, String(input.description ?? ''), Number(input.schemaVersion ?? 1), stringify(initialState), stringify(input.expectations ?? {}), now, Number(id));
+      expectations_json=?, updated_at=? WHERE id=?`).run(name, String(input.description ?? ''), 2, stringify(initialState), stringify(input.expectations ?? {}), now, Number(id));
     return this.getScenario(id);
   }
   deleteScenario(id) { return this.db.prepare('DELETE FROM test_scenario WHERE id = ?').run(Number(id)).changes > 0; }

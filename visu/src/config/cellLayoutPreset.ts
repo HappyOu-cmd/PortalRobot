@@ -1,4 +1,5 @@
 import type { CellLayout } from '../model/types';
+import { MEASURED_PORTAL_LAYOUT, PORTAL_MEASUREMENTS } from './portalMeasurements';
 
 // Эталонная геометрия ячейки. Этот файл хранится в Git и используется как
 // восстановимый источник настроек при первом запуске и миграциях localStorage.
@@ -7,11 +8,11 @@ export const CELL_LAYOUT_PRESET: CellLayout = {
     origin: { x: 0, y: 40, z: -200 },
     direction: { x: 1, y: 1, z: 1 },
   },
-  floor: { lengthX: 13200, widthY: 3900 },
+  floor: { lengthX: 14000, widthY: 3900 },
   machine: {
-    sizeX: 3680,
-    sizeY: 1670,
-    sizeZ: 2080,
+    sizeX: 2300,
+    sizeY: 1680,
+    sizeZ: 1780,
     doorTravel: 1120,
     machines: [
       { position: { x: 0, y: 1450, z: 0 } },
@@ -20,13 +21,11 @@ export const CELL_LAYOUT_PRESET: CellLayout = {
     ],
   },
   portal: {
-    position: { x: -260, y: 1710, z: 0 },
-    lengthX: 14050,
-    widthY: 1950,
+    // The rail starts locally at -420 mm; this offset puts its left end at X=0.
+    position: { x: 420, y: 1710, z: 0 },
+    ...MEASURED_PORTAL_LAYOUT,
     frameThicknessZ: 120,
     frameDepthY: 110,
-    frameBottomZ: 3000,
-    supportSize: 180,
     supportInsetX: 180,
   },
   robot: {
@@ -34,6 +33,7 @@ export const CELL_LAYOUT_PRESET: CellLayout = {
     yBeamWidthX: 300,
     zBaseLength: 520,
     zColumnWidth: 120,
+    zProfileLength: PORTAL_MEASUREMENTS.zProfileLength,
   },
   partGeometry: {
     diameter: 39,
@@ -53,13 +53,13 @@ export const CELL_LAYOUT_PRESET: CellLayout = {
       position: { x: 4210, y: 1950, z: 0 },
       pitchX: 60,
       pitchY: 60,
-      workingHeight: 820,
+      workingHeight: 900,
     },
     {
       position: { x: 9210, y: 1950, z: 0 },
       pitchX: 60,
       pitchY: 60,
-      workingHeight: 820,
+      workingHeight: 900,
     },
   ],
   animation: {

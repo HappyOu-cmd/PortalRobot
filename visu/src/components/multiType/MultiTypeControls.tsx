@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { BarChart3, Boxes, CheckCircle2, ChevronRight, Clock3, EthernetPort, MapPin, TriangleAlert } from 'lucide-react';
 import type { ProductType } from '../../model/types';
 import type { PlcCellSettings, PlcRobotModbusInfo, PlcTestEnvironmentInfo } from '../../plc/client';
+import { SegmentedControl } from '../ui/ControlPrimitives';
 import { VercelTabs } from '../ui/VercelTabs';
 
 const TEST_ENVIRONMENT_LABELS = ['Обычная ячейка', 'Симуляция', 'Стенд SC-500'];
@@ -39,16 +40,18 @@ export function ProductTypeSelector({ value, count, disabled, onChange, label }:
   const types = ([1, 2, 3] as ProductType[]).slice(0, Math.max(1, Math.min(3, count)));
   return <div className="product-type-control">
     {label && <span>{label}</span>}
-    <div className={`product-type-selector count-${types.length}`} role="group" aria-label={label ?? 'Тип заготовки'}>
-      {types.map((type) => <button
-        key={type}
-        type="button"
-        className={`product-type-${type} ${value === type ? 'active' : ''}`}
-        disabled={disabled}
-        aria-pressed={value === type}
-        onClick={() => onChange(type)}
-      ><i />{PRODUCT_TYPE_LABELS[type]}</button>)}
-    </div>
+    <SegmentedControl
+      className={`product-type-selector count-${types.length}`}
+      value={String(value)}
+      options={types.map((type) => ({
+        value: String(type),
+        label: <><i />{PRODUCT_TYPE_LABELS[type]}</>,
+        className: `product-type-${type}`,
+      }))}
+      disabled={disabled}
+      onChange={(nextValue) => onChange(Number(nextValue) as ProductType)}
+      ariaLabel={label ?? 'Тип заготовки'}
+    />
   </div>;
 }
 
@@ -173,9 +176,19 @@ export function CellSettingsPanel({ online, modbusMode, modbus, testEnvironment,
 		{activeTopic === 'cell' && <>
       <section className="cell-config-section test-environment-settings">
 			<div className="cell-config-title"><Boxes /><div><h3>Среда выполнения</h3></div></div>
-          <div className="cell-settings-mode-switch three" role="group" aria-label="Тестовая среда">
-            {TEST_ENVIRONMENT_LABELS.map((label, value) => <button key={label} type="button" className={testEnvironment.applied === value ? 'active' : ''} disabled={!online || !testEnvironment.changeAllowed || testEnvironment.applied === value} onClick={() => onTestEnvironmentChange(value)}>{label}</button>)}
-          </div>
+          <SegmentedControl
+            className="cell-settings-mode-switch three"
+            value={String(testEnvironment.applied)}
+            options={TEST_ENVIRONMENT_LABELS.map((label, value) => ({
+              value: String(value),
+              label,
+              className: `environment-${value}${!testEnvironment.changeAllowed && testEnvironment.applied !== value ? ' command-unavailable' : ''}`,
+              disabled: !testEnvironment.changeAllowed,
+            }))}
+            disabled={!online}
+            onChange={(nextValue) => onTestEnvironmentChange(Number(nextValue))}
+            ariaLabel="Тестовая среда"
+          />
 			<ModeApplicationStatus requested={requestedEnvironment} applied={appliedEnvironment} />
 			{testEnvironment.rejectReason > 0 && <p className="panel-note warning">PLC отклонил переключение: {TEST_REJECT_REASONS[testEnvironment.rejectReason] ?? `код ${testEnvironment.rejectReason}`}.</p>}
 		</section>
@@ -186,15 +199,22 @@ export function CellSettingsPanel({ online, modbusMode, modbus, testEnvironment,
             <input disabled={!online || modbusMode || !accelerationAllowed} type="checkbox" checked={accelerationEnabled} onChange={(event) => onAccelerationChange(event.target.checked)} />
             <i />
           </label>
-			<p className={`simulation-acceleration-status ${accelerationActive ? 'active' : ''}`}>{accelerationActive ? 'Ускорение применено к симуляции.' : 'Ускорение выключено.'}</p>
+			<p className={`simulation-acceleration-status ${accelerationActive ? 'active' : ''}`}>{accelerationActive ? 'Коэффициент применён к таймерам и Dynamic Limits SoftMotion.' : 'Ускоренная динамика выключена.'}</p>
 		</section>
 		</>}
 		{activeTopic === 'robot' && <section className="cell-config-section robot-interface-settings">
 			<div className="cell-config-title"><EthernetPort /><div><h3>Источник управления роботом</h3></div></div>
-          <div className="cell-settings-mode-switch" role="group" aria-label="Источник управления роботом">
-            <button type="button" className={!modbusMode ? 'active' : ''} disabled={!online || !modbus.modeChangeAllowed || !modbusMode} onClick={() => onModeChange(false)}>SoftMotion</button>
-            <button type="button" className={modbusMode ? 'active' : ''} disabled={!online || !modbus.modeChangeAllowed || modbusMode} onClick={() => onModeChange(true)}>Modbus TCP</button>
-          </div>
+          <SegmentedControl
+            className="cell-settings-mode-switch"
+            value={modbusMode ? 'modbus' : 'softmotion'}
+            options={[
+              { value: 'softmotion', label: 'SoftMotion', className: 'robot-source-softmotion', disabled: !modbus.modeChangeAllowed },
+              { value: 'modbus', label: 'Modbus TCP', className: 'robot-source-modbus', disabled: !modbus.modeChangeAllowed },
+            ]}
+            disabled={!online}
+            onChange={(nextValue) => onModeChange(nextValue === 'modbus')}
+            ariaLabel="Источник управления роботом"
+          />
 			<ModeApplicationStatus requested={requestedRobotMode} applied={appliedRobotMode} />
 			<p className={`cell-settings-access ${modbus.modeChangeAllowed ? 'allowed' : ''}`}>{!online ? 'Нет связи с PLC.' : modbus.modeChangeAllowed ? 'Переключение разрешено PLC.' : 'Для переключения остановите ячейку, робот и технологические операции.'}</p>
 			<div className="cell-settings-grid modbus-grid">
@@ -241,6 +261,7 @@ export function CellSettingsPanel({ online, modbusMode, modbus, testEnvironment,
 				{field('Освобождение интерфейса', 'cell.settings.timeoutRobotRelease', settings.timeouts.robotRelease, 'с', 1, 600, 1)}
 				{field('Открытие люка', 'cell.settings.timeoutDoorOpen', settings.timeouts.doorOpen, 'с', 1, 600, 1)}
 				{field('Закрытие люка', 'cell.settings.timeoutDoorClose', settings.timeouts.doorClose, 'с', 1, 600, 1)}
+				{field('Открытие замка люка', 'cell.settings.timeoutHatchUnlock', settings.timeouts.hatchUnlock, 'с', 1, 600, 1)}
 				{field('Разжим патрона', 'cell.settings.timeoutChuckOpen', settings.timeouts.chuckOpen, 'с', 1, 600, 1)}
 				{field('Зажим патрона', 'cell.settings.timeoutChuckClose', settings.timeouts.chuckClose, 'с', 1, 600, 1)}
 				{field('Подтверждение цикла', 'cell.settings.timeoutCycleStart', settings.timeouts.cycleStart, 'с', 1, 600, 1)}
@@ -249,9 +270,19 @@ export function CellSettingsPanel({ online, modbusMode, modbus, testEnvironment,
 		{activeTopic === 'products' && <>
 		<section className="cell-config-section product-type-count-settings">
 			<div className="cell-config-title"><Boxes /><div><h3>Типы изделий на ячейке</h3></div></div>
-          <div className="robot-mode-selector three" role="group" aria-label="Количество типов изделий">
-            {[1, 2, 3].map((count) => <button key={count} type="button" className={`${typeCount === count ? 'active' : ''} ${typeCountAllowed ? '' : 'command-unavailable'}`} disabled={!online || typeCount === count} aria-disabled={!typeCountAllowed} onClick={() => onTypeCountChange(count)}>{count} {count === 1 ? 'тип' : count < 5 ? 'типа' : 'типов'}</button>)}
-          </div>
+          <SegmentedControl
+            className="robot-mode-selector three"
+            value={String(typeCount)}
+            options={[1, 2, 3].map((count) => ({
+              value: String(count),
+              label: `${count} ${count === 1 ? 'тип' : count < 5 ? 'типа' : 'типов'}`,
+              className: `product-count-${count}${typeCountAllowed ? '' : ' command-unavailable'}`,
+              ariaDisabled: !typeCountAllowed,
+            }))}
+            disabled={!online}
+            onChange={(nextValue) => onTypeCountChange(Number(nextValue))}
+            ariaLabel="Количество типов изделий"
+          />
 			<p className={`cell-settings-access ${typeCountAllowed && magazineConfigAllowed ? 'allowed' : ''}`}>{!online ? 'Нет связи с PLC.' : typeCountAllowed && magazineConfigAllowed ? 'Изменение конфигурации разрешено PLC.' : 'Для изменения остановите ячейку и магазины.'}</p>
 		</section>
 		<section className={`multi-type-validation ${configurationValid ? 'valid' : 'invalid'}`}>

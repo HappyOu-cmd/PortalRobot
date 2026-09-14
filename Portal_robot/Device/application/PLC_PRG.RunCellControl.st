@@ -25,6 +25,7 @@ TYPE_CONFIG(
 CELL_MANAGER(
 	xStart := GVL_CELL_CONTROL.xStart,
 	xStop := GVL_CELL_CONTROL.xStop,
+	xTestAbort := xTestAbortActive,
 	xResetRequest := GVL_HMI.xCellReset,
 	xReset := GVL_CELL_CONTROL.xReset,
 	xOperatorChoice := GVL_HMI.xCellOperatorChoice,
@@ -33,6 +34,7 @@ CELL_MANAGER(
 	xManual := GVL_CELL_CONTROL.xManual,
 	xManualRequest := GVL_HMI.xCellManual,
 	xGlobalError := GVL_CELL_CONTROL.xGlobalError,
+	xSafetyReady := CELL_SAFETY.Status.xReady,
 	xDrivesReady := xDrivesReady,
 	xMotionBusy := xMotionBusy,
 	xRobotInterfaceReady := xRobotInterfaceReady,

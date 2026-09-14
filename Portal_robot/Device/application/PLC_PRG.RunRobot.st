@@ -238,12 +238,15 @@ AND ((stMagazinePointCommand.eSetPoint = E_POINT_NAME.MAGAZINE_SAFE)
 	GVL_POINT.Points[stMagazinePointCommand.eSetPoint].Y :=
 		GVL_POINT.Points[stMagazinePointCommand.eSetPoint].Y
 		+ UINT_TO_LREAL(uiRobotManualMagazineRow) * GVL_HMI.MagazinePitchY;
+	// Signed-смещение добавляется к базе: отрицательное Z поднимает траверсу, положительное опускает.
 	IF stMagazinePointCommand.eSetPoint = E_POINT_NAME.MAGAZINE_SAFE THEN
 		GVL_POINT.Points[stMagazinePointCommand.eSetPoint].Z :=
-			GVL_HMI.alrMagazineSafeZ_1[stMagazinePointCommand.uiMagazineId];
+			GVL_POINT.Points[eMagazineBasePoint].Z
+			+ GVL_POINT.Points[eMagazineBasePoint].MagazineSafeZ;
 	ELSIF stMagazinePointCommand.eSetPoint = E_POINT_NAME.MAGAZINE_CHANGE THEN
 		GVL_POINT.Points[stMagazinePointCommand.eSetPoint].Z :=
-			GVL_HMI.alrMagazineSafeZ_2[stMagazinePointCommand.uiMagazineId];
+			GVL_POINT.Points[eMagazineBasePoint].Z
+			+ GVL_POINT.Points[eMagazineBasePoint].MagazineChangeZ;
 	END_IF;
 END_IF;
 
@@ -438,6 +441,7 @@ ROBOT(
 	xMotionBusy := xMotionBusy,
 	xSingleAxisMotionBusy := uiManualAxisOwner > UINT#0,
 	xPointCheckActive := xPointCheckActive,
+	xTestAbort := xTestAbortActive,
 	rPointCheckSpeedPercent := rPointCheckLatchedSpeed,
 	xSimulationAccelerationEnable := GVL_CELL_SETTINGS.xSimulationAccelerationActive,
 	uiSimulationTimeFactor := GVL_CELL_SETTINGS.uiSimulationTimeFactorApplied,

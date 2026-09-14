@@ -31,7 +31,7 @@ import {
 import { CellEventClassifier, CellEventStore, describeOperatorCommand } from './cell-events.mjs';
 import { AuthStore, AuthStoreError } from './auth-store.mjs';
 import { StatisticsStore, StatisticsStoreError } from './statistics-store.mjs';
-import { TestStore } from './test-store.mjs';
+import { TestStore, normalizeScenarioState } from './test-store.mjs';
 import { isHmiCommandAllowedDuringTest } from './test-session.mjs';
 import { PointBackupStore, PointBackupStoreError } from './point-backup-store.mjs';
 import { MobilePointsService, MOBILE_COOKIE, isPhoneAgent } from './mobile-points.mjs';
@@ -84,19 +84,23 @@ const faultRequiredSymbols = [
   'xErrorSimulationEnable', 'xErrorSimulationEnabled', 'xSimAxisGroupErrorAllowed',
   'xSimulationAccelerationEnable', 'xSimulationAccelerationActive',
   'xSimulationAccelerationChangeAllowed', 'uiSimulationTimeFactor',
-  'uiSimulationTimeFactorApplied', 'xSimulationAccelerationError',
+  'uiSimulationTimeFactorApplied', 'xSimulationAccelerationPending',
+  'xSimulationAccelerationBusy', 'xSimulationAccelerationError',
+  'udiSimulationAccelerationErrorId',
   'xCellSettingsChangeAllowed',
   'lrSafetyHomeX', 'lrSafetyHomeY', 'lrSafetyHomeZ', 'lrSafetyHomeSpeedFactor',
   'lrSafetyHomeToleranceX', 'lrSafetyHomeToleranceY', 'lrSafetyHomeToleranceZ',
   'stCellMachineTimeouts.tRobotMove', 'stCellMachineTimeouts.tRobotAction',
   'stCellMachineTimeouts.tRobotRelease', 'stCellMachineTimeouts.tDoorOpen',
   'stCellMachineTimeouts.tDoorClose', 'stCellMachineTimeouts.tChuckOpen',
-  'stCellMachineTimeouts.tChuckClose', 'stCellMachineTimeouts.tCycleStart',
+  'stCellMachineTimeouts.tHatchUnlock', 'stCellMachineTimeouts.tChuckClose', 'stCellMachineTimeouts.tCycleStart',
   'xSimAxisGroupError', 'xSimRobotWrongAction', 'xSimCellBothGrippers',
   'xSimGripper1Fault', 'xSimGripper2Fault', 'xSimGripperRotationFault', 'xSimGripperGlobalFault',
   'xSimPointXOutOfLimit', 'xSimPointYOutOfLimit', 'xSimPointZOutOfLimit', 'xSimPointInvalidVelocity',
   'xSimMagazineWrongOperation', 'xSimMagazineNoBlank', 'xSimMagazineNoFreeSlot',
   'xSimMagazineInvalidSlot', 'xSimMagazineSlotContent', 'xSimMagazineGeometry',
+  'xSimSafetyEmergencyStopMpg', 'xSimSafetyPhaseRelayFault',
+  'xSimSafetyPressureRelayFault', 'xSimSafetyRelayFault',
   'tMachineDoorOpenTime', 'tMachineDoorCloseTime', 'tMachineChuckOpenTime', 'tMachineChuckCloseTime',
   'tGripper1OpenTime', 'tGripper1CloseTime', 'tGripper2OpenTime', 'tGripper2CloseTime', 'tGripperChangeTime',
   ...[1, 2, 3].flatMap((index) => [
@@ -104,14 +108,20 @@ const faultRequiredSymbols = [
     `axMachineSimAlarm[${index}]`, `axMachineSimDoorFault[${index}]`, `axMachineSimSafetyDoorOpen[${index}]`, `axMachineSimChuckFault[${index}]`,
     `axMachineTimeoutRobotMove[${index}]`, `axMachineTimeoutRobotAction[${index}]`, `axMachineTimeoutRobotRelease[${index}]`,
     `axMachineTimeoutDoorOpen[${index}]`, `axMachineTimeoutDoorClose[${index}]`,
+    `axMachineTimeoutHatchUnlock[${index}]`,
     `axMachineTimeoutChuckOpen[${index}]`, `axMachineTimeoutChuckClose[${index}]`, `axMachineTimeoutCycleStart[${index}]`,
     `tMachineCycleTime[${index}]`,
     ...faultStatusSymbols(`astAxisFaultStatus[${index}]`),
     ...faultStatusSymbols(`astMachineFaultStatus[${index}]`),
   ]),
+  ...[1, 2, 3, 4].flatMap((index) => [
+    `axSimSafetyEmergencyStopStation[${index}]`, `axSimSafetyDoorUnlocked[${index}]`,
+  ]),
+  ...[1, 2].map((index) => `axSimSafetyEmergencyStopCabinet[${index}]`),
   ...faultStatusSymbols('stAxisGroupFaultStatus'),
   ...faultStatusSymbols('stRobotFaultStatus'),
   ...faultStatusSymbols('stCellFaultStatus'),
+  ...faultStatusSymbols('stSafetyFaultStatus'),
   ...faultStatusSymbols('stGripperFaultStatus'),
   ...faultStatusSymbols('stPointFaultStatus'),
   ...faultStatusSymbols('stMagazineFaultStatus'),
@@ -145,6 +155,7 @@ const requiredSymbols = [...new Set([
   'stCellStatus.xStartCheckMagazineReady',
   'stCellStatus.xStartCheckTaskAvailable',
   'stCellStatus.xStartCheckSafetyHome',
+  'stCellStatus.xStartCheckSafety',
   'stCellStatus.uiStartConditionsMet',
   'stCellStatus.uiStartConditionsTotal',
   'stCellStatus.uiReadyMachines',
@@ -155,6 +166,31 @@ const requiredSymbols = [...new Set([
   'stCellStatus.uiOperatorPrompt',
   'stCellStatus.uiOperatorTypeMask',
   'stCellStatus.uiOperatorMachineMask',
+  'stCellSafetyStatus.xReady',
+  'stCellSafetyStatus.xGlobalError',
+  'stCellSafetyStatus.xPhaseRelayOk',
+  'stCellSafetyStatus.xPressureRelayOk',
+  'stCellSafetyStatus.xSafetyRelayOk',
+  'stCellSafetyStatus.xSafetyRelayResetAllowed',
+  'stCellSafetyStatus.xSafetyRelayResetActive',
+  ...[1, 2, 3, 4].flatMap((index) => [
+    `astButtonStationIoStatus[${index}].xEmergencyStopPressed`,
+    `astButtonStationIoStatus[${index}].xButtonPressed`,
+    `astButtonStationIoStatus[${index}].xButtonLightOn`,
+    `astEnclosureDoorStatus[${index}].xLocked`,
+    `astEnclosureDoorStatus[${index}].xUnlockAllowed`,
+    `astEnclosureDoorStatus[${index}].xUnlockOutput`,
+    `stCellSafetyStatus.axDoorReady[${index}]`,
+  ]),
+  ...[1, 2, 3, 4, 5, 6, 7].map((index) => `stCellSafetyStatus.axEmergencyStopReleased[${index}]`),
+  'stFrontControlCabinetIoStatus.xEmergencyStopPressed',
+  'stFrontControlCabinetIoStatus.xStartPressed',
+  'stFrontControlCabinetIoStatus.xStopPressed',
+  'stFrontControlCabinetIoStatus.xResetPressed',
+  'stRearControlCabinetIoStatus.xEmergencyStopPressed',
+  'stMpgIoStatus.xEmergencyStopPressed',
+  'stMpgIoStatus.xAxisX', 'stMpgIoStatus.xAxisY', 'stMpgIoStatus.xAxisZ',
+  'stMpgIoStatus.xMultiplier1', 'stMpgIoStatus.xMultiplier10', 'stMpgIoStatus.xMultiplier100',
   'stCellDiag.eState',
   'rLoadCNC_1',
   'rLoadCNC_2',
@@ -261,6 +297,8 @@ const requiredSymbols = [...new Set([
   'stAxisGroupStatus.xPositionValid',
   'uiPointEditorIndex',
   'lrPointEditorDraftSpeedFactor',
+  'lrPointEditorDraftMagazineSafeZ',
+  'lrPointEditorDraftMagazineChangeZ',
   'uiPointEditorCommand',
   'udiPointEditorCommandSeq',
   'udiPointEditorAckSeq',
@@ -280,6 +318,8 @@ const requiredSymbols = [...new Set([
   'stPointEditorResultPoint.X',
   'stPointEditorResultPoint.Y',
   'stPointEditorResultPoint.Z',
+  'stPointEditorResultPoint.MagazineSafeZ',
+  'stPointEditorResultPoint.MagazineChangeZ',
   'stPointEditorResultPoint.SpeedFactor',
   'stPointEditorResultPoint.xConfigured',
   ...[1, 2, 3].map((index) => `alrPointEditorDraftXYZ[${index}]`),
@@ -288,6 +328,8 @@ const requiredSymbols = [...new Set([
     `astPointEditorPoints[${index}].X`,
     `astPointEditorPoints[${index}].Y`,
     `astPointEditorPoints[${index}].Z`,
+    `astPointEditorPoints[${index}].MagazineSafeZ`,
+    `astPointEditorPoints[${index}].MagazineChangeZ`,
     `astPointEditorPoints[${index}].SpeedFactor`,
     `astPointEditorPoints[${index}].xConfigured`,
     `axPointCheckAllowed[${index}]`,
@@ -334,14 +376,17 @@ const requiredSymbols = [...new Set([
   'astMachineIoStatus[1].xDoorOpen',
   ...[1, 2, 3].flatMap((index) => [
     `astMachineIoStatus[${index}].xDoorOpen`, `astMachineIoStatus[${index}].xDoorClosed`,
+    `astMachineIoStatus[${index}].xHatchLocked`,
     `astMachineIoStatus[${index}].xSafetyDoorOpen`, `astMachineIoStatus[${index}].xSafetyDoorClosed`,
     `astMachineIoStatus[${index}].xChuckUnclamped`, `astMachineIoStatus[${index}].xChuckClamped`,
     `astMachineStatus[${index}].xManualControlAllowed`,
     `astMachineStatus[${index}].xManualSafetyDoorOpenAllowed`, `astMachineStatus[${index}].xManualSafetyDoorCloseAllowed`,
     `astMachineStatus[${index}].xManualHatchOpenAllowed`, `astMachineStatus[${index}].xManualHatchCloseAllowed`,
+    `astMachineStatus[${index}].xManualHatchUnlockAllowed`, `astMachineStatus[${index}].xManualHatchLockAllowed`,
     `astMachineStatus[${index}].xManualChuckOpenAllowed`, `astMachineStatus[${index}].xManualChuckCloseAllowed`,
     `axMachineManualSafetyDoorOpen[${index}]`, `axMachineManualSafetyDoorClose[${index}]`,
     `axMachineManualHatchOpen[${index}]`, `axMachineManualHatchClose[${index}]`,
+    `axMachineManualHatchUnlock[${index}]`, `axMachineManualHatchLock[${index}]`,
     `axMachineManualChuckOpen[${index}]`, `axMachineManualChuckClose[${index}]`,
   ]),
   'axMachineSetBlank[1]',
@@ -376,12 +421,9 @@ const requiredSymbols = [...new Set([
     `astMagazineCommand[${index}].xFill`, `astMagazineCommand[${index}].xClear`,
     `astMagazineCommand[${index}].xCycleSlot`, `astMagazineCommand[${index}].xApplySlot`,
     `astMagazineCommand[${index}].xApplyPitchX`, `astMagazineCommand[${index}].xApplyPitchY`,
-    `astMagazineCommand[${index}].xApplySafeAbove`, `astMagazineCommand[${index}].xApplySafeInside`,
     `astMagazineCommand[${index}].uiEditSlot`, `astMagazineCommand[${index}].uiEditDetailType`,
     `astMagazineCommand[${index}].uiEditProductType`,
     `astMagazineCommand[${index}].lrEditPitchX`, `astMagazineCommand[${index}].lrEditPitchY`,
-    `astMagazineCommand[${index}].lrEditSafeAbove`, `astMagazineCommand[${index}].lrEditSafeInside`,
-    `alrMagazineSafeZ_1[${index}]`, `alrMagazineSafeZ_2[${index}]`,
     ...Array.from({ length: 120 }, (_, slot) => [
       `astMagazineInventory[${index}].aSlots[${slot + 1}].xInPosition`,
       `astMagazineInventory[${index}].aSlots[${slot + 1}].eDetailType`,
@@ -415,15 +457,20 @@ const requiredSymbols = [...new Set([
   'xTestSessionActive', 'xTestScenarioApply', 'uiTestEnvironmentApplied', 'uiTestSpeedProfileApplied',
   'xTestEnvironmentChangeAllowed', 'xTestScenarioApplyAllowed', 'xSc500BenchKeyActive', 'xSc500BenchKeyLost',
   'uiTestRejectReason', 'udiTestScenarioAckSeq', 'uiTestScenarioResult', 'stTestScenario.udiLoadSeq',
-  'stTestScenario.uiTypeCount', 'stTestScenario.xMagazineEnabled', 'stTestScenario.uiOrientation',
-  'stTestScenario.dwCellFaultMask', 'stTestScenario.dwRobotFaultMask', 'stTestScenario.dwMagazineFaultMask',
+  'stTestScenario.uiTypeCount', 'stTestScenario.uiOrientation',
+  'stTestScenario.dwCellFaultMask', 'stTestScenario.dwRobotFaultMask',
+  ...[1, 2].flatMap((index) => [`stTestScenario.axMagazineEnabled[${index}]`, `stTestScenario.adwMagazineFaultMask[${index}]`]),
   ...[1, 2, 3].map((index) => `stTestScenario.adwMachineFaultMask[${index}]`),
   ...[1, 2, 3].flatMap((index) => [`stTestScenario.auiMachineState[${index}]`, `stTestScenario.auiMachineType[${index}]`]),
   ...[1, 2].flatMap((index) => [`stTestScenario.auiGripperContent[${index}]`, `stTestScenario.auiGripperType[${index}]`]),
-  ...Array.from({ length: 120 }, (_, index) => [`stTestScenario.auiSlotContent[${index + 1}]`, `stTestScenario.auiSlotType[${index + 1}]`]).flat(),
+  ...Array.from({ length: 120 }, (_, index) => [
+    `stTestScenario.aauiSlotContent[1,${index + 1}]`,
+    `stTestScenario.aauiSlotContent[2,${index + 1}]`,
+    `stTestScenario.auiSlotType[${index + 1}]`,
+  ]).flat(),
   'stTestObservability.udiAppliedScenarioSeq', 'stTestObservability.uiCellState',
   'stTestObservability.uiRobotState', 'stTestObservability.uiRobotAction', 'stTestObservability.uiRobotPoint',
-  'stTestObservability.uiMagazineState', 'stTestObservability.uiMagazineOperation',
+  'stTestObservability.uiActiveMagazine', 'stTestObservability.uiMagazineState', 'stTestObservability.uiMagazineOperation',
   'stTestObservability.uiTakeSlot', 'stTestObservability.uiPutSlot', 'stTestObservability.uiSelectedMachine',
   'stTestObservability.uiSelectedType', 'stTestObservability.uiErrorSource', 'stTestObservability.dwErrorCode',
   ...[1, 2, 3].flatMap((index) => [`stTestObservability.auiMachineState[${index}]`, `stTestObservability.auiMachineOperation[${index}]`]),
@@ -436,10 +483,12 @@ const commandMap = {
   'cell.start': { path: 'xCellStart', dataType: DataType.Boolean, pulse: true },
   'cell.stop': { path: 'xCellStop', dataType: DataType.Boolean, pulse: true },
   'cell.reset': { path: 'xCellReset', dataType: DataType.Boolean, pulse: true },
+  'safety.resetRelay': { path: 'xSafetyRelayReset', dataType: DataType.Boolean, pulse: true },
   'cell.operatorCancel': { path: 'xCellOperatorCancel', dataType: DataType.Boolean, pulse: true },
   'alarms.resetWarnings': { path: 'xAlarmResetWarnings', dataType: DataType.Boolean, pulse: true },
   'cell.manual': { path: 'xCellManual', dataType: DataType.Boolean },
   'test.session': { path: 'xTestSessionActive', dataType: DataType.Boolean },
+  'test.abort': { path: 'xTestAbort', dataType: DataType.Boolean },
   'robot.modbus.ip1': { path: 'uiModbusIpOctet1', dataType: DataType.UInt16, transform: (v) => Math.max(0, Math.min(255, Math.round(Number(v)))) },
   'robot.modbus.ip2': { path: 'uiModbusIpOctet2', dataType: DataType.UInt16, transform: (v) => Math.max(0, Math.min(255, Math.round(Number(v)))) },
   'robot.modbus.ip3': { path: 'uiModbusIpOctet3', dataType: DataType.UInt16, transform: (v) => Math.max(0, Math.min(255, Math.round(Number(v)))) },
@@ -459,6 +508,7 @@ const commandMap = {
   'cell.settings.timeoutRobotRelease': { path: 'stCellMachineTimeouts.tRobotRelease', dataType: DataType.Int64, transform: (v) => Math.max(1000, Math.min(600000, Math.round(Number(v) * 1000))) },
   'cell.settings.timeoutDoorOpen': { path: 'stCellMachineTimeouts.tDoorOpen', dataType: DataType.Int64, transform: (v) => Math.max(1000, Math.min(600000, Math.round(Number(v) * 1000))) },
   'cell.settings.timeoutDoorClose': { path: 'stCellMachineTimeouts.tDoorClose', dataType: DataType.Int64, transform: (v) => Math.max(1000, Math.min(600000, Math.round(Number(v) * 1000))) },
+  'cell.settings.timeoutHatchUnlock': { path: 'stCellMachineTimeouts.tHatchUnlock', dataType: DataType.Int64, transform: (v) => Math.max(1000, Math.min(600000, Math.round(Number(v) * 1000))) },
   'cell.settings.timeoutChuckOpen': { path: 'stCellMachineTimeouts.tChuckOpen', dataType: DataType.Int64, transform: (v) => Math.max(1000, Math.min(600000, Math.round(Number(v) * 1000))) },
   'cell.settings.timeoutChuckClose': { path: 'stCellMachineTimeouts.tChuckClose', dataType: DataType.Int64, transform: (v) => Math.max(1000, Math.min(600000, Math.round(Number(v) * 1000))) },
   'cell.settings.timeoutCycleStart': { path: 'stCellMachineTimeouts.tCycleStart', dataType: DataType.Int64, transform: (v) => Math.max(1000, Math.min(600000, Math.round(Number(v) * 1000))) },
@@ -483,6 +533,10 @@ const commandMap = {
   'fault.magazineInvalidSlot': { path: 'xSimMagazineInvalidSlot', dataType: DataType.Boolean, pulse: true },
   'fault.magazineSlotContent': { path: 'xSimMagazineSlotContent', dataType: DataType.Boolean, pulse: true },
   'fault.magazineGeometry': { path: 'xSimMagazineGeometry', dataType: DataType.Boolean, pulse: true },
+  'fault.safety.emergencyStopMpg': { path: 'xSimSafetyEmergencyStopMpg', dataType: DataType.Boolean },
+  'fault.safety.phaseRelay': { path: 'xSimSafetyPhaseRelayFault', dataType: DataType.Boolean },
+  'fault.safety.pressureRelay': { path: 'xSimSafetyPressureRelayFault', dataType: DataType.Boolean },
+  'fault.safety.safetyRelay': { path: 'xSimSafetyRelayFault', dataType: DataType.Boolean },
   'simulation.machineDoorOpen': { path: 'tMachineDoorOpenTime', dataType: DataType.Int64, transform: (v) => Math.max(50, Math.min(120000, Math.round(Number(v) * 1000))) },
   'simulation.machineDoorClose': { path: 'tMachineDoorCloseTime', dataType: DataType.Int64, transform: (v) => Math.max(50, Math.min(120000, Math.round(Number(v) * 1000))) },
   'simulation.machineChuckOpen': { path: 'tMachineChuckOpenTime', dataType: DataType.Int64, transform: (v) => Math.max(50, Math.min(120000, Math.round(Number(v) * 1000))) },
@@ -685,6 +739,7 @@ const pointEditorRejectReasons = [
   'software limits недоступны', 'координаты вне software limits', 'недопустимый коэффициент скорости',
   'точка не сохранена', 'приводы или группа не готовы', 'люк станка не открыт',
   'нет связи с мобильным редактором', 'другая команда претендует на робота', 'точка изменена после подтверждения',
+  'смещения Safe Z или Change Z находятся вне диапазона от -10000 до 10000 мм',
 ];
 
 const pointEditorChannel = new PointEditorChannel({
@@ -694,6 +749,7 @@ const pointEditorChannel = new PointEditorChannel({
     await readSymbolValues([
       'udiPointEditorAckSeq', 'uiPointEditorResult', 'uiPointEditorRejectReason',
       'stPointEditorResultPoint.X', 'stPointEditorResultPoint.Y', 'stPointEditorResultPoint.Z',
+      'stPointEditorResultPoint.MagazineSafeZ', 'stPointEditorResultPoint.MagazineChangeZ',
       'stPointEditorResultPoint.SpeedFactor', 'stPointEditorResultPoint.xConfigured',
     ]);
     const rejectCode = Number(latestValues.uiPointEditorRejectReason ?? 0);
@@ -704,6 +760,8 @@ const pointEditorChannel = new PointEditorChannel({
         x: Number(latestValues['stPointEditorResultPoint.X'] ?? 0),
         y: Number(latestValues['stPointEditorResultPoint.Y'] ?? 0),
         z: Number(latestValues['stPointEditorResultPoint.Z'] ?? 0),
+        magazineSafeZ: Number(latestValues['stPointEditorResultPoint.MagazineSafeZ'] ?? 0),
+        magazineChangeZ: Number(latestValues['stPointEditorResultPoint.MagazineChangeZ'] ?? 0),
         speedFactor: Number(latestValues['stPointEditorResultPoint.SpeedFactor'] ?? 0),
         configured: Boolean(latestValues['stPointEditorResultPoint.xConfigured']),
       },
@@ -1041,6 +1099,7 @@ async function executeCommandDirect(message) {
         `axMachineTimeoutRobotMove[${index}]`, `axMachineTimeoutRobotAction[${index}]`,
         `axMachineTimeoutRobotRelease[${index}]`, `axMachineTimeoutDoorOpen[${index}]`,
         `axMachineTimeoutDoorClose[${index}]`, `axMachineTimeoutChuckOpen[${index}]`,
+        `axMachineTimeoutHatchUnlock[${index}]`,
         `axMachineTimeoutChuckClose[${index}]`, `axMachineTimeoutCycleStart[${index}]`,
       ]),
     ];
@@ -1048,19 +1107,22 @@ async function executeCommandDirect(message) {
     return requestId;
   }
   if (message.command === 'test.scenario.apply') {
-    const scenario = message.scenario;
-    if (!scenario || !Array.isArray(scenario.slots) || scenario.slots.length !== 120) throw new Error('Сценарий должен содержать ровно 120 слотов');
+    const scenario = normalizeScenarioState(message.scenario);
     const machines = Array.isArray(scenario.machines) ? scenario.machines : [];
     const grippers = Array.isArray(scenario.grippers) ? scenario.grippers : [];
     await writeValue('stTestScenario.uiTypeCount', DataType.UInt16, Number(scenario.typeCount ?? 1));
-    await writeValue('stTestScenario.xMagazineEnabled', DataType.Boolean, Boolean(scenario.magazineEnabled));
+    for (let magazine = 1; magazine <= 2; magazine += 1) {
+      await writeValue(`stTestScenario.axMagazineEnabled[${magazine}]`, DataType.Boolean, Boolean(scenario.magazines[magazine - 1].enabled));
+    }
     for (let index = 1; index <= 3; index += 1) {
       await writeValue(`stTestScenario.auiMachineState[${index}]`, DataType.UInt16, Number(machines[index - 1]?.state ?? 0));
       await writeValue(`stTestScenario.auiMachineType[${index}]`, DataType.UInt16, Number(machines[index - 1]?.productType ?? 0));
     }
     for (let index = 1; index <= 120; index += 1) {
-      await writeValue(`stTestScenario.auiSlotContent[${index}]`, DataType.UInt16, Number(scenario.slots[index - 1]?.content ?? 0));
-      await writeValue(`stTestScenario.auiSlotType[${index}]`, DataType.UInt16, Number(scenario.slots[index - 1]?.productType ?? 0));
+      for (let magazine = 1; magazine <= 2; magazine += 1) {
+        await writeValue(`stTestScenario.aauiSlotContent[${magazine},${index}]`, DataType.UInt16, Number(scenario.magazines[magazine - 1].slots[index - 1]?.content ?? 0));
+      }
+      await writeValue(`stTestScenario.auiSlotType[${index}]`, DataType.UInt16, Number(scenario.magazines[0].slots[index - 1]?.productType ?? 0));
     }
     for (let index = 1; index <= 2; index += 1) {
       await writeValue(`stTestScenario.auiGripperContent[${index}]`, DataType.UInt16, Number(grippers[index - 1]?.content ?? 0));
@@ -1070,7 +1132,9 @@ async function executeCommandDirect(message) {
     const faultMasks = scenario.faultMasks ?? {};
     await writeValue('stTestScenario.dwCellFaultMask', DataType.UInt32, Number(faultMasks.cell ?? 0) >>> 0);
     await writeValue('stTestScenario.dwRobotFaultMask', DataType.UInt32, Number(faultMasks.robot ?? 0) >>> 0);
-    await writeValue('stTestScenario.dwMagazineFaultMask', DataType.UInt32, Number(faultMasks.magazine ?? 0) >>> 0);
+    for (let index = 1; index <= 2; index += 1) {
+      await writeValue(`stTestScenario.adwMagazineFaultMask[${index}]`, DataType.UInt32, Number(faultMasks.magazines?.[index - 1] ?? 0) >>> 0);
+    }
     for (let index = 1; index <= 3; index += 1) {
       await writeValue(`stTestScenario.adwMachineFaultMask[${index}]`, DataType.UInt32, Number(faultMasks.machines?.[index - 1] ?? 0) >>> 0);
     }
@@ -1084,13 +1148,19 @@ async function executeCommandDirect(message) {
   if (message.command === 'robot.point.capture') {
     const index = Math.round(Number(message.index));
     const speedFactor = Number(message.speedFactor ?? 0);
+    const point = message.draft ?? {};
+    const magazineSafeZ = index >= 11 ? Number(point.magazineSafeZ ?? 0) : 0;
+    const magazineChangeZ = index >= 11 ? Number(point.magazineChangeZ ?? 0) : 0;
     if (!Number.isInteger(index) || index < 1 || index > 12) throw new Error('Неверный индекс инженерной точки');
     if (!Number.isFinite(speedFactor)) throw new Error('Неверный коэффициент скорости точки');
+    if (![magazineSafeZ, magazineChangeZ].every(Number.isFinite)) throw new Error('Смещения точки магазина должны быть конечными числами');
     const sequence = nextPointEditorSequence();
     message._pointEditorSequence = sequence;
     if (message._pointEditorAudit) pendingPointEditorAudits.set(sequence, { ...message._pointEditorAudit, pointIndex: index });
     await writeValue('uiPointEditorIndex', DataType.UInt16, index);
     await writeValue('lrPointEditorDraftSpeedFactor', DataType.Double, speedFactor);
+    await writeValue('lrPointEditorDraftMagazineSafeZ', DataType.Double, magazineSafeZ);
+    await writeValue('lrPointEditorDraftMagazineChangeZ', DataType.Double, magazineChangeZ);
     await writeValue('uiPointEditorCommand', DataType.UInt16, 1);
     await writeValue('udiPointEditorCommandSeq', DataType.UInt32, sequence);
     return requestId;
@@ -1100,10 +1170,16 @@ async function executeCommandDirect(message) {
     const point = message.draft ?? {};
     const coordinates = [Number(point.x), Number(point.y), Number(point.z)];
     const speedFactor = Number(point.speedFactor);
+    const magazineSafeZ = index >= 11 ? Number(point.magazineSafeZ ?? 0) : 0;
+    const magazineChangeZ = index >= 11 ? Number(point.magazineChangeZ ?? 0) : 0;
     if (!Number.isInteger(index) || index < 1 || index > 12) throw new Error('Неверный индекс инженерной точки');
     if (!coordinates.every(Number.isFinite)) throw new Error('Координаты точки должны быть конечными числами');
     if (!Number.isFinite(speedFactor) || speedFactor <= 0.1 || speedFactor > 1) {
       throw new Error('Коэффициент скорости точки должен быть больше 0.1 и не больше 1.0');
+    }
+    if (![magazineSafeZ, magazineChangeZ].every(Number.isFinite)
+      || Math.abs(magazineSafeZ) > 10000 || Math.abs(magazineChangeZ) > 10000) {
+      throw new Error('Смещения Safe Z и Change Z должны быть от -10000 до 10000 мм');
     }
     const sequence = nextPointEditorSequence();
     message._pointEditorSequence = sequence;
@@ -1113,6 +1189,8 @@ async function executeCommandDirect(message) {
       await writeValue(`alrPointEditorDraftXYZ[${axis}]`, DataType.Double, coordinates[axis - 1]);
     }
     await writeValue('lrPointEditorDraftSpeedFactor', DataType.Double, speedFactor);
+    await writeValue('lrPointEditorDraftMagazineSafeZ', DataType.Double, magazineSafeZ);
+    await writeValue('lrPointEditorDraftMagazineChangeZ', DataType.Double, magazineChangeZ);
     await writeValue('uiPointEditorCommand', DataType.UInt16, 2);
     // CommandSeq пишется последним: частично подготовленный черновик PLC не применит.
     await writeValue('udiPointEditorCommandSeq', DataType.UInt32, sequence);
@@ -1123,14 +1201,19 @@ async function executeCommandDirect(message) {
     const point = message.draft ?? {};
     const coordinates = [Number(point.x), Number(point.y), Number(point.z)];
     const speedFactor = Number(point.speedFactor);
+    const magazineSafeZ = index >= 11 ? Number(point.magazineSafeZ ?? 0) : 0;
+    const magazineChangeZ = index >= 11 ? Number(point.magazineChangeZ ?? 0) : 0;
     if (!Number.isInteger(index) || index < 1 || index > 12) throw new Error('Неверный индекс инженерной точки');
-    if (!coordinates.every(Number.isFinite) || !Number.isFinite(speedFactor)) throw new Error('Неверный снимок сохранённой точки');
+    if (!coordinates.every(Number.isFinite) || !Number.isFinite(speedFactor)
+      || ![magazineSafeZ, magazineChangeZ].every(Number.isFinite)) throw new Error('Неверный снимок сохранённой точки');
     const sequence = nextPointEditorSequence();
     message._pointEditorSequence = sequence;
     if (message._pointEditorAudit) pendingPointEditorAudits.set(sequence, { ...message._pointEditorAudit, pointIndex: index });
     await writeValue('uiPointEditorIndex', DataType.UInt16, index);
     for (let axis = 1; axis <= 3; axis += 1) await writeValue(`alrPointEditorDraftXYZ[${axis}]`, DataType.Double, coordinates[axis - 1]);
     await writeValue('lrPointEditorDraftSpeedFactor', DataType.Double, speedFactor);
+    await writeValue('lrPointEditorDraftMagazineSafeZ', DataType.Double, magazineSafeZ);
+    await writeValue('lrPointEditorDraftMagazineChangeZ', DataType.Double, magazineChangeZ);
     message._assertAuthorized?.();
     await writeValue('uiPointEditorCommand', DataType.UInt16, 3);
     message._assertAuthorized?.();
@@ -1262,8 +1345,6 @@ async function executeCommandDirect(message) {
     const geometryCommands = {
       pitchX: { valueLeaf: 'lrEditPitchX', pulseLeaf: 'xApplyPitchX', min: 1, max: 5000 },
       pitchY: { valueLeaf: 'lrEditPitchY', pulseLeaf: 'xApplyPitchY', min: 1, max: 5000 },
-      safeAbove: { valueLeaf: 'lrEditSafeAbove', pulseLeaf: 'xApplySafeAbove', min: -10000, max: 10000 },
-      safeInside: { valueLeaf: 'lrEditSafeInside', pulseLeaf: 'xApplySafeInside', min: -10000, max: 10000 },
     };
     const geometry = geometryCommands[action];
     if (geometry) {
@@ -1301,11 +1382,26 @@ async function executeCommandDirect(message) {
       timeoutRobotRelease: { path: `axMachineTimeoutRobotRelease[${index}]`, dataType: DataType.Boolean },
       timeoutDoorOpen: { path: `axMachineTimeoutDoorOpen[${index}]`, dataType: DataType.Boolean },
       timeoutDoorClose: { path: `axMachineTimeoutDoorClose[${index}]`, dataType: DataType.Boolean },
+      timeoutHatchUnlock: { path: `axMachineTimeoutHatchUnlock[${index}]`, dataType: DataType.Boolean },
       timeoutChuckOpen: { path: `axMachineTimeoutChuckOpen[${index}]`, dataType: DataType.Boolean },
       timeoutChuckClose: { path: `axMachineTimeoutChuckClose[${index}]`, dataType: DataType.Boolean },
       timeoutCycleStart: { path: `axMachineTimeoutCycleStart[${index}]`, dataType: DataType.Boolean },
     };
     definition = machineFaultCommands[action];
+  }
+  if (message.command?.startsWith('fault.safety.')) {
+    const index = Number(message.index);
+    const action = message.command.slice('fault.safety.'.length);
+    if (action === 'stationEmergencyStop' || action === 'doorUnlocked') {
+      if (!Number.isInteger(index) || index < 1 || index > 4) throw new Error('Неверный номер двери безопасности');
+      definition = {
+        path: `${action === 'stationEmergencyStop' ? 'axSimSafetyEmergencyStopStation' : 'axSimSafetyDoorUnlocked'}[${index}]`,
+        dataType: DataType.Boolean,
+      };
+    } else if (action === 'cabinetEmergencyStop') {
+      if (!Number.isInteger(index) || index < 1 || index > 2) throw new Error('Неверный номер шкафа безопасности');
+      definition = { path: `axSimSafetyEmergencyStopCabinet[${index}]`, dataType: DataType.Boolean };
+    }
   }
   if (message.command?.startsWith('machine.')) {
     const index = Number(message.machine);
@@ -1325,6 +1421,8 @@ async function executeCommandDirect(message) {
       manualDoorClose: { path: `axMachineManualSafetyDoorClose[${index}]`, dataType: DataType.Boolean, pulse: true },
       manualHatchOpen: { path: `axMachineManualHatchOpen[${index}]`, dataType: DataType.Boolean, pulse: true },
       manualHatchClose: { path: `axMachineManualHatchClose[${index}]`, dataType: DataType.Boolean, pulse: true },
+      manualHatchUnlock: { path: `axMachineManualHatchUnlock[${index}]`, dataType: DataType.Boolean, pulse: true },
+      manualHatchLock: { path: `axMachineManualHatchLock[${index}]`, dataType: DataType.Boolean, pulse: true },
       manualChuckOpen: { path: `axMachineManualChuckOpen[${index}]`, dataType: DataType.Boolean, pulse: true },
       manualChuckClose: { path: `axMachineManualChuckClose[${index}]`, dataType: DataType.Boolean, pulse: true },
       used: { path: `axMachineUsed[${index}]`, dataType: DataType.Boolean },
@@ -1597,6 +1695,8 @@ const mobilePointsSnapshot = () => ({
       x: Number(latestValues[`astPointEditorPoints[${index}].X`] ?? 0),
       y: Number(latestValues[`astPointEditorPoints[${index}].Y`] ?? 0),
       z: Number(latestValues[`astPointEditorPoints[${index}].Z`] ?? 0),
+      magazineSafeZ: Number(latestValues[`astPointEditorPoints[${index}].MagazineSafeZ`] ?? 0),
+      magazineChangeZ: Number(latestValues[`astPointEditorPoints[${index}].MagazineChangeZ`] ?? 0),
       speedFactor: Number(latestValues[`astPointEditorPoints[${index}].SpeedFactor`] ?? 0),
       configured: Boolean(latestValues[`astPointEditorPoints[${index}].xConfigured`]),
       checkAllowed: Boolean(latestValues[`axPointCheckAllowed[${index}]`]),
@@ -1720,25 +1820,26 @@ function currentScenario() {
       productType: configuredType(latestValues[`stMultiType.Config.auiMachineType[${index}]`]),
     };
   });
-  const slots = Array.from({ length: 120 }, (_, offset) => {
-    const index = offset + 1;
-    const root = `astMagazineInventory[1].aSlots[${index}]`;
-    const present = Boolean(latestValues[`${root}.xInPosition`]);
-    return {
-      content: present ? Number(latestValues[`${root}.eDetailType`] ?? 0) : 0,
-      productType: configuredType(present
-        ? latestValues[`${root}.uiProductType`]
-        : latestValues[`stMultiType.Config.auiSlotType[${index}]`]),
-    };
-  });
+  const magazines = [1, 2].map((magazine) => ({
+    enabled: Boolean(latestValues[`astMagazineStatus[${magazine}].xEnabled`]),
+    slots: Array.from({ length: 120 }, (_, offset) => {
+      const index = offset + 1;
+      const root = `astMagazineInventory[${magazine}].aSlots[${index}]`;
+      const present = Boolean(latestValues[`${root}.xInPosition`]);
+      return {
+        content: present ? Number(latestValues[`${root}.eDetailType`] ?? 0) : 0,
+        productType: configuredType(latestValues[`stMultiType.Config.auiSlotType[${index}]`]),
+      };
+    }),
+  }));
   return {
-    typeCount, magazineEnabled: Boolean(latestValues['astMagazineStatus[1].xEnabled']), machines, slots,
+    typeCount, machines, magazines,
     grippers: [
       { content: Boolean(latestValues['stRobotStatus.xGripper1Closed']) ? 1 : 0, productType: Boolean(latestValues['stRobotStatus.xGripper1Closed']) ? configuredType(latestValues['stRobotStatus.uiBlankPayloadType']) : 0 },
       { content: Boolean(latestValues['stRobotStatus.xGripper2Closed']) ? 2 : 0, productType: Boolean(latestValues['stRobotStatus.xGripper2Closed']) ? configuredType(latestValues['stRobotStatus.uiDetailPayloadType']) : 0 },
     ],
     orientation: Boolean(latestValues['stRobotStatus.xRotatedToDetail']) ? 1 : 0,
-    faultMasks: { cell: 0, robot: 0, magazine: 0, machines: [0, 0, 0] },
+    faultMasks: { cell: 0, robot: 0, magazines: [0, 0], machines: [0, 0, 0] },
   };
 }
 
@@ -1764,6 +1865,8 @@ function currentPointBackup(user) {
         x: Number(latestValues[`astPointEditorPoints[${index}].X`] ?? 0),
         y: Number(latestValues[`astPointEditorPoints[${index}].Y`] ?? 0),
         z: Number(latestValues[`astPointEditorPoints[${index}].Z`] ?? 0),
+        magazineSafeZ: Number(latestValues[`astPointEditorPoints[${index}].MagazineSafeZ`] ?? 0),
+        magazineChangeZ: Number(latestValues[`astPointEditorPoints[${index}].MagazineChangeZ`] ?? 0),
         speedFactor: Number(latestValues[`astPointEditorPoints[${index}].SpeedFactor`] ?? 0),
         configured: Boolean(latestValues[`astPointEditorPoints[${index}].xConfigured`]),
       };
@@ -1771,8 +1874,9 @@ function currentPointBackup(user) {
   };
 }
 
-async function fallbackTestCleanup() {
+async function fallbackTestCleanup({ aborted = false } = {}) {
   try {
+    if (aborted) await executeCommandDirect({ command: 'test.abort', value: true });
     if (Boolean(latestValues['stCellStatus.xRunning']) && !Boolean(latestValues['stCellStatus.xStopPending'])) {
       await executeCommand({ requestId: `cleanup-${Date.now()}-stop`, command: 'cell.stop' });
     }
@@ -1787,6 +1891,11 @@ async function fallbackTestCleanup() {
     console.error(`[Tests] Fallback PLC cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
   } finally {
     try {
+      await executeCommandDirect({ command: 'test.abort', value: false });
+    } catch (error) {
+      console.error(`[Tests] Could not release PLC abort: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    try {
       await executeCommand({ requestId: `cleanup-${Date.now()}-session`, command: 'test.session', value: false });
     } catch (error) {
       console.error(`[Tests] Could not release PLC test session: ${error instanceof Error ? error.message : String(error)}`);
@@ -1800,6 +1909,10 @@ function launchTestRun(config) {
   const environment = String(config.environment ?? 'simulation').toLowerCase();
   const robotInterface = String(config.robotInterface ?? 'softmotion').toLowerCase();
   const speedProfile = String(config.speedProfile ?? 'realtime').toLowerCase();
+  const requestedFactor = Number(config.simulationTimeFactor ?? 25);
+  const suite = String(config.suite ?? 'smoke').toLowerCase();
+  if (!Number.isFinite(requestedFactor)) throw new Error('Недопустимый коэффициент SoftMotion-симуляции');
+  const simulationTimeFactor = Math.max(1, Math.min(100, Math.round(requestedFactor)));
   if (environment === 'sc500_bench' && robotInterface !== 'sc500-modbus') {
     throw new Error('Для стенда SC-500 разрешён только интерфейс SC500 Modbus');
   }
@@ -1809,11 +1922,14 @@ function launchTestRun(config) {
   if (environment === 'sc500_bench' && speedProfile === 'fast') {
     throw new Error('FAST запрещён на стенде SC-500');
   }
+  if (suite === 'general' && environment !== 'simulation') {
+    throw new Error('Генеральные тесты с автоматической перезагрузкой магазинов разрешены только в симуляции');
+  }
   const selectedScenarios = Array.isArray(config.scenarioIds)
     ? config.scenarioIds.map((id) => testStore.getScenario(id)).filter(Boolean)
-      .map((item) => ({ name: item.name, description: item.description, initialState: item.initialState, expectations: item.expectations }))
+      .map((item) => ({ name: item.name, description: item.description, schemaVersion: item.schemaVersion, initialState: item.initialState, expectations: item.expectations }))
     : [];
-  const runConfig = { ...config, scenarios: selectedScenarios };
+  const runConfig = { ...config, simulationTimeFactor, scenarios: selectedScenarios };
   const run = testStore.createRun(runConfig);
   const token = randomUUID();
   const robotDir = normalize(join(__dirname, '..', '..', 'robot_simulator'));
@@ -1837,7 +1953,7 @@ function launchTestRun(config) {
     if (activeTestRun?.id !== run.id) return;
     const stored = testStore.getRun(run.id);
     if (!stored?.finishedAt) {
-      await fallbackTestCleanup();
+      await fallbackTestCleanup({ aborted: Boolean(stored?.abortRequested) });
       if (stored?.abortRequested) testStore.finishRun(run.id, 'ABORTED', 'Прогон остановлен оператором');
       else {
         const runnerError = activeTestRun.stderr.trim().split(/\r?\n/).filter(Boolean).at(-1);
@@ -2138,6 +2254,7 @@ const httpServer = createServer(async (request, response) => {
         operationId: requestUrl.searchParams.get('operationId') ?? '',
         commandSeq: requestUrl.searchParams.get('commandSeq') ?? '',
         code: requestUrl.searchParams.get('code') ?? '', order,
+        codePrefixes: cellEventListParameter(requestUrl.searchParams, 'codePrefixes'),
         actorUserId: numberParameter('actorUserId'),
         cursor: decodeCellEventCursor(requestUrl.searchParams.get('cursor')),
         limit: numberParameter('limit') ?? 100,
@@ -2145,6 +2262,7 @@ const httpServer = createServer(async (request, response) => {
       jsonResponse(response, 200, {
         serverTime: Date.now(), retentionMs: cellEventStore.retentionMs,
         total: result.count, events: result.events,
+        appliedCodePrefixes: cellEventListParameter(requestUrl.searchParams, 'codePrefixes'),
         nextCursor: encodeCellEventCursor(result.nextCursor), hasMore: result.hasMore,
       });
       return;
@@ -2164,7 +2282,7 @@ const httpServer = createServer(async (request, response) => {
     if (requestUrl.pathname === '/api/test-scenarios' && request.method === 'POST') { jsonResponse(response, 201, testStore.saveScenario(await requestJson(request))); return; }
     if (requestUrl.pathname === '/api/test-scenarios/capture-current' && request.method === 'POST') {
       const body = await requestJson(request);
-      jsonResponse(response, 201, testStore.saveScenario({ name: body.name ?? `Снимок ${new Date().toLocaleString('ru-RU')}`, description: body.description ?? 'Создано из текущего состояния PLC', schemaVersion: 1, initialState: currentScenario(), expectations: {} }));
+      jsonResponse(response, 201, testStore.saveScenario({ name: body.name ?? `Снимок ${new Date().toLocaleString('ru-RU')}`, description: body.description ?? 'Создано из текущего состояния PLC', schemaVersion: 2, initialState: currentScenario(), expectations: {} }));
       return;
     }
     if (scenarioMatch && request.method === 'PUT') { jsonResponse(response, 200, testStore.saveScenario(await requestJson(request), scenarioMatch[1])); return; }
@@ -2175,6 +2293,13 @@ const httpServer = createServer(async (request, response) => {
     if (runMatch?.[2] && request.method === 'POST') {
       const run = testStore?.requestAbort(runMatch[1]);
       if (activeTestRun?.id === Number(runMatch[1])) {
+        // PLC получает удерживаемый Abort напрямую от gateway. Поэтому отмена
+        // не зависит от того, читает ли Python runner WebSocket в эту секунду.
+        try {
+          await executeCommandDirect({ command: 'test.abort', value: true });
+        } catch (error) {
+          console.error(`[Tests] Could not assert PLC abort: ${error instanceof Error ? error.message : String(error)}`);
+        }
         if (activeTestRun.socket) send(activeTestRun.socket, { type: 'test-abort-requested' });
         const abortRunId = activeTestRun.id;
         setTimeout(() => {

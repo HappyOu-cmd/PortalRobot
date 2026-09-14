@@ -41,8 +41,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "columns": 10,
         "pitch_x": 60.0,
         "pitch_y": 60.0,
-        "safe_z": 0.0,
-        "change_z": 1400.0,
+        "safe_z": -1600.0,
+        "change_z": -200.0,
         "speed_factor": 1.0,
     },
     "magazine_2": {
@@ -53,8 +53,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "columns": 10,
         "pitch_x": 60.0,
         "pitch_y": 60.0,
-        "safe_z": 0.0,
-        "change_z": 1400.0,
+        "safe_z": -1600.0,
+        "change_z": -200.0,
         "speed_factor": 1.0,
     },
     "points": {

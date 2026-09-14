@@ -290,9 +290,10 @@ class RobotModel:
             row = index // columns
             x = float(magazine["base_x"]) + column * float(magazine["pitch_x"])
             y = float(magazine["base_y"]) + row * float(magazine["pitch_y"])
+            base_z = float(magazine["base_z"])
             z = {
-                int(CommandCode.MAGAZINE_SAFE): float(magazine["safe_z"]),
-                int(CommandCode.MAGAZINE_CHANGE): float(magazine["change_z"]),
+                int(CommandCode.MAGAZINE_SAFE): base_z + float(magazine["safe_z"]),
+                int(CommandCode.MAGAZINE_CHANGE): base_z + float(magazine["change_z"]),
                 int(CommandCode.MAGAZINE_IN_SLOT): float(magazine["base_z"]),
             }[command]
             return x, y, z, float(magazine.get("speed_factor", 1.0))

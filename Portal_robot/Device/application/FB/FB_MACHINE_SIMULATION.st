@@ -44,6 +44,7 @@ VAR
 
     tonDoorOpen   : TON; // Таймер открытия двери
     tonDoorClose  : TON; // Таймер закрытия двери
+	tonHatchUnlock : TON; // Таймер снятия замка роботного люка
 	tonSafetyDoorOpen  : TON; // Таймер открытия операторской двери
 	tonSafetyDoorClose : TON; // Таймер закрытия операторской двери
     tonChuckClamp : TON; // Таймер зажима патрона
@@ -53,6 +54,7 @@ VAR
 
     xDoorOpening   : BOOL; // Выполняется открытие двери
     xDoorClosing   : BOOL; // Выполняется закрытие двери
+	xHatchUnlocking : BOOL; // Выполняется открытие замка
 	xSafetyDoorOpening : BOOL; // Выполняется открытие операторской двери
 	xSafetyDoorClosing : BOOL; // Выполняется закрытие операторской двери
     xChuckClamping : BOOL; // Выполняется зажим патрона
@@ -103,6 +105,7 @@ tEffectiveCycleTime := UDINT_TO_TIME(udiCycleTime);
 IF NOT xInitialized THEN
     Status.xDoorOpen := FALSE;
     Status.xDoorClosed := TRUE;
+	Status.xHatchLocked := TRUE;
 	Status.xSafetyDoorOpen := FALSE;
 	Status.xSafetyDoorClosed := TRUE;
 
@@ -119,6 +122,7 @@ END_IF;
 IF xTestInitialize THEN
 	xDoorOpening := FALSE;
 	xDoorClosing := FALSE;
+	xHatchUnlocking := FALSE;
 	xSafetyDoorOpening := FALSE;
 	xSafetyDoorClosing := FALSE;
 	xChuckClamping := FALSE;
@@ -127,6 +131,7 @@ IF xTestInitialize THEN
 	xAlarmLatched := FALSE;
 	Status.xDoorOpen := FALSE;
 	Status.xDoorClosed := TRUE;
+	Status.xHatchLocked := TRUE;
 	Status.xSafetyDoorOpen := FALSE;
 	Status.xSafetyDoorClosed := TRUE;
 	Status.xChuckClamped := (uiTestInitialState = UINT#2) OR (uiTestInitialState = UINT#3);
@@ -189,6 +194,7 @@ END_IF;
 IF FaultRequest.xReset THEN
 	xDoorOpening := FALSE;
 	xDoorClosing := FALSE;
+	xHatchUnlocking := FALSE;
 	xSafetyDoorOpening := FALSE;
 	xSafetyDoorClosing := FALSE;
 	xChuckClamping := FALSE;
@@ -204,6 +210,19 @@ xAlarmLatched := Error.dwErrorActive <> DWORD#0;
 // =====================================================
 
 IF NOT xAlarmLatched THEN
+
+	// xHatchUnLock — единственный выход замка: TRUE снимает замок,
+	// FALSE после закрытия двери возвращает его в безопасное состояние.
+	IF Command.xHatchUnLock
+	AND Status.xHatchLocked
+	AND NOT Status.xCycleActive THEN
+		xHatchUnlocking := TRUE;
+	END_IF;
+	IF NOT Command.xHatchUnLock
+	AND Status.xDoorClosed THEN
+		xHatchUnlocking := FALSE;
+		Status.xHatchLocked := TRUE;
+	END_IF;
 
     // Открытие двери
     IF Command.xOpenDoor
@@ -281,6 +300,12 @@ tonDoorClose(
 	PT := tEffectiveDoorCloseTime
 );
 
+tonHatchUnlock(
+	IN := xHatchUnlocking
+		AND NOT (FaultRequest.xEnabled AND FaultRequest.xTimeoutHatchUnlock),
+	PT := T#200MS
+);
+
 tonSafetyDoorOpen(
 	IN := xSafetyDoorOpening,
 	PT := tEffectiveDoorOpenTime
@@ -335,6 +360,11 @@ IF tonDoorClose.Q THEN
     Status.xDoorOpen := FALSE;
 
     xDoorClosing := FALSE;
+END_IF;
+
+IF tonHatchUnlock.Q THEN
+	Status.xHatchLocked := FALSE;
+	xHatchUnlocking := FALSE;
 END_IF;
 
 // =====================================================
@@ -407,6 +437,7 @@ IF xAlarmLatched THEN
 
     xDoorOpening := FALSE;
     xDoorClosing := FALSE;
+	xHatchUnlocking := FALSE;
 	xSafetyDoorOpening := FALSE;
 	xSafetyDoorClosing := FALSE;
 
@@ -426,6 +457,7 @@ Status.xReady := NOT xAlarmLatched
 	AND NOT Status.xCycleActive
 	AND NOT xDoorOpening
 	AND NOT xDoorClosing
+	AND NOT xHatchUnlocking
 	AND NOT xSafetyDoorOpening
 	AND NOT xSafetyDoorClosing
 	AND NOT xChuckClamping

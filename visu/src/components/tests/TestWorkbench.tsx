@@ -14,12 +14,11 @@ type Scenario = {
   schemaVersion: number;
   initialState: {
     typeCount: number;
-    magazineEnabled: boolean;
+    magazines: { enabled: boolean; slots: Slot[] }[];
     machines: Machine[];
-    slots: Slot[];
     grippers: Slot[];
     orientation: number;
-    faultMasks: { cell: number; robot: number; magazine: number; machines: number[] };
+    faultMasks: { cell: number; robot: number; magazines: number[]; machines: number[] };
   };
   expectations: Record<string, unknown>;
 };
@@ -65,20 +64,38 @@ type Status = {
 const fresh = (): Scenario => ({
   name: 'Новый сценарий',
   description: '',
-  schemaVersion: 1,
+  schemaVersion: 2,
   expectations: {},
   initialState: {
     typeCount: 1,
-    magazineEnabled: true,
     machines: [{ state: 1, productType: 1 }, { state: 0, productType: 1 }, { state: 0, productType: 1 }],
-    slots: Array.from({ length: 120 }, (_, index) => ({ content: index === 0 ? 1 : 0, productType: 1 })),
+    magazines: [
+      { enabled: true, slots: Array.from({ length: 120 }, (_, index) => ({ content: index === 0 ? 1 : 0, productType: 1 })) },
+      { enabled: false, slots: Array.from({ length: 120 }, () => ({ content: 0, productType: 1 })) },
+    ],
     grippers: [{ content: 0, productType: 0 }, { content: 0, productType: 0 }],
     orientation: 0,
-    faultMasks: { cell: 0, robot: 0, magazine: 0, machines: [0, 0, 0] },
+    faultMasks: { cell: 0, robot: 0, magazines: [0, 0], machines: [0, 0, 0] },
   },
 });
 
 const clone = <T,>(value: T): T => structuredClone(value);
+
+const normalizeScenario = (value: Scenario): Scenario => {
+  const next = clone(value) as Scenario & { initialState: Scenario['initialState'] & { magazineEnabled?: boolean; slots?: Slot[]; faultMasks: Scenario['initialState']['faultMasks'] & { magazine?: number } } };
+  if (!Array.isArray(next.initialState.magazines)) {
+    const slots = next.initialState.slots ?? fresh().initialState.magazines[0].slots;
+    next.initialState.magazines = [
+      { enabled: Boolean(next.initialState.magazineEnabled), slots },
+      { enabled: false, slots: slots.map((slot) => ({ content: 0, productType: slot.productType })) },
+    ];
+  }
+  if (!Array.isArray(next.initialState.faultMasks.magazines)) {
+    next.initialState.faultMasks.magazines = [Number(next.initialState.faultMasks.magazine ?? 0), 0];
+  }
+  next.schemaVersion = 2;
+  return next;
+};
 
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(gatewayApiUrl(path), {
@@ -109,7 +126,7 @@ const rejectReasons = [
   'неизвестная тестовая среда',
   'для стенда нужны Modbus и физический ключ',
   'PLC не видит признак Python-симулятора',
-  'FAST разрешён только в остановленной симуляции',
+  'профиль скорости разрешён только в симуляции',
 ];
 const runStatuses: Record<string, string> = {
   QUEUED: 'В очереди', RUNNING: 'Выполняется', PASS: 'Пройден', FAIL: 'Есть ошибки',
@@ -118,6 +135,9 @@ const runStatuses: Record<string, string> = {
 const runStages: Record<string, string> = {
   queued: 'Ожидание запуска', connected: 'Runner подключён', load: 'Подготовка сценария',
   running: 'Автоматический цикл', cleanup: 'Восстановление', finished: 'Завершено',
+  'general-m1-a': 'Партия М1-A', 'general-reload-m1': 'Перезагрузка М1',
+  'general-m2-a': 'Партия М2-A', 'general-reload-m2': 'Перезагрузка М2',
+  'general-m1-b': 'Партия М1-B', 'general-m2-b': 'Партия М2-B',
 };
 const typeClass = (type: number) => (type ? `type-${type}` : '');
 
@@ -128,10 +148,22 @@ function StateBadge({ ok, label, warning = false }: { ok: boolean; label: string
 }
 
 export function TestWorkbench({
+  simulationFactor,
+  simulationFactorApplied,
+  simulationFactorAllowed,
+  simulationFactorPending,
+  simulationFactorBusy,
+  simulationFactorError,
   onSend,
   onClose,
   className = '',
 }: {
+  simulationFactor: number;
+  simulationFactorApplied: number;
+  simulationFactorAllowed: boolean;
+  simulationFactorPending: boolean;
+  simulationFactorBusy: boolean;
+  simulationFactorError: boolean;
   onSend: (message: { command: string; value?: boolean | number }) => void;
   onClose: () => void;
   className?: string;
@@ -145,6 +177,7 @@ export function TestWorkbench({
   const [robotInterface, setRobotInterface] = useState('softmotion');
   const [environment, setEnvironment] = useState('simulation');
   const [speedProfile, setSpeedProfile] = useState('realtime');
+  const [simulationFactorDraft, setSimulationFactorDraft] = useState(simulationFactor);
   const [seed, setSeed] = useState(1);
   const [count, setCount] = useState(100);
   const [error, setError] = useState('');
@@ -155,7 +188,7 @@ export function TestWorkbench({
       api<Run[]>('/api/test-runs?limit=20'),
       api<Status>('/api/test-system/status'),
     ]);
-    setScenarios(stored);
+    setScenarios(stored.map(normalizeScenario));
     setRuns(history);
     setStatus(system);
   };
@@ -165,6 +198,10 @@ export function TestWorkbench({
     const timer = window.setInterval(() => refresh().catch(() => undefined), 1000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    setSimulationFactorDraft(simulationFactor);
+  }, [simulationFactor]);
 
   const editState = (update: (state: Scenario['initialState']) => void) => {
     setEditor((value) => {
@@ -214,9 +251,21 @@ export function TestWorkbench({
   const start = async () => {
     try {
       setError('');
+      const selectedSpeedProfile = robotInterface === 'softmotion'
+        ? (simulationFactorDraft > 1 ? 'fast' : 'realtime')
+        : speedProfile;
       await api('/api/test-runs', {
         method: 'POST',
-        body: JSON.stringify({ suite, environment, robotInterface, speedProfile, seed, count, scenarioIds: selected }),
+        body: JSON.stringify({
+          suite,
+          environment,
+          robotInterface,
+          speedProfile: selectedSpeedProfile,
+          simulationTimeFactor: simulationFactorDraft,
+          seed,
+          count,
+          scenarioIds: selected,
+        }),
       });
       await refresh();
     } catch (startError) {
@@ -229,12 +278,12 @@ export function TestWorkbench({
       const run = await api<Run>(`/api/test-runs/${runId}`);
       const failed = [...(run.cases ?? [])].reverse().find((item) => item.status === 'FAIL' && item.scenario);
       if (!failed?.scenario) throw new Error('В прогоне нет сохранённого FAIL-сценария');
-      const source = clone(failed.scenario);
+      const source = normalizeScenario(failed.scenario);
       setEditor({
         id: undefined,
         name: `${source.name || 'Сгенерированный сценарий'} — повтор FAIL`,
         description: source.description ?? '',
-        schemaVersion: source.schemaVersion ?? 1,
+        schemaVersion: 2,
         initialState: source.initialState,
         expectations: source.expectations ?? {},
       });
@@ -257,8 +306,10 @@ export function TestWorkbench({
           ? 'Запустите или перезапустите Python-симулятор: управляющий API недоступен'
           : robotInterface === 'python-modbus' && !status.simulatorControl?.modbusRunning
             ? 'В Python-симуляторе не запущен Modbus Server'
-        : environment === 'sc500_bench' && !status.plc?.benchKey
-          ? 'Для стенда включите физический ключ'
+        : suite === 'general' && environment !== 'simulation'
+          ? 'Генеральные тесты с автоматической перезагрузкой доступны только в симуляции'
+          : environment === 'sc500_bench' && !status.plc?.benchKey
+            ? 'Для стенда включите физический ключ'
           : '';
 
   return <aside className={`test-workbench ${className}`}>
@@ -320,7 +371,7 @@ export function TestWorkbench({
                   : ids.filter((id) => id !== item.id))}
               />
             </label>
-            <button type="button" onClick={() => setEditor(clone(item))}>
+            <button type="button" onClick={() => setEditor(normalizeScenario(item))}>
               <b>{item.name}</b>
               <small>{item.description || 'Без описания'}</small>
             </button>
@@ -350,11 +401,11 @@ export function TestWorkbench({
                 const typeCount = Number(event.target.value);
                 state.typeCount = typeCount;
                 state.machines.forEach((item) => { item.productType = Math.min(Math.max(1, item.productType), typeCount); });
-                state.slots.forEach((item) => { item.productType = Math.min(Math.max(1, item.productType), typeCount); });
+                state.magazines.forEach((magazine) => magazine.slots.forEach((item) => { item.productType = Math.min(Math.max(1, item.productType), typeCount); }));
                 state.grippers.forEach((item) => { if (item.content) item.productType = Math.min(Math.max(1, item.productType), typeCount); });
               })}>{[1, 2, 3].map((value) => <option key={value} value={value}>{value}</option>)}</select>
             </label>
-            <label className="test-check-field"><input type="checkbox" checked={editor.initialState.magazineEnabled} onChange={(event) => editState((state) => { state.magazineEnabled = event.target.checked; })} /><span><b>Магазин включён</b><small>Участвует в выборе задания</small></span></label>
+            {editor.initialState.magazines.map((magazine, index) => <label className="test-check-field" key={index}><input type="checkbox" checked={magazine.enabled} onChange={(event) => editState((state) => { state.magazines[index].enabled = event.target.checked; })} /><span><b>Магазин {index + 1} включён</b><small>Участвует в выборе задания</small></span></label>)}
           </div>
 
           <div className="test-machine-grid">
@@ -383,42 +434,46 @@ export function TestWorkbench({
 
           <div className="test-fault-grid">
             <header><AlertTriangle /><div><b>Начальные маски аварий</b><small>0 — аварий нет</small></div></header>
-            {(['cell', 'robot', 'magazine'] as const).map((owner) => <label key={owner}><span>{owner === 'cell' ? 'Ячейка' : owner === 'robot' ? 'Робот' : 'Магазин'}</span><input type="number" min={0} value={editor.initialState.faultMasks[owner]} onChange={(event) => editState((state) => { state.faultMasks[owner] = Math.max(0, Number(event.target.value) || 0); })} /></label>)}
+            {(['cell', 'robot'] as const).map((owner) => <label key={owner}><span>{owner === 'cell' ? 'Ячейка' : 'Робот'}</span><input type="number" min={0} value={editor.initialState.faultMasks[owner]} onChange={(event) => editState((state) => { state.faultMasks[owner] = Math.max(0, Number(event.target.value) || 0); })} /></label>)}
+            {editor.initialState.faultMasks.magazines.map((mask, index) => <label key={`magazine-${index}`}><span>Магазин {index + 1}</span><input type="number" min={0} value={mask} onChange={(event) => editState((state) => { state.faultMasks.magazines[index] = Math.max(0, Number(event.target.value) || 0); })} /></label>)}
             {editor.initialState.faultMasks.machines.map((mask, index) => <label key={index}><span>Станок {index + 1}</span><input type="number" min={0} value={mask} onChange={(event) => editState((state) => { state.faultMasks.machines[index] = Math.max(0, Number(event.target.value) || 0); })} /></label>)}
           </div>
 
-          <div className="test-section-heading test-magazine-heading">
-            <div><span>03</span><b>Магазин 1 · зона работы — 120 слотов</b></div>
-            <small>ЛКМ — содержимое · ПКМ — тип изделия</small>
-          </div>
-          <div className="test-slot-legend"><span className="blank">Заготовка</span><span className="detail">Готовая деталь</span><span className="type-two">Тип 2</span><span className="type-three">Тип 3</span></div>
-          <div className="test-slot-grid">
-            {editor.initialState.slots.map((slot, index) => <button
+          {editor.initialState.magazines.map((magazine, magazineIndex) => <div key={magazineIndex}>
+            <div className="test-section-heading test-magazine-heading">
+              <div><span>0{magazineIndex + 3}</span><b>Магазин {magazineIndex + 1} — 120 слотов</b></div>
+              <small>ЛКМ — содержимое · ПКМ — общий тип слота</small>
+            </div>
+            <div className="test-slot-legend"><span className="blank">Заготовка</span><span className="detail">Готовая деталь</span><span className="type-two">Тип 2</span><span className="type-three">Тип 3</span></div>
+            <div className="test-slot-grid">
+            {magazine.slots.map((slot, index) => <button
               type="button"
               key={index}
               className={`${typeClass(slot.productType)} content-${slot.content}`}
               title={`Слот ${index + 1}: ${contents[slot.content]}; ПКМ — сменить тип`}
               onClick={() => editState((state) => {
-                const item = state.slots[index];
+                const item = state.magazines[magazineIndex].slots[index];
                 item.content = (item.content + 1) % 3;
                 item.productType = Math.max(1, item.productType);
               })}
               onContextMenu={(event) => {
                 event.preventDefault();
                 editState((state) => {
-                  const item = state.slots[index];
-                  item.productType = item.productType % state.typeCount + 1;
+                  const productType = state.magazines[magazineIndex].slots[index].productType % state.typeCount + 1;
+                  state.magazines.forEach((item) => { item.slots[index].productType = productType; });
                 });
               }}
             ><span>{index + 1}</span><b>{slot.content ? contents[slot.content][0] : '—'}</b><small>Т{slot.productType}</small></button>)}
+            </div>
           </div>
+          )}
         </div>
       </section>
 
       <section className="test-card test-run-panel">
         <header className="test-card-header"><div><span>УПРАВЛЕНИЕ</span><h3>Прогон</h3></div><Activity /></header>
         <div className="test-run-settings">
-          <label>Набор тестов<select value={suite} onChange={(event) => setSuite(event.target.value)}><option value="smoke">Smoke — 10 основных</option><option value="regression">Regression — 70</option><option value="generated">Generated</option></select></label>
+          <label>Набор тестов<select value={suite} onChange={(event) => setSuite(event.target.value)}><option value="smoke">Smoke — 12 основных</option><option value="regression">Regression — 73</option><option value="general">Генеральные — 8 × 4 партии</option><option value="generated">Generated</option></select></label>
           <label>Интерфейс робота<select value={robotInterface} onChange={(event) => setRobotInterface(event.target.value)}>{environment === 'sc500_bench' ? <option value="sc500-modbus">SC-500 Modbus</option> : <><option value="softmotion">SoftMotion</option><option value="python-modbus">Python Modbus</option></>}</select></label>
           <label>Среда<select value={environment} onChange={(event) => {
             const next = event.target.value;
@@ -428,7 +483,24 @@ export function TestWorkbench({
               setSpeedProfile('realtime');
             } else if (robotInterface === 'sc500-modbus') setRobotInterface('softmotion');
           }}><option value="simulation">Симуляция</option><option value="sc500_bench">Стенд SC-500</option></select></label>
-          <label>Скорость<select value={speedProfile} onChange={(event) => setSpeedProfile(event.target.value)}><option value="realtime">Realtime</option><option value="fast" disabled={environment === 'sc500_bench'}>Fast</option></select></label>
+          {robotInterface === 'softmotion' && environment === 'simulation' ? <label>Скорость SoftMotion
+            <input
+              type="range"
+              min={1}
+              max={100}
+              step={1}
+              value={simulationFactorDraft}
+              disabled={!simulationFactorAllowed}
+              onChange={(event) => {
+                const factor = Number(event.currentTarget.value);
+                setSimulationFactorDraft(factor);
+                onSend({ command: 'simulation.accelerationFactor', value: factor });
+              }}
+              aria-label="Коэффициент скорости SoftMotion-симуляции"
+            />
+            <strong>×{simulationFactorDraft}</strong>
+            <small>{simulationFactorError ? 'Ошибка Dynamic Limits' : simulationFactorBusy ? 'Применение лимитов XYZ…' : simulationFactorPending ? `Применится перед следующим тестом; сейчас ×${simulationFactorApplied}` : `Применено ×${simulationFactorApplied}`}</small>
+          </label> : <label>Скорость<select value={speedProfile} onChange={(event) => setSpeedProfile(event.target.value)}><option value="realtime">Realtime</option><option value="fast" disabled={environment === 'sc500_bench'}>Fast</option></select></label>}
           {suite === 'generated' && <div className="test-generated-fields"><label>Seed<input type="number" value={seed} onChange={(event) => setSeed(Number(event.target.value))} /></label><label>Количество<input type="number" min={1} max={1000} value={count} onChange={(event) => setCount(Number(event.target.value))} /></label></div>}
           {selected.length > 0 && <div className="test-selected-note"><Database /><span>Будут запущены выбранные сценарии: <b>{selected.length}</b></span></div>}
           <button className="test-run-button" type="button" disabled={Boolean(runBlockedReason)} title={runBlockedReason} onClick={start}><Play />Запустить прогон</button>

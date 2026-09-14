@@ -330,11 +330,13 @@ class MainWindow(QMainWindow):
             form = QFormLayout(tab)
             mag = self.config[config_key]
             fields: dict[str, QDoubleSpinBox | QSpinBox] = {}
-            for key, label in (("base_x", "База X"), ("base_y", "База Y"), ("base_z", "Точка слота Z"), ("pitch_x", "Шаг X"), ("pitch_y", "Шаг Y"), ("safe_z", "Safe Z"), ("change_z", "Change Z"), ("speed_factor", "SpeedFactor")):
+            for key, label in (("base_x", "База X"), ("base_y", "База Y"), ("base_z", "Точка слота Z"), ("pitch_x", "Шаг X"), ("pitch_y", "Шаг Y"), ("safe_z", "Смещение Safe Z от базы"), ("change_z", "Смещение Change Z от базы"), ("speed_factor", "SpeedFactor")):
                 field = make_double(float(mag[key]))
                 if key == "speed_factor":
                     field.setRange(0.01, 1.0)
                     field.setSingleStep(0.05)
+                elif key in {"safe_z", "change_z"}:
+                    field.setRange(-10000.0, 10000.0)
                 form.addRow(label, field)
                 fields[key] = field
             for key, label in (("rows", "Строки"), ("columns", "Столбцы")):

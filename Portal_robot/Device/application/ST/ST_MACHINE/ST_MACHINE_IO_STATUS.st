@@ -4,6 +4,7 @@ STRUCT
 	xAlarm          : BOOL; // Активна авария станка
 	xDoorOpen       : BOOL; // Роботный люк открыт; имя сохранено для совместимости
 	xDoorClosed     : BOOL; // Роботный люк закрыт; имя сохранено для совместимости
+	xHatchLocked    : BOOL; // Замок роботного люка закрыт (0 — открыт, 1 — закрыт)
 	xSafetyDoorOpen   : BOOL; // Операторская дверь открыта
 	xSafetyDoorClosed : BOOL; // Операторская дверь закрыта
 	xChuckClamped   : BOOL; // Патрон зажат

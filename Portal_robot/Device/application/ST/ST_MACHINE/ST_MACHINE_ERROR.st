@@ -20,9 +20,11 @@ STRUCT
 	TIMEOUT_ROBOT_RELEASE : BOOL; // Робот не освободил интерфейс команды вовремя
 	TIMEOUT_DOOR_OPEN     : BOOL; // Превышено время открытия двери
 	TIMEOUT_DOOR_CLOSE    : BOOL; // Превышено время закрытия двери
+	TIMEOUT_HATCH_UNLOCK  : BOOL; // Превышено время открытия замка роботного люка
 	TIMEOUT_CHUCK_OPEN    : BOOL; // Превышено время разжима патрона
 	TIMEOUT_CHUCK_CLOSE   : BOOL; // Превышено время зажима патрона
 	TIMEOUT_CYCLE_START   : BOOL; // Превышено время подтверждения запуска цикла
 	SAFETY_DOOR_OPEN     : BOOL; // Операторская дверь открылась во время обслуживания
+	HATCH_UNLOCK_PROCESSING : BOOL; // Замок открыт во время обработки в автоматической линии
 END_STRUCT
 END_TYPE

@@ -4,6 +4,7 @@ VAR
 	AXIS_Y         : FB_AXIS; // Управление осью Y
 	AXIS_Z         : FB_AXIS; // Управление осью Z
 	GROUP_XYZ      : FB_AXIS_GROUP; // Управление группой осей XYZ
+	SIMULATION_DYNAMICS : FB_SIMULATION_DYNAMIC_LIMITS; // Транзакционное масштабирование лимитов XYZ между тестами
 	MOTION_MANAGER : FB_MOTION_MANAGER; // Менеджер движения по именованным точкам
 	MACHINE_1      : FB_MACHINE; // Логика первого станка
 	MACHINE_2      : FB_MACHINE; // Логика второго станка
@@ -19,6 +20,7 @@ VAR
 	ROBOT          : FB_ROBOT; // Координация движений и захвата робота
 	ROBOT_MODBUS   : FB_ROBOT_MODBUS; // Modbus TCP транспорт внешнего контроллера
 	TYPE_CONFIG    : FB_MULTI_TYPE_CONFIG_MANAGER; // Конфигурация типов продукции
+	CELL_SAFETY    : FB_CELL_SAFETY; // Дискретный контур безопасности, двери и внешние кнопки
 	CELL_MANAGER   : FB_CELL_MANAGER; // Универсальный автоматический цикл для одного-трёх типов
 	ALARM_MANAGER  : FB_ALARM_MANAGER; // Журнал аварий и предупреждений
 	uiMachine      : UINT; // Индекс станка при обработке команд HMI
@@ -104,7 +106,8 @@ VAR
 	stRobotFaultRequest    : ST_ROBOT_FAULT_REQUEST; // Запросы ошибок робота и точки
 	astMagazineFaultRequest : ARRAY [1..2] OF ST_MAGAZINE_FAULT_REQUEST; // Диагностика двух магазинов
 	stCellFaultRequest     : ST_CELL_FAULT_REQUEST; // Запрос локальной ошибки менеджера ячейки
-	astAlarmSource : ARRAY [1..16] OF ST_ALARM_SOURCE_DATA; // 14 активных источников + 2 legacy-слота журнала
+	stSafetyFaultRequest   : ST_CELL_SAFETY_FAULT_REQUEST; // Независимые инъекции дискретной безопасности
+	astAlarmSource : ARRAY [1..17] OF ST_ALARM_SOURCE_DATA; // 15 активных источников + 2 legacy-слота журнала
 	uiPointEditorIndex : UINT; // Компактный индекс фиксированной точки редактора 1..12
 	uiPointStorageIndex : UINT; // Индекс в совместимом Persistent-массиве 1..15
 	ePointEditorName : E_POINT_NAME; // Фактический enum выбранной инженерной точки
@@ -113,6 +116,7 @@ VAR
 	xPointEditorAllHomed : BOOL; // Все оси XYZ прошли Home
 	xPointEditorRequestValid : BOOL; // Индекс и код новой транзакции распознаны
 	xPointEditorDraftValid : BOOL; // XYZ и скорость черновика прошли проверку
+	xPointEditorMagazinePoint : BOOL; // Выбрана базовая точка магазина 1 или 2
 	udiLastPointEditorCommandSeq : UDINT; // Последняя обработанная транзакция редактора
 	xPointCheckRequest : BOOL;
 	xPointCheckActive : BOOL;
@@ -148,11 +152,14 @@ VAR
 	rtTestSpeedProfileApply : R_TRIG;
 	rtTestScenarioApply : R_TRIG;
 	xTestInitializePulse : BOOL;
+	xTestAbortActive : BOOL; // Тестовая отмена действует только в виртуальной среде
 	xTestStable : BOOL;
 	xTestScenarioValid : BOOL;
 	xSc500BenchKeyLost : BOOL;
 	uiTestIndex : UINT;
+	uiTestMagazine : UINT;
 	uiTestFaultOwnerCount : UINT;
+	adwTestMagazineFaultMask : ARRAY [1..2] OF DWORD;
 	xMachineUseInitialized : BOOL; // Однократная синхронизация выбора станков после старта/Online Change
 END_VAR
 
@@ -178,6 +185,7 @@ END_VAR
 
 SetApplicationDefaults();
 ReadHmiInputs();
+RunSafety();
 RunMotion();
 RunRobotModbus();
 RunTestControl();

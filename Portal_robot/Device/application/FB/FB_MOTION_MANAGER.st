@@ -61,6 +61,17 @@ IF fbPointFaultInjector.xExecute THEN
 	curPointName := E_POINT_NAME.NONE;
 END_IF;
 
+// Рабочая точка должна быть защёлкнута до вызова FB_POINT_MANAGER. Иначе при
+// переходе в VALIDATE менеджер точек видит curPoint от предыдущей команды
+// (или нулевой ST_POINT при первом проходе), потому что прежняя запись
+// выполнялась ниже вызова FB_POINT_MANAGER в CASE VALIDATE.
+IF (stMotionManager.Diag.eState = E_MOTION_MANAGER_STATE.VALIDATE)
+AND NOT fbPointFaultInjector.xExecute THEN
+
+	curPoint := stPoint[stMotionManager.Command.eTargetPoint];
+	curPointName := stMotionManager.Command.eTargetPoint;
+END_IF;
+
 fbPointManager(
 			stPointManager := stPointManager,
 			stPoint := curPoint
@@ -106,11 +117,6 @@ CASE stMotionManager.Diag.eState OF
 	E_MOTION_MANAGER_STATE.VALIDATE:
 	// --------------------------------------------------
 		stMotionManager.Status.xBusy := TRUE;
-		IF NOT fbPointFaultInjector.xExecute THEN
-			curPoint := stPoint[stMotionManager.Command.eTargetPoint];
-			curPointName := stMotionManager.Command.eTargetPoint;
-		END_IF;
-		
 		stPointManager.Command.xExecute := TRUE;
 		
 		IF stPointManager.Status.xDone AND NOT stPointManager.Status.xInvalid THEN

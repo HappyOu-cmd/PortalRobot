@@ -6,11 +6,22 @@ import type {
   ProductType,
   StaticMagazineLayout,
 } from '../model/types';
-import { box, logicalPosition, material, mm } from './primitives';
+import {
+  alarmPulse,
+  box,
+  collectAlarmSurfaceMaterials,
+  logicalPosition,
+  material,
+  mm,
+  setAlarmSurfaceMaterials,
+  type AlarmSurfaceMaterial,
+} from './primitives';
 
 export const STATIC_MAGAZINE_COLUMNS = 10;
 export const STATIC_MAGAZINE_ROWS = 12;
 export const STATIC_MAGAZINE_SLOTS = STATIC_MAGAZINE_COLUMNS * STATIC_MAGAZINE_ROWS;
+const CASSETTE_HEIGHT = 0.024;
+const TRAY_THICKNESS = 0.018;
 
 type ProductMeshes = [THREE.InstancedMesh, THREE.InstancedMesh, THREE.InstancedMesh];
 
@@ -29,6 +40,9 @@ export interface StaticMagazineRig {
   pocketDepth: number;
   productHeight: number;
   inventorySignature: string;
+  alarmSurfaceMaterials: AlarmSurfaceMaterial[];
+  alarmElapsed: number;
+  reducedMotion: boolean;
 }
 
 const MAGAZINE_COLORS = {
@@ -132,7 +146,7 @@ function buildFrame(
   const halfZ = depth / 2 - inset;
   const frontZ = centerZ + halfZ;
   const backZ = centerZ - halfZ;
-  const topY = workingHeight - 0.085;
+  const topY = workingHeight - TRAY_THICKNESS - tube / 2;
   const lowerY = 0.24;
   const legHeight = topY - 0.085;
   const legY = 0.085 + legHeight / 2;
@@ -143,6 +157,7 @@ function buildFrame(
   ];
 
   root.add(
+    box('static_magazine_tray', new THREE.Vector3(width, TRAY_THICKNESS, depth), MAGAZINE_COLORS.frameDark, new THREE.Vector3(0, workingHeight - TRAY_THICKNESS / 2, centerZ), { metalness: 0.5, roughness: 0.34 }),
     box('static_magazine_top_front', new THREE.Vector3(width - 0.04, tube, tube), MAGAZINE_COLORS.frame, new THREE.Vector3(0, topY, frontZ), { metalness: 0.52, roughness: 0.32 }),
     box('static_magazine_top_back', new THREE.Vector3(width - 0.04, tube, tube), MAGAZINE_COLORS.frame, new THREE.Vector3(0, topY, backZ), { metalness: 0.52, roughness: 0.32 }),
     box('static_magazine_top_left', new THREE.Vector3(tube, tube, depth - 0.04), MAGAZINE_COLORS.frame, new THREE.Vector3(-halfX, topY, centerZ), { metalness: 0.52, roughness: 0.32 }),
@@ -187,9 +202,9 @@ function buildCassette(
   const centerZ = -((STATIC_MAGAZINE_ROWS - 1) * pitchY) / 2;
   const cassetteWidth = width - 0.055;
   const cassetteDepth = depth - 0.055;
-  const cassetteHeight = 0.024;
-  const cassetteY = workingHeight - 0.018;
-  const borderWidth = 0.032;
+  const cassetteHeight = CASSETTE_HEIGHT;
+  const cassetteY = workingHeight - cassetteHeight / 2;
+  const borderWidth = 0.004;
   const innerDepth = cassetteDepth - borderWidth * 2;
 
   root.add(
@@ -295,18 +310,22 @@ export function createStaticMagazine(
 
   const pitchX = mm(config.pitchX);
   const pitchY = mm(config.pitchY);
-  const workingHeight = mm(config.workingHeight);
+  // Configured height is the supporting tray surface; the matrix sits on it.
+  const trayHeight = mm(config.workingHeight);
+  const workingHeight = trayHeight + CASSETTE_HEIGHT;
   const maxPartDiameter = mm(partGeometry.diameter);
   const minPitch = Math.min(pitchX, pitchY);
   const pocketInnerRadius = Math.min(minPitch / 2 - 0.003, maxPartDiameter / 2 + 0.0015);
   const pocketOuterRadius = Math.min(minPitch / 2 - 0.001, pocketInnerRadius + 0.0035);
   const productHeight = mm(partGeometry.length);
   const pocketDepth = THREE.MathUtils.clamp(productHeight * 0.62, 0.032, 0.12);
-  const width = (STATIC_MAGAZINE_COLUMNS - 1) * pitchX + pocketOuterRadius * 2 + 0.15;
-  const depth = (STATIC_MAGAZINE_ROWS - 1) * pitchY + pocketOuterRadius * 2 + 0.15;
+  // Half a pitch at each edge: 10 x 12 cells at 60 mm give 600 x 720 mm.
+  // The supporting tray extends 27.5 mm beyond each matrix edge.
+  const width = STATIC_MAGAZINE_COLUMNS * pitchX + 0.055;
+  const depth = STATIC_MAGAZINE_ROWS * pitchY + 0.055;
   const centerZ = -((STATIC_MAGAZINE_ROWS - 1) * pitchY) / 2;
 
-  buildFrame(root, width, depth, centerZ, workingHeight);
+  buildFrame(root, width, depth, centerZ, trayHeight);
   buildCassette(root, pitchY, width, depth, workingHeight);
 
   const pocketBottoms = createInstanceMesh(
@@ -377,9 +396,29 @@ export function createStaticMagazine(
     pocketDepth,
     productHeight,
     inventorySignature: '',
+    alarmSurfaceMaterials: collectAlarmSurfaceMaterials(root),
+    alarmElapsed: 0,
+    reducedMotion: typeof window !== 'undefined'
+      && typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
   };
 }
 
-export function updateStaticMagazineRig(rig: StaticMagazineRig, magazine?: MagazineData): void {
+export function updateStaticMagazineRig(
+  rig: StaticMagazineRig,
+  magazine: MagazineData | undefined,
+  dt = 0,
+  alarmTargetActive = false,
+  inspecting = false,
+): void {
   updateProducts(rig, magazine);
+  const alarm = alarmTargetActive || magazine?.state.error === true || (magazine?.state.activeErrors?.length ?? 0) > 0;
+  rig.alarmElapsed = alarm ? rig.alarmElapsed + dt : 0;
+  setAlarmSurfaceMaterials(
+    rig.alarmSurfaceMaterials,
+    alarm && !inspecting,
+    alarmPulse(rig.alarmElapsed, rig.reducedMotion),
+    rig.alarmElapsed,
+    rig.reducedMotion,
+  );
 }

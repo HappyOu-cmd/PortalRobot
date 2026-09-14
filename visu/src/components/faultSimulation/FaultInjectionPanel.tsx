@@ -41,6 +41,7 @@ const timeoutToggles = [
   ['timeoutRobotRelease', 'Освобождение интерфейса', 'axMachineTimeoutRobotRelease'],
   ['timeoutDoorOpen', 'Открытие люка', 'axMachineTimeoutDoorOpen'],
   ['timeoutDoorClose', 'Закрытие люка', 'axMachineTimeoutDoorClose'],
+  ['timeoutHatchUnlock', 'Открытие замка люка', 'axMachineTimeoutHatchUnlock'],
   ['timeoutChuckOpen', 'Разжим патрона', 'axMachineTimeoutChuckOpen'],
   ['timeoutChuckClose', 'Зажим патрона', 'axMachineTimeoutChuckClose'],
   ['timeoutCycleStart', 'Запуск обработки', 'axMachineTimeoutCycleStart'],
@@ -63,6 +64,7 @@ export function FaultInjectionPanel({ values, online, send, onClose, className }
   const axisGroup = readInjectionStatus(values, 'stAxisGroupFaultStatus');
   const robot = readInjectionStatus(values, 'stRobotFaultStatus');
   const cell = readInjectionStatus(values, 'stCellFaultStatus');
+  const safety = readInjectionStatus(values, 'stSafetyFaultStatus');
   const gripper = readInjectionStatus(values, 'stGripperFaultStatus');
   const point = readInjectionStatus(values, 'stPointFaultStatus');
   const magazine = readInjectionStatus(values, 'stMagazineFaultStatus');
@@ -73,9 +75,17 @@ export function FaultInjectionPanel({ values, online, send, onClose, className }
     value,
     ...(selectedMachine ? { machine: selectedMachine } : {}),
   });
+  const setSafetyHeld = (command: string, value: boolean, index?: number) => send({ command, value, index });
 
   const releaseHeld = () => {
     ['gripper1', 'gripper2', 'gripperRotation', 'gripperGlobal'].forEach((command) => setHeld(`fault.${command}`, false));
+    ['emergencyStopMpg', 'phaseRelay', 'pressureRelay', 'safetyRelay']
+      .forEach((command) => setSafetyHeld(`fault.safety.${command}`, false));
+    for (let index = 1; index <= 4; index += 1) {
+      setSafetyHeld('fault.safety.stationEmergencyStop', false, index);
+      setSafetyHeld('fault.safety.doorUnlocked', false, index);
+    }
+    for (let index = 1; index <= 2; index += 1) setSafetyHeld('fault.safety.cabinetEmergencyStop', false, index);
     for (let index = 1; index <= 3; index += 1) {
       [...machineToggles, ...timeoutToggles].forEach(([command]) => setHeld(`fault.machine.${command}`, false, index));
     }
@@ -88,6 +98,31 @@ export function FaultInjectionPanel({ values, online, send, onClose, className }
     <section className="fault-injection-mode">
       <h3>Режим инъекций</h3>
       <FaultToggle label="Разрешить симуляцию ошибок" checked={requested} online={online} onChange={(value) => send({ command: 'fault.enable', value })} />
+    </section>
+
+    <section>
+      <h3>Безопасность ячейки</h3>
+      <div className="fault-subsection-title">Аварийные грибки</div>
+      {[1, 2, 3, 4].map((index) => <FaultToggle key={`station-${index}`} label={`Кнопочный пост ${index}`}
+        checked={readBool(values, `axSimSafetyEmergencyStopStation[${index}]`)} allowed={safety.allowed} online={online}
+        onChange={(value) => setSafetyHeld('fault.safety.stationEmergencyStop', value, index)} />)}
+      {[1, 2].map((index) => <FaultToggle key={`cabinet-${index}`} label={`Шкаф ${index === 1 ? 'оператора' : 'управления'}`}
+        checked={readBool(values, `axSimSafetyEmergencyStopCabinet[${index}]`)} allowed={safety.allowed} online={online}
+        onChange={(value) => setSafetyHeld('fault.safety.cabinetEmergencyStop', value, index)} />)}
+      <FaultToggle label="MPG-пульт" checked={readBool(values, 'xSimSafetyEmergencyStopMpg')} allowed={safety.allowed} online={online}
+        onChange={(value) => setSafetyHeld('fault.safety.emergencyStopMpg', value)} />
+      <div className="fault-subsection-title">Реле и замки</div>
+      <FaultToggle label="Отказ реле контроля фаз" checked={readBool(values, 'xSimSafetyPhaseRelayFault')} allowed={safety.allowed} online={online}
+        onChange={(value) => setSafetyHeld('fault.safety.phaseRelay', value)} />
+      <FaultToggle label="Отказ реле контроля давления" checked={readBool(values, 'xSimSafetyPressureRelayFault')} allowed={safety.allowed} online={online}
+        onChange={(value) => setSafetyHeld('fault.safety.pressureRelay', value)} />
+      <FaultToggle label="Реле безопасности не взведено" checked={readBool(values, 'xSimSafetyRelayFault')} allowed={safety.allowed} online={online}
+        onChange={(value) => setSafetyHeld('fault.safety.safetyRelay', value)} />
+      {[1, 2, 3, 4].map((index) => <FaultToggle key={`door-${index}`} label={`Замок двери ${index} открыт`}
+        checked={readBool(values, `axSimSafetyDoorUnlocked[${index}]`)} allowed={safety.allowed} online={online}
+        onChange={(value) => setSafetyHeld('fault.safety.doorUnlocked', value, index)} />)}
+      <p className="panel-note">Открытый замок создаёт GLOBAL_STOP только при включённом связанном магазине.</p>
+      <FaultStatusLine status={safety} />
     </section>
 
     <section>

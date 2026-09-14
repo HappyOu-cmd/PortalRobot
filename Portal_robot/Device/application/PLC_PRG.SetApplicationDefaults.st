@@ -23,6 +23,8 @@ IF GVL_POINT.udiPointStorageVersion <> GVL_POINT.udiExpectedPointStorageVersion 
 		GVL_POINT.astRetainPoints[uiPointEditorIndex].X := 0.0;
 		GVL_POINT.astRetainPoints[uiPointEditorIndex].Y := 0.0;
 		GVL_POINT.astRetainPoints[uiPointEditorIndex].Z := 0.0;
+		GVL_POINT.astRetainPoints[uiPointEditorIndex].MagazineSafeZ := 0.0;
+		GVL_POINT.astRetainPoints[uiPointEditorIndex].MagazineChangeZ := 0.0;
 		GVL_POINT.astRetainPoints[uiPointEditorIndex].SpeedFactor := 0.0;
 		GVL_POINT.astRetainPoints[uiPointEditorIndex].xConfigured := FALSE;
 	END_FOR;
@@ -54,7 +56,14 @@ FOR uiPointEditorIndex := UINT#1 TO INT_TO_UINT(GVL_POINT.iEditablePointCount) D
 
 	IF (ePointEditorName <> E_POINT_NAME.NONE) AND (uiPointStorageIndex <> UINT#0) THEN
 		GVL_POINT.Points[ePointEditorName] := GVL_POINT.astRetainPoints[uiPointStorageIndex];
-		IF NOT GVL_POINT.astRetainPoints[uiPointStorageIndex].xConfigured THEN
+		IF (ePointEditorName = E_POINT_NAME.MAGAZINE_1_DETAIL)
+		OR (ePointEditorName = E_POINT_NAME.MAGAZINE_2_DETAIL) THEN
+			GVL_POINT.Points[ePointEditorName].xConfigured :=
+				GVL_POINT.astRetainPoints[uiPointStorageIndex].xConfigured
+				AND (GVL_POINT.astRetainPoints[uiPointStorageIndex].MagazineSafeZ <> LREAL#0.0)
+				AND (GVL_POINT.astRetainPoints[uiPointStorageIndex].MagazineChangeZ <> LREAL#0.0);
+		END_IF;
+		IF NOT GVL_POINT.Points[ePointEditorName].xConfigured THEN
 			xPointTableReady := FALSE;
 		END_IF;
 	ELSE

@@ -203,7 +203,14 @@ CASE eState OF
         Status.xBusy := TRUE;
         Status.xDone := FALSE;
 
-        IF fbFaultInjector.xGlobalFault THEN
+		// Снятие Execute отменяет только незавершённое виртуальное действие и
+		// сохраняет последнюю подтверждённую позицию захвата.
+		IF NOT Command.xExecute THEN
+			Status.xBusy := FALSE;
+			eActiveAction := E_ROBOT_ACTION.NONE;
+			eState := E_GRIPPER_STATE.IDLE;
+
+		ELSIF fbFaultInjector.xGlobalFault THEN
             Error.dwErrorActive := Error.dwErrorActive OR ERR_GRIP_GLOBAL;
             eState := E_GRIPPER_STATE.ERROR;
 

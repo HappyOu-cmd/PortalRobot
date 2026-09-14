@@ -28,6 +28,7 @@ STRUCT
 	xStartCheckMagazineReady     : BOOL; // Магазин готов к операции
 	xStartCheckTaskAvailable     : BOOL; // Есть допустимая работа или известный груз
 	xStartCheckSafetyHome        : BOOL; // Условие HOME_SAFETY выполнено
+	xStartCheckSafety            : BOOL; // Грибки, реле и двери безопасности готовы
 	uiStartConditionsMet        : UINT; // Количество выполненных условий запуска
 	uiStartConditionsTotal      : UINT; // Общее количество условий запуска
 	uiReadyMachines    : UINT; // Количество включённых станков в состоянии IDLE

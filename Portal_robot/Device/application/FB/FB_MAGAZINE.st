@@ -19,15 +19,11 @@ VAR_INPUT
 	xHmiApplySlot     : BOOL; // Явно записать состояние и тип выбранного слота
 	xHmiApplyPitchX   : BOOL; // Применить новый общий шаг слотов по X
 	xHmiApplyPitchY   : BOOL; // Применить новый общий шаг слотов по Y
-	xHmiApplySafeAbove : BOOL; // Применить безопасную высоту конкретного магазина
-	xHmiApplySafeInside : BOOL; // Применить рабочую высоту конкретного магазина
 	uiHmiEditSlot     : UINT; // Номер слота для ручного редактирования
 	uiHmiEditDetailType : UINT; // 0=NONE, 1=BLANK, 2=DETAIL
 	uiHmiEditProductType : UINT; // Тип изделия 1..3
 	lrHmiEditPitchX   : LREAL;
 	lrHmiEditPitchY   : LREAL;
-	lrHmiEditSafeAbove : LREAL;
-	lrHmiEditSafeInside : LREAL;
 	xRobotOwnsMagazine : BOOL; // Автомат удерживает этот магазин в текущем цикле
 	xRobotCanWorkWithMagazine : BOOL; // Интерфейс робота и обязательные точки готовы
 	xSharedGeometryEditAllowed : BOOL; // Оба магазина выключены; общий шаг можно менять
@@ -48,8 +44,6 @@ VAR_IN_OUT
 	stInventory : ST_MAGAZINE_INVENTORY; // Единственная кассета текущего магазина
 	lrPitchX : LREAL; // Общий фактический шаг слотов по X
 	lrPitchY : LREAL; // Общий фактический шаг слотов по Y
-	lrSafeAbove : LREAL; // Фактическая безопасная высота текущего магазина
-	lrSafeInside : LREAL; // Фактическая рабочая высота текущего магазина
 END_VAR
 VAR
 	eGrantedOperation : E_MAGAZINE_OPERATION; // Доступная операция магазина
@@ -64,8 +58,6 @@ VAR
 	rtApplySlot        : R_TRIG; // Фронт явной записи выбранного слота
 	rtApplyPitchX      : R_TRIG;
 	rtApplyPitchY      : R_TRIG;
-	rtApplySafeAbove   : R_TRIG;
-	rtApplySafeInside  : R_TRIG;
 	rtReset            : R_TRIG; // Фронт команды сброса магазина
 
 	xExecuteRequest    : BOOL; // Активный запрос выполнения операции
@@ -135,7 +127,7 @@ VAR CONSTANT
 	WRN_SIM_ERROR_NOT_ALLOWED: UINT := 10; // Тестовая ошибка запрещена текущим состоянием
 	WRN_ENABLE_ROBOT_NOT_READY : UINT := 15; // Робот не может работать с магазином
 	WRN_EDIT_REJECTED : UINT := 14; // Редактирование включённого/занятого магазина запрещено
-	WRN_GEOMETRY_EDIT_REJECTED : UINT := 16; // PLC отклонил изменение шага или рабочих высот
+	WRN_GEOMETRY_EDIT_REJECTED : UINT := 16; // PLC отклонил изменение общего шага X/Y
 END_VAR
 
 // --- BEGIN IMPLEMENTATION ---
@@ -195,8 +187,6 @@ rtCycleSlot(CLK := xHmiCycleSlot);
 rtApplySlot(CLK := xHmiApplySlot);
 rtApplyPitchX(CLK := xHmiApplyPitchX);
 rtApplyPitchY(CLK := xHmiApplyPitchY);
-rtApplySafeAbove(CLK := xHmiApplySafeAbove);
-rtApplySafeInside(CLK := xHmiApplySafeInside);
 
 IF (uiRows > UINT#0)
 AND (uiColumns > UINT#0)
@@ -254,7 +244,7 @@ Status.xEditAllowed := ((Diag.eState = E_MAGAZINE_STATE.DISABLED)
 Status.xPitchEditAllowed := Status.xEditAllowed AND xSharedGeometryEditAllowed;
 
 // Шаг матрицы общий для двух магазинов, поэтому менять его разрешено только
-// когда оба магазина выключены. Z-параметры принадлежат конкретному магазину.
+// когда оба магазина выключены. Смещения Z принадлежат базовым точкам магазина.
 IF rtApplyPitchX.Q
 AND Status.xEditAllowed
 AND xSharedGeometryEditAllowed
@@ -269,19 +259,6 @@ AND (lrHmiEditPitchY >= LREAL#1.0)
 AND (lrHmiEditPitchY <= LREAL#5000.0) THEN
 	lrPitchY := lrHmiEditPitchY;
 END_IF;
-IF rtApplySafeAbove.Q
-AND Status.xEditAllowed
-AND (lrHmiEditSafeAbove >= -LREAL#10000.0)
-AND (lrHmiEditSafeAbove <= LREAL#10000.0) THEN
-	lrSafeAbove := lrHmiEditSafeAbove;
-END_IF;
-IF rtApplySafeInside.Q
-AND Status.xEditAllowed
-AND (lrHmiEditSafeInside >= -LREAL#10000.0)
-AND (lrHmiEditSafeInside <= LREAL#10000.0) THEN
-	lrSafeInside := lrHmiEditSafeInside;
-END_IF;
-
 IF rtClear.Q AND Status.xEditAllowed THEN
 	FOR iInventoryIndex := 1 TO GVL_CELL_SETTINGS.MagazineSlots DO
 		stInventory.aSlots[iInventoryIndex].xInPosition := FALSE;
@@ -401,11 +378,7 @@ Status.xEnableCheckGeometry := (iActiveSlotCount > SINT#0)
 	AND (lrPitchX >= LREAL#1.0)
 	AND (lrPitchX <= LREAL#5000.0)
 	AND (lrPitchY >= LREAL#1.0)
-	AND (lrPitchY <= LREAL#5000.0)
-	AND (lrSafeAbove >= -LREAL#10000.0)
-	AND (lrSafeAbove <= LREAL#10000.0)
-	AND (lrSafeInside >= -LREAL#10000.0)
-	AND (lrSafeInside <= LREAL#10000.0);
+	AND (lrPitchY <= LREAL#5000.0);
 Status.xEnableSequenceAllowed := (Diag.eState = E_MAGAZINE_STATE.DISABLED)
 	AND Status.xEnableCheckRobotReady
 	AND Status.xEnableCheckRobotReleased
@@ -531,15 +504,7 @@ OR (rtApplyPitchY.Q
 	AND (NOT Status.xEditAllowed
 		OR NOT xSharedGeometryEditAllowed
 		OR (lrHmiEditPitchY < LREAL#1.0)
-		OR (lrHmiEditPitchY > LREAL#5000.0)))
-OR (rtApplySafeAbove.Q
-	AND (NOT Status.xEditAllowed
-		OR (lrHmiEditSafeAbove < -LREAL#10000.0)
-		OR (lrHmiEditSafeAbove > LREAL#10000.0)))
-OR (rtApplySafeInside.Q
-	AND (NOT Status.xEditAllowed
-		OR (lrHmiEditSafeInside < -LREAL#10000.0)
-		OR (lrHmiEditSafeInside > LREAL#10000.0))) THEN
+		OR (lrHmiEditPitchY > LREAL#5000.0))) THEN
 	Diag.stWarning.uiCode := WRN_GEOMETRY_EDIT_REJECTED;
 	Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
 	IF Diag.stWarning.udiSequence = UDINT#0 THEN

@@ -9,6 +9,8 @@ STRUCT
 	xManualSafetyDoorCloseAllowed: BOOL; // Разрешено закрыть операторскую дверь
 	xManualHatchOpenAllowed      : BOOL; // Разрешено открыть роботный люк
 	xManualHatchCloseAllowed     : BOOL; // Разрешено закрыть роботный люк
+	xManualHatchUnlockAllowed    : BOOL; // Разрешено открыть замок роботного люка
+	xManualHatchLockAllowed      : BOOL; // Разрешено закрыть замок роботного люка
 	xManualChuckOpenAllowed      : BOOL; // Разрешено разжать патрон
 	xManualChuckCloseAllowed     : BOOL; // Разрешено зажать патрон
 	xProcessing          : BOOL; // Станок выполняет цикл обработки
