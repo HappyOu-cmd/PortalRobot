@@ -364,8 +364,8 @@ def test_recovery_does_not_touch_drives_in_modbus_mode() -> None:
     assert runner.commands == []
 
 
-def test_automatic_mode_level_write_retries_until_plc_feedback_changes() -> None:
-    class RetryRunner(RecordingRunner):
+def test_automatic_mode_waits_for_feedback_after_one_confirmed_command() -> None:
+    class ConfirmedRunner(RecordingRunner):
         def __init__(self) -> None:
             super().__init__()
             self.wait_attempts = 0
@@ -374,20 +374,18 @@ def test_automatic_mode_level_write_retries_until_plc_feedback_changes() -> None
             self, _socket: Any, predicate: Any, _timeout: float, label: str,
         ) -> None:
             self.wait_attempts += 1
-            if self.wait_attempts == 1:
-                raise TimeoutError(label)
             self.values["stCellStatus.xStartCheckAutomaticMode"] = True
             assert predicate(self.values), label
 
-    runner = RetryRunner()
+    runner = ConfirmedRunner()
     runner.values["stCellStatus.xStartCheckAutomaticMode"] = False
 
     asyncio.run(runner.enter_automatic_mode(object()))
 
     assert runner.commands == [
         ("cell.manual", {"value": False}),
-        ("cell.manual", {"value": False}),
     ]
+    assert runner.wait_attempts == 1
 
 
 def test_robot_fault_reset_waits_for_robot_and_cell_reset_completion() -> None:

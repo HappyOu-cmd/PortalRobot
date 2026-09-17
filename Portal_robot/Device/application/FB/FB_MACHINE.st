@@ -239,11 +239,13 @@ xRobotInsideMachine := (eState = E_MACHINE_STATE.ROBOT_ACTION)
 	// аварийная защёлка не отпущена, считаем робота оставшимся внутри зоны.
 	OR xDoorRobotStopLatched;
 
-// Ручное управление разрешено только при выбранном ручном режиме и полностью
-// исключённом из автоматики станке. Конкретные xAllowed дополнительно не дают
-// отправлять бессмысленную команду уже достигнутого положения.
+// Ручное управление разрешено только при выбранном ручном режиме и остановленном
+// автомате станка. xAutomaticUseEnabled хранит выбор для следующей автообработки
+// и не является текущим владельцем станка: после аварии и сброса этот флаг
+// остаётся TRUE, хотя eState уже DISABLED и автоматикой станок не управляется.
+// Конкретные xAllowed дополнительно не дают отправлять бессмысленную команду
+// уже достигнутого положения.
 xManualControlAllowed := xManualMode
-	AND NOT xAutomaticUseEnabled
 	AND (eState = E_MACHINE_STATE.DISABLED)
 	AND NOT xGlobalError
 	AND NOT stMachineStatus.xAlarm
@@ -255,7 +257,6 @@ xManualControlAllowed := xManualMode
 xDoorRobotRecoveryReady := (stMachineStatus.xDoorOpen AND NOT stMachineStatus.xDoorClosed)
 	OR NOT xRobotInsideMachine;
 xManualHatchRecoveryOpenAllowed := xManualMode
-	AND NOT xAutomaticUseEnabled
 	AND (eState = E_MACHINE_STATE.ERROR)
 	AND ((Error.dwErrorActive AND ERR_DOOR_ROBOT) <> DWORD#0)
 	AND stMachineStatus.xDoorClosed
@@ -431,7 +432,7 @@ tonHatchUnlockTimeout(
 	IN := (eState <> E_MACHINE_STATE.ERROR)
 		AND stMachineStatus.xHatchLocked
 		AND (((eState = E_MACHINE_STATE.DOOR_OPEN) AND xServiceHatchUnlockDemand)
-			OR (xManualHatchUnlockDemand AND xManualMode AND NOT xAutomaticUseEnabled)),
+			OR (xManualHatchUnlockDemand AND xManualMode)),
 	PT := stTimeouts.tHatchUnlock
 );
 tonChuckOpenTimeout(
@@ -494,7 +495,7 @@ IF rtHmiLockHatch.Q AND xManualHatchLockAllowed THEN
 	xManualHatchUnlockDemand := FALSE;
 	xManualHatchOpenDemand := FALSE;
 END_IF;
-IF xAutomaticUseEnabled OR NOT xManualMode THEN
+IF NOT xManualMode THEN
 	xManualHatchUnlockDemand := FALSE;
 	xManualHatchOpenDemand := FALSE;
 END_IF;

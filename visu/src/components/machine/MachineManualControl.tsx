@@ -85,14 +85,14 @@ export function MachineManualControlMenu({
       <strong>{mechanismState(machine, mechanism)}</strong>
     </div>
     <div className="machine-mechanism-actions">
-      <button type="button" className={openAllowed ? '' : 'command-unavailable'} aria-disabled={!openAllowed} onClick={() => onRequest('open')}>
+      <button type="button" className={openAllowed ? '' : 'command-unavailable'} disabled={!openAllowed} aria-disabled={!openAllowed} onClick={() => onRequest('open')}>
         <OpenIcon /><span>{mechanism === 'chuck' ? 'Разжать' : 'Открыть'}</span>
       </button>
-      <button type="button" className={closeAllowed ? 'primary' : 'primary command-unavailable'} aria-disabled={!closeAllowed} onClick={() => onRequest('close')}>
+      <button type="button" className={closeAllowed ? 'primary' : 'primary command-unavailable'} disabled={!closeAllowed} aria-disabled={!closeAllowed} onClick={() => onRequest('close')}>
         <LockKeyhole /><span>{mechanism === 'chuck' ? 'Зажать' : 'Закрыть'}</span>
       </button>
     </div>
-    {!machine.manualControlAllowed && !machine.manualHatchOpenAllowed && usePlcData && <p><ShieldAlert />Включите ручной режим и исключите станок из автоматической обработки</p>}
+    {!machine.manualControlAllowed && !machine.manualHatchOpenAllowed && usePlcData && <p><ShieldAlert />Включите ручной режим, выключите станок и устраните блокирующие условия</p>}
   </aside>;
 }
 
@@ -118,10 +118,10 @@ export function MachineMotionWarning({ request, allowed, onConfirm, onCancel }: 
         <span>Станок {request.machineIndex + 1}</span>
         <strong>{action}: {MECHANISM_LABELS[request.mechanism]}</strong>
       </div>
-      {!allowed && <div className="machine-motion-blocked"><ShieldAlert /><span>PLC не разрешает команду: нужен ручной режим, а станок должен быть выключен из автообработки.</span></div>}
+      {!allowed && <div className="machine-motion-blocked"><ShieldAlert /><span>PLC не разрешает команду: нужен ручной режим, выключенный станок и отсутствие блокирующих условий.</span></div>}
       <div className="machine-motion-warning-actions">
         <button type="button" onClick={onCancel}>Отмена</button>
-        <button className="danger" type="button" onClick={onConfirm}>Понимаю, выполнить</button>
+        <button className="danger" type="button" disabled={!allowed} onClick={onConfirm}>Понимаю, выполнить</button>
       </div>
       </Dialog.Content>
     </Dialog.Portal>

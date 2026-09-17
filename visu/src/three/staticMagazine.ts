@@ -40,6 +40,7 @@ export interface StaticMagazineRig {
   pocketDepth: number;
   productHeight: number;
   inventorySignature: string;
+  inventorySource?: MagazineData;
   alarmSurfaceMaterials: AlarmSurfaceMaterial[];
   alarmElapsed: number;
   reducedMotion: boolean;
@@ -258,6 +259,9 @@ function inventoryKey(magazine?: MagazineData): string {
 }
 
 function updateProducts(rig: StaticMagazineRig, magazine?: MagazineData): void {
+  // HMI snapshots are immutable; don't rebuild a 120-slot key every frame.
+  if (rig.inventorySignature && rig.inventorySource === magazine) return;
+  rig.inventorySource = magazine;
   const signature = inventoryKey(magazine);
   if (signature === rig.inventorySignature) return;
   rig.inventorySignature = signature;

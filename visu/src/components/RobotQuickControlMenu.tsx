@@ -105,12 +105,13 @@ function StepButton({ axis, direction, allowed, online, className, label, arrow,
 }
 
 export function RobotQuickControlMenu({
-  control, open, robot, magazines, manual, axisManual, continuousMode, manualStep,
+  control, open, robot, coordinates, magazines, manual, axisManual, continuousMode, manualStep,
   speedOverridePercent, modbusMode, online, triggerRef, onOpenChange, onSend,
 }: {
   control: RobotQuickControl;
   open: boolean;
   robot: CellState['robot'];
+  coordinates: { x: number; y: number; z: number };
   magazines: CellState['magazines'];
   manual: PlcRuntimeInfo['robotManual'];
   axisManual: PlcRuntimeInfo['axisManual'];
@@ -303,7 +304,7 @@ export function RobotQuickControlMenu({
               ariaLabel="Предустановки шага перемещения"
             />
           </div>}
-          <footer className="robot-mini-footer"><div><span>X</span><strong>{robot.x.toFixed(1)}</strong><span>Y</span><strong>{robot.y.toFixed(1)}</strong><span>Z</span><strong>{robot.z.toFixed(1)}</strong></div><button type="button" disabled={!online} className={!manual.stopAllowed ? 'command-unavailable' : ''} aria-disabled={!manual.stopAllowed} onClick={() => { stopActiveJog(); onSend({ command: 'robot.stop' }); }}>Стоп</button></footer>
+          <footer className="robot-mini-footer"><div><span>X</span><strong>{coordinates.x.toFixed(1)}</strong><span>Y</span><strong>{coordinates.y.toFixed(1)}</strong><span>Z</span><strong>{coordinates.z.toFixed(1)}</strong></div><button type="button" disabled={!online} className={!manual.stopAllowed ? 'command-unavailable' : ''} aria-disabled={!manual.stopAllowed} onClick={() => { stopActiveJog(); onSend({ command: 'robot.stop' }); }}>Стоп</button></footer>
         </div>}
       </> : <>
         <div className="machine-mechanism-state"><span><Indicator active={online} tone="blue" />Текущее состояние</span><strong>{state}</strong></div>

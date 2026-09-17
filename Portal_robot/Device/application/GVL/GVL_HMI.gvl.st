@@ -1,12 +1,34 @@
 {attribute 'qualified_only'}
 VAR_GLOBAL
+	{attribute 'symbol' := 'read'}
+	udiHmiCommandClockMs : UDINT;
+	{attribute 'symbol' := 'readwrite'}
+	audiHmiCommandIssuedAtMs : ARRAY [1..121] OF UDINT;
+	{attribute 'symbol' := 'read'}
+	auiHmiCommandResult : ARRAY [1..121] OF UINT; // 1 consumed, 2 expired
+	{attribute 'symbol' := 'readwrite'}
+	udiCellSettingIssuedAtMs : UDINT;
+	{attribute 'symbol' := 'readwrite'}
+	audiHmiCommandSeq : ARRAY [1..121] OF UDINT;
+	{attribute 'symbol' := 'read'}
+	audiHmiCommandAckSeq : ARRAY [1..121] OF UDINT;
+	{attribute 'symbol' := 'readwrite'}
+	uiCellSettingIndex : UINT; // 1..13, see command-contract.mjs
+	{attribute 'symbol' := 'readwrite'}
+	lrCellSettingRequest : LREAL; // TIME values in milliseconds
+	{attribute 'symbol' := 'readwrite'}
+	udiCellSettingCommandSeq : UDINT;
+	{attribute 'symbol' := 'read'}
+	udiCellSettingAckSeq : UDINT;
+	{attribute 'symbol' := 'read'}
+	uiCellSettingResult : UINT; // 1 applied, 2 blocked, 3 invalid, 4 expired
 	{attribute 'symbol' := 'readwrite'}
 	uiTestEnvironmentRequest : UINT := UINT#0;
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
 	xTestEnvironmentApply : BOOL;
 	{attribute 'symbol' := 'readwrite'}
 	uiTestSpeedProfileRequest : UINT := UINT#0;
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
 	xTestSpeedProfileApply : BOOL;
 	{attribute 'symbol' := 'readwrite'}
 	xTestSessionActive : BOOL;
@@ -14,7 +36,7 @@ VAR_GLOBAL
 	xTestAbort : BOOL; // Удерживаемая отмена теста: немедленно прекращает тестовую команду
 	{attribute 'symbol' := 'readwrite'}
 	stTestScenario : ST_TEST_SCENARIO_BUFFER;
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
 	xTestScenarioApply : BOOL;
 	uiTestEnvironmentApplied : UINT;
 	uiTestSpeedProfileApplied : UINT;
@@ -48,38 +70,53 @@ VAR_GLOBAL
 	lrSafetyHomeZ : LREAL := 0.0; // Координата Z точки HOME_SAFETY
 	{attribute 'symbol' := 'read'}
 	lrSafetyHomeSpeedFactor : LREAL := 0.2; // Локальный коэффициент скорости точки 0.1..1.0
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
 	lrSafetyHomeToleranceX : LREAL := 5.0; // Допуск безопасной зоны по X, мм
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
 	lrSafetyHomeToleranceY : LREAL := 5.0; // Допуск безопасной зоны по Y, мм
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
 	lrSafetyHomeToleranceZ : LREAL := 5.0; // Допуск безопасной зоны по Z, мм
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
 	stCellMachineTimeouts : ST_MACHINE_TIMEOUTS; // Настраиваемые TIMEOUT технологических ожиданий
 	xCellSettingsChangeAllowed : BOOL; // PLC разрешает изменение настроек ячейки
 	// Команды и настройки, получаемые от HMI.
+	{attribute 'symbol' := 'read'}
 	xCellEnable       : BOOL; // Импульс включения оборудования ячейки
+	{attribute 'symbol' := 'read'}
 	xCellDisable      : BOOL; // Импульс отключения оборудования ячейки
+	{attribute 'symbol' := 'read'}
 	xCellStart        : BOOL; // Импульс запуска цикла или отмены ожидающей остановки
+	{attribute 'symbol' := 'read'}
 	xCellStop         : BOOL; // Импульс остановки автоматического цикла
+	{attribute 'symbol' := 'read'}
 	xCellReset        : BOOL; // Общий сброс ошибок ячейки
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
 	xSafetyRelayReset : BOOL; // Импульс отдельного сброса реле безопасности
 	{attribute 'symbol' := 'readwrite'}
 	uiCellOperatorChoice : UINT; // Ответ активному предпусковому опросу PLC
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
 	xCellOperatorChoice : BOOL; // Импульс подтверждения ответа предпускового опроса
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
 	xCellOperatorCancel : BOOL; // Импульс отмены предпускового опроса
+	{attribute 'symbol' := 'read'}
 	xAlarmResetWarnings : BOOL; // Импульс сброса накопленных предупреждений
-	xCellManual       : BOOL; // Ручной режим управления ячейкой
+	{attribute 'symbol' := 'read'}
+	xCellManual       : BOOL; // Фактический режим; единственный писатель — PLC
+	{attribute 'symbol' := 'readwrite'}
+	xCellManualRequest : BOOL; // Требуемый режим; записать до CommandSeq
+	{attribute 'symbol' := 'readwrite'}
+	udiCellModeCommandSeq : UDINT; // Новая транзакция переключения режима
+	{attribute 'symbol' := 'read'}
+	udiCellModeAckSeq : UDINT; // Последняя обработанная транзакция
+	{attribute 'symbol' := 'read'}
+	uiCellModeResult : UINT; // 0 нет результата, 1 применён, 2 цикл работает, 3 общая авария
 	lrOffsetX          : LREAL; // Ручное смещение по оси X
 	lrOffsetY          : LREAL; // Ручное смещение по оси Y
 	lrOffsetZ          : LREAL; // Ручное смещение по оси Z
 	xModbusMode        : BOOL; // Read-only: TRUE, когда PLC применил MODBUS_TCP
 	{attribute 'symbol' := 'readwrite'}
 	uiRobotControlModeRequest : UINT; // 0 SoftMotion, 1 Modbus TCP
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
 	xRobotControlModeApply : BOOL; // Импульс применения выбранного режима
 	{attribute 'symbol' := 'readwrite'}
 	uiModbusIpOctet1 : UINT; // Подготавливаемые настройки соединения
@@ -99,7 +136,7 @@ VAR_GLOBAL
 	udiModbusPollIntervalMs : UDINT := UDINT#50;
 	{attribute 'symbol' := 'readwrite'}
 	udiModbusHeartbeatTimeoutMs : UDINT := UDINT#2000;
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
 	xModbusSettingsApply : BOOL; // Импульс атомарного применения настроек
 	xRobotModeChangeAllowed : BOOL;
 	xModbusSettingsChangeAllowed : BOOL;
@@ -108,9 +145,13 @@ VAR_GLOBAL
 	stRobotModbusStatus : ST_ROBOT_MODBUS_STATUS;
 	auiRobotModbusWriteRegisters : ARRAY [1..9] OF UINT; // Диагностическая копия 1001..1009, read-only для HMI
 	auiRobotModbusReadRegisters : ARRAY [1..17] OF UINT; // Диагностическая копия 1101..1117, read-only для HMI
+	{attribute 'symbol' := 'read'}
 	xRobotDrivesEnable : BOOL; // Импульс включения приводов робота
+	{attribute 'symbol' := 'read'}
 	xRobotDrivesDisable: BOOL; // Импульс отключения приводов робота
+	{attribute 'symbol' := 'read'}
 	xRobotStop         : BOOL; // Импульс контролируемой остановки робота
+	{attribute 'symbol' := 'read'}
 	xRobotReset        : BOOL; // Импульс сброса ошибок робота и приводов
 	{attribute 'symbol' := 'readwrite'}
 	udiHmiHeartbeat    : UDINT; // Счётчик связи HMI -> PLC, контролируется PLC watchdog
@@ -143,10 +184,10 @@ VAR_GLOBAL
 	udiPointEditorCommandSeq : UDINT;
 	{attribute 'symbol' := 'readwrite'}
 	udiPointCheckHeartbeat : UDINT; // Отдельный heartbeat владельца проверки, не заменяет HMI
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
 	xPointCheckStop : BOOL; // Остановка только текущей проверки, потребляется PLC
-	{attribute 'symbol' := 'readwrite'}
-	rPointCheckSpeedPercent : REAL := 10.0; // Запрос настройки, 0.1..100 %
+	{attribute 'symbol' := 'read'}
+	rPointCheckSpeedPercent : REAL := 10.0; // Применённая настройка, 0.1..100 %
 	{attribute 'symbol' := 'readwrite'}
 	astAxisHmiCommand : ARRAY [1..3] OF ST_AXIS_HMI_COMMAND; // Команды выбранной оси от HMI
 	{attribute 'symbol' := 'readwrite'}
@@ -155,26 +196,40 @@ VAR_GLOBAL
 	uiRobotManualPoint : UINT; // Код E_POINT_NAME без записи типизированного enum через OPC UA
 	{attribute 'symbol' := 'readwrite'}
 	uiRobotManualSlot : UINT := UINT#1; // Активный слот для трёх магазинных точек
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
 	xRobotManualExecute : BOOL; // Импульс ручного действия робота/перехода к точке
 	xErrorSimulationEnable : BOOL; // Переключатель диагностического режима эмуляции ошибок
+	{attribute 'symbol' := 'read'}
 	axSimAxisJogConflict : ARRAY [1..3] OF BOOL; // Импульсы безопасного конфликта Jog осей X/Y/Z
+	{attribute 'symbol' := 'read'}
 	xSimAxisGroupError : BOOL; // Импульс формирования тестовой ошибки SM3 группы XYZ
+	{attribute 'symbol' := 'read'}
 	xSimRobotWrongAction : BOOL; // Импульс недопустимого действия робота
+	{attribute 'symbol' := 'read'}
 	xSimCellBothGrippers : BOOL; // Импульс противоречивого заполнения двух захватов
 	xSimGripper1Fault  : BOOL; // Имитация неисправности первого захвата
 	xSimGripper2Fault  : BOOL; // Имитация неисправности второго захвата
 	xSimGripperRotationFault : BOOL; // Имитация неисправности поворота захвата
 	xSimGripperGlobalFault   : BOOL; // Имитация общей неисправности захвата
+	{attribute 'symbol' := 'read'}
 	xSimPointXOutOfLimit     : BOOL; // Импульс точки с координатой X вне границ
+	{attribute 'symbol' := 'read'}
 	xSimPointYOutOfLimit     : BOOL; // Импульс точки с координатой Y вне границ
+	{attribute 'symbol' := 'read'}
 	xSimPointZOutOfLimit     : BOOL; // Импульс точки с координатой Z вне границ
+	{attribute 'symbol' := 'read'}
 	xSimPointInvalidVelocity : BOOL; // Импульс точки с недопустимой скоростью
+	{attribute 'symbol' := 'read'}
 	xSimMagazineWrongOperation : BOOL; // Импульс недопустимой операции магазина
+	{attribute 'symbol' := 'read'}
 	xSimMagazineNoBlank        : BOOL; // Импульс ошибки отсутствия заготовки
+	{attribute 'symbol' := 'read'}
 	xSimMagazineNoFreeSlot     : BOOL; // Импульс ошибки отсутствия свободного слота
+	{attribute 'symbol' := 'read'}
 	xSimMagazineInvalidSlot    : BOOL; // Импульс недопустимого номера слота
+	{attribute 'symbol' := 'read'}
 	xSimMagazineSlotContent    : BOOL; // Импульс несоответствия содержимого слота
+	{attribute 'symbol' := 'read'}
 	xSimMagazineGeometry       : BOOL; // Импульс недопустимой геометрии магазина
 	axSimSafetyEmergencyStopStation : ARRAY [1..4] OF BOOL; // Удерживаемые инъекции грибков постов
 	axSimSafetyEmergencyStopCabinet : ARRAY [1..2] OF BOOL; // Удерживаемые инъекции грибков шкафов
@@ -195,25 +250,29 @@ VAR_GLOBAL
 	astMagazineCommand : ARRAY [1..GVL_CELL_SETTINGS.MagazineCount] OF ST_MAGAZINE_HMI_COMMAND;
 	{attribute 'symbol' := 'readwrite'}
 	uiRobotManualMagazine : UINT := UINT#1; // Магазин ручной роботной команды
+	{attribute 'symbol' := 'read'}
 	axMachineEnable    : ARRAY [1..3] OF BOOL; // Включить станок или отменить ожидающее отключение
+	{attribute 'symbol' := 'read'}
 	axMachineDisable   : ARRAY [1..3] OF BOOL; // Импульсы отключения отдельных станков
+	{attribute 'symbol' := 'read'}
 	axMachineReset     : ARRAY [1..3] OF BOOL; // Команды сброса ошибок отдельных станков
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
 	axMachineManualSafetyDoorOpen  : ARRAY [1..3] OF BOOL; // Ручное открытие операторской двери
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
 	axMachineManualSafetyDoorClose : ARRAY [1..3] OF BOOL; // Ручное закрытие операторской двери
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
 	axMachineManualHatchOpen       : ARRAY [1..3] OF BOOL; // Ручное открытие роботного люка
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
 	axMachineManualHatchClose      : ARRAY [1..3] OF BOOL; // Ручное закрытие роботного люка
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
 	axMachineManualHatchUnlock     : ARRAY [1..3] OF BOOL; // Ручное открытие замка роботного люка
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
 	axMachineManualHatchLock       : ARRAY [1..3] OF BOOL; // Ручное закрытие замка роботного люка
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
 	axMachineManualChuckOpen       : ARRAY [1..3] OF BOOL; // Ручной разжим патрона
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
 	axMachineManualChuckClose      : ARRAY [1..3] OF BOOL; // Ручной зажим патрона
+	{attribute 'symbol' := 'read'}
 	axMachineSimReset  : ARRAY [1..3] OF BOOL; // Отдельный сброс аварий FB_MACHINE_SIMULATION
 	axMachineSimAlarm  : ARRAY [1..3] OF BOOL; // Имитация общей аварии станков
 	axMachineSimDoorFault  : ARRAY [1..3] OF BOOL; // Имитация неисправности роботных люков
@@ -229,17 +288,17 @@ VAR_GLOBAL
 	axMachineTimeoutChuckOpen    : ARRAY [1..3] OF BOOL; // Игнорировать подтверждение разжима патрона до TIMEOUT
 	axMachineTimeoutChuckClose   : ARRAY [1..3] OF BOOL; // Игнорировать подтверждение зажима патрона до TIMEOUT
 	axMachineTimeoutCycleStart   : ARRAY [1..3] OF BOOL; // Игнорировать подтверждение запуска цикла до TIMEOUT
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
 	axMachineSetBlank  : ARRAY [1..3] OF BOOL; // Подтвердить заготовку в патроне
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
 	axMachineSetDetail : ARRAY [1..3] OF BOOL; // Подтвердить готовую деталь в патроне
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
 	axMachineAcceptDoor: ARRAY [1..3] OF BOOL; // Подтвердить закрытие двери
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
 	axMachineRejectDoor: ARRAY [1..3] OF BOOL; // Отказаться от закрытия двери
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
 	axMachineAcceptRun : ARRAY [1..3] OF BOOL; // Подтвердить запуск обработки
-	{attribute 'symbol' := 'readwrite'}
+	{attribute 'symbol' := 'read'}
 	axMachineRejectRun : ARRAY [1..3] OF BOOL; // Отказаться от запуска обработки
 	axMachineUsed      : ARRAY [1..3] OF BOOL := [FALSE, FALSE, FALSE]; // Выбор станков для авто; FB_MACHINE после старта находится в DISABLED
 	xUseHmiCycleTime   : ARRAY [1..3] OF BOOL := [FALSE, FALSE, FALSE]; // Использовать заданное время цикла
@@ -321,6 +380,12 @@ VAR_GLOBAL
 	stCellSafetyError  : ST_CELL_SAFETY_ERRORS; // Отдельные Safety-аварии
 	astButtonStationIoStatus : ARRAY [1..4] OF ST_BUTTON_STATION_IO_STATUS;
 	stFrontControlCabinetIoStatus : ST_CONTROL_CABINET_IO_STATUS;
+	{attribute 'symbol' := 'read'}
+	xSignalTowerRed   : BOOL; // Фактический логический выход красной секции, включая мигание
+	{attribute 'symbol' := 'read'}
+	xSignalTowerAmber : BOOL; // Фактический логический выход оранжевой секции
+	{attribute 'symbol' := 'read'}
+	xSignalTowerGreen : BOOL; // Фактический логический выход зелёной секции, включая мигание
 	stRearControlCabinetIoStatus : ST_CONTROL_CABINET_IO_STATUS;
 	stMpgIoStatus : ST_MPG_IO_STATUS;
 	astEnclosureDoorStatus : ARRAY [1..4] OF ST_ENCLOSURE_DOOR_STATUS;

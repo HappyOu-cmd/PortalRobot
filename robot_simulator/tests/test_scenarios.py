@@ -5,6 +5,7 @@ from robot_simulator.test_scenarios import (
     general_scenarios,
     generated_scenarios,
     operator_cancel_scenario,
+    payload_recovery_scenarios,
     regression_scenarios,
     smoke_scenarios,
     validate_inventory,
@@ -125,13 +126,27 @@ def test_return_blank_smoke_case_checks_decision_without_waiting_for_an_impossib
     assert item["expectations"]["fullCycle"] is False
 
 
-def test_regression_suite_has_fixed_owner_cases_and_seventy_three_total() -> None:
+def test_payload_recovery_cases_cover_reenable_and_put_fallback() -> None:
+    load_first, put_first = payload_recovery_scenarios()
+    assert all(not validate_inventory(case["initialState"]) for case in (load_first, put_first))
+    assert load_first["expectations"]["enableMagazineBeforeStart"] == 1
+    assert load_first["expectations"]["firstDecision"] == "machine-load"
+    assert put_first["expectations"]["firstDecision"] == "magazine-put"
+    assert all(
+        sum(slot["content"] == 0 for slot in case["initialState"]["magazines"][0]["slots"]) == 1
+        for case in (load_first, put_first)
+    )
+    assert expected_first_decision(load_first["initialState"]) == "machine-load"
+    assert expected_first_decision(put_first["initialState"]) == "magazine-put"
+
+
+def test_regression_suite_has_fixed_owner_cases_and_seventy_five_total() -> None:
     owners = error_owner_scenarios()
     assert [case["expectations"]["expectedErrorSource"] for case in owners] == [1, 2, 3, 7, 4, 5, 6]
     assert [magazine["enabled"] for magazine in owners[3]["initialState"]["magazines"]] == [False, True]
     assert owners[5]["initialState"]["machines"][1]["state"] == 1
     assert owners[6]["initialState"]["machines"][2]["state"] == 1
-    assert len(regression_scenarios()) == 73
+    assert len(regression_scenarios()) == 75
     assert operator_cancel_scenario()["expectations"]["testKind"] == "operator-cancel"
 
 

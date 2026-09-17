@@ -146,39 +146,6 @@ class GatewayRunner:
             command,
         )
 
-    async def write_level_until_acknowledged(
-        self,
-        socket: Any,
-        command: str,
-        predicate: Callable[[dict[str, Any]], bool],
-        timeout: float,
-        label: str,
-        **fields: Any,
-    ) -> None:
-        """Repeat an idempotent level write until authoritative PLC feedback changes."""
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            await self.command(socket, command, **fields)
-            if predicate(self.values):
-                return
-            remaining = deadline - time.monotonic()
-            if remaining <= 0.0:
-                break
-            try:
-                await self.wait_value(
-                    socket,
-                    predicate,
-                    min(0.75, remaining),
-                    label,
-                )
-                return
-            except TimeoutError:
-                # GVL_HMI.xCellManual is both command and published feedback.
-                # A single asynchronous OPC UA write can land after ReadHmiInputs
-                # and be overwritten by PublishHmi in the same PLC scan.
-                continue
-        raise TimeoutError(label)
-
     async def maintain_hmi_heartbeat(self, socket: Any) -> None:
         """Keep the PLC HMI watchdog alive while the headless runner owns the cell."""
         self._hmi_heartbeat = int(self.values.get("udiHmiHeartbeat", 0))
@@ -364,14 +331,14 @@ class GatewayRunner:
                 45.0,
                 "cell did not stop before entering manual mode",
             )
-        await self.write_level_until_acknowledged(
+        # Gateway подтверждает одну транзакцию режима; повторная запись скрыла бы потерю команды.
+        await self.command(socket, "cell.manual", value=True)
+        await self.wait_value(
             socket,
-            "cell.manual",
             lambda values: bool(values.get("xCellManual", False))
             and not bool(values.get("stCellStatus.xStartCheckAutomaticMode", True)),
             15.0,
             "PLC did not enter manual mode",
-            value=True,
         )
         await self.wait_value(
             socket,
@@ -648,13 +615,12 @@ class GatewayRunner:
         return [label for label, symbol in checks if not bool(values.get(symbol, False))]
 
     async def enter_automatic_mode(self, socket: Any) -> None:
-        await self.write_level_until_acknowledged(
+        await self.command(socket, "cell.manual", value=False)
+        await self.wait_value(
             socket,
-            "cell.manual",
             lambda values: bool(values.get("stCellStatus.xStartCheckAutomaticMode", False)),
             15.0,
             "PLC did not enter automatic mode",
-            value=False,
         )
 
     async def start_automatic_cycle(self, socket: Any) -> None:
@@ -1476,6 +1442,26 @@ class GatewayRunner:
             await self.exercise_robot_error_reset(socket)
         if case.get("expectations", {}).get("testKind") == "general-four-batches":
             await self.prepare_general_cycle(socket)
+
+        magazine_to_enable = int(
+            case.get("expectations", {}).get("enableMagazineBeforeStart", 0)
+        )
+        if magazine_to_enable:
+            root = f"astMagazineStatus[{magazine_to_enable}]"
+            await self.wait_value(
+                socket,
+                lambda values: bool(values.get(f"{root}.xEnableSequenceAllowed", False)),
+                20.0,
+                f"magazine {magazine_to_enable} does not allow Enable with both payloads",
+            )
+            await self.command(socket, "magazine.enable", magazine=magazine_to_enable)
+            await self.wait_value(
+                socket,
+                lambda values: bool(values.get(f"{root}.xEnabled", False))
+                and bool(values.get(f"{root}.xReady", False)),
+                20.0,
+                f"magazine {magazine_to_enable} did not enable with both payloads",
+            )
 
         await self.send(socket, {
             "type": "test-progress", "caseIndex": index, "caseCount": total,

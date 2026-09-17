@@ -9,7 +9,8 @@ VAR_INPUT
 	xOperatorCancel   : BOOL; // Импульс отмены предпускового опроса
 	uiOperatorChoice  : UINT; // Выбранное содержимое, тип продукции или станок
 	xManual           : BOOL; // Ручной режим ячейки
-	xManualRequest    : BOOL; // Необработанный запрос HMI на ручной режим
+	xSettingsRejected : BOOL; // Rejected or expired setting transaction
+	uiModeRejectReason : UINT; // Одноцикловый отказ транзакции режима: 2 цикл, 3 Safety
 	xGlobalError      : BOOL; // Глобальная ошибка ячейки
 	xSafetyReady      : BOOL; // Все дискретные условия безопасности выполнены
 	xDrivesReady      : BOOL; // Приводы готовы
@@ -105,7 +106,6 @@ VAR
 	rtReset              : R_TRIG; // Фронт сброса
 	rtOperatorChoice     : R_TRIG; // Один ответ не переносится на следующий шаг опроса
 	rtOperatorCancel     : R_TRIG; // Фронт отмены предпускового опроса
-	rtManualReject       : R_TRIG; // Фронт отклонённого запроса ручного режима
 	fbFaultInjector      : FB_CELL_FAULT_INJECTOR; // Проверка противоречивого груза
 END_VAR
 VAR CONSTANT
@@ -124,6 +124,8 @@ VAR CONSTANT
 	WRN_PAYLOAD_ROUTE_MISMATCH : UINT := UINT#9;
 	WRN_SAFETY_HOME_REQUIRED   : UINT := UINT#10;
 	WRN_MANUAL_MODE_REJECTED   : UINT := UINT#11;
+	WRN_CELL_SETTING_REJECTED : UINT := UINT#28;
+	WRN_AUTOMATIC_MODE_REJECTED : UINT := UINT#27; // WARNING: общая авария удерживает ручной режим
 	WRN_GRIPPER1_CONTENT       : UINT := UINT#15;
 	WRN_GRIPPER2_CONTENT       : UINT := UINT#16;
 	WRN_PAYLOAD_TYPE_CHOICE    : UINT := UINT#17;
@@ -136,12 +138,18 @@ END_VAR
 
 // --- BEGIN IMPLEMENTATION ---
 
+IF xSettingsRejected THEN
+	Diag.stWarning.uiCode := WRN_CELL_SETTING_REJECTED; // WARNING: settings unchanged
+	Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
+	IF Diag.stWarning.udiSequence = UDINT#0 THEN Diag.stWarning.udiSequence := UDINT#1; END_IF;
+END_IF;
+
+
 rtStart(CLK := xStart);
 rtStop(CLK := xStop);
 rtReset(CLK := xResetRequest);
 rtOperatorChoice(CLK := xOperatorChoice);
 rtOperatorCancel(CLK := xOperatorCancel);
-rtManualReject(CLK := xManualRequest AND xRunning AND NOT xGlobalError);
 
 // Выбор выполняется только между операциями. Внутренний автомат по-прежнему
 // работает с одним снимком, поэтому уже отлажанный маршрут не размазывается
@@ -487,8 +495,12 @@ IF rtStop.Q AND NOT xRunning THEN
 	END_IF;
 END_IF;
 
-IF rtManualReject.Q THEN
-	Diag.stWarning.uiCode := WRN_MANUAL_MODE_REJECTED;
+IF (uiModeRejectReason = UINT#2) OR (uiModeRejectReason = UINT#3) THEN
+	IF uiModeRejectReason = UINT#2 THEN
+		Diag.stWarning.uiCode := WRN_MANUAL_MODE_REJECTED;
+	ELSE
+		Diag.stWarning.uiCode := WRN_AUTOMATIC_MODE_REJECTED;
+	END_IF;
 	Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
 	IF Diag.stWarning.udiSequence = UDINT#0 THEN
 		Diag.stWarning.udiSequence := UDINT#1;
@@ -712,7 +724,16 @@ CASE eState OF
 					eState := E_CELL_MANAGER_STATE.WAIT_GRIPPER2_TYPE;
 				END_IF;
 				IF (Config.uiTypeCount = UINT#1) AND xPrestartGripper1Occupied THEN
-					eState := E_CELL_MANAGER_STATE.WAIT_START_MACHINE;
+					IF uiOperatorMachineMask <> UINT#0 THEN
+						eState := E_CELL_MANAGER_STATE.WAIT_START_MACHINE;
+					ELSE
+						// Нет пустого совместимого станка: это не тупик. После
+						// идентификации обоих грузов планировщик сначала уложит деталь.
+						xSafetyHomeRequired := FALSE;
+						xStoppedPoseValid := FALSE;
+						xRunning := TRUE;
+						eState := E_CELL_MANAGER_STATE.PLAN_TARGET;
+					END_IF;
 				ELSIF Config.uiTypeCount = UINT#1 THEN
 					xSafetyHomeRequired := FALSE;
 					xStoppedPoseValid := FALSE;
@@ -738,7 +759,14 @@ CASE eState OF
 			AND (uiOperatorChoice <= Config.uiTypeCount) THEN
 				uiDetailPayloadType := uiOperatorChoice;
 				IF xPrestartGripper1Occupied THEN
-					eState := E_CELL_MANAGER_STATE.WAIT_START_MACHINE;
+					IF uiOperatorMachineMask <> UINT#0 THEN
+						eState := E_CELL_MANAGER_STATE.WAIT_START_MACHINE;
+					ELSE
+						xSafetyHomeRequired := FALSE;
+						xStoppedPoseValid := FALSE;
+						xRunning := TRUE;
+						eState := E_CELL_MANAGER_STATE.PLAN_TARGET;
+					END_IF;
 				ELSE
 					xSafetyHomeRequired := FALSE;
 					xStoppedPoseValid := FALSE;
@@ -766,10 +794,12 @@ CASE eState OF
 			IF Diag.stWarning.udiSequence = UDINT#0 THEN Diag.stWarning.udiSequence := UDINT#1; END_IF;
 			eState := E_CELL_MANAGER_STATE.IDLE;
 		ELSIF uiOperatorMachineMask = UINT#0 THEN
-			Diag.stWarning.uiCode := WRN_START_MACHINE_REQUIRED;
-			Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
-			IF Diag.stWarning.udiSequence = UDINT#0 THEN Diag.stWarning.udiSequence := UDINT#1; END_IF;
-			eState := E_CELL_MANAGER_STATE.IDLE;
+			// Пока оператор отвечал, пустой станок мог стать недоступен. Сохраняем
+			// оба груза и передаём решение общему планировщику вместо отмены старта.
+			xSafetyHomeRequired := FALSE;
+			xStoppedPoseValid := FALSE;
+			xRunning := TRUE;
+			eState := E_CELL_MANAGER_STATE.PLAN_TARGET;
 		ELSIF rtOperatorChoice.Q AND xOperatorChoiceAllowed THEN
 			IF ((uiOperatorChoice = UINT#1) AND ((uiOperatorMachineMask AND UINT#1) <> UINT#0))
 			OR ((uiOperatorChoice = UINT#2) AND ((uiOperatorMachineMask AND UINT#2) <> UINT#0))
@@ -798,8 +828,51 @@ CASE eState OF
 
 		ELSIF stRobotStatus.xBlankAvailable
 		AND stRobotStatus.xDetailAvailable THEN
-			Error.dwErrorActive := Error.dwErrorActive OR ERR_BOTH_GRIPPERS;
-			eState := E_CELL_MANAGER_STATE.ERROR;
+			// Два груза после аварийного восстановления — штатная ситуация. Сначала
+			// ищем пустой готовый станок строго по типу заготовки. Если загрузить её
+			// прямо сейчас некуда, освобождаем захват 2 операцией PUT.
+			IF (uiBlankPayloadType < UINT#1)
+			OR (uiBlankPayloadType > Config.uiTypeCount) THEN
+				Error.dwErrorActive := Error.dwErrorActive OR ERR_MAGAZINE;
+				eState := E_CELL_MANAGER_STATE.ERROR;
+			ELSIF (uiDetailPayloadType < UINT#1)
+			OR (uiDetailPayloadType > Config.uiTypeCount) THEN
+				Error.dwErrorActive := Error.dwErrorActive OR ERR_MACHINE;
+				eState := E_CELL_MANAGER_STATE.ERROR;
+			ELSE
+				uiCandidateMachine := UINT#0;
+				FOR uiMachine := FIRST_MACHINE TO LAST_MACHINE DO
+					IF (uiCandidateMachine = UINT#0)
+					AND IsMachineCompatible(
+						uiMachine := uiMachine,
+						uiProductType := uiBlankPayloadType
+					)
+					AND astMachineStatus[uiMachine].xCanAcceptService
+					AND (astMachineStatus[uiMachine].ePartState = E_PART_STATE.EMPTY) THEN
+						uiCandidateMachine := uiMachine;
+					END_IF;
+				END_FOR;
+
+				IF uiCandidateMachine > UINT#0 THEN
+					uiSelectedMachine := uiCandidateMachine;
+					uiSelectedType := uiBlankPayloadType;
+					eMachineOperation := E_MACHINE_OPERATION.LOAD;
+					xMachineServiceStarted := FALSE;
+					eState := E_CELL_MANAGER_STATE.ROUTE_TO_TARGET;
+				ELSIF (stMagazineStatus.stTypeStatus.aiFreeSlot[uiDetailPayloadType] > SINT#0)
+				AND xMagazineReady THEN
+					uiSelectedMachine := UINT#0;
+					uiSelectedType := UINT#0;
+					eMachineOperation := E_MACHINE_OPERATION.NONE;
+					iTakeSlot := SINT#0;
+					iTakeOriginSlot := SINT#0;
+					iPutSlot := stMagazineStatus.stTypeStatus.aiFreeSlot[uiDetailPayloadType];
+					eMagazineOperation := E_MAGAZINE_OPERATION.PUT;
+					eState := E_CELL_MANAGER_STATE.MAGAZINE_EXECUTE;
+				ELSE
+					eState := E_CELL_MANAGER_STATE.WAIT_MAGAZINE;
+				END_IF;
+			END_IF;
 
 		ELSIF stRobotStatus.xBlankAvailable THEN
 			IF (uiBlankPayloadType < UINT#1)
@@ -1072,6 +1145,28 @@ CASE eState OF
 				xMachineServiceStarted := FALSE;
 				eState := E_CELL_MANAGER_STATE.SERVICE_TARGET;
 			END_IF;
+		ELSIF stRobotStatus.xBlankAvailable
+		AND stRobotStatus.xDetailAvailable THEN
+			// Выбранная пустая цель могла стать недоступной по дороге. Обслуживаем
+			// только всё ещё пустой совместимый станок; иначе перепланируем через PUT.
+			IF (uiSelectedMachine >= FIRST_MACHINE)
+			AND (uiSelectedMachine <= LAST_MACHINE) THEN
+				IF IsMachineCompatible(
+					uiMachine := uiSelectedMachine,
+					uiProductType := uiBlankPayloadType
+				)
+				AND (stRobotStatus.eCurrentPoint = astMachineStatus[uiSelectedMachine].eAbovePoint)
+				AND astMachineStatus[uiSelectedMachine].xCanAcceptService
+				AND (astMachineStatus[uiSelectedMachine].ePartState = E_PART_STATE.EMPTY) THEN
+					eMachineOperation := E_MACHINE_OPERATION.LOAD;
+					xMachineServiceStarted := FALSE;
+					eState := E_CELL_MANAGER_STATE.SERVICE_TARGET;
+				ELSE
+					eState := E_CELL_MANAGER_STATE.PLAN_TARGET;
+				END_IF;
+			ELSE
+				eState := E_CELL_MANAGER_STATE.PLAN_TARGET;
+			END_IF;
 		ELSIF stRobotStatus.xBlankAvailable THEN
 			uiCandidateMachine := SelectMachineForHeldBlank(
 				uiProductType := uiBlankPayloadType,
@@ -1207,7 +1302,11 @@ CASE eState OF
 		END_IF;
 
 	E_CELL_MANAGER_STATE.SELECT_FALLBACK:
-		IF (uiBlankPayloadType < UINT#1)
+		IF stRobotStatus.xDetailAvailable THEN
+			// RETURN_BLANK запрещён при занятом захвате 2. Общий план сначала
+			// попробует другой пустой станок, затем освободит готовую деталь через PUT.
+			eState := E_CELL_MANAGER_STATE.PLAN_TARGET;
+		ELSIF (uiBlankPayloadType < UINT#1)
 		OR (uiBlankPayloadType > Config.uiTypeCount) THEN
 			Error.dwErrorActive := Error.dwErrorActive OR ERR_MAGAZINE;
 			eState := E_CELL_MANAGER_STATE.ERROR;
@@ -1254,6 +1353,21 @@ CASE eState OF
 			ELSE
 				xRunning := FALSE;
 				eState := E_CELL_MANAGER_STATE.IDLE;
+			END_IF;
+		ELSIF stRobotStatus.xBlankAvailable
+		AND stRobotStatus.xDetailAvailable THEN
+			IF (uiBlankPayloadType < UINT#1)
+			OR (uiBlankPayloadType > Config.uiTypeCount) THEN
+				Error.dwErrorActive := Error.dwErrorActive OR ERR_MAGAZINE;
+				eState := E_CELL_MANAGER_STATE.ERROR;
+			ELSIF (uiDetailPayloadType < UINT#1)
+			OR (uiDetailPayloadType > Config.uiTypeCount) THEN
+				Error.dwErrorActive := Error.dwErrorActive OR ERR_MACHINE;
+				eState := E_CELL_MANAGER_STATE.ERROR;
+			ELSIF (uiOperatorMachineMask <> UINT#0)
+			OR ((stMagazineStatus.stTypeStatus.aiFreeSlot[uiDetailPayloadType] > SINT#0)
+				AND xMagazineReady) THEN
+				eState := E_CELL_MANAGER_STATE.PLAN_TARGET;
 			END_IF;
 		ELSIF stRobotStatus.xBlankAvailable THEN
 			IF (uiBlankPayloadType < UINT#1)

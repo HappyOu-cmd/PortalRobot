@@ -1,9 +1,22 @@
 import asyncio
 import json
+from unittest.mock import AsyncMock
 
 import pytest
 
 from robot_simulator.test_runner import GatewayRunner, RunAborted
+
+
+@pytest.mark.parametrize("manual", [True, False])
+def test_mode_feedback_timeout_does_not_resend_the_command(manual: bool) -> None:
+    runner = GatewayRunner.__new__(GatewayRunner)
+    runner.values = {"stCellStatus.xRunning": False}
+    runner.command = AsyncMock()
+    runner.wait_value = AsyncMock(side_effect=TimeoutError("feedback missing"))
+    operation = runner.ensure_manual_control if manual else runner.enter_automatic_mode
+    with pytest.raises(TimeoutError, match="feedback missing"):
+        asyncio.run(operation(None))
+    runner.command.assert_awaited_once_with(None, "cell.manual", value=manual)
 
 
 def test_decision_oracle_uses_numeric_plc_observability() -> None:

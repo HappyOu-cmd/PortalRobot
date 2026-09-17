@@ -728,6 +728,11 @@ export function mapPlcSnapshot(
       multiplier100: booleanValue(values, 'stMpgIoStatus.xMultiplier100', mpg.multiplier100),
     },
     controlCabinets: {
+      signalTower: {
+        red: booleanValue(values, 'xSignalTowerRed', false),
+        amber: booleanValue(values, 'xSignalTowerAmber', false),
+        green: booleanValue(values, 'xSignalTowerGreen', false),
+      },
       front: {
         emergencyStopPressed: booleanValue(values, 'stFrontControlCabinetIoStatus.xEmergencyStopPressed', cabinets.front.emergencyStopPressed),
         startPressed: booleanValue(values, 'stFrontControlCabinetIoStatus.xStartPressed', cabinets.front.startPressed),

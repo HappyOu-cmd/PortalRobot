@@ -53,7 +53,7 @@ interface CameraFlight {
   end: CameraPose;
 }
 
-const getRenderPixelRatio = (): number => Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+const getRenderPixelRatio = (preview: boolean): number => Math.min(preview ? 1 : 1.5, Math.max(1, window.devicePixelRatio || 1));
 
 export class CellScene {
   private readonly scene = new THREE.Scene();
@@ -77,6 +77,9 @@ export class CellScene {
   private state: CellState;
   private layout: CellLayout;
   private animationFrame = 0;
+  private renderingEnabled = true;
+  private lastShadowTime = 0;
+  private readonly reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
   private resizeObserver: ResizeObserver;
   private selectedMachine: number | null = null;
   private cameraPreset: CameraPreset = 'iso';
@@ -114,15 +117,17 @@ export class CellScene {
     private readonly onAnchorsUpdate?: (anchors: EquipmentAnchors) => void,
     private readonly onDriftTelemetry?: (telemetry: DriftTelemetry) => void,
     private readonly onEquipmentInspect?: (target: InspectionTarget, node?: InspectionNode) => void,
+    private readonly preview = false,
   ) {
     this.layout = layout;
     this.state = state;
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(getRenderPixelRatio());
+    this.renderer.setPixelRatio(getRenderPixelRatio(this.preview));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.08;
-    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.enabled = !this.preview;
+    this.renderer.shadowMap.autoUpdate = false;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.domElement.className = 'cell-canvas';
     this.host.appendChild(this.renderer.domElement);
@@ -221,13 +226,16 @@ export class CellScene {
     this.machineRigs.forEach((rig) => this.cellRoot.add(rig.root));
     this.portalRig = createPortal(layout);
     this.cellRoot.add(this.portalRig.root);
-    this.enclosureRig = createEnclosure(layout);
-    this.cellRoot.add(this.enclosureRig.root);
-    this.controlCabinetsRig = createControlCabinets(layout);
-    this.cellRoot.add(this.controlCabinetsRig.root);
-    const buttonPost = this.enclosureRig.buttonStations.find(({ id }) => id === 'magazine-1-front');
-    this.mpgPendantRig = createMpgPendant(layout, buttonPost?.rig.root.position.y ?? 1.15);
-    this.cellRoot.add(this.mpgPendantRig.root);
+    // The small confirmation view only needs the equipment and its positions.
+    if (!this.preview) {
+      this.enclosureRig = createEnclosure(layout);
+      this.cellRoot.add(this.enclosureRig.root);
+      this.controlCabinetsRig = createControlCabinets(layout);
+      this.cellRoot.add(this.controlCabinetsRig.root);
+      const buttonPost = this.enclosureRig.buttonStations.find(({ id }) => id === 'magazine-1-front');
+      this.mpgPendantRig = createMpgPendant(layout, buttonPost?.rig.root.position.y ?? 1.15);
+      this.cellRoot.add(this.mpgPendantRig.root);
+    }
     this.staticMagazineRigs = layout.staticMagazines.map((config, index) => {
       const rig = createStaticMagazine(
         config,
@@ -238,9 +246,11 @@ export class CellScene {
       this.cellRoot.add(rig.root);
       return rig;
     });
-    this.easterEggController = new EasterEggController(layout, this.onDriftTelemetry, this.driftSettings);
-    this.easterEggController.setMode(this.easterEggMode, this.easterEggRevision);
-    this.cellRoot.add(this.easterEggController.root);
+    if (!this.preview) {
+      this.easterEggController = new EasterEggController(layout, this.onDriftTelemetry, this.driftSettings);
+      this.easterEggController.setMode(this.easterEggMode, this.easterEggRevision);
+      this.cellRoot.add(this.easterEggController.root);
+    }
     this.effectAnchors = {
       machines: this.machineRigs.map(() => ({ ground: new THREE.Vector3(), service: new THREE.Vector3() })),
       magazines: this.staticMagazineRigs.map(() => ({
@@ -251,8 +261,10 @@ export class CellScene {
       portal: { ground: new THREE.Vector3(), service: new THREE.Vector3() },
       cell: { center: new THREE.Vector3(), length: mm(layout.floor.lengthX), width: mm(layout.floor.widthY) },
     };
-    this.operationalEffects = new OperationalEffects(this.visualEffects);
-    this.cellRoot.add(this.operationalEffects.root);
+    if (!this.preview) {
+      this.operationalEffects = new OperationalEffects(this.visualEffects);
+      this.cellRoot.add(this.operationalEffects.root);
+    }
     this.scene.add(this.cellRoot);
     this.setSelectedMachine(this.selectedMachine);
     this.activeFocusKey = null;
@@ -262,10 +274,19 @@ export class CellScene {
     this.state = state;
   }
 
+  setLayout(layout: CellLayout): void {
+    // The constructor already built this layout. React's first effect must not
+    // dispose and recreate every mesh, texture and loaded machine immediately.
+    if (layout !== this.layout) this.rebuild(layout);
+  }
+
+  setRenderingEnabled(enabled: boolean): void { this.renderingEnabled = enabled; }
+
   setInspectionEnabled(enabled: boolean): void { this.inspectionEnabled = enabled; }
   refocusInspection(): void { this.inspectionCameraKey = ''; }
 
   setInspection(inspection: EquipmentInspection | null): void {
+    this.renderer.shadowMap.needsUpdate = true;
     const modeChanged = !!inspection !== !!this.inspection;
     if (inspection && !this.inspection) {
       this.savedCamera = { position: this.camera.position.clone(), target: this.controls.target.clone(), fov: this.camera.fov };
@@ -329,6 +350,7 @@ export class CellScene {
   }
 
   private updateInspection(): void {
+    if (!this.inspectionEnabled && !this.inspection) return;
     this.refreshInspectionEntries();
     const inspection = this.inspection;
     const entry = inspection ? this.inspectionEntries.find((item) => inspectionKey(item.target) === inspectionKey(inspection.target)) : undefined;
@@ -371,7 +393,7 @@ export class CellScene {
       }
     }
     this.inspectionLayer.update(this.cellRoot, entry, inspection, this.inspectionElapsed,
-      window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+      this.reducedMotion.matches);
   }
 
   setEasterEgg(mode: EasterEggMode, revision = 0): void {
@@ -537,7 +559,7 @@ export class CellScene {
   private readonly resize = (): void => {
     const width = Math.max(1, this.renderer.domElement.clientWidth || this.host.clientWidth);
     const height = Math.max(1, this.renderer.domElement.clientHeight || this.host.clientHeight);
-    const pixelRatio = getRenderPixelRatio();
+    const pixelRatio = getRenderPixelRatio(this.preview);
     if (Math.abs(this.renderer.getPixelRatio() - pixelRatio) > 0.001) {
       this.renderer.setPixelRatio(pixelRatio);
     }
@@ -676,6 +698,11 @@ export class CellScene {
 
   private readonly animate = (): void => {
     this.animationFrame = requestAnimationFrame(this.animate);
+    if (!this.renderingEnabled || document.hidden) {
+      this.clock.getDelta();
+      return;
+    }
+    const now = performance.now();
     const dt = Math.min(this.clock.getDelta(), 0.05);
     this.inspectionElapsed += dt;
     this.inspectionLayer.restoreVisibility();
@@ -721,13 +748,19 @@ export class CellScene {
         !!this.inspection,
       );
     });
-    this.updateEffectAnchors();
+    if (this.operationalEffects) this.updateEffectAnchors();
     this.operationalEffects?.update(dt, this.sceneActivity, this.effectAnchors);
     this.easterEggController?.update(dt, this.camera);
     this.updateInspection();
     if (!this.easterEggController?.controlsCamera) {
       this.updateCameraFocus(dt);
       this.controls.update();
+    }
+    // Shadows need another geometry pass for the entire cell. Keep their full
+    // resolution, but update at 30 Hz while equipment motion renders at 60 Hz.
+    if (!this.preview && now - this.lastShadowTime >= 1000 / 30 - 0.5) {
+      this.renderer.shadowMap.needsUpdate = true;
+      this.lastShadowTime = now;
     }
     this.renderer.render(this.scene, this.camera);
     this.updateEquipmentAnchors();

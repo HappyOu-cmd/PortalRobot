@@ -19,6 +19,9 @@ import {
   Variant,
 } from 'node-opcua';
 import { WebSocketServer } from 'ws';
+import { CellModeChannel, cellModeSymbols } from './cell-mode-channel.mjs';
+import { AcknowledgedCommand } from './acknowledged-command.mjs';
+import { pulseProtocols, settingPaths, settingProtocol, commandSymbols, payloadProtocols } from './command-contract.mjs';
 import {
   CyclogramStore,
   classifyCyclogram,
@@ -128,6 +131,8 @@ const faultRequiredSymbols = [
 ];
 
 const requiredSymbols = [...new Set([
+  ...cellModeSymbols,
+  ...commandSymbols,
   'udiPlcHeartbeat',
   'xGlobalError',
   'stCellStatus.xRunning',
@@ -187,6 +192,9 @@ const requiredSymbols = [...new Set([
   'stFrontControlCabinetIoStatus.xStartPressed',
   'stFrontControlCabinetIoStatus.xStopPressed',
   'stFrontControlCabinetIoStatus.xResetPressed',
+  'xSignalTowerRed',
+  'xSignalTowerAmber',
+  'xSignalTowerGreen',
   'stRearControlCabinetIoStatus.xEmergencyStopPressed',
   'stMpgIoStatus.xEmergencyStopPressed',
   'stMpgIoStatus.xAxisX', 'stMpgIoStatus.xAxisY', 'stMpgIoStatus.xAxisZ',
@@ -486,7 +494,6 @@ const commandMap = {
   'safety.resetRelay': { path: 'xSafetyRelayReset', dataType: DataType.Boolean, pulse: true },
   'cell.operatorCancel': { path: 'xCellOperatorCancel', dataType: DataType.Boolean, pulse: true },
   'alarms.resetWarnings': { path: 'xAlarmResetWarnings', dataType: DataType.Boolean, pulse: true },
-  'cell.manual': { path: 'xCellManual', dataType: DataType.Boolean },
   'test.session': { path: 'xTestSessionActive', dataType: DataType.Boolean },
   'test.abort': { path: 'xTestAbort', dataType: DataType.Boolean },
   'robot.modbus.ip1': { path: 'uiModbusIpOctet1', dataType: DataType.UInt16, transform: (v) => Math.max(0, Math.min(255, Math.round(Number(v)))) },
@@ -1012,15 +1019,18 @@ async function writeValue(path, dataType, value) {
   if (!nodeId) throw new Error(`Переменная ${plcRootName}.${path} не опубликована`);
   const status = await opcua.session.writeSingleNode(nodeId, new Variant({ dataType, value }));
   if (!status.isGood()) throw new Error(`PLC отклонил запись ${path}: ${status.toString()}`);
-  // Do not wait for the next subscription publish before reflecting a successful
-  // write in the HMI. The following OPC UA notification remains authoritative.
-  latestValues[path] = jsonValue(value);
-  publishSnapshot({ [path]: latestValues[path] }, false);
+  // Write=Good подтверждает только доставку. PLC может отклонить или нормализовать
+  // команду между отсчётами подписки, тогда changed вообще не придёт. Телеметрия
+  // обновляется исключительно чтением/подпиской OPC UA, без оптимистической записи.
 }
 
 async function pulseValue(path) {
-  await writeValue(path, DataType.Boolean, true);
-  setTimeout(() => writeValue(path, DataType.Boolean, false).catch(console.error), 150);
+  const protocol = pulseProtocols.get(path);
+  if (!protocol) throw new Error(`Неизвестный подтверждаемый канал ${path}`);
+  return commandChannel.run(protocol, undefined, (result) => {
+    if (result === 2) throw new Error('PLC отклонил просроченную команду; отправьте новый запрос');
+    if (result !== 1) throw new Error(`Неизвестный результат обработки команды: ${result}`);
+  });
 }
 
 async function readSymbolValues(paths) {
@@ -1069,22 +1079,55 @@ function schedulePointEditorAudit() {
   pointEditorAuditTimer = setTimeout(flushPointEditorAudits, cyclogramSettleMs);
 }
 
+const cellModeChannel = new CellModeChannel({
+  read: async () => {
+    if (!cellModeSymbols.every((path) => symbolNodes.has(path))) {
+      throw new Error('PLC не публикует транзакционный канал режима: обновите PLC и состав символов');
+    }
+    await readSymbolValues(cellModeSymbols);
+    const result = Object.fromEntries(cellModeSymbols.map((path) => [path, latestValues[path]]));
+    publishSnapshot(result, false);
+    return result;
+  },
+  write: (path, value) => writeValue(path,
+    path === 'xCellManualRequest' ? DataType.Boolean : DataType.UInt32, value),
+});
+
+const commandChannel = new AcknowledgedCommand({
+  read: async (paths) => {
+    await readSymbolValues(paths);
+    return Object.fromEntries(paths.map((path) => [path, latestValues[path]]));
+  },
+  write: (path, sequence) => writeValue(path, DataType.UInt32, sequence),
+});
+
 async function executeCommandDirect(message) {
+  const payload = payloadProtocols(message);
+  const result = payload
+    ? await commandChannel.exclusive(payload.key, payload.protocols, () => executeCommandPrepared(message))
+    : await executeCommandPrepared(message);
+  // Commands using pulseValue return only after a completed PLC scan.
+  return result;
+}
+
+async function executeCommandPrepared(message) {
   const requestId = String(message.requestId ?? Date.now());
+  if (message.command === 'cell.manual') {
+    await cellModeChannel.run(message.value);
+    return requestId;
+  }
   if (message.command === 'test.environment.set') {
     const environment = Math.round(Number(message.value));
     if (![0, 1, 2].includes(environment)) throw new Error('Недопустимая тестовая среда');
     await writeValue('uiTestEnvironmentRequest', DataType.UInt16, environment);
-    await writeValue('xTestEnvironmentApply', DataType.Boolean, true);
-    setTimeout(() => writeValue('xTestEnvironmentApply', DataType.Boolean, false).catch(console.error), 150);
+    message._plcReceipt = { path: 'xTestEnvironmentApply', sequence: await pulseValue('xTestEnvironmentApply') };
     return requestId;
   }
   if (message.command === 'test.speed.set') {
     const profile = Math.round(Number(message.value));
     if (![0, 1].includes(profile)) throw new Error('Недопустимый профиль скорости теста');
     await writeValue('uiTestSpeedProfileRequest', DataType.UInt16, profile);
-    await writeValue('xTestSpeedProfileApply', DataType.Boolean, true);
-    setTimeout(() => writeValue('xTestSpeedProfileApply', DataType.Boolean, false).catch(console.error), 150);
+    message._plcReceipt = { path: 'xTestSpeedProfileApply', sequence: await pulseValue('xTestSpeedProfileApply') };
     return requestId;
   }
   if (message.command === 'test.faults.clear') {
@@ -1103,7 +1146,9 @@ async function executeCommandDirect(message) {
         `axMachineTimeoutChuckClose[${index}]`, `axMachineTimeoutCycleStart[${index}]`,
       ]),
     ];
-    for (const path of paths) await writeValue(path, DataType.Boolean, false);
+    for (const path of paths) {
+      if (!pulseProtocols.has(path)) await writeValue(path, DataType.Boolean, false);
+    }
     return requestId;
   }
   if (message.command === 'test.scenario.apply') {
@@ -1141,8 +1186,7 @@ async function executeCommandDirect(message) {
     let loadSeq = Date.now() >>> 0;
     if (!loadSeq) loadSeq = 1;
     await writeValue('stTestScenario.udiLoadSeq', DataType.UInt32, loadSeq);
-    await writeValue('xTestScenarioApply', DataType.Boolean, true);
-    setTimeout(() => writeValue('xTestScenarioApply', DataType.Boolean, false).catch(console.error), 150);
+    message._plcReceipt = { path: 'xTestScenarioApply', sequence: await pulseValue('xTestScenarioApply') };
     return requestId;
   }
   if (message.command === 'robot.point.capture') {
@@ -1221,7 +1265,7 @@ async function executeCommandDirect(message) {
     return requestId;
   }
   if (message.command === 'robot.point.stop') {
-    await writeValue('xPointCheckStop', DataType.Boolean, true);
+    message._plcReceipt = { path: 'xPointCheckStop', sequence: await pulseValue('xPointCheckStop') };
     return requestId;
   }
   if (message.command === 'robot.axis.jog') {
@@ -1241,8 +1285,7 @@ async function executeCommandDirect(message) {
   if (message.command === 'robot.axis.home') {
     const axis = Math.round(Number(message.machine));
     if (!Number.isInteger(axis) || axis < 1 || axis > 3) throw new Error('Неверная команда Home оси');
-    await writeValue(`astAxisHmiCommand[${axis}].xHome`, DataType.Boolean, true);
-    setTimeout(() => writeValue(`astAxisHmiCommand[${axis}].xHome`, DataType.Boolean, false).catch(console.error), 150);
+    message._plcReceipt = { path: `astAxisHmiCommand[${axis}].xHome`, sequence: await pulseValue(`astAxisHmiCommand[${axis}].xHome`) };
     return requestId;
   }
   if (message.command === 'robot.axis.moveRelative' || message.command === 'robot.axis.moveAbsolute') {
@@ -1253,8 +1296,7 @@ async function executeCommandDirect(message) {
     if (!Number.isInteger(axis) || axis < 1 || axis > 3 || !Number.isFinite(value)) throw new Error('Неверная команда перемещения оси');
     if (message.command.endsWith('moveRelative') && Math.abs(value) > 100) throw new Error('Шаг ручного перемещения должен быть не более 100 мм');
     await writeValue(`astAxisHmiCommand[${axis}].${suffix}`, DataType.Double, value);
-    await writeValue(`astAxisHmiCommand[${axis}].${executeLeaf}`, DataType.Boolean, true);
-    setTimeout(() => writeValue(`astAxisHmiCommand[${axis}].${executeLeaf}`, DataType.Boolean, false).catch(console.error), 150);
+    message._plcReceipt = { path: `astAxisHmiCommand[${axis}].${executeLeaf}`, sequence: await pulseValue(`astAxisHmiCommand[${axis}].${executeLeaf}`) };
     return requestId;
   }
   if (message.command === 'robot.action') {
@@ -1271,24 +1313,21 @@ async function executeCommandDirect(message) {
     await writeValue('uiRobotManualPoint', DataType.UInt16, point);
     await writeValue('uiRobotManualSlot', DataType.UInt16, slot);
     await writeValue('uiRobotManualMagazine', DataType.UInt16, magazine);
-    await writeValue('xRobotManualExecute', DataType.Boolean, true);
-    setTimeout(() => writeValue('xRobotManualExecute', DataType.Boolean, false).catch(console.error), 150);
+    message._plcReceipt = { path: 'xRobotManualExecute', sequence: await pulseValue('xRobotManualExecute') };
     return requestId;
   }
   if (message.command === 'multi.typeCount') {
     const typeCount = Math.round(Number(message.value));
     if (!Number.isInteger(typeCount) || typeCount < 1 || typeCount > 3) throw new Error('Количество типов должно быть от 1 до 3');
     await writeValue('stMultiType.Command.uiRequestedTypeCount', DataType.UInt16, typeCount);
-    await writeValue('stMultiType.Command.xSetTypeCount', DataType.Boolean, true);
-    setTimeout(() => writeValue('stMultiType.Command.xSetTypeCount', DataType.Boolean, false).catch(console.error), 150);
+    message._plcReceipt = { path: 'stMultiType.Command.xSetTypeCount', sequence: await pulseValue('stMultiType.Command.xSetTypeCount') };
     return requestId;
   }
   if (message.command === 'cell.operatorChoice') {
     const choice = Math.round(Number(message.value));
     if (!Number.isInteger(choice) || choice < 1 || choice > 3) throw new Error('Недопустимый ответ предпускового опроса');
     await writeValue('uiCellOperatorChoice', DataType.UInt16, choice);
-    await writeValue('xCellOperatorChoice', DataType.Boolean, true);
-    setTimeout(() => writeValue('xCellOperatorChoice', DataType.Boolean, false).catch(console.error), 150);
+    message._plcReceipt = { path: 'xCellOperatorChoice', sequence: await pulseValue('xCellOperatorChoice') };
     return requestId;
   }
   if (message.command === 'multi.machineType') {
@@ -1298,16 +1337,14 @@ async function executeCommandDirect(message) {
     if (!Number.isInteger(productType) || productType < 1 || productType > 3) throw new Error('Неверный тип заготовки');
     await writeValue('stMultiType.Command.uiRequestedMachine', DataType.UInt16, machine);
     await writeValue('stMultiType.Command.uiRequestedMachineType', DataType.UInt16, productType);
-    await writeValue('stMultiType.Command.xSetMachineType', DataType.Boolean, true);
-    setTimeout(() => writeValue('stMultiType.Command.xSetMachineType', DataType.Boolean, false).catch(console.error), 150);
+    message._plcReceipt = { path: 'stMultiType.Command.xSetMachineType', sequence: await pulseValue('stMultiType.Command.xSetMachineType') };
     return requestId;
   }
   if (message.command === 'robot.controlMode.set') {
     const mode = Math.round(Number(message.value));
     if (mode !== 0 && mode !== 1) throw new Error('Неверный режим управления роботом');
     await writeValue('uiRobotControlModeRequest', DataType.UInt16, mode);
-    await writeValue('xRobotControlModeApply', DataType.Boolean, true);
-    setTimeout(() => writeValue('xRobotControlModeApply', DataType.Boolean, false).catch(console.error), 150);
+    message._plcReceipt = { path: 'xRobotControlModeApply', sequence: await pulseValue('xRobotControlModeApply') };
     return requestId;
   }
   if (message.command === 'multi.slotType') {
@@ -1317,8 +1354,7 @@ async function executeCommandDirect(message) {
     if (!Number.isInteger(productType) || productType < 1 || productType > 3) throw new Error('Неверный тип заготовки');
     await writeValue('stMultiType.Command.uiRequestedSlot', DataType.UInt16, slot);
     await writeValue('stMultiType.Command.uiRequestedSlotType', DataType.UInt16, productType);
-    await writeValue('stMultiType.Command.xSetSlotType', DataType.Boolean, true);
-    setTimeout(() => writeValue('stMultiType.Command.xSetSlotType', DataType.Boolean, false).catch(console.error), 150);
+    message._plcReceipt = { path: 'stMultiType.Command.xSetSlotType', sequence: await pulseValue('stMultiType.Command.xSetSlotType') };
     return requestId;
   }
   if (message.command?.startsWith('magazine.')) {
@@ -1339,7 +1375,7 @@ async function executeCommandDirect(message) {
       await writeValue(`astMagazineCommand[${magazine}].uiEditSlot`, DataType.UInt16, slot);
       await writeValue(`astMagazineCommand[${magazine}].uiEditDetailType`, DataType.UInt16, content);
       await writeValue(`astMagazineCommand[${magazine}].uiEditProductType`, DataType.UInt16, productType);
-      await pulseValue(`astMagazineCommand[${magazine}].xApplySlot`);
+      message._plcReceipt = { path: `astMagazineCommand[${magazine}].xApplySlot`, sequence: await pulseValue(`astMagazineCommand[${magazine}].xApplySlot`) };
       return requestId;
     }
     const geometryCommands = {
@@ -1353,12 +1389,12 @@ async function executeCommandDirect(message) {
         throw new Error('Параметр геометрии магазина вне допустимого диапазона');
       }
       await writeValue(`astMagazineCommand[${magazine}].${geometry.valueLeaf}`, DataType.Double, value);
-      await pulseValue(`astMagazineCommand[${magazine}].${geometry.pulseLeaf}`);
+      message._plcReceipt = { path: `astMagazineCommand[${magazine}].${geometry.pulseLeaf}`, sequence: await pulseValue(`astMagazineCommand[${magazine}].${geometry.pulseLeaf}`) };
       return requestId;
     }
     const leaf = pulseLeaves[action];
     if (!leaf) throw new Error(`Команда магазина ${action} не разрешена`);
-    await pulseValue(`astMagazineCommand[${magazine}].${leaf}`);
+    message._plcReceipt = { path: `astMagazineCommand[${magazine}].${leaf}`, sequence: await pulseValue(`astMagazineCommand[${magazine}].${leaf}`) };
     return requestId;
   }
   let definition = commandMap[message.command];
@@ -1434,8 +1470,26 @@ async function executeCommandDirect(message) {
   if (!definition) throw new Error(`Команда ${message.command} не разрешена`);
   const rawValue = message.value ?? true;
   const value = definition.transform ? definition.transform(rawValue) : Boolean(rawValue);
-  await writeValue(definition.path, definition.dataType, value);
-  if (definition.pulse) setTimeout(() => writeValue(definition.path, definition.dataType, false).catch(console.error), 150);
+  const settingIndex = settingPaths.indexOf(definition.path);
+  if (settingIndex >= 0) {
+    if (!Number.isFinite(Number(message.value))) throw new Error('Настройка должна быть конечным числом');
+    const sequence = await commandChannel.run(settingProtocol, async () => {
+      await writeValue('uiCellSettingIndex', DataType.UInt16, settingIndex + 1);
+      await writeValue('lrCellSettingRequest', DataType.Double, value);
+    }, (result) => {
+      if (result === 4) throw new Error('PLC отклонил просроченную настройку');
+      if (result === 2) throw new Error('PLC отклонил настройку: изменение сейчас запрещено');
+      if (result !== 1) throw new Error(`PLC отклонил настройку: недопустимый параметр (результат ${result})`);
+    });
+    message._plcApplied = true;
+    message._plcReceipt = { path: definition.path, sequence };
+  } else if (definition.pulse) {
+    // A falling edge is local to PLC; legacy cleanup writes cannot cancel a request.
+    if (!value) throw new Error('Для разовой команды требуется TRUE; сброс импульса выполняет PLC');
+    message._plcReceipt = { path: definition.path, sequence: await pulseValue(definition.path) };
+  } else {
+    await writeValue(definition.path, definition.dataType, value);
+  }
   return requestId;
 }
 
@@ -2478,9 +2532,10 @@ webSocketServer.on('connection', (socket, request) => {
         message: description.label, requestId, actor: liveSession?.user ?? null, details: actorDetails,
       });
       const acceptedRequestId = await executeCommand(message);
+      if (message._plcReceipt) actorDetails.plcReceipt = message._plcReceipt;
       if (message.command !== 'hmi.heartbeat') recordCellEvent({
-        timestampMs: Date.now(), sourceId: 6, eventType: 'operator-command', status: 'accepted',
-        message: `${description.label}: передано в PLC`, requestId, actor: liveSession?.user ?? null, details: actorDetails,
+        timestampMs: Date.now(), sourceId: 6, eventType: 'operator-command', status: message.command === 'cell.manual' || message._plcApplied ? 'completed' : 'accepted',
+        message: `${description.label}: ${message.command === 'cell.manual' || message._plcApplied ? 'PLC подтвердил применение' : message._plcReceipt ? 'PLC обработал запрос; завершение операции определяется состоянием оборудования' : 'передано в PLC'}`, requestId, actor: liveSession?.user ?? null, details: actorDetails,
       });
       send(socket, { type: 'ack', requestId: acceptedRequestId, ok: true });
     } catch (error) {

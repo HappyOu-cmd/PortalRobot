@@ -8,6 +8,8 @@ GVL_HMI.xHmiConnectionAlive := xHmiConnectionAlive;
 GVL_HMI.xManualRecoveryActive := xManualRecoveryActive;
 GVL_HMI.xGlobalError := GVL_CELL_CONTROL.xGlobalError;
 GVL_HMI.xCellManual := GVL_CELL_CONTROL.xManual;
+// Отказ тоже потребляет транзакцию: она не исполнится позже сама собой.
+GVL_HMI.udiCellModeAckSeq := udiCellModeCommandSnapshot;
 GVL_HMI.xErrorSimulationEnabled := GVL_CELL_SETTINGS.xErrorSimulationEnabled;
 GVL_HMI.stSafetyFaultStatus := CELL_SAFETY.FaultStatus;
 GVL_HMI.xSimulationAccelerationActive := GVL_CELL_SETTINGS.xSimulationAccelerationActive;
@@ -138,6 +140,9 @@ GVL_HMI.stCellSafetyDiag := CELL_SAFETY.Diag;
 GVL_HMI.stCellSafetyError := CELL_SAFETY.Error;
 GVL_HMI.astButtonStationIoStatus := CELL_SAFETY.astButtonStationIoStatus;
 GVL_HMI.stFrontControlCabinetIoStatus := CELL_SAFETY.stFrontControlCabinetIoStatus;
+GVL_HMI.xSignalTowerRed := GVL_CELL_SAFETY_IO.xSignalTowerRedOutput;
+GVL_HMI.xSignalTowerAmber := GVL_CELL_SAFETY_IO.xSignalTowerAmberOutput;
+GVL_HMI.xSignalTowerGreen := GVL_CELL_SAFETY_IO.xSignalTowerGreenOutput;
 GVL_HMI.stRearControlCabinetIoStatus := CELL_SAFETY.stRearControlCabinetIoStatus;
 GVL_HMI.stMpgIoStatus := CELL_SAFETY.stMpgIoStatus;
 GVL_HMI.astEnclosureDoorStatus := CELL_SAFETY.astEnclosureDoorStatus;
@@ -217,3 +222,11 @@ GVL_HMI.astMachineSimError[3] := MACHINE_3_SIM.Error;
 FOR iDetail := 1 TO GVL_CELL_SETTINGS.NumberDetail DO
 	GVL_HMI.astMagazineSlot[iDetail] := GVL_DETAIL.astMagazine[1].aSlots[iDetail];
 END_FOR;
+
+// Ack only the snapshot actually dispatched through all consumers this scan.
+FOR uiHmiCommandIndex := UINT#1 TO UINT#121 DO
+	IF axHmiCommandConsumed[uiHmiCommandIndex] THEN
+		GVL_HMI.audiHmiCommandAckSeq[uiHmiCommandIndex] := audiHmiCommandSnapshot[uiHmiCommandIndex];
+	END_IF;
+END_FOR;
+GVL_HMI.udiCellSettingAckSeq := udiCellSettingSnapshot;

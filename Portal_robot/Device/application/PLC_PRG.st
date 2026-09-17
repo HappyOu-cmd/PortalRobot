@@ -23,9 +23,24 @@ VAR
 	CELL_SAFETY    : FB_CELL_SAFETY; // Дискретный контур безопасности, двери и внешние кнопки
 	CELL_MANAGER   : FB_CELL_MANAGER; // Универсальный автоматический цикл для одного-трёх типов
 	ALARM_MANAGER  : FB_ALARM_MANAGER; // Журнал аварий и предупреждений
+	tonSignalTowerBlink : TON; // Полупериод мигания колонны — 500 мс
+	usiSignalTowerMode : USINT; // 1 работа; 2 готова; 3 предупреждение; 4 авария; 5 не готова
+	usiSignalTowerPreviousMode : USINT;
+	xSignalTowerBlinkOn : BOOL := TRUE;
+	uiHmiCommandIndex : UINT;
+	udiHmiCommandNowMs : UDINT;
+	axHmiCommandConsumed : ARRAY [1..121] OF BOOL;
+	axHmiCommandWasHigh : ARRAY [1..121] OF BOOL;
+	axHmiInternalPulse : ARRAY [1..121] OF BOOL; // Internal scenario events, consumed next scan
+	axHmiCommandPulse : ARRAY [1..121] OF BOOL;
+	audiHmiCommandSnapshot : ARRAY [1..121] OF UDINT;
+	udiCellSettingSnapshot : UDINT;
+	xCellSettingRejected : BOOL;
 	uiMachine      : UINT; // Индекс станка при обработке команд HMI
 	iDetail        : SINT; // Индекс слота при передаче состояния магазина в HMI
 	xRobotHmiPermit: BOOL; // Разрешение ручных команд робота с HMI
+	udiCellModeCommandSnapshot : UDINT; // Снимок маркера транзакции текущего скана
+	uiCellModeRejectReason : UINT; // Одноцикловая причина отказа для журнала ячейки
 	xDrivesReady   : BOOL; // Все оси и группа готовы к движению
 	xDrivesPowered : BOOL; // На все три оси фактически подано питание
 	xAnyDrivePowered : BOOL; // Хотя бы на одну ось фактически подано питание
@@ -184,6 +199,7 @@ END_VAR
 // --- BEGIN IMPLEMENTATION ---
 
 SetApplicationDefaults();
+ReadHmiCommands();
 ReadHmiInputs();
 RunSafety();
 RunMotion();
@@ -194,4 +210,5 @@ RunMachines();
 RunMagazine();
 RunRobot();
 RunAlarms();
+RunSignalTower();
 PublishHmi();

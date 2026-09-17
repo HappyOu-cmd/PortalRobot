@@ -473,7 +473,7 @@ export function TestWorkbench({
       <section className="test-card test-run-panel">
         <header className="test-card-header"><div><span>УПРАВЛЕНИЕ</span><h3>Прогон</h3></div><Activity /></header>
         <div className="test-run-settings">
-          <label>Набор тестов<select value={suite} onChange={(event) => setSuite(event.target.value)}><option value="smoke">Smoke — 12 основных</option><option value="regression">Regression — 73</option><option value="general">Генеральные — 8 × 4 партии</option><option value="generated">Generated</option></select></label>
+          <label>Набор тестов<select value={suite} onChange={(event) => setSuite(event.target.value)}><option value="smoke">Smoke — 12 основных</option><option value="regression">Regression — 75</option><option value="general">Генеральные — 8 × 4 партии</option><option value="generated">Generated</option></select></label>
           <label>Интерфейс робота<select value={robotInterface} onChange={(event) => setRobotInterface(event.target.value)}>{environment === 'sc500_bench' ? <option value="sc500-modbus">SC-500 Modbus</option> : <><option value="softmotion">SoftMotion</option><option value="python-modbus">Python Modbus</option></>}</select></label>
           <label>Среда<select value={environment} onChange={(event) => {
             const next = event.target.value;

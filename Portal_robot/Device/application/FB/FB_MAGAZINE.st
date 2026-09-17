@@ -332,9 +332,11 @@ Status.xCanPut := NOT Status.xOutFreeSlot;
 Status.xCanChange := Status.xCanTake AND Status.xCanPut;
 Status.xCanEnable := FALSE;
 
-IF stRobotStatus.xBlankAvailable AND NOT stRobotStatus.xDetailAvailable THEN
-	Status.xCanEnable := Status.xCanPut;
-ELSIF stRobotStatus.xDetailAvailable AND NOT stRobotStatus.xBlankAvailable THEN
+// Любой уже зажатый груз требует свободного слота: готовая деталь должна быть
+// уложена, а заготовка должна иметь безопасный маршрут возврата. Одновременная
+// занятость двух захватов является штатным восстановительным состоянием, а не
+// причиной навсегда запрещать повторное включение магазина.
+IF stRobotStatus.xBlankAvailable OR stRobotStatus.xDetailAvailable THEN
 	Status.xCanEnable := Status.xCanPut;
 ELSIF NOT stRobotStatus.xBlankAvailable AND NOT stRobotStatus.xDetailAvailable THEN
 	Status.xCanEnable := Status.xCanTake;
@@ -403,20 +405,24 @@ xFinishedCondition :=
 	AND (xAllSlotsDetails OR xNoBlankNoMachinePart OR xNoBlankNoDestination);
 
 eGrantedOperation := E_MAGAZINE_OPERATION.NONE;
-IF NOT Status.xOutBlank
+IF stRobotStatus.xBlankAvailable
+AND stRobotStatus.xDetailAvailable
+AND Status.xCanPut THEN
+	// Сначала освобождается захват готовой детали; заготовка остаётся у робота.
+	eGrantedOperation := E_MAGAZINE_OPERATION.PUT;
+ELSIF NOT Status.xOutBlank
 AND NOT stRobotStatus.xBlankAvailable
 AND NOT stRobotStatus.xDetailAvailable THEN
 	eGrantedOperation := E_MAGAZINE_OPERATION.TAKE;
-ELSIF NOT Status.xOutFreeSlot
-AND Status.xOutBlank
-AND stRobotStatus.xDetailAvailable THEN
-	eGrantedOperation := E_MAGAZINE_OPERATION.PUT;
 ELSIF NOT Status.xOutFreeSlot
 AND NOT Status.xOutBlank
 AND stRobotStatus.xGripper1Open
 AND NOT stRobotStatus.xBlankAvailable
 AND stRobotStatus.xDetailAvailable THEN
 	eGrantedOperation := E_MAGAZINE_OPERATION.CHANGE;
+ELSIF NOT Status.xOutFreeSlot
+AND stRobotStatus.xDetailAvailable THEN
+	eGrantedOperation := E_MAGAZINE_OPERATION.PUT;
 END_IF;
 
 xResetRequest := xReset;

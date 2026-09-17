@@ -67,8 +67,7 @@ END_IF;
 xPointCheckConnectionAlive := (udiLastPointCheckHeartbeat <> UDINT#0) AND NOT tonPointCheckWatchdog.Q;
 xPointCheckStopRequest := xPointCheckActive AND (GVL_HMI.xPointCheckStop
 	OR NOT xPointCheckConnectionAlive OR NOT xHmiConnectionAlive);
-// Stop не влияет на чужое движение и не остаётся от предыдущей проверки.
-GVL_HMI.xPointCheckStop := FALSE;
+// Stop is a PLC-owned one-scan event; its request counter is never cleared here.
 
 IF GVL_HMI.rRobotManualSpeedPercent < REAL#0.1 THEN
 	GVL_HMI.rRobotManualSpeedPercent := REAL#0.1;
@@ -104,10 +103,8 @@ GVL_CELL_CONTROL.xStop := GVL_HMI.xCellStop;
 // Необработанный общий импульс передаётся всем владельцам аварий.
 // Каждый функциональный блок самостоятельно проверяет возможность сброса.
 GVL_CELL_CONTROL.xReset := GVL_HMI.xCellReset;
-// В автоматическом цикле запрос ручного режима не принимается. При общей
-// аварии ручной режим включается принудительно для безопасного восстановления.
-GVL_CELL_CONTROL.xManual := GVL_CELL_CONTROL.xGlobalError
-	OR (GVL_HMI.xCellManual AND NOT GVL_CELL_MANAGER.Status.xRunning);
+// Режим хранит PLC. Новая транзакция применяется в RunSafety после чтения
+// актуальных входов безопасности; PublishHmi не пишет в буфер запроса.
 GVL_ALARM.Command.xResetWarnings := GVL_HMI.xAlarmResetWarnings;
 
 // Режим инъекции ошибок включается отдельным переключателем страницы CELL_SETTINGS.
@@ -147,23 +144,87 @@ GVL_CELL_SETTINGS.xCellSettingsChangeAllowed :=
 	AND NOT GVL_AXIS_GROUP.AxisGroup.Command.xMoveLinear
 	AND NOT GVL_ROBOT.Status.xBusy;
 
-IF GVL_CELL_SETTINGS.xCellSettingsChangeAllowed THEN
-	IF NOT xPointCheckActive THEN
-		GVL_CELL_SETTINGS.rPointCheckSpeedPercent := LIMIT(REAL#0.1, GVL_HMI.rPointCheckSpeedPercent, REAL#100.0);
+// Independent requested value; publication cannot overwrite an incoming write.
+xCellSettingRejected := FALSE;
+udiCellSettingSnapshot := GVL_HMI.udiCellSettingCommandSeq;
+IF (udiCellSettingSnapshot <> UDINT#0)
+AND (udiCellSettingSnapshot <> GVL_HMI.udiCellSettingAckSeq) THEN
+	GVL_HMI.uiCellSettingResult := UINT#3;
+	IF NOT IsHmiCommandFresh(udiIssuedAtMs := GVL_HMI.udiCellSettingIssuedAtMs) THEN
+		GVL_HMI.uiCellSettingResult := UINT#4; // Expired: never apply later
+	ELSIF NOT GVL_CELL_SETTINGS.xCellSettingsChangeAllowed
+	OR ((GVL_HMI.uiCellSettingIndex = UINT#4) AND xPointCheckActive) THEN
+		GVL_HMI.uiCellSettingResult := UINT#2;
+	ELSE
+		CASE GVL_HMI.uiCellSettingIndex OF
+			UINT#1:
+				IF (GVL_HMI.lrCellSettingRequest >= 0.1) AND (GVL_HMI.lrCellSettingRequest <= 1000.0) THEN
+					GVL_CELL_SETTINGS.lrSafetyHomeToleranceX := GVL_HMI.lrCellSettingRequest;
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
+			UINT#2:
+				IF (GVL_HMI.lrCellSettingRequest >= 0.1) AND (GVL_HMI.lrCellSettingRequest <= 1000.0) THEN
+					GVL_CELL_SETTINGS.lrSafetyHomeToleranceY := GVL_HMI.lrCellSettingRequest;
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
+			UINT#3:
+				IF (GVL_HMI.lrCellSettingRequest >= 0.1) AND (GVL_HMI.lrCellSettingRequest <= 1000.0) THEN
+					GVL_CELL_SETTINGS.lrSafetyHomeToleranceZ := GVL_HMI.lrCellSettingRequest;
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
+			UINT#4:
+				IF (GVL_HMI.lrCellSettingRequest >= 0.1) AND (GVL_HMI.lrCellSettingRequest <= 100.0) THEN
+					GVL_CELL_SETTINGS.rPointCheckSpeedPercent := LREAL_TO_REAL(GVL_HMI.lrCellSettingRequest);
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
+			UINT#5:
+				IF (GVL_HMI.lrCellSettingRequest >= 1000.0) AND (GVL_HMI.lrCellSettingRequest <= 600000.0) THEN
+					GVL_CELL_SETTINGS.stMachineTimeouts.tRobotMove := UDINT_TO_TIME(LREAL_TO_UDINT(GVL_HMI.lrCellSettingRequest));
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
+			UINT#6:
+				IF (GVL_HMI.lrCellSettingRequest >= 1000.0) AND (GVL_HMI.lrCellSettingRequest <= 600000.0) THEN
+					GVL_CELL_SETTINGS.stMachineTimeouts.tRobotAction := UDINT_TO_TIME(LREAL_TO_UDINT(GVL_HMI.lrCellSettingRequest));
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
+			UINT#7:
+				IF (GVL_HMI.lrCellSettingRequest >= 1000.0) AND (GVL_HMI.lrCellSettingRequest <= 600000.0) THEN
+					GVL_CELL_SETTINGS.stMachineTimeouts.tRobotRelease := UDINT_TO_TIME(LREAL_TO_UDINT(GVL_HMI.lrCellSettingRequest));
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
+			UINT#8:
+				IF (GVL_HMI.lrCellSettingRequest >= 1000.0) AND (GVL_HMI.lrCellSettingRequest <= 600000.0) THEN
+					GVL_CELL_SETTINGS.stMachineTimeouts.tDoorOpen := UDINT_TO_TIME(LREAL_TO_UDINT(GVL_HMI.lrCellSettingRequest));
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
+			UINT#9:
+				IF (GVL_HMI.lrCellSettingRequest >= 1000.0) AND (GVL_HMI.lrCellSettingRequest <= 600000.0) THEN
+					GVL_CELL_SETTINGS.stMachineTimeouts.tDoorClose := UDINT_TO_TIME(LREAL_TO_UDINT(GVL_HMI.lrCellSettingRequest));
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
+			UINT#10:
+				IF (GVL_HMI.lrCellSettingRequest >= 1000.0) AND (GVL_HMI.lrCellSettingRequest <= 600000.0) THEN
+					GVL_CELL_SETTINGS.stMachineTimeouts.tHatchUnlock := UDINT_TO_TIME(LREAL_TO_UDINT(GVL_HMI.lrCellSettingRequest));
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
+			UINT#11:
+				IF (GVL_HMI.lrCellSettingRequest >= 1000.0) AND (GVL_HMI.lrCellSettingRequest <= 600000.0) THEN
+					GVL_CELL_SETTINGS.stMachineTimeouts.tChuckOpen := UDINT_TO_TIME(LREAL_TO_UDINT(GVL_HMI.lrCellSettingRequest));
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
+			UINT#12:
+				IF (GVL_HMI.lrCellSettingRequest >= 1000.0) AND (GVL_HMI.lrCellSettingRequest <= 600000.0) THEN
+					GVL_CELL_SETTINGS.stMachineTimeouts.tChuckClose := UDINT_TO_TIME(LREAL_TO_UDINT(GVL_HMI.lrCellSettingRequest));
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
+			UINT#13:
+				IF (GVL_HMI.lrCellSettingRequest >= 1000.0) AND (GVL_HMI.lrCellSettingRequest <= 600000.0) THEN
+					GVL_CELL_SETTINGS.stMachineTimeouts.tCycleStart := UDINT_TO_TIME(LREAL_TO_UDINT(GVL_HMI.lrCellSettingRequest));
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
+		END_CASE;
 	END_IF;
-	GVL_CELL_SETTINGS.lrSafetyHomeToleranceX := LIMIT(0.1, GVL_HMI.lrSafetyHomeToleranceX, 1000.0);
-	GVL_CELL_SETTINGS.lrSafetyHomeToleranceY := LIMIT(0.1, GVL_HMI.lrSafetyHomeToleranceY, 1000.0);
-	GVL_CELL_SETTINGS.lrSafetyHomeToleranceZ := LIMIT(0.1, GVL_HMI.lrSafetyHomeToleranceZ, 1000.0);
-
-	GVL_CELL_SETTINGS.stMachineTimeouts.tRobotMove := LIMIT(T#1S, GVL_HMI.stCellMachineTimeouts.tRobotMove, T#600S);
-	GVL_CELL_SETTINGS.stMachineTimeouts.tRobotAction := LIMIT(T#1S, GVL_HMI.stCellMachineTimeouts.tRobotAction, T#600S);
-	GVL_CELL_SETTINGS.stMachineTimeouts.tRobotRelease := LIMIT(T#1S, GVL_HMI.stCellMachineTimeouts.tRobotRelease, T#600S);
-	GVL_CELL_SETTINGS.stMachineTimeouts.tDoorOpen := LIMIT(T#1S, GVL_HMI.stCellMachineTimeouts.tDoorOpen, T#600S);
-	GVL_CELL_SETTINGS.stMachineTimeouts.tDoorClose := LIMIT(T#1S, GVL_HMI.stCellMachineTimeouts.tDoorClose, T#600S);
-	GVL_CELL_SETTINGS.stMachineTimeouts.tHatchUnlock := LIMIT(T#1S, GVL_HMI.stCellMachineTimeouts.tHatchUnlock, T#600S);
-	GVL_CELL_SETTINGS.stMachineTimeouts.tChuckOpen := LIMIT(T#1S, GVL_HMI.stCellMachineTimeouts.tChuckOpen, T#600S);
-	GVL_CELL_SETTINGS.stMachineTimeouts.tChuckClose := LIMIT(T#1S, GVL_HMI.stCellMachineTimeouts.tChuckClose, T#600S);
-	GVL_CELL_SETTINGS.stMachineTimeouts.tCycleStart := LIMIT(T#1S, GVL_HMI.stCellMachineTimeouts.tCycleStart, T#600S);
+	xCellSettingRejected := GVL_HMI.uiCellSettingResult <> UINT#1;
 END_IF;
 
 // =============================================================================
@@ -436,16 +497,3 @@ stSafetyFaultRequest.xPressureRelayFault := GVL_HMI.xSimSafetyPressureRelayFault
 stSafetyFaultRequest.xSafetyRelayFault := GVL_HMI.xSimSafetyRelayFault;
 
 
-// Ручные команды робота разрешены только вне автоматического цикла.
-xRobotHmiPermit := GVL_CELL_CONTROL.xManual AND NOT GVL_CELL_MANAGER.Status.xRunning;
-
-// При аварии робота или Motion-слоя в автоматическом режиме питание приводов
-// снимается без дополнительного перехода оператора в ручное управление.
-xRobotAutoPowerOff := NOT GVL_CELL_CONTROL.xManual
-	AND (GVL_ROBOT.Status.xError
-		OR GVL_AXIS.arrAxis[1].Status.xError
-		OR GVL_AXIS.arrAxis[2].Status.xError
-		OR GVL_AXIS.arrAxis[3].Status.xError
-		OR GVL_AXIS_GROUP.AxisGroup.Status.xLocalError
-		OR GVL_AXIS_GROUP.AxisGroup.Status.xLogicalError
-		OR GVL_AXIS_GROUP.AxisGroup.Status.xGroupError);

@@ -90,6 +90,7 @@ import type {
   PartMaterialLayout,
   ProductType,
   RobotCoordinateFrame,
+  Vec3Mm,
   SlotType,
 } from './model/types';
 import {
@@ -98,6 +99,7 @@ import {
   type CellLogEvent, type PlcAlarmEvent, type PlcAlarmSource, type PlcCommand, type PlcConnectionInfo, type PlcRuntimeInfo,
 } from './plc/client';
 import { pointBackupApi } from './points/client';
+import { DEMO_OPERATOR } from './statistics/demoData';
 
 type Page = 'monitoring' | 'machines' | 'robot' | 'magazine' | 'manual' | 'injections' | 'events' | 'alarms' | 'tests' | 'settings' | 'cell-settings' | 'simulation-settings' | 'users' | 'statistics' | 'statistics-settings';
 type BottomSection = 'cell' | 'machines' | 'robot' | 'magazine' | 'cyclogram';
@@ -194,6 +196,7 @@ const WORKSPACE_OPEN_PANEL_SELECTOR = [
   '.cell-event-panel', '.statistics-panel', '.statistics-settings-panel', '.confirmation-overlay', '.magazine-matrix-card', '.profile-area', '.command-error',
 ].map((selector) => `${selector}:not(.ios-motion-exiting)`).join(', ');
 const sameData = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
+const IS_OPERATOR_STATISTICS_DEMO = new URLSearchParams(window.location.search).get('demo') === 'operator-statistics';
 const sameAlarmState = (left: PlcRuntimeInfo, right: PlcRuntimeInfo) =>
   left.globalError === right.globalError
   && left.activeAlarmCount === right.activeAlarmCount
@@ -723,8 +726,8 @@ function CellQuickPanel({ running, stopPending, online, globalError, readyToStar
           className={`cell-mode-switch ${manualMode ? 'is-manual' : 'is-automatic'}`}
           value={manualMode ? 'manual' : 'automatic'}
           options={[
-            { value: 'manual', label: 'Ручной', className: `manual${manualAllowed ? '' : ' command-unavailable'}`, ariaDisabled: !manualAllowed },
-            { value: 'automatic', label: 'Автомат', className: `auto${automaticAllowed ? '' : ' command-unavailable'}`, ariaDisabled: !automaticAllowed },
+            { value: 'manual', label: 'Ручной', className: `manual${manualAllowed ? '' : ' command-unavailable'}`, disabled: !manualAllowed, ariaDisabled: !manualAllowed },
+            { value: 'automatic', label: 'Автомат', className: `auto${automaticAllowed ? '' : ' command-unavailable'}`, disabled: !automaticAllowed, ariaDisabled: !automaticAllowed },
           ]}
           disabled={!online}
           onChange={(value) => onModeChange(value === 'manual')}
@@ -803,7 +806,15 @@ function SafetyQuickPanel({ id, safety, online, onResetRelay, onClose, className
   return <section id={id} className={`safety-quick-panel ${className ?? ''}`} aria-label="Безопасность ячейки">
     <SheetGrip onClose={onClose} />
     <header>
-      <div><span className="panel-eyebrow">ЛИНИЯ ЯЧЕЙКИ</span><h2>Безопасность</h2><p><Indicator active={online} tone={ready ? 'green' : 'red'} />{!online ? 'Нет связи' : ready ? 'Готово' : 'Не готово'}</p></div>
+      <div className="safety-panel-heading">
+        <span className="panel-eyebrow">ЛИНИЯ ЯЧЕЙКИ</span>
+        <div className="safety-panel-title">
+          <h2>Безопасность</h2>
+          <span className={`safety-panel-status ${!online ? 'offline' : ready ? 'ready' : 'blocked'}`}>
+            <Indicator active={online} tone={ready ? 'green' : 'red'} />{!online ? 'Нет связи' : ready ? 'Готово' : 'Не готово'}
+          </span>
+        </div>
+      </div>
       <div className="quick-panel-header-actions">
         <button className={`safety-relay-reset ${safety.safetyRelayResetAllowed ? 'active' : ''}`} type="button"
           disabled={!online || !safety.safetyRelayResetAllowed} onClick={onResetRelay}>
@@ -813,19 +824,27 @@ function SafetyQuickPanel({ id, safety, online, onResetRelay, onClose, className
       </div>
     </header>
     <div className="safety-condition-groups">
-      {groups.map((group) => <section key={group.title}><h3>{group.title}</h3><div>
-        {group.items.map((item) => <article className={item.ready ? 'ready' : 'blocked'} key={item.label}>
-          {item.ready ? <CheckCircle2 /> : <TriangleAlert />}<span><strong>{item.label}</strong><small>{item.ready ? item.ok : item.fault}</small></span>
-        </article>)}
+      {groups.map((group) => <section key={group.title}><h3>{group.title}</h3><div className="safety-condition-list">
+        {group.items.map((item) => {
+          const [name, location] = item.label.split(' · ');
+          return <article className={item.ready ? 'ready' : 'blocked'} key={item.label}>
+            <div className="safety-condition-label"><strong>{name}</strong>{location && <small>{location}</small>}</div>
+            <span className="safety-condition-state">
+              {item.ready ? <CheckCircle2 aria-hidden="true" /> : <TriangleAlert aria-hidden="true" />}
+              <span>{item.ready ? item.ok : item.fault}</span>
+            </span>
+          </article>;
+        })}
       </div></section>)}
     </div>
   </section>;
 }
 
-function RobotQuickPanel({ robot, magazines, robotManual, robotModbus, axisManual, modbusMode, continuousMode, manualStep, speedOverridePercent, step, online, globalError, robotReady,
+function RobotQuickPanel({ robot, magazines, coordinates, robotManual, robotModbus, axisManual, modbusMode, continuousMode, manualStep, speedOverridePercent, step, online, globalError, robotReady,
   onSend, onToggleDrives, onStop, onSpeedOverrideChange, onExtended, onClose, className }: {
   robot: CellState['robot'];
   magazines: CellState['magazines'];
+  coordinates: Vec3Mm;
   robotManual: PlcRuntimeInfo['robotManual'];
   robotModbus: PlcRuntimeInfo['robotModbus'];
   axisManual: PlcRuntimeInfo['axisManual'];
@@ -944,13 +963,13 @@ function RobotQuickPanel({ robot, magazines, robotManual, robotModbus, axisManua
         </div>
       </div>
       <div className="robot-quick-status-grid">
-        <QuickStatusCard {...triggerProps('position')} icon={Activity} title="Позиция" status={`X ${Math.round(robot.x)} · Y ${Math.round(robot.y)} · Z ${Math.round(robot.z)}`} tone={online ? 'blue' : 'gray'} className={`robot-position ${triggerClass('position')}`} />
+        <QuickStatusCard {...triggerProps('position')} icon={Activity} title="Позиция" status={`X ${Math.round(coordinates.x)} · Y ${Math.round(coordinates.y)} · Z ${Math.round(coordinates.z)}`} tone={online ? 'blue' : 'gray'} className={`robot-position ${triggerClass('position')}`} />
         <QuickStatusCard {...triggerProps('gripper1')} icon={Box} title="Захват 1" status={<>{gripper1}{robot.gripper1Closed && robot.blankProductType > 0 && <ProductTypeBadge type={robot.blankProductType as ProductType} />}</>} tone={gripper1Tone} className={`${triggerClass('gripper1')} ${robot.gripper1Closed ? 'holding-blank' : ''}`} />
         <QuickStatusCard {...triggerProps('gripper2')} icon={Box} title="Захват 2" status={<>{gripper2}{robot.gripper2Closed && robot.detailProductType > 0 && <ProductTypeBadge type={robot.detailProductType as ProductType} />}</>} tone={gripper2Tone} className={`${triggerClass('gripper2')} ${robot.gripper2Closed ? 'holding-detail' : ''}`} />
         <QuickStatusCard {...triggerProps('rotation')} icon={RotateCcw} title="Поворот" status={orientation} tone={orientationTone} className={triggerClass('rotation')} />
       </div>
     </div>
-    <RobotQuickControlMenu control={control} open={controlOpen} robot={robot} magazines={magazines} manual={robotManual} axisManual={axisManual} continuousMode={continuousMode} manualStep={manualStep} speedOverridePercent={normalizedSpeed} modbusMode={modbusMode} online={online} triggerRef={controlTriggerRef} onOpenChange={setControlOpen} onSend={onSend} />
+    <RobotQuickControlMenu control={control} open={controlOpen} robot={robot} coordinates={coordinates} magazines={magazines} manual={robotManual} axisManual={axisManual} continuousMode={continuousMode} manualStep={manualStep} speedOverridePercent={normalizedSpeed} modbusMode={modbusMode} online={online} triggerRef={controlTriggerRef} onOpenChange={setControlOpen} onSend={onSend} />
   </section>;
 }
 
@@ -1724,12 +1743,9 @@ function MachinePanel({ index, state, multiTypeCount, productTypeChangeAllowed, 
   </aside>;
 }
 
-function OperatorConfirmation({ index, machine, layout, state, robotCoordinatesRef, onCommand, onCancel, className }: {
+function OperatorConfirmation({ index, machine, onCommand, onCancel, className }: {
   index: number;
   machine: CellState['machines'][number];
-  layout: CellLayout;
-  state: CellState;
-  robotCoordinatesRef: RefObject<RobotCoordinateFrame>;
   onCommand: (command: string) => void;
   onCancel: () => void;
   className?: string;
@@ -1742,8 +1758,8 @@ function OperatorConfirmation({ index, machine, layout, state, robotCoordinatesR
     <div className="confirmation-modal">
       <aside className="confirmation-context">
         <div><span>ВВОД В РАБОТУ</span><h2>Станок {index + 1}</h2></div>
-        <div className="confirmation-cell-preview"><CellViewport layout={layout} state={state} robotCoordinatesRef={robotCoordinatesRef} selectedMachine={index} cameraPreset="iso" controlsVisible={false} onMachineSelect={() => {}} /></div>
-        <p>Выбранный станок отмечен в модели ячейки.</p>
+        <div className="confirmation-machine-identity"><Factory size={56} strokeWidth={1.4} /><strong>Станок {index + 1}</strong><span>Выбор содержимого патрона</span></div>
+        <p>Подтверждение выполняется для выбранного станка.</p>
       </aside>
       <section className="confirmation-workflow">
         <header><div><span>СТАНОК {index + 1}</span><h2>Подтверждение оператора</h2></div><button type="button" onClick={onCancel} title="Отменить ввод в работу"><X /></button></header>
@@ -1760,11 +1776,9 @@ function OperatorConfirmation({ index, machine, layout, state, robotCoordinatesR
   </div>;
 }
 
-function CellStartConfirmation({ runtime, layout, state, robotCoordinatesRef, onChoice, onCancel, className }: {
+function CellStartConfirmation({ runtime, state, onChoice, onCancel, className }: {
   runtime: PlcRuntimeInfo;
-  layout: CellLayout;
   state: CellState;
-  robotCoordinatesRef: RefObject<RobotCoordinateFrame>;
   onChoice: (choice: number) => void;
   onCancel: () => void;
   className?: string;
@@ -1778,7 +1792,6 @@ function CellStartConfirmation({ runtime, layout, state, robotCoordinatesRef, on
   const types = ([1, 2, 3] as ProductType[]).filter((type) => (runtime.operatorTypeMask & (1 << (type - 1))) !== 0);
   const machines = [1, 2, 3].filter((machine) => (runtime.operatorMachineMask & (1 << (machine - 1))) !== 0);
   const steps = ['Проверить захват 1', 'Проверить захват 2', 'Выбрать стартовый станок'];
-  const selectedMachine = isMachinePrompt && machines.length === 1 ? machines[0] - 1 : null;
   const choiceDisabled = !runtime.operatorChoiceAllowed || answerPending;
   const submitChoice = (choice: number) => {
     if (choiceDisabled) return;
@@ -1798,7 +1811,7 @@ function CellStartConfirmation({ runtime, layout, state, robotCoordinatesRef, on
     <div className="confirmation-modal">
       <aside className="confirmation-context">
         <div><span>ЗАПУСК АВТОМАТИЧЕСКОГО ЦИКЛА</span><h2>{isMachinePrompt ? 'Выбор станка' : `Захват ${gripper}`}</h2></div>
-        <div className="confirmation-cell-preview"><CellViewport layout={layout} state={state} robotCoordinatesRef={robotCoordinatesRef} selectedMachine={selectedMachine} cameraPreset="iso" controlsVisible={false} onMachineSelect={() => {}} /></div>
+        <div className="confirmation-machine-identity"><Factory size={56} strokeWidth={1.4} /><strong>{isMachinePrompt ? 'Выбор станка' : `Захват ${gripper}`}</strong><span>{isMachinePrompt ? 'Выберите станок для загрузки' : 'Подтвердите содержимое захвата'}</span></div>
         <p>PLC проверяет ответ и разрешает только совместимый маршрут.</p>
       </aside>
       <section className="confirmation-workflow">
@@ -2245,14 +2258,19 @@ export function App() {
   const [visualEffects, setVisualEffects] = useState<VisualEffectSettings>(loadVisualEffects);
   const [easterEggRevision, setEasterEggRevision] = useState(0);
   const [cellState, setCellState] = useState<CellState>(cloneState);
-  const [page, setPage] = useState<Page>('monitoring');
+  const [robotCoordinates, setRobotCoordinates] = useState<Vec3Mm>(() => ({
+    x: cellState.robot.x,
+    y: cellState.robot.y,
+    z: cellState.robot.z,
+  }));
+  const [page, setPage] = useState<Page>(IS_OPERATOR_STATISTICS_DEMO ? 'statistics' : 'monitoring');
   const [inspectionOpen, setInspectionOpen] = useState(false);
   const [bottomSection, setBottomSection] = useState<BottomSection | null>(null);
   const [matrixQuickOpen, setMatrixQuickOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
-  const [authUser, setAuthUser] = useState<AppUser | null>(null);
+  const [authUser, setAuthUser] = useState<AppUser | null>(IS_OPERATOR_STATISTICS_DEMO ? DEMO_OPERATOR : null);
   const [shiftSummary, setShiftSummary] = useState<StatisticsSummary | null>(null);
-  const [authLoading, setAuthLoading] = useState(true);
+  const [authLoading, setAuthLoading] = useState(!IS_OPERATOR_STATISTICS_DEMO);
   const [authSubmitting, setAuthSubmitting] = useState(false);
   const [authError, setAuthError] = useState('');
   const [guestView, setGuestView] = useState(false);
@@ -2316,6 +2334,10 @@ export function App() {
     && simulationAccelerationAllowed
     && !plcRuntime.modbusMode;
   useEffect(() => {
+    if (IS_OPERATOR_STATISTICS_DEMO) {
+      setAuthLoading(false);
+      return;
+    }
     let active = true;
     authApi.session().then((session) => {
       if (!active) return;
@@ -2330,7 +2352,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!authUser) {
+    if (!authUser || IS_OPERATOR_STATISTICS_DEMO) {
       setShiftSummary(null);
       refreshShiftSummaryRef.current = null;
       return;
@@ -2565,11 +2587,18 @@ export function App() {
   };
   const requestMachineMotion = (action: MachineMechanismAction) => {
     if (rejectGuestAction() || machineMechanism === null) return;
-    setPendingMachineMotion({ machineIndex: selectedMachine ?? 0, mechanism: machineMechanism, action });
+    const machineIndex = selectedMachine ?? 0;
+    if (!isMachineMotionAllowed(cellState.machines[machineIndex], machineMechanism, action, usePlcData)) return;
+    setPendingMachineMotion({ machineIndex, mechanism: machineMechanism, action });
   };
   const confirmMachineMotion = () => {
     if (!pendingMachineMotion) return;
     const { machineIndex, mechanism, action } = pendingMachineMotion;
+    if (!isMachineMotionAllowed(cellState.machines[machineIndex], mechanism, action, usePlcData)) {
+      setPendingMachineMotion(null);
+      setCommandError('Ручная команда станка отклонена: PLC снял разрешение до подтверждения');
+      return;
+    }
     const command = mechanism === 'door'
       ? action === 'open' ? 'machine.manualDoorOpen' : 'machine.manualDoorClose'
       : mechanism === 'hatch'
@@ -2579,7 +2608,7 @@ export function App() {
         : action === 'open' ? 'machine.manualChuckOpen' : 'machine.manualChuckClose';
     if (usePlcData) {
       sendPlcCommand({ command, machine: machineIndex + 1 });
-    } else if (isMachineMotionAllowed(cellState.machines[machineIndex], mechanism, action, false)) {
+    } else {
       const patch = mechanism === 'door'
         ? { doorOpen: action === 'open', doorClosed: action === 'close' }
         : mechanism === 'hatch'
@@ -2592,8 +2621,6 @@ export function App() {
             ? { hatchLocked: action === 'close' }
           : { chuckOpen: action === 'open', chuckClosed: action === 'close' };
       updateMachine(machineIndex, patch);
-    } else {
-      setCommandError('Ручная команда станка отклонена: включите ручной режим и выключите станок из автообработки');
     }
     setPendingMachineMotion(null);
   };
@@ -2634,16 +2661,23 @@ export function App() {
 
   useEffect(() => {
     if (!plcDataEnabled) {
+      const coordinates = { x: cellState.robot.x, y: cellState.robot.y, z: cellState.robot.z };
       robotCoordinatesRef.current = {
         sequence: robotCoordinatesRef.current.sequence + 1,
         timestampMs: Date.now(),
         sourceTimestampMs: Date.now(),
-        coordinates: { x: cellState.robot.x, y: cellState.robot.y, z: cellState.robot.z },
+        coordinates,
       };
+      setRobotCoordinates((current) => sameData(current, coordinates) ? current : coordinates);
     }
   }, [cellState.robot.x, cellState.robot.y, cellState.robot.z, plcDataEnabled]);
 
   useEffect(() => {
+    if (IS_OPERATOR_STATISTICS_DEMO) {
+      plcClient.current?.close();
+      plcClient.current = null;
+      return;
+    }
     if (!authUser && !guestView) {
       plcClient.current?.close();
       plcClient.current = null;
@@ -2658,15 +2692,7 @@ export function App() {
       if (!values || !plcDataEnabledRef.current) return;
       const currentCellState = cellStateRef.current;
       const mappedCellState = mapPlcSnapshot(values, currentCellState);
-      const nextCellState = {
-        ...mappedCellState,
-        robot: {
-          ...mappedCellState.robot,
-          x: currentCellState.robot.x,
-          y: currentCellState.robot.y,
-          z: currentCellState.robot.z,
-        },
-      };
+      const nextCellState = mappedCellState;
       if (!sameData(currentCellState, nextCellState)) {
         cellStateRef.current = nextCellState;
         setCellState(nextCellState);
@@ -2683,7 +2709,10 @@ export function App() {
     plcClient.current = createPlcClient({
       onConnection: setPlcConnection,
       onRobotFrame: (frame) => {
-        if (plcDataEnabledRef.current) robotCoordinatesRef.current = frame;
+        if (plcDataEnabledRef.current) {
+          robotCoordinatesRef.current = frame;
+          setRobotCoordinates((current) => sameData(current, frame.coordinates) ? current : frame.coordinates);
+        }
       },
       onSnapshot: (values, changed, full) => {
         const nextFaultValues = pickFaultSimulationValues(values);
@@ -2838,8 +2867,10 @@ export function App() {
 
   const displayedRunning = usePlcData ? plcRuntime.cellRunning : running;
   const displayedGlobalError = usePlcData ? plcRuntime.globalError : globalError;
-  const connectionLost = plcConnection.status === 'disconnected' || plcConnection.status === 'connecting';
-  const systemText = connectionLost ? 'НЕТ СВЯЗИ' : plcConnection.status === 'degraded' ? 'ЧАСТИЧНЫЕ ДАННЫЕ' : displayedGlobalError ? 'ОШИБКА' : displayedRunning ? 'РАБОТАЕТ' : 'ОСТАНОВЛЕНА';
+  const connectionLost = !IS_OPERATOR_STATISTICS_DEMO && (plcConnection.status === 'disconnected' || plcConnection.status === 'connecting');
+  const systemText = IS_OPERATOR_STATISTICS_DEMO
+    ? 'ОСТАНОВЛЕНА'
+    : connectionLost ? 'НЕТ СВЯЗИ' : plcConnection.status === 'degraded' ? 'ЧАСТИЧНЫЕ ДАННЫЕ' : displayedGlobalError ? 'ОШИБКА' : displayedRunning ? 'РАБОТАЕТ' : 'ОСТАНОВЛЕНА';
   const closeMachinePanel = () => {
     if (page === 'machines') {
       setPage('monitoring');
@@ -2848,7 +2879,7 @@ export function App() {
     if (selectedMachine !== null) setSelectedMachine(null);
   };
   const systemHeaderText = systemText.charAt(0) + systemText.slice(1).toLowerCase();
-  const modeText = usePlcData ? (plcRuntime.manualMode ? 'Ручной' : 'Автомат') : 'Ручной';
+  const modeText = IS_OPERATOR_STATISTICS_DEMO ? 'Автомат' : usePlcData ? (plcRuntime.manualMode ? 'Ручной' : 'Автомат') : 'Ручной';
   const displayedReadyMachines = usePlcData ? plcRuntime.readyMachines : 0;
   // Карточка агрегирует только те PLC-проверки робота, которые могут запретить
   // автоматический запуск ячейки. Условия станков, магазинов и режима живут отдельно.
@@ -3045,7 +3076,7 @@ export function App() {
       ? { kind: 'magazine', index: selectedMagazine }
       : null;
 
-  return <div className="app-shell tesla-shell no-sidebar" onPointerDownCapture={(event) => {
+  return <div className={`app-shell tesla-shell no-sidebar${page === 'statistics' ? ' statistics-open' : ''}`} onPointerDownCapture={(event) => {
     if (!authUser && guestView && (event.target as HTMLElement).closest('.workspace button:disabled, .workspace button[aria-disabled="true"]')) {
       showGuestRestriction();
     }
@@ -3197,6 +3228,7 @@ export function App() {
         robotCoordinatesRef={robotCoordinatesRef}
         selectedMachine={selectedMachine}
         cameraPreset="front"
+        renderingEnabled={confirmationMachine === null && !plcRuntime.operatorPromptActive}
         controlsVisible={page === 'monitoring' && !topMenuOpen && !profileOpen && confirmationMachine === null && !plcRuntime.operatorPromptActive}
         onMachineSelect={() => {}}
         onMagazineSelect={(magazineId) => { setSelectedMagazine(magazineId - 1); selectBottomSection('magazine'); }}
@@ -3274,10 +3306,10 @@ export function App() {
       <AnimatedPresence open={page === 'events'}><CellEventLog liveEvent={latestCellLogEvent} online={isPlcOnline} onClose={() => setPage('monitoring')} /></AnimatedPresence>
       <AnimatedPresence open={page === 'tests'}><TestWorkbench simulationFactor={simulationTimeFactor} simulationFactorApplied={simulationTimeFactorApplied} simulationFactorAllowed={simulationControlsAllowed} simulationFactorPending={simulationAccelerationPending} simulationFactorBusy={simulationAccelerationBusy} simulationFactorError={simulationAccelerationError} onSend={sendPlcCommand} onClose={() => setPage('monitoring')} /></AnimatedPresence>
       <AnimatedPresence open={page === 'users' && authUser?.role === 'admin'}>{authUser?.role === 'admin' && <UserManagementPanel currentUser={authUser} onCurrentUserChange={setAuthUser} onUnauthorized={() => { setAuthUser(null); setPage('monitoring'); }} onClose={() => setPage('monitoring')} />}</AnimatedPresence>
-      <AnimatedPresence open={page === 'statistics' && authUser !== null}>{authUser && <StatisticsPanel user={authUser} onClose={() => setPage('monitoring')} />}</AnimatedPresence>
+      <AnimatedPresence open={page === 'statistics' && authUser !== null}>{authUser && <StatisticsPanel user={authUser} demo={IS_OPERATOR_STATISTICS_DEMO} onClose={() => setPage('monitoring')} />}</AnimatedPresence>
       <AnimatedPresence open={page === 'statistics-settings' && authUser?.role === 'admin'}>{authUser?.role === 'admin' && <StatisticsSettingsPanel onClose={() => setPage('cell-settings')} />}</AnimatedPresence>
-      <AnimatedPresence open={confirmationMachine !== null && !plcRuntime.operatorPromptActive}>{confirmationMachine !== null && !plcRuntime.operatorPromptActive && <OperatorConfirmation index={confirmationMachine} machine={cellState.machines[confirmationMachine]} layout={layout} state={cellState} robotCoordinatesRef={robotCoordinatesRef} onCommand={sendMachineConfirmation} onCancel={cancelMachineConfirmation} />}</AnimatedPresence>
-      <AnimatedPresence open={plcRuntime.operatorPromptActive}><CellStartConfirmation runtime={plcRuntime} layout={layout} state={cellState} robotCoordinatesRef={robotCoordinatesRef} onChoice={sendCellStartChoice} onCancel={cancelCellStartConfirmation} /></AnimatedPresence>
+      <AnimatedPresence open={confirmationMachine !== null && !plcRuntime.operatorPromptActive}>{confirmationMachine !== null && !plcRuntime.operatorPromptActive && <OperatorConfirmation index={confirmationMachine} machine={cellState.machines[confirmationMachine]} onCommand={sendMachineConfirmation} onCancel={cancelMachineConfirmation} />}</AnimatedPresence>
+      <AnimatedPresence open={plcRuntime.operatorPromptActive}><CellStartConfirmation runtime={plcRuntime} state={cellState} onChoice={sendCellStartChoice} onCancel={cancelCellStartConfirmation} /></AnimatedPresence>
       {pendingMachineMotion && <MachineMotionWarning request={pendingMachineMotion} allowed={isMachineMotionAllowed(cellState.machines[pendingMachineMotion.machineIndex], pendingMachineMotion.mechanism, pendingMachineMotion.action, usePlcData)} onConfirm={confirmMachineMotion} onCancel={() => setPendingMachineMotion(null)} />}
       {page === 'monitoring' && confirmationMachine === null && !plcRuntime.operatorPromptActive && <div className="cell-bottom-shell">
         <AnimatedPresence open={bottomSection === 'cell'}><CellQuickPanel
@@ -3319,6 +3351,7 @@ export function App() {
         <AnimatedPresence open={bottomSection === 'robot'}><RobotQuickPanel
           robot={cellState.robot}
           magazines={cellState.magazines}
+          coordinates={robotCoordinates}
           onSend={sendPlcCommand}
           robotManual={plcRuntime.robotManual}
           robotModbus={plcRuntime.robotModbus}

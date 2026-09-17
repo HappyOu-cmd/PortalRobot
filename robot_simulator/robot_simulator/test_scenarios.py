@@ -257,7 +257,12 @@ def expected_first_decision(initial_state: dict[str, Any]) -> str:
     if grippers[0]["content"] == BLANK:
         blank_type = int(grippers[0]["productType"])
         if grippers[1]["content"] == DETAIL:
-            return "machine-load"
+            immediate_load = any(
+                int(machine["state"]) == MACHINE_EMPTY_READY
+                and int(machine["productType"]) == blank_type
+                for machine in initial_state["machines"]
+            )
+            return "machine-load" if immediate_load else "magazine-put"
         compatible = [
             machine for machine in initial_state["machines"]
             if int(machine["state"]) != MACHINE_DISABLED
@@ -421,6 +426,44 @@ def operator_cancel_scenario() -> dict[str, Any]:
     return item
 
 
+def payload_recovery_scenarios() -> list[dict[str, Any]]:
+    """Recovery routes for a robot holding both a blank and a finished detail."""
+    almost_full = _slots(*(
+        (slot, BLANK, 1) for slot in range(1, 120)
+    ))
+    load_first = scenario(
+        "Два груза после перезаполнения магазина — сначала загрузить станок",
+        machines=(
+            (MACHINE_DETAIL_READY, 1),
+            (MACHINE_DETAIL_READY, 1),
+            (MACHINE_EMPTY_READY, 1),
+        ),
+        slots=copy.deepcopy(almost_full),
+        magazine_enabled=(False, False),
+        gripper_1=(BLANK, 1),
+        gripper_2=(DETAIL, 1),
+        expected="machine-load",
+        expected_magazine=1,
+        full_cycle=False,
+    )
+    load_first["expectations"]["enableMagazineBeforeStart"] = 1
+
+    put_first = scenario(
+        "Два груза без пустого станка — сначала уложить деталь",
+        machines=(
+            (MACHINE_BLANK_PROCESSING, 1),
+            (MACHINE_BLANK_PROCESSING, 1),
+            (MACHINE_DISABLED, 1),
+        ),
+        slots=copy.deepcopy(almost_full),
+        gripper_1=(BLANK, 1),
+        gripper_2=(DETAIL, 1),
+        expected="magazine-put",
+        full_cycle=False,
+    )
+    return [load_first, put_first]
+
+
 def general_scenarios() -> list[dict[str, Any]]:
     """Four full magazine batches for every occupancy mask of three machines."""
     definitions = (
@@ -466,4 +509,10 @@ def general_scenarios() -> list[dict[str, Any]]:
 
 
 def regression_scenarios() -> list[dict[str, Any]]:
-    return smoke_scenarios() + error_owner_scenarios() + [operator_cancel_scenario()] + generated_scenarios(50_100, 53)
+    return (
+        smoke_scenarios()
+        + error_owner_scenarios()
+        + [operator_cancel_scenario()]
+        + generated_scenarios(50_100, 53)
+        + payload_recovery_scenarios()
+    )

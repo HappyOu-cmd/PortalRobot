@@ -362,6 +362,25 @@ function modbusSnapshot(values) {
   };
 }
 
+function cellControlEvents(current, previous, timestampMs) {
+  const events = [];
+  for (const [path, eventType, label, enabled, disabled] of [
+    ['xCellManual', 'control-mode', 'Ячейка', 'ручной режим подтверждён PLC', 'автоматический режим подтверждён PLC'],
+    ['stCellStatus.xResetAllowed', 'reset-availability', 'Общий сброс', 'разрешён PLC', 'запрещён PLC'],
+  ]) {
+    if (!Object.hasOwn(current, path) || (previous && current[path] === previous[path])) continue;
+    // Сохраняем факты владельцев разрешений, без повторения PLC-условий в JS.
+    const signals = Object.fromEntries(Object.entries(current).filter(([key]) =>
+      ['xCellManual', 'xGlobalError', 'udiCellModeAckSeq', 'uiCellModeResult'].includes(key)
+      || /(?:xResetAllowed|xBusy|xMotionBusy|xError|xRunning|xGlobalError|xCriticalError)$/.test(key)));
+    events.push({ timestampMs, sourceId: 8, eventType, status: 'changed',
+      message: `${label}: ${current[path] ? enabled : disabled}`,
+      oldValue: previous?.[path] ?? null, newValue: current[path],
+      details: { observedOnConnect: previous === null, signals } });
+  }
+  return events;
+}
+
 export class CellEventClassifier {
   constructor() {
     this.previous = null;
@@ -382,12 +401,14 @@ export class CellEventClassifier {
         this.operationSequence += 1;
         this.activeOperationId = `cycle-${timestampMs}-${this.operationSequence}`;
       }
-      return [...this.alarmEvents(current, timestampMs, true), ...inspectionIoEvents(current, null, timestampMs)]
+      return [...this.alarmEvents(current, timestampMs, true), ...inspectionIoEvents(current, null, timestampMs),
+        ...cellControlEvents(current, null, timestampMs)]
         .map((event) => ({ ...event, timestampMs }));
     }
 
     const previous = this.previous;
-    const events = inspectionIoEvents(current, previous, timestampMs);
+    const events = [...inspectionIoEvents(current, previous, timestampMs),
+      ...cellControlEvents(current, previous, timestampMs)];
     const changed = (path) => Object.hasOwn(current, path) && current[path] !== previous[path];
     const push = (event) => events.push({ timestampMs, ...event });
 

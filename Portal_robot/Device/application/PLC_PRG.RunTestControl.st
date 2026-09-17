@@ -179,9 +179,9 @@ IF rtTestScenarioApply.Q THEN
 		END_FOR;
 		// Начальные инъекции: маски переводятся в существующий диагностический
 		// контракт, а не обходят владельцев ошибок.
-		GVL_HMI.xSimCellBothGrippers :=
+		axHmiInternalPulse[13] :=
 			(GVL_HMI.stTestScenario.dwCellFaultMask AND DWORD#16#0000_0001) <> DWORD#0;
-		GVL_HMI.xSimRobotWrongAction :=
+		axHmiInternalPulse[12] :=
 			(GVL_HMI.stTestScenario.dwRobotFaultMask AND DWORD#16#0000_0001) <> DWORD#0;
 		GVL_HMI.xSimGripper1Fault :=
 			(GVL_HMI.stTestScenario.dwRobotFaultMask AND DWORD#16#0000_0002) <> DWORD#0;
@@ -191,25 +191,25 @@ IF rtTestScenarioApply.Q THEN
 			(GVL_HMI.stTestScenario.dwRobotFaultMask AND DWORD#16#0000_0008) <> DWORD#0;
 		GVL_HMI.xSimGripperGlobalFault :=
 			(GVL_HMI.stTestScenario.dwRobotFaultMask AND DWORD#16#0000_0010) <> DWORD#0;
-		GVL_HMI.xSimPointXOutOfLimit :=
+		axHmiInternalPulse[14] :=
 			(GVL_HMI.stTestScenario.dwRobotFaultMask AND DWORD#16#0000_0020) <> DWORD#0;
-		GVL_HMI.xSimPointYOutOfLimit :=
+		axHmiInternalPulse[15] :=
 			(GVL_HMI.stTestScenario.dwRobotFaultMask AND DWORD#16#0000_0040) <> DWORD#0;
-		GVL_HMI.xSimPointZOutOfLimit :=
+		axHmiInternalPulse[16] :=
 			(GVL_HMI.stTestScenario.dwRobotFaultMask AND DWORD#16#0000_0080) <> DWORD#0;
-		GVL_HMI.xSimPointInvalidVelocity :=
+		axHmiInternalPulse[17] :=
 			(GVL_HMI.stTestScenario.dwRobotFaultMask AND DWORD#16#0000_0100) <> DWORD#0;
-		GVL_HMI.xSimMagazineWrongOperation :=
+		axHmiInternalPulse[18] :=
 			(GVL_HMI.stTestScenario.adwMagazineFaultMask[1] AND DWORD#16#0000_0001) <> DWORD#0;
-		GVL_HMI.xSimMagazineNoBlank :=
+		axHmiInternalPulse[19] :=
 			(GVL_HMI.stTestScenario.adwMagazineFaultMask[1] AND DWORD#16#0000_0002) <> DWORD#0;
-		GVL_HMI.xSimMagazineNoFreeSlot :=
+		axHmiInternalPulse[20] :=
 			(GVL_HMI.stTestScenario.adwMagazineFaultMask[1] AND DWORD#16#0000_0004) <> DWORD#0;
-		GVL_HMI.xSimMagazineInvalidSlot :=
+		axHmiInternalPulse[21] :=
 			(GVL_HMI.stTestScenario.adwMagazineFaultMask[1] AND DWORD#16#0000_0008) <> DWORD#0;
-		GVL_HMI.xSimMagazineSlotContent :=
+		axHmiInternalPulse[22] :=
 			(GVL_HMI.stTestScenario.adwMagazineFaultMask[1] AND DWORD#16#0000_0010) <> DWORD#0;
-		GVL_HMI.xSimMagazineGeometry :=
+		axHmiInternalPulse[23] :=
 			(GVL_HMI.stTestScenario.adwMagazineFaultMask[1] AND DWORD#16#0000_0020) <> DWORD#0;
 		FOR uiTestIndex := UINT#1 TO UINT#3 DO
 			GVL_HMI.axMachineSimAlarm[uiTestIndex] :=

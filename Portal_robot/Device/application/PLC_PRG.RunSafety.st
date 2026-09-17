@@ -35,6 +35,43 @@ GVL_CELL_CONTROL.xDisable := GVL_CELL_CONTROL.xDisable OR CELL_SAFETY.xCellDisab
 GVL_CELL_CONTROL.xReset := GVL_CELL_CONTROL.xReset OR CELL_SAFETY.xCellResetPulse;
 
 GVL_CELL_CONTROL.xGlobalError := CELL_SAFETY.Status.xGlobalError;
+
+// HMI записывает payload, затем CommandSeq. Gateway удерживает единственного
+// писателя до AckSeq. Даже запись между RunSafety и PublishHmi не теряется:
+// PLC никогда не перезаписывает запрос, а обработает его в следующем скане.
+uiCellModeRejectReason := UINT#0;
+udiCellModeCommandSnapshot := GVL_HMI.udiCellModeCommandSeq;
+IF (udiCellModeCommandSnapshot <> UDINT#0)
+AND (udiCellModeCommandSnapshot <> GVL_HMI.udiCellModeAckSeq) THEN
+	IF GVL_HMI.xCellManualRequest
+	AND GVL_CELL_MANAGER.Status.xRunning
+	AND NOT GVL_CELL_CONTROL.xGlobalError THEN
+		uiCellModeRejectReason := UINT#2;
+	ELSIF NOT GVL_HMI.xCellManualRequest
+	AND GVL_CELL_CONTROL.xGlobalError THEN
+		uiCellModeRejectReason := UINT#3;
+	ELSE
+		GVL_CELL_CONTROL.xManual := GVL_HMI.xCellManualRequest;
+	END_IF;
+	IF uiCellModeRejectReason = UINT#0 THEN
+		GVL_HMI.uiCellModeResult := UINT#1;
+	ELSE
+		GVL_HMI.uiCellModeResult := uiCellModeRejectReason;
+	END_IF;
+	// Ack публикуется после фактического режима в PublishHmi, включая отказ.
+END_IF;
+
 IF GVL_CELL_CONTROL.xGlobalError THEN
 	GVL_CELL_CONTROL.xManual := TRUE;
 END_IF;
+
+// Разрешения рассчитываются после применения режима и Safety текущего скана.
+xRobotHmiPermit := GVL_CELL_CONTROL.xManual AND NOT GVL_CELL_MANAGER.Status.xRunning;
+xRobotAutoPowerOff := NOT GVL_CELL_CONTROL.xManual
+	AND (GVL_ROBOT.Status.xError
+		OR GVL_AXIS.arrAxis[1].Status.xError
+		OR GVL_AXIS.arrAxis[2].Status.xError
+		OR GVL_AXIS.arrAxis[3].Status.xError
+		OR GVL_AXIS_GROUP.AxisGroup.Status.xLocalError
+		OR GVL_AXIS_GROUP.AxisGroup.Status.xLogicalError
+		OR GVL_AXIS_GROUP.AxisGroup.Status.xGroupError);

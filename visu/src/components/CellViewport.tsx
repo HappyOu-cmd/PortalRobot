@@ -18,6 +18,7 @@ import {
   type VisualEffectSettings,
 } from '../model/visualEffects';
 import { CellScene, type CameraPreset, type EquipmentAnchors } from '../three/cellScene';
+import { DEFAULT_CONTROL_CABINETS } from '../model/controlCabinets';
 
 export interface EquipmentStatus {
   title: string;
@@ -32,6 +33,8 @@ interface CellViewportProps {
   selectedMachine: number | null;
   cameraPreset: CameraPreset;
   controlsVisible?: boolean;
+  renderingEnabled?: boolean;
+  preview?: boolean;
   onMachineSelect: (index: number) => void;
   onMagazineSelect?: (magazineId: 1 | 2) => void;
   easterEggMode?: EasterEggMode;
@@ -58,6 +61,8 @@ export function CellViewport({
   selectedMachine,
   cameraPreset,
   controlsVisible = true,
+  renderingEnabled = true,
+  preview = false,
   onMachineSelect,
   onMagazineSelect,
   easterEggMode = 'off',
@@ -169,9 +174,10 @@ export function CellViewport({
       () => coordinatesRef.current ?? fallbackRobotCoordinatesRef.current,
       (index) => selectRef.current(index),
       (magazineId) => magazineSelectRef.current?.(magazineId),
-      updateAnchors,
+      preview ? undefined : updateAnchors,
       setDriftTelemetry,
       (target, node) => inspectRef.current(target, node),
+      preview,
     );
     sceneRef.current = scene;
     scene.setDriftSettings(driftSettings);
@@ -185,7 +191,18 @@ export function CellViewport({
     };
   }, []);
 
-  useEffect(() => sceneRef.current?.setState(state), [state]);
+  useEffect(() => {
+    // A frozen green lamp must not imply that the disconnected PLC is still running.
+    const sceneState = inspectionDataMode === 'stale' ? {
+      ...state,
+      controlCabinets: {
+        ...state.controlCabinets,
+        signalTower: DEFAULT_CONTROL_CABINETS.signalTower,
+      },
+    } : state;
+    sceneRef.current?.setState(sceneState);
+  }, [state, inspectionDataMode]);
+  useEffect(() => sceneRef.current?.setRenderingEnabled(renderingEnabled), [renderingEnabled]);
   useEffect(() => sceneRef.current?.setInspectionEnabled(inspectionAvailable && easterEggMode === 'off'), [inspectionAvailable, easterEggMode]);
   useEffect(() => sceneRef.current?.setInspection(inspectionClosing ? null : inspection), [inspection, inspectionClosing]);
   useEffect(() => sceneRef.current?.setEasterEgg(easterEggMode, easterEggRevision), [easterEggMode, easterEggRevision]);
@@ -193,7 +210,7 @@ export function CellViewport({
   useEffect(() => sceneRef.current?.setVisualEffects(visualEffects), [visualEffects]);
   useEffect(() => sceneRef.current?.setSceneActivity(sceneActivity), [sceneActivity]);
   useEffect(() => sceneRef.current?.setFocusTarget(focusTarget), [focusTarget]);
-  useEffect(() => sceneRef.current?.rebuild(layout), [layout]);
+  useEffect(() => sceneRef.current?.setLayout(layout), [layout]);
   useEffect(() => sceneRef.current?.setSelectedMachine(selectedMachine), [selectedMachine]);
   useEffect(() => {
     const scene = sceneRef.current;

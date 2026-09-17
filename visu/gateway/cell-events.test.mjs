@@ -14,6 +14,29 @@ const snapshot = (overrides = {}) => ({
   ...overrides,
 });
 
+test('mode and reset availability log PLC feedback and supporting signals without duplicates', () => {
+  const classifier = new CellEventClassifier();
+  const initial = snapshot({ xCellManual: false, 'stCellStatus.xResetAllowed': false,
+    'stRobotStatus.xResetAllowed': false, 'stRobotStatus.xError': true });
+  const observed = classifier.process(initial, 1000).filter((event) => ['control-mode', 'reset-availability'].includes(event.eventType));
+  assert.equal(observed.length, 2);
+  assert.equal(observed[0].details.observedOnConnect, true);
+  const current = { ...initial, xCellManual: true, 'stCellStatus.xResetAllowed': true,
+    'stRobotStatus.xResetAllowed': true, udiCellModeAckSeq: 2, uiCellModeResult: 1 };
+  const events = classifier.process(current, 2000);
+  assert.deepEqual(events.map((event) => event.eventType), ['control-mode', 'reset-availability']);
+  assert.equal(events[1].details.signals['stRobotStatus.xResetAllowed'], true);
+  assert.equal(events[0].details.signals.udiCellModeAckSeq, 2);
+  assert.equal(events[0].details.observedOnConnect, false);
+  assert.deepEqual(classifier.process(current, 3000), []);
+});
+
+test('missing mode/reset signals are not invented as false telemetry', () => {
+  const classifier = new CellEventClassifier();
+  assert.deepEqual(classifier.process(snapshot(), 1000), []);
+  assert.deepEqual(classifier.process(snapshot(), 2000), []);
+});
+
 test('equipment inspection history filters exact source prefixes and activation time', () => {
   const store = new CellEventStore({ databasePath: ':memory:' });
   try {

@@ -8,6 +8,7 @@ import { createEmergencyStopButton, updateEmergencyStopButton, type EmergencySto
 import { createIlluminatedPushButton, updateIlluminatedPushButton, type IlluminatedPushButtonRig } from './illuminatedPushButton';
 import { createAirPreparation, type AirPreparationRig } from './airPreparation';
 import { createEmergencyIndicator, updateEmergencyIndicator, type EmergencyIndicatorRig } from './emergencyIndicator';
+import { createSignalTower, updateSignalTower, type SignalTowerRig } from './signalTower';
 
 type XYZ = [number, number, number];
 type ControlButtonKey = 'startPressed' | 'stopPressed' | 'resetPressed';
@@ -19,6 +20,7 @@ export interface ControlCabinetsRig {
   rearEmergencyStop: EmergencyStopButtonRig;
   electricalAlarm: EmergencyIndicatorRig;
   airPreparation: AirPreparationRig;
+  signalTower: SignalTowerRig;
   buttons: { signal: ControlButtonKey; rig: IlluminatedPushButtonRig }[];
   textures: THREE.Texture[];
   elapsed: number;
@@ -149,6 +151,12 @@ export function createControlCabinets(layout: CellLayout): ControlCabinetsRig {
   // Keep the panel proportions while reducing the front cabinet width and height by 20%.
   front.root.scale.set(0.8, 0.8, 1);
 
+  const signalTower = createSignalTower();
+  // Sit on the roof centre; compensate cabinet scaling so the tower remains round.
+  signalTower.root.position.set(-0.2, 0.66 / 2, 0.1 + 0.26 / 2);
+  signalTower.root.scale.set(1 / front.root.scale.x, 1 / front.root.scale.y, 1);
+  front.root.add(signalTower.root);
+
   const rearHeight = 0.88;
   const rear = createHousing('rear_control_cabinet_post_4', 0.76, rearHeight, 0.32, support);
   rear.root.position.set(x, 1.30, -mm(portal.widthY) - clearance - support / 2);
@@ -170,7 +178,7 @@ export function createControlCabinets(layout: CellLayout): ControlCabinetsRig {
   root.add(airPreparation.root);
 
   return {
-    root, screen, frontEmergencyStop, rearEmergencyStop, electricalAlarm, airPreparation, buttons,
+    root, screen, frontEmergencyStop, rearEmergencyStop, electricalAlarm, airPreparation, signalTower, buttons,
     textures: [screen.texture, labels.texture], elapsed: 0,
     reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)'),
   };
@@ -180,6 +188,7 @@ export function updateControlCabinets(rig: ControlCabinetsRig, states: ControlCa
   rig.elapsed += dt;
   const state = states ?? DEFAULT_CONTROL_CABINETS;
   const reducedMotion = rig.reducedMotion.matches;
+  updateSignalTower(rig.signalTower, state.signalTower ?? DEFAULT_CONTROL_CABINETS.signalTower);
   updateEmergencyStopButton(rig.frontEmergencyStop, state.front.emergencyStopPressed, rig.elapsed, reducedMotion);
   updateEmergencyStopButton(rig.rearEmergencyStop, state.rear.emergencyStopPressed, rig.elapsed, reducedMotion);
   updateEmergencyIndicator(rig.electricalAlarm,
