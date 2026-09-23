@@ -6,7 +6,7 @@ METHOD PRIVATE ReadHmiInputs
 // расширенные ручные команды; технологические проверки ниже остаются в PLC.
 tonHmiWatchdog(
 	IN := GVL_HMI.udiHmiHeartbeat = udiLastHmiHeartbeat,
-	PT := T#2S
+	PT := GVL_CELL_SETTINGS.tHmiWatchdogTimeout
 );
 IF GVL_HMI.udiHmiHeartbeat <> udiLastHmiHeartbeat THEN
 	udiLastHmiHeartbeat := GVL_HMI.udiHmiHeartbeat;
@@ -19,7 +19,7 @@ rtMobileMotionStart(CLK := GVL_HMI.xMobileMotionActive);
 tonMobileMotionWatchdog(
 	IN := GVL_HMI.xMobileMotionActive
 		AND (GVL_HMI.udiMobileMotionHeartbeat = udiLastMobileMotionHeartbeat),
-	PT := T#2S
+	PT := GVL_CELL_SETTINGS.tMobileMotionWatchdogTimeout
 );
 IF GVL_HMI.udiMobileMotionHeartbeat <> udiLastMobileMotionHeartbeat THEN
 	udiLastMobileMotionHeartbeat := GVL_HMI.udiMobileMotionHeartbeat;
@@ -60,7 +60,10 @@ GVL_HMI.xMobileMotionLeaseAlive := xMobileMotionLeaseActive
 GVL_HMI.rMobileMotionAppliedSpeedPercent := rMobileMotionSpeedLimitPercent;
 
 xPointCheckRequest := FALSE;
-tonPointCheckWatchdog(IN := GVL_HMI.udiPointCheckHeartbeat = udiLastPointCheckHeartbeat, PT := T#2S);
+tonPointCheckWatchdog(
+	IN := GVL_HMI.udiPointCheckHeartbeat = udiLastPointCheckHeartbeat,
+	PT := GVL_CELL_SETTINGS.tPointCheckWatchdogTimeout
+);
 IF GVL_HMI.udiPointCheckHeartbeat <> udiLastPointCheckHeartbeat THEN
 	udiLastPointCheckHeartbeat := GVL_HMI.udiPointCheckHeartbeat;
 END_IF;
@@ -142,6 +145,8 @@ GVL_CELL_SETTINGS.xCellSettingsChangeAllowed :=
 	AND NOT GVL_AXIS.arrAxis[3].Status.xMotionBusy
 	AND NOT GVL_AXIS_GROUP.AxisGroup.Command.xMoveDirect
 	AND NOT GVL_AXIS_GROUP.AxisGroup.Command.xMoveLinear
+	AND NOT xPowerTransitionActive
+	AND NOT SIMULATION_DYNAMICS.xBusy
 	AND NOT GVL_ROBOT.Status.xBusy;
 
 // Independent requested value; publication cannot overwrite an incoming write.
@@ -153,7 +158,11 @@ AND (udiCellSettingSnapshot <> GVL_HMI.udiCellSettingAckSeq) THEN
 	IF NOT IsHmiCommandFresh(udiIssuedAtMs := GVL_HMI.udiCellSettingIssuedAtMs) THEN
 		GVL_HMI.uiCellSettingResult := UINT#4; // Expired: never apply later
 	ELSIF NOT GVL_CELL_SETTINGS.xCellSettingsChangeAllowed
-	OR ((GVL_HMI.uiCellSettingIndex = UINT#4) AND xPointCheckActive) THEN
+	OR (((GVL_HMI.uiCellSettingIndex = UINT#4)
+		OR (GVL_HMI.uiCellSettingIndex = UINT#25)
+		OR (GVL_HMI.uiCellSettingIndex = UINT#29))
+		AND xPointCheckActive)
+	OR ((GVL_HMI.uiCellSettingIndex = UINT#28) AND xMobileMotionLeaseActive) THEN
 		GVL_HMI.uiCellSettingResult := UINT#2;
 	ELSE
 		CASE GVL_HMI.uiCellSettingIndex OF
@@ -220,6 +229,121 @@ AND (udiCellSettingSnapshot <> GVL_HMI.udiCellSettingAckSeq) THEN
 			UINT#13:
 				IF (GVL_HMI.lrCellSettingRequest >= 1000.0) AND (GVL_HMI.lrCellSettingRequest <= 600000.0) THEN
 					GVL_CELL_SETTINGS.stMachineTimeouts.tCycleStart := UDINT_TO_TIME(LREAL_TO_UDINT(GVL_HMI.lrCellSettingRequest));
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
+			UINT#14:
+				IF (GVL_HMI.lrCellSettingRequest >= 1000.0) AND (GVL_HMI.lrCellSettingRequest <= 600000.0) THEN
+					GVL_CELL_SETTINGS.stAxisTimeouts.tPowerTimeout := UDINT_TO_TIME(LREAL_TO_UDINT(GVL_HMI.lrCellSettingRequest));
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
+			UINT#15:
+				IF (GVL_HMI.lrCellSettingRequest >= 1000.0) AND (GVL_HMI.lrCellSettingRequest <= 600000.0) THEN
+					GVL_CELL_SETTINGS.stAxisTimeouts.tResetTimeout := UDINT_TO_TIME(LREAL_TO_UDINT(GVL_HMI.lrCellSettingRequest));
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
+			UINT#16:
+				IF (GVL_HMI.lrCellSettingRequest >= 1000.0) AND (GVL_HMI.lrCellSettingRequest <= 600000.0) THEN
+					GVL_CELL_SETTINGS.stAxisTimeouts.tStopTimeout := UDINT_TO_TIME(LREAL_TO_UDINT(GVL_HMI.lrCellSettingRequest));
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
+			UINT#17:
+				IF (GVL_HMI.lrCellSettingRequest >= 1000.0) AND (GVL_HMI.lrCellSettingRequest <= 600000.0) THEN
+					GVL_CELL_SETTINGS.stAxisTimeouts.tHomeTimeout := UDINT_TO_TIME(LREAL_TO_UDINT(GVL_HMI.lrCellSettingRequest));
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
+			UINT#18:
+				IF (GVL_HMI.lrCellSettingRequest >= 1000.0) AND (GVL_HMI.lrCellSettingRequest <= 600000.0) THEN
+					GVL_CELL_SETTINGS.stAxisTimeouts.tMoveTimeout := UDINT_TO_TIME(LREAL_TO_UDINT(GVL_HMI.lrCellSettingRequest));
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
+			UINT#19:
+				IF (GVL_HMI.lrCellSettingRequest >= 1000.0) AND (GVL_HMI.lrCellSettingRequest <= 600000.0) THEN
+					GVL_CELL_SETTINGS.stAxisGroupTimeouts.tPowerTimeout := UDINT_TO_TIME(LREAL_TO_UDINT(GVL_HMI.lrCellSettingRequest));
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
+			UINT#20:
+				IF (GVL_HMI.lrCellSettingRequest >= 1000.0) AND (GVL_HMI.lrCellSettingRequest <= 600000.0) THEN
+					GVL_CELL_SETTINGS.stAxisGroupTimeouts.tGroupTimeout := UDINT_TO_TIME(LREAL_TO_UDINT(GVL_HMI.lrCellSettingRequest));
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
+			UINT#21:
+				IF (GVL_HMI.lrCellSettingRequest >= 1000.0) AND (GVL_HMI.lrCellSettingRequest <= 600000.0) THEN
+					GVL_CELL_SETTINGS.stAxisGroupTimeouts.tStopTimeout := UDINT_TO_TIME(LREAL_TO_UDINT(GVL_HMI.lrCellSettingRequest));
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
+			UINT#22:
+				IF (GVL_HMI.lrCellSettingRequest >= 1000.0) AND (GVL_HMI.lrCellSettingRequest <= 600000.0) THEN
+					GVL_CELL_SETTINGS.stAxisGroupTimeouts.tHaltTimeout := UDINT_TO_TIME(LREAL_TO_UDINT(GVL_HMI.lrCellSettingRequest));
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
+			UINT#23:
+				IF (GVL_HMI.lrCellSettingRequest >= 1000.0) AND (GVL_HMI.lrCellSettingRequest <= 600000.0) THEN
+					GVL_CELL_SETTINGS.stAxisGroupTimeouts.tHomeTimeout := UDINT_TO_TIME(LREAL_TO_UDINT(GVL_HMI.lrCellSettingRequest));
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
+			UINT#24:
+				IF (GVL_HMI.lrCellSettingRequest >= 1000.0) AND (GVL_HMI.lrCellSettingRequest <= 600000.0) THEN
+					GVL_CELL_SETTINGS.stAxisGroupTimeouts.tMoveTimeout := UDINT_TO_TIME(LREAL_TO_UDINT(GVL_HMI.lrCellSettingRequest));
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
+			UINT#25:
+				IF (GVL_HMI.lrCellSettingRequest >= 500.0) AND (GVL_HMI.lrCellSettingRequest <= 60000.0) THEN
+					GVL_CELL_SETTINGS.tPointCheckStartTimeout := UDINT_TO_TIME(LREAL_TO_UDINT(GVL_HMI.lrCellSettingRequest));
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
+			UINT#26:
+				IF (GVL_HMI.lrCellSettingRequest >= 1000.0) AND (GVL_HMI.lrCellSettingRequest <= 600000.0) THEN
+					GVL_CELL_SETTINGS.tSimulationDynamicsTimeout := UDINT_TO_TIME(LREAL_TO_UDINT(GVL_HMI.lrCellSettingRequest));
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
+			UINT#27:
+				IF (GVL_HMI.lrCellSettingRequest >= 500.0) AND (GVL_HMI.lrCellSettingRequest <= 30000.0) THEN
+					GVL_CELL_SETTINGS.tHmiWatchdogTimeout := UDINT_TO_TIME(LREAL_TO_UDINT(GVL_HMI.lrCellSettingRequest));
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
+			UINT#28:
+				IF (GVL_HMI.lrCellSettingRequest >= 500.0) AND (GVL_HMI.lrCellSettingRequest <= 30000.0) THEN
+					GVL_CELL_SETTINGS.tMobileMotionWatchdogTimeout := UDINT_TO_TIME(LREAL_TO_UDINT(GVL_HMI.lrCellSettingRequest));
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
+			UINT#29:
+				IF (GVL_HMI.lrCellSettingRequest >= 500.0) AND (GVL_HMI.lrCellSettingRequest <= 30000.0) THEN
+					GVL_CELL_SETTINGS.tPointCheckWatchdogTimeout := UDINT_TO_TIME(LREAL_TO_UDINT(GVL_HMI.lrCellSettingRequest));
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
+			UINT#30:
+				IF (GVL_HMI.lrCellSettingRequest >= 1000.0) AND (GVL_HMI.lrCellSettingRequest <= 30000.0) THEN
+					GVL_CELL_SETTINGS.tHmiCommandFreshnessTimeout := UDINT_TO_TIME(LREAL_TO_UDINT(GVL_HMI.lrCellSettingRequest));
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
+			UINT#31:
+				IF (GVL_HMI.lrCellSettingRequest >= 100.0) AND (GVL_HMI.lrCellSettingRequest <= 10000.0) THEN
+					GVL_CELL_SETTINGS.stAxisTimeouts.tPowerFeedbackLossTimeout := UDINT_TO_TIME(LREAL_TO_UDINT(GVL_HMI.lrCellSettingRequest));
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
+			UINT#32:
+				IF (GVL_HMI.lrCellSettingRequest >= 1.0) AND (GVL_HMI.lrCellSettingRequest <= 100.0) THEN
+					GVL_CELL_SETTINGS.rRobotAccelerationPercent := LREAL_TO_REAL(GVL_HMI.lrCellSettingRequest);
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
+			UINT#33:
+				IF (GVL_HMI.lrCellSettingRequest >= 1.0) AND (GVL_HMI.lrCellSettingRequest <= 100.0) THEN
+					GVL_CELL_SETTINGS.rRobotDecelerationPercent := LREAL_TO_REAL(GVL_HMI.lrCellSettingRequest);
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
+			UINT#34:
+				IF (GVL_HMI.lrCellSettingRequest >= 1.0) AND (GVL_HMI.lrCellSettingRequest <= 100.0) THEN
+					GVL_CELL_SETTINGS.rRobotJerkPercent := LREAL_TO_REAL(GVL_HMI.lrCellSettingRequest);
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
+			UINT#35:
+				IF (GVL_HMI.lrCellSettingRequest >= 1.0) AND (GVL_HMI.lrCellSettingRequest <= 100000.0) THEN
+					GVL_CELL_SETTINGS.lrRobotHaltDeceleration := GVL_HMI.lrCellSettingRequest;
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
+			UINT#36:
+				IF (GVL_HMI.lrCellSettingRequest >= 1.0) AND (GVL_HMI.lrCellSettingRequest <= 1000000.0) THEN
+					GVL_CELL_SETTINGS.lrRobotHaltJerk := GVL_HMI.lrCellSettingRequest;
 					GVL_HMI.uiCellSettingResult := UINT#1;
 				END_IF;
 		END_CASE;

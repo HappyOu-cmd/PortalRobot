@@ -9,6 +9,8 @@ export interface VisualIndicatorSettings {
 }
 
 export interface VisualEffectSettings {
+  /** Показывать дополнительный цех с маршрутом и циклом погрузчика. */
+  workshopEnabled: boolean;
   cameraFocus: boolean;
   alarmBeacons: boolean;
   /** Непрозрачность сетчатых ограждений и дверных полотен. */
@@ -26,6 +28,7 @@ const createDefaultIndicatorSettings = (): VisualIndicatorSettings => ({
 });
 
 export const DEFAULT_VISUAL_EFFECT_SETTINGS: VisualEffectSettings = {
+  workshopEnabled: true,
   cameraFocus: false,
   alarmBeacons: false,
   enclosureOpacity: 1,
@@ -99,6 +102,8 @@ export function normalizeVisualEffectSettings(value: unknown): VisualEffectSetti
   const savedMachines = Array.isArray(savedIndicators.machines) ? savedIndicators.machines : [];
   const savedMagazines = Array.isArray(savedIndicators.magazines) ? savedIndicators.magazines : [];
   return {
+    // Для ранее сохранённых настроек оставляем новые элементы включёнными.
+    workshopEnabled: saved.workshopEnabled !== false,
     cameraFocus: saved.cameraFocus === true,
     alarmBeacons: saved.alarmBeacons === true,
     enclosureOpacity: boundedNumber(saved.enclosureOpacity, DEFAULT_VISUAL_EFFECT_SETTINGS.enclosureOpacity, 0.1, 1),

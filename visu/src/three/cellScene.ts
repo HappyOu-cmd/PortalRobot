@@ -24,6 +24,7 @@ import { OperationalEffects, type SceneEffectAnchors } from './OperationalEffect
 import { COLORS, disposeObject, logicalPosition, material, mm } from './primitives';
 import { inspectionKey, inspectionSlot, type EquipmentInspection, type InspectionTarget, type InspectionNode } from '../model/equipmentInspection';
 import { EquipmentInspectionLayer, inspectionBounds, isObjectVisible, type InspectionEntry } from './equipmentInspection';
+import { Workshop } from './workshop';
 
 export type CameraPreset = 'iso' | 'front' | 'side' | 'top';
 
@@ -74,6 +75,8 @@ export class CellScene {
   private easterEggMode: EasterEggMode = 'off';
   private easterEggRevision = 0;
   private operationalEffects?: OperationalEffects;
+  private workshop?: Workshop;
+  private fallbackFloor?: THREE.Group;
   private state: CellState;
   private layout: CellLayout;
   private animationFrame = 0;
@@ -118,9 +121,11 @@ export class CellScene {
     private readonly onDriftTelemetry?: (telemetry: DriftTelemetry) => void,
     private readonly onEquipmentInspect?: (target: InspectionTarget, node?: InspectionNode) => void,
     private readonly preview = false,
+    initialVisualEffects: VisualEffectSettings = DEFAULT_VISUAL_EFFECT_SETTINGS,
   ) {
     this.layout = layout;
     this.state = state;
+    this.visualEffects = initialVisualEffects;
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(getRenderPixelRatio(this.preview));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -133,12 +138,13 @@ export class CellScene {
     this.host.appendChild(this.renderer.domElement);
 
     this.scene.background = new THREE.Color(COLORS.background);
-    this.scene.fog = new THREE.Fog(COLORS.background, 18, 34);
+    const expandedScene = !this.preview && this.visualEffects.workshopEnabled;
+    this.scene.fog = new THREE.Fog(COLORS.background, expandedScene ? 26 : 18, expandedScene ? 55 : 34);
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.07;
     this.controls.minDistance = 0.5;
-    this.controls.maxDistance = 26;
+    this.controls.maxDistance = expandedScene ? 36 : 26;
     this.controls.maxPolarAngle = Math.PI * 0.48;
     this.controls.addEventListener('start', this.cancelCameraFlight);
 
@@ -164,13 +170,15 @@ export class CellScene {
   private addLights(): void {
     this.scene.add(new THREE.HemisphereLight(0xffffff, 0xaab6c0, 2.25));
     const key = new THREE.DirectionalLight(0xffffff, 3.2);
-    key.position.set(4, 12, 8);
+    key.position.set(2, 14, 8);
+    key.target.position.set(3, 0, -4);
+    this.scene.add(key.target);
     key.castShadow = true;
     key.shadow.mapSize.set(2048, 2048);
-    key.shadow.camera.left = -10;
-    key.shadow.camera.right = 10;
-    key.shadow.camera.top = 7;
-    key.shadow.camera.bottom = -7;
+    key.shadow.camera.left = -17;
+    key.shadow.camera.right = 17;
+    key.shadow.camera.top = 14;
+    key.shadow.camera.bottom = -14;
     key.shadow.bias = -0.0002;
     this.scene.add(key);
     const fill = new THREE.DirectionalLight(0xc9e0ff, 1.1);
@@ -203,6 +211,31 @@ export class CellScene {
     return root;
   }
 
+  private setWorkshopScene(enabled: boolean, refitCamera = true): void {
+    if (this.preview) return;
+    this.workshop?.dispose();
+    this.workshop = undefined;
+    if (this.fallbackFloor) {
+      this.cellRoot.remove(this.fallbackFloor);
+      disposeObject(this.fallbackFloor);
+      this.fallbackFloor = undefined;
+    }
+    if (enabled) {
+      this.workshop = new Workshop(this.layout);
+      this.cellRoot.add(this.workshop.root);
+    } else {
+      this.fallbackFloor = this.createFloor(this.layout);
+      this.cellRoot.add(this.fallbackFloor);
+    }
+    this.controls.maxDistance = enabled ? 36 : 26;
+    if (this.scene.fog instanceof THREE.Fog) {
+      const cameraControlled = this.easterEggController?.controlsCamera ?? false;
+      this.scene.fog.near = cameraControlled ? 38 : enabled ? 26 : 18;
+      this.scene.fog.far = cameraControlled ? 86 : enabled ? 55 : 34;
+    }
+    if (refitCamera) this.setCamera(this.cameraPreset);
+  }
+
   rebuild(layout: CellLayout): void {
     this.inspectionLayer?.update(this.cellRoot, undefined, null, 0, true);
     this.inspectionEntries = [];
@@ -216,12 +249,16 @@ export class CellScene {
     this.easterEggController = undefined;
     this.operationalEffects?.dispose();
     this.operationalEffects = undefined;
+    this.workshop?.dispose();
+    this.workshop = undefined;
+    this.fallbackFloor = undefined;
     this.machineRigs.forEach(disposeMachineRig);
     this.scene.remove(this.cellRoot);
     disposeObject(this.cellRoot);
     this.cellRoot = new THREE.Group();
     this.cellRoot.name = 'Cell';
-    this.cellRoot.add(this.createFloor(layout));
+    if (this.preview) this.cellRoot.add(this.createFloor(layout));
+    else this.setWorkshopScene(this.visualEffects.workshopEnabled, false);
     this.machineRigs = layout.machine.machines.map((_, index) => createMachine(layout, index));
     this.machineRigs.forEach((rig) => this.cellRoot.add(rig.root));
     this.portalRig = createPortal(layout);
@@ -296,7 +333,7 @@ export class CellScene {
       this.inspectionLayer.update(this.cellRoot, undefined, null, 0, true);
       this.inspectionCameraKey = '';
       this.controls.minDistance = 0.5;
-      this.controls.maxDistance = 26;
+      this.controls.maxDistance = !this.preview && this.visualEffects.workshopEnabled ? 36 : 26;
       this.setSelectedMachine(this.selectedMachine);
       this.activeFocusKey = this.visualEffects.cameraFocus && this.focusTarget ? `${this.focusTarget.kind}:${this.focusTarget.index}` : 'preset';
       if (this.savedCamera) this.startCameraFlight(this.savedCamera, 0.26);
@@ -405,8 +442,9 @@ export class CellScene {
     this.controls.enabled = !controlledCameraNow;
     if (controlledCameraBefore && !controlledCameraNow) this.setCamera(this.cameraPreset);
     if (this.scene.fog instanceof THREE.Fog) {
-      this.scene.fog.near = controlledCameraNow ? 38 : 18;
-      this.scene.fog.far = controlledCameraNow ? 86 : 34;
+      const expandedScene = !this.preview && this.visualEffects.workshopEnabled;
+      this.scene.fog.near = controlledCameraNow ? 38 : expandedScene ? 26 : 18;
+      this.scene.fog.far = controlledCameraNow ? 86 : expandedScene ? 55 : 34;
     }
   }
 
@@ -416,7 +454,9 @@ export class CellScene {
   }
 
   setVisualEffects(settings: VisualEffectSettings): void {
+    const workshopChanged = settings.workshopEnabled !== this.visualEffects.workshopEnabled;
     this.visualEffects = settings;
+    if (workshopChanged) this.setWorkshopScene(settings.workshopEnabled);
     this.operationalEffects?.setSettings(settings);
     this.activeFocusKey = null;
   }
@@ -483,14 +523,17 @@ export class CellScene {
         - this.portalRig.zHomeDrop + this.portalRig.mastLength + 0.24
       : 4;
     const center = logicalPosition(this.layout.floor.lengthX * 0.5, this.layout.floor.widthY * 0.45, 0);
+    // Keep the left logistics aisle in the overview only while the workshop is visible.
+    const expandedScene = !this.preview && this.visualEffects.workshopEnabled;
+    if (expandedScene) { center.x -= 2.5; center.z -= 1.2; }
     const target = center.clone();
     target.y = portalTop * 0.38;
     const position = new THREE.Vector3();
-    if (this.cameraPreset === 'front') position.set(center.x, target.y + 4, 14.5);
+    if (this.cameraPreset === 'front') position.set(center.x, target.y + 4, expandedScene ? 17 : 14.5);
     if (this.cameraPreset === 'side') position.set(center.x + 14.5, target.y + 4, center.z);
-    if (this.cameraPreset === 'top') position.set(center.x, 15.5, center.z + 0.01);
-    if (this.cameraPreset === 'iso') position.set(center.x + 4.2, target.y + 6.5, center.z + 13.6);
-    return { position, target, fov: 34 };
+    if (this.cameraPreset === 'top') position.set(center.x, expandedScene ? 22 : 15.5, center.z + 0.01);
+    if (this.cameraPreset === 'iso') position.set(center.x + 4.2, target.y + 6.5, center.z + (expandedScene ? 17.6 : 13.6));
+    return { position, target, fov: expandedScene ? 38 : 34 };
   }
 
   private createFocusCameraPose(anchor: THREE.Vector3): CameraPose {
@@ -751,6 +794,7 @@ export class CellScene {
     if (this.operationalEffects) this.updateEffectAnchors();
     this.operationalEffects?.update(dt, this.sceneActivity, this.effectAnchors);
     this.easterEggController?.update(dt, this.camera);
+    this.workshop?.update(dt, this.reducedMotion.matches || !!this.inspection || this.easterEggMode !== 'off');
     this.updateInspection();
     if (!this.easterEggController?.controlsCamera) {
       this.updateCameraFocus(dt);
@@ -784,6 +828,8 @@ export class CellScene {
     this.easterEggController = undefined;
     this.operationalEffects?.dispose();
     this.operationalEffects = undefined;
+    this.workshop?.dispose();
+    this.workshop = undefined;
     this.machineRigs.forEach(disposeMachineRig);
     disposeObject(this.cellRoot);
     this.renderer.dispose();

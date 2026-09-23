@@ -140,7 +140,30 @@ export const settingPaths = [
   "stCellMachineTimeouts.tHatchUnlock",
   "stCellMachineTimeouts.tChuckOpen",
   "stCellMachineTimeouts.tChuckClose",
-  "stCellMachineTimeouts.tCycleStart"
+  "stCellMachineTimeouts.tCycleStart",
+  "stCellAxisTimeouts.tPowerTimeout",
+  "stCellAxisTimeouts.tResetTimeout",
+  "stCellAxisTimeouts.tStopTimeout",
+  "stCellAxisTimeouts.tHomeTimeout",
+  "stCellAxisTimeouts.tMoveTimeout",
+  "stCellAxisGroupTimeouts.tPowerTimeout",
+  "stCellAxisGroupTimeouts.tGroupTimeout",
+  "stCellAxisGroupTimeouts.tStopTimeout",
+  "stCellAxisGroupTimeouts.tHaltTimeout",
+  "stCellAxisGroupTimeouts.tHomeTimeout",
+  "stCellAxisGroupTimeouts.tMoveTimeout",
+  "tPointCheckStartTimeout",
+  "tSimulationDynamicsTimeout",
+  "tHmiWatchdogTimeout",
+  "tMobileMotionWatchdogTimeout",
+  "tPointCheckWatchdogTimeout",
+  "tHmiCommandFreshnessTimeout",
+  "stCellAxisTimeouts.tPowerFeedbackLossTimeout",
+  "rRobotAccelerationPercent",
+  "rRobotDecelerationPercent",
+  "rRobotJerkPercent",
+  "lrRobotHaltDeceleration",
+  "lrRobotHaltJerk"
 ];
 export const settingProtocol = { issued: 'udiCellSettingIssuedAtMs', request: 'udiCellSettingCommandSeq', ack: 'udiCellSettingAckSeq', result: 'uiCellSettingResult' };
 export const commandSymbols = [...pulseProtocols.values()].flatMap((protocol) => Object.values(protocol)).concat(Object.values(settingProtocol), ['uiCellSettingIndex', 'lrCellSettingRequest', 'udiHmiCommandClockMs']);

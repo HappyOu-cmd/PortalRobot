@@ -11,6 +11,7 @@ VAR_INPUT
 	xDrivesPowered : BOOL;
 	xDrivesOff : BOOL;
 	eGroupState : E_AXIS_GROUP_STATE;
+	tTransactionTimeout : TIME := T#60S; // Общий предел Stop -> Disable -> Change -> Enable
 END_VAR
 VAR_OUTPUT
 	xCellStopRequest : BOOL; // Сначала остановить технологический цикл
@@ -159,7 +160,7 @@ xRestoreOnExit := xOriginalLimitsSaved
 xPending := xOriginalLimitsSaved AND (uiDesiredFactor <> uiAppliedFactor);
 
 // Один общий таймаут защищает всю транзакцию Stop -> Disable -> Change -> Enable.
-tonTransaction(IN := uiState <> STATE_IDLE, PT := T#60S);
+tonTransaction(IN := uiState <> STATE_IDLE, PT := tTransactionTimeout);
 IF tonTransaction.Q
 AND (uiState <> STATE_IDLE)
 AND (uiState <> STATE_LOCKED_ERROR) THEN

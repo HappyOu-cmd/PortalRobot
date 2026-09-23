@@ -83,7 +83,8 @@ Status.xConfigValid := (Config.aIpAddress[0] > BYTE#0)
 	AND (Config.uiUnitId <= UINT#255)
 	AND (Config.tResponseTimeout >= T#50MS)
 	AND (Config.tPollInterval >= T#10MS)
-	AND (Config.tHeartbeatTimeout >= T#500MS);
+	AND (Config.tHeartbeatTimeout >= T#500MS)
+	AND (Config.tCommandTimeout >= T#1S);
 
 	udiReplyTimeoutUs := TIME_TO_UDINT(Config.tResponseTimeout) * UDINT#1000;
 	rtStop(CLK := Command.xStop);

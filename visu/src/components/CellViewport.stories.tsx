@@ -63,6 +63,7 @@ function EffectsPreview({ alarm = false }: { alarm?: boolean }) {
       cameraPreset="front"
       onMachineSelect={() => {}}
       visualEffects={{
+        workshopEnabled: true,
         cameraFocus: false,
         alarmBeacons: true,
         enclosureOpacity: 1,

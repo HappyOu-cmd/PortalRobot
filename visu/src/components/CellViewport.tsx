@@ -178,6 +178,7 @@ export function CellViewport({
       setDriftTelemetry,
       (target, node) => inspectRef.current(target, node),
       preview,
+      visualEffects,
     );
     sceneRef.current = scene;
     scene.setDriftSettings(driftSettings);
@@ -207,7 +208,12 @@ export function CellViewport({
   useEffect(() => sceneRef.current?.setInspection(inspectionClosing ? null : inspection), [inspection, inspectionClosing]);
   useEffect(() => sceneRef.current?.setEasterEgg(easterEggMode, easterEggRevision), [easterEggMode, easterEggRevision]);
   useEffect(() => sceneRef.current?.setDriftSettings(driftSettings), [driftSettings]);
-  useEffect(() => sceneRef.current?.setVisualEffects(visualEffects), [visualEffects]);
+  useEffect(() => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+    scene.setVisualEffects(visualEffects);
+    setZoomLevel(scene.getZoomLevel());
+  }, [visualEffects]);
   useEffect(() => sceneRef.current?.setSceneActivity(sceneActivity), [sceneActivity]);
   useEffect(() => sceneRef.current?.setFocusTarget(focusTarget), [focusTarget]);
   useEffect(() => sceneRef.current?.setLayout(layout), [layout]);

@@ -1,0 +1,129 @@
+.cell-header-controls {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 14px;
+  margin-left: auto;
+}
+
+.cell-header-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 16px;
+  grid-template-rows: 14px 21px;
+  align-content: center;
+  gap: 3px 10px;
+  min-width: 177px;
+  height: 58px;
+  padding: 9px 16px 9px 24px;
+  border: 1px solid #e2e9ee;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 2px 5px rgb(33 57 78 / 5%), 0 5px 12px rgb(33 57 78 / 3%);
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.cell-header-card--mode { min-width: 163px; border-color: #e0e8f5; }
+.cell-header-card__label {
+  grid-column: 1;
+  grid-row: 1;
+  color: #7b8da8;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 14px;
+  letter-spacing: .02em;
+}
+.cell-header-card__value {
+  grid-column: 1;
+  grid-row: 2;
+  color: #00b52e;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 21px;
+}
+.cell-header-card--mode .cell-header-card__value { color: #005cff; }
+.cell-header-card--alarm .cell-header-card__value { color: #d94747; }
+.cell-header-card__arrow {
+  grid-column: 2;
+  grid-row: 1 / 3;
+  align-self: center;
+  width: 16px;
+  height: 16px;
+  color: #7b8da8;
+  transition: transform 220ms ease, color 160ms ease;
+}
+.cell-header-card:hover,
+.cell-header-card[data-state="open"] {
+  border-color: #c8d9ed;
+  box-shadow: 0 3px 12px rgb(33 57 78 / 8%);
+}
+.cell-header-card[data-state="open"] .cell-header-card__arrow { transform: rotate(180deg); color: #005cff; }
+.cell-header-card:focus-visible { outline: 2px solid #90b7f4; outline-offset: 3px; }
+
+.cell-header-menu {
+  z-index: 80;
+  min-width: max(224px, var(--radix-dropdown-menu-trigger-width));
+  max-width: calc(100vw - 24px);
+  padding: 8px;
+  border: 1px solid #e2e9ee;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgb(33 57 78 / 10%), 0 2px 5px rgb(33 57 78 / 4%);
+  color: #183255;
+  outline: none;
+  transform-origin: var(--radix-dropdown-menu-content-transform-origin);
+}
+.cell-header-menu--mode { min-width: var(--radix-dropdown-menu-trigger-width); border-color: #e0e8f5; }
+.cell-header-menu__label {
+  padding: 5px 10px 8px;
+  color: #7b8da8;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 14px;
+  letter-spacing: .02em;
+}
+.cell-header-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 10px;
+  border-radius: 5px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+}
+.cell-header-menu__item > svg,
+.cell-header-menu__check > svg { display: block; width: 20px; height: 20px; flex-shrink: 0; }
+.cell-header-menu__item--start { color: #00a82b; }
+.cell-header-menu__item--stop { color: #d94747; }
+.cell-header-menu__item[data-highlighted] { background: #f3f7fd; }
+.cell-header-menu__item[data-state="checked"] { color: #005cff; background: #f3f7ff; }
+.cell-header-menu__item.is-unavailable { opacity: .42; }
+.cell-header-menu__item[data-disabled] { opacity: .42; cursor: default; }
+.cell-header-menu__check { margin-left: auto; }
+.cell-header-menu[data-state="open"] { animation: cell-header-menu-in 380ms cubic-bezier(.16, 1, .3, 1); }
+.cell-header-menu[data-state="closed"] { animation: cell-header-menu-out 240ms cubic-bezier(.32, 0, .67, 0); pointer-events: none; }
+@keyframes cell-header-menu-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes cell-header-menu-out {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(-8px); }
+}
+@media (max-width: 1100px) {
+  .cell-header-controls { gap: 10px; }
+  .cell-header-card { min-width: 150px; padding-left: 16px; }
+  .cell-header-card--mode { min-width: 136px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cell-header-card, .cell-header-card__arrow { transition: none; }
+  .cell-header-menu[data-state] { animation: none; }
+}

@@ -5,6 +5,8 @@ VAR_INPUT
 	FaultRequest : ST_POINT_FAULT_REQUEST; // Диагностические ошибки проверки точки
 	xSpeedFactorOverride : BOOL; // Для отдельной проверки точки с телефона
 	lrSpeedFactorOverride : LREAL; // 0.001..1.0, применяется вместо SpeedFactor точки
+	lrAccelerationFactor : LREAL := 1.0; // Единый предел разгона/торможения группы 0.01..1.0
+	lrJerkFactor : LREAL := 1.0; // Плавность групповой траектории 0.01..1.0
 END_VAR
 VAR_OUTPUT
 	FaultStatus : ST_FAULT_INJECTION_STATUS; // Состояние инжектора проверки точки
@@ -146,10 +148,10 @@ CASE stMotionManager.Diag.eState OF
 		ELSE
 			GroupData.MotionParam.VelFactor := curPoint.SpeedFactor;
 		END_IF;
-		// SpeedFactor точки ограничивает только скорость. Ускорение, замедление и
-		// jerk остаются инженерными пределами и не ослабляют торможение робота.
-		GroupData.MotionParam.AccFactor := 1.0;
-		GroupData.MotionParam.JerkFactor := 1.0;
+		// У группы SoftMotion один AccFactor для обеих сторон профиля. PLC передаёт
+		// сюда более строгий из глобальных процентов разгона и торможения.
+		GroupData.MotionParam.AccFactor := LIMIT(0.01, lrAccelerationFactor, 1.0);
+		GroupData.MotionParam.JerkFactor := LIMIT(0.01, lrJerkFactor, 1.0);
 		IF GroupData.Diag.iStep = E_AXIS_GROUP_STATE.READY
 		AND NOT GroupData.Command.xMoveDirect
 		AND NOT stMotionManager.Command.xGlobalError

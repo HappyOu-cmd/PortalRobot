@@ -13,7 +13,7 @@ VAR_GLOBAL
 	{attribute 'symbol' := 'read'}
 	audiHmiCommandAckSeq : ARRAY [1..121] OF UDINT;
 	{attribute 'symbol' := 'readwrite'}
-	uiCellSettingIndex : UINT; // 1..13, see command-contract.mjs
+	uiCellSettingIndex : UINT; // 1..36, see command-contract.mjs
 	{attribute 'symbol' := 'readwrite'}
 	lrCellSettingRequest : LREAL; // TIME values in milliseconds
 	{attribute 'symbol' := 'readwrite'}
@@ -77,7 +77,33 @@ VAR_GLOBAL
 	{attribute 'symbol' := 'read'}
 	lrSafetyHomeToleranceZ : LREAL := 5.0; // Допуск безопасной зоны по Z, мм
 	{attribute 'symbol' := 'read'}
+	rRobotAccelerationPercent : REAL := 100.0; // Разгон относительно предела осей, 1..100 %
+	{attribute 'symbol' := 'read'}
+	rRobotDecelerationPercent : REAL := 100.0; // Торможение относительно предела осей, 1..100 %
+	{attribute 'symbol' := 'read'}
+	rRobotJerkPercent : REAL := 100.0; // Jerk относительно предела осей, 1..100 %
+	{attribute 'symbol' := 'read'}
+	lrRobotHaltDeceleration : LREAL := 1000.0; // Замедление MC_GroupHalt, мм/с2
+	{attribute 'symbol' := 'read'}
+	lrRobotHaltJerk : LREAL := 10000.0; // Jerk MC_GroupHalt, мм/с3
+	{attribute 'symbol' := 'read'}
 	stCellMachineTimeouts : ST_MACHINE_TIMEOUTS; // Настраиваемые TIMEOUT технологических ожиданий
+	{attribute 'symbol' := 'read'}
+	stCellAxisTimeouts : ST_AXIS_TIMEOUTS; // Общий профиль TIMEOUT осей X/Y/Z
+	{attribute 'symbol' := 'read'}
+	stCellAxisGroupTimeouts : ST_AXIS_GROUP_TIMEOUTS; // TIMEOUT координатной группы XYZ
+	{attribute 'symbol' := 'read'}
+	tPointCheckStartTimeout : TIME;
+	{attribute 'symbol' := 'read'}
+	tSimulationDynamicsTimeout : TIME;
+	{attribute 'symbol' := 'read'}
+	tHmiWatchdogTimeout : TIME;
+	{attribute 'symbol' := 'read'}
+	tMobileMotionWatchdogTimeout : TIME;
+	{attribute 'symbol' := 'read'}
+	tPointCheckWatchdogTimeout : TIME;
+	{attribute 'symbol' := 'read'}
+	tHmiCommandFreshnessTimeout : TIME;
 	xCellSettingsChangeAllowed : BOOL; // PLC разрешает изменение настроек ячейки
 	// Команды и настройки, получаемые от HMI.
 	{attribute 'symbol' := 'read'}
@@ -136,6 +162,10 @@ VAR_GLOBAL
 	udiModbusPollIntervalMs : UDINT := UDINT#50;
 	{attribute 'symbol' := 'readwrite'}
 	udiModbusHeartbeatTimeoutMs : UDINT := UDINT#2000;
+	{attribute 'symbol' := 'readwrite'}
+	udiModbusCommandStartTimeoutMs : UDINT := UDINT#30000;
+	{attribute 'symbol' := 'readwrite'}
+	udiModbusCommandTimeoutMs : UDINT := UDINT#600000;
 	{attribute 'symbol' := 'read'}
 	xModbusSettingsApply : BOOL; // Импульс атомарного применения настроек
 	xRobotModeChangeAllowed : BOOL;

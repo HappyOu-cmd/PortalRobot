@@ -31,7 +31,6 @@ VAR CONSTANT
     AXE_DRIVE_AXIS_ERROR     : DWORD := DWORD#16#00002000; // Ошибка привода
     AXE_POWER_FEEDBACK_LOST  : DWORD := DWORD#16#00004000; // Потеря силовой готовности при активной команде питания
 
-    POWER_FEEDBACK_LOSS_DELAY : TIME := T#500MS; // Фильтр кратковременного дребезга обратной связи
 
     // ==================================================
     // Логические ошибки блока
@@ -214,7 +213,7 @@ xPowerFeedbackExpected := xPowerRequest
 		OR (AxisData.Diag.iStep = E_AXIS_STATE.STOP_RELEASE));
 tonPowerFeedbackLoss(
 	IN := xPowerFeedbackExpected AND NOT AxisData.Status.xPowered,
-	PT := POWER_FEEDBACK_LOSS_DELAY
+	PT := AxisData.Timeouts.tPowerFeedbackLossTimeout
 );
 IF tonPowerFeedbackLoss.Q
 AND (AxisData.Diag.iStep <> E_AXIS_STATE.ERROR_RESET_MANAGER) THEN

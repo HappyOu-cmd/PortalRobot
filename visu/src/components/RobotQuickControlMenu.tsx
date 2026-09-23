@@ -288,7 +288,6 @@ export function RobotQuickControlMenu({
               value={SPEED_PRESETS.find((value) => Math.abs(speed - value) < 0.05)?.toString() ?? ''}
               options={SPEED_PRESETS.map((value) => ({ value: value.toString(), label: `${value}%` }))}
               disabled={!modeReady}
-              animated={false}
               onChange={(nextValue) => onSend({ command: 'robot.speedOverride', value: Number(nextValue) })}
               ariaLabel="Предустановки скорости JOG"
             />
@@ -299,7 +298,6 @@ export function RobotQuickControlMenu({
               value={manualStep.toString()}
               options={STEP_VALUES.map((value) => ({ value: value.toString(), label: `${value} мм` }))}
               disabled={!modeReady}
-              animated={false}
               onChange={(nextValue) => onSend({ command: 'robot.manualStep', value: Number(nextValue) })}
               ariaLabel="Предустановки шага перемещения"
             />

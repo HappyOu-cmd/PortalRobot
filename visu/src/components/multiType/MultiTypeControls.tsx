@@ -139,7 +139,6 @@ export function CellSettingsPanel({ online, modbusMode, modbus, testEnvironment,
 }) {
 	const editable = online && settings.changeAllowed;
 	const modbusEditable = online && modbus.settingsChangeAllowed;
-	const [timeoutsOpen, setTimeoutsOpen] = useState(true);
 	const [activeTopic, setActiveTopic] = useState<CellSettingsTopic>('cell');
 	const [topicDirection, setTopicDirection] = useState<1 | -1>(1);
 	const requestedEnvironment = TEST_ENVIRONMENT_LABELS[testEnvironment.requested] ?? `код ${testEnvironment.requested}`;
@@ -224,6 +223,8 @@ export function CellSettingsPanel({ online, modbusMode, modbus, testEnvironment,
 				{field('Таймаут ответа', 'robot.modbus.responseTimeout', modbus.responseTimeoutMs, 'мс', 50, 10000, 10, modbusEditable)}
 				{field('Период опроса', 'robot.modbus.pollInterval', modbus.pollIntervalMs, 'мс', 10, 5000, 10, modbusEditable)}
 				{field('Таймаут heartbeat', 'robot.modbus.heartbeatTimeout', modbus.heartbeatTimeoutMs, 'мс', 500, 30000, 100, modbusEditable)}
+				{field('Старт команды', 'robot.modbus.commandStartTimeout', modbus.commandStartTimeout, 'с', 1, 600, 1, modbusEditable)}
+				{field('Выполнение команды', 'robot.modbus.commandTimeout', modbus.commandExecutionTimeout, 'с', 1, 3600, 1, modbusEditable)}
 			</div>
 			<button className="modbus-apply-button" type="button" disabled={!online || !modbus.settingsChangeAllowed} onClick={onModbusApply}>Применить соединение</button>
 			<div className="modbus-status-grid">
@@ -253,20 +254,55 @@ export function CellSettingsPanel({ online, modbusMode, modbus, testEnvironment,
 			</div>
 			<p className={`cell-settings-access ${editable ? 'allowed' : ''}`}>{editable ? 'Изменение разрешено PLC.' : !online ? 'Нет связи с PLC.' : 'Для изменения остановите ячейку и все движения, снимите активные ошибки.'}</p>
 		</section>}
-		{activeTopic === 'timeouts' && <details className="cell-settings-disclosure" open={timeoutsOpen} onToggle={(event) => setTimeoutsOpen(event.currentTarget.open)}>
-			<summary><Clock3 /><div><strong>TIMEOUT технологических ошибок</strong><span>Предельное ожидание подтверждений, 1–600 секунд</span></div><ChevronRight /></summary>
-			<div className="cell-settings-grid timeout-grid">
-				{field('Движение робота', 'cell.settings.timeoutRobotMove', settings.timeouts.robotMove, 'с', 1, 600, 1)}
-				{field('Действие захвата', 'cell.settings.timeoutRobotAction', settings.timeouts.robotAction, 'с', 1, 600, 1)}
-				{field('Освобождение интерфейса', 'cell.settings.timeoutRobotRelease', settings.timeouts.robotRelease, 'с', 1, 600, 1)}
-				{field('Открытие люка', 'cell.settings.timeoutDoorOpen', settings.timeouts.doorOpen, 'с', 1, 600, 1)}
-				{field('Закрытие люка', 'cell.settings.timeoutDoorClose', settings.timeouts.doorClose, 'с', 1, 600, 1)}
-				{field('Открытие замка люка', 'cell.settings.timeoutHatchUnlock', settings.timeouts.hatchUnlock, 'с', 1, 600, 1)}
-				{field('Разжим патрона', 'cell.settings.timeoutChuckOpen', settings.timeouts.chuckOpen, 'с', 1, 600, 1)}
-				{field('Зажим патрона', 'cell.settings.timeoutChuckClose', settings.timeouts.chuckClose, 'с', 1, 600, 1)}
-				{field('Подтверждение цикла', 'cell.settings.timeoutCycleStart', settings.timeouts.cycleStart, 'с', 1, 600, 1)}
-			</div>
-		</details>}
+		{activeTopic === 'timeouts' && <>
+			<details className="cell-settings-disclosure" open>
+				<summary><Clock3 /><div><strong>Станки и робот</strong><span>Технологические подтверждения, 1–600 секунд</span></div><ChevronRight /></summary>
+				<div className="cell-settings-grid timeout-grid">
+					{field('Движение робота', 'cell.settings.timeoutRobotMove', settings.timeouts.robotMove, 'с', 1, 600, 1)}
+					{field('Действие захвата', 'cell.settings.timeoutRobotAction', settings.timeouts.robotAction, 'с', 1, 600, 1)}
+					{field('Освобождение интерфейса', 'cell.settings.timeoutRobotRelease', settings.timeouts.robotRelease, 'с', 1, 600, 1)}
+					{field('Открытие люка', 'cell.settings.timeoutDoorOpen', settings.timeouts.doorOpen, 'с', 1, 600, 1)}
+					{field('Закрытие люка', 'cell.settings.timeoutDoorClose', settings.timeouts.doorClose, 'с', 1, 600, 1)}
+					{field('Открытие замка люка', 'cell.settings.timeoutHatchUnlock', settings.timeouts.hatchUnlock, 'с', 1, 600, 1)}
+					{field('Разжим патрона', 'cell.settings.timeoutChuckOpen', settings.timeouts.chuckOpen, 'с', 1, 600, 1)}
+					{field('Зажим патрона', 'cell.settings.timeoutChuckClose', settings.timeouts.chuckClose, 'с', 1, 600, 1)}
+					{field('Подтверждение цикла', 'cell.settings.timeoutCycleStart', settings.timeouts.cycleStart, 'с', 1, 600, 1)}
+				</div>
+			</details>
+			<details className="cell-settings-disclosure">
+				<summary><Clock3 /><div><strong>Оси X/Y/Z</strong><span>Единый профиль для трёх приводов, 0.1–600 секунд</span></div><ChevronRight /></summary>
+				<div className="cell-settings-grid timeout-grid">
+					{field('Потеря силовой готовности', 'cell.settings.axisPowerFeedbackLossTimeout', settings.timeouts.axisPowerFeedbackLoss, 'с', 0.1, 10, 0.1)}
+					{field('Включение питания', 'cell.settings.axisPowerTimeout', settings.timeouts.axisPower, 'с', 1, 600, 1)}
+					{field('Сброс ошибки', 'cell.settings.axisResetTimeout', settings.timeouts.axisReset, 'с', 1, 600, 1)}
+					{field('Остановка', 'cell.settings.axisStopTimeout', settings.timeouts.axisStop, 'с', 1, 600, 1)}
+					{field('Поиск HOME', 'cell.settings.axisHomeTimeout', settings.timeouts.axisHome, 'с', 1, 600, 1)}
+					{field('Перемещение', 'cell.settings.axisMoveTimeout', settings.timeouts.axisMove, 'с', 1, 600, 1)}
+				</div>
+			</details>
+			<details className="cell-settings-disclosure">
+				<summary><Clock3 /><div><strong>Группа XYZ</strong><span>Операции координатной группы, 1–600 секунд</span></div><ChevronRight /></summary>
+				<div className="cell-settings-grid timeout-grid">
+					{field('Включение питания', 'cell.settings.groupPowerTimeout', settings.timeouts.groupPower, 'с', 1, 600, 1)}
+					{field('Включение группы', 'cell.settings.groupEnableTimeout', settings.timeouts.groupEnable, 'с', 1, 600, 1)}
+					{field('Остановка', 'cell.settings.groupStopTimeout', settings.timeouts.groupStop, 'с', 1, 600, 1)}
+					{field('Плавная остановка', 'cell.settings.groupHaltTimeout', settings.timeouts.groupHalt, 'с', 1, 600, 1)}
+					{field('Поиск HOME', 'cell.settings.groupHomeTimeout', settings.timeouts.groupHome, 'с', 1, 600, 1)}
+					{field('Перемещение', 'cell.settings.groupMoveTimeout', settings.timeouts.groupMove, 'с', 1, 600, 1)}
+				</div>
+			</details>
+			<details className="cell-settings-disclosure">
+				<summary><Clock3 /><div><strong>Связь и служебные операции</strong><span>Watchdog и запуск внутренних транзакций</span></div><ChevronRight /></summary>
+				<div className="cell-settings-grid timeout-grid">
+					{field('Старт проверки точки', 'cell.settings.pointCheckStartTimeout', settings.timeouts.pointCheckStart, 'с', 0.5, 60, 0.1)}
+					{field('Dynamic Limits', 'cell.settings.simulationDynamicsTimeout', settings.timeouts.simulationDynamics, 'с', 1, 600, 1)}
+					{field('Heartbeat HMI', 'cell.settings.hmiWatchdogTimeout', settings.timeouts.hmiWatchdog, 'с', 0.5, 30, 0.1)}
+					{field('Heartbeat мобильного движения', 'cell.settings.mobileMotionWatchdogTimeout', settings.timeouts.mobileMotionWatchdog, 'с', 0.5, 30, 0.1)}
+					{field('Heartbeat проверки точки', 'cell.settings.pointCheckWatchdogTimeout', settings.timeouts.pointCheckWatchdog, 'с', 0.5, 30, 0.1)}
+					{field('Срок действия команды HMI', 'cell.settings.hmiCommandFreshnessTimeout', settings.timeouts.hmiCommandFreshness, 'с', 1, 30, 0.1)}
+				</div>
+			</details>
+		</>}
 		{activeTopic === 'products' && <>
 		<section className="cell-config-section product-type-count-settings">
 			<div className="cell-config-title"><Boxes /><div><h3>Типы изделий на ячейке</h3></div></div>

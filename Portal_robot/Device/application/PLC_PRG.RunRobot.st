@@ -443,6 +443,11 @@ ROBOT(
 	xPointCheckActive := xPointCheckActive,
 	xTestAbort := xTestAbortActive,
 	rPointCheckSpeedPercent := rPointCheckLatchedSpeed,
+	lrGroupAccelerationFactor := REAL_TO_LREAL(MIN(
+		GVL_CELL_SETTINGS.rRobotAccelerationPercent,
+		GVL_CELL_SETTINGS.rRobotDecelerationPercent)) / 100.0,
+	lrGroupJerkFactor := REAL_TO_LREAL(GVL_CELL_SETTINGS.rRobotJerkPercent) / 100.0,
+	tModbusStartTimeout := GVL_ROBOT_MODBUS_RETAIN.tCommandStartTimeout,
 	xSimulationAccelerationEnable := GVL_CELL_SETTINGS.xSimulationAccelerationActive,
 	uiSimulationTimeFactor := GVL_CELL_SETTINGS.uiSimulationTimeFactorApplied,
 	FaultRequest := stRobotFaultRequest,
@@ -465,7 +470,10 @@ ROBOT(
 );
 
 // Проверка держит свою скорость до фактического окончания/останова движения.
-tonPointCheckStart(IN := xPointCheckActive AND NOT xPointCheckSeenBusy, PT := T#2S);
+tonPointCheckStart(
+	IN := xPointCheckActive AND NOT xPointCheckSeenBusy,
+	PT := GVL_CELL_SETTINGS.tPointCheckStartTimeout
+);
 IF xPointCheckActive THEN
 	xPointCheckSeenBusy := xPointCheckSeenBusy OR GVL_ROBOT.Status.xBusy;
 	// HMI передаёт Execute импульсом. FB_ROBOT в DONE при снятом Execute

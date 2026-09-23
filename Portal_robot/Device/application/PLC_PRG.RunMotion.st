@@ -99,6 +99,7 @@ SIMULATION_DYNAMICS(
 	xDrivesPowered := xDrivesPowered,
 	xDrivesOff := xDrivesOff,
 	eGroupState := GVL_AXIS_GROUP.AxisGroup.Diag.iStep,
+	tTransactionTimeout := GVL_CELL_SETTINGS.tSimulationDynamicsTimeout,
 	AxisX := X,
 	AxisY := Y,
 	AxisZ := Z
@@ -385,9 +386,12 @@ FOR uiMachine := 1 TO 3 DO
 	axManualAxisCommandRejected[uiMachine] := FALSE;
 
 	GVL_AXIS.arrAxis[uiMachine].MotionParam.lrVelocity := alrRobotJogVelocity[uiMachine];
-	GVL_AXIS.arrAxis[uiMachine].MotionParam.lrAcceleration := alrRobotRatedAcceleration[uiMachine];
-	GVL_AXIS.arrAxis[uiMachine].MotionParam.lrDeceleration := alrRobotRatedDeceleration[uiMachine];
-	GVL_AXIS.arrAxis[uiMachine].MotionParam.lrJerk := alrRobotRatedJerk[uiMachine];
+	GVL_AXIS.arrAxis[uiMachine].MotionParam.lrAcceleration := alrRobotRatedAcceleration[uiMachine]
+		* REAL_TO_LREAL(GVL_CELL_SETTINGS.rRobotAccelerationPercent) / 100.0;
+	GVL_AXIS.arrAxis[uiMachine].MotionParam.lrDeceleration := alrRobotRatedDeceleration[uiMachine]
+		* REAL_TO_LREAL(GVL_CELL_SETTINGS.rRobotDecelerationPercent) / 100.0;
+	GVL_AXIS.arrAxis[uiMachine].MotionParam.lrJerk := alrRobotRatedJerk[uiMachine]
+		* REAL_TO_LREAL(GVL_CELL_SETTINGS.rRobotJerkPercent) / 100.0;
 
 	axManualAxisBaseAllowed[uiMachine] := xRobotHmiPermit
 		AND NOT xPointCheckActive
@@ -524,6 +528,13 @@ FOR uiMachine := 1 TO 3 DO
 	artManualAxisReject[uiMachine](CLK := axManualAxisCommandRejected[uiMachine]);
 END_FOR;
 
+// Все оси используют единый инженерный профиль. Настройки принимаются только
+// вне переходов питания и движения, поэтому активный шаг не меняет PT на лету.
+FOR uiMachine := 1 TO 3 DO
+	GVL_AXIS.arrAxis[uiMachine].Timeouts := GVL_CELL_SETTINGS.stAxisTimeouts;
+END_FOR;
+GVL_AXIS_GROUP.AxisGroup.Timeouts := GVL_CELL_SETTINGS.stAxisGroupTimeouts;
+
 AXIS_X(
 	FaultRequest := astAxisFaultRequest[1],
 	xResetPermit := xRobotHmiPermit,
@@ -577,6 +588,8 @@ IF xPointCheckActive THEN
 	// Глобальный override оставляем 100 %, иначе процент умножится сам на себя.
 	lrGroupVelocityOverride := 1.0;
 END_IF;
+GVL_AXIS_GROUP.AxisGroup.MotionParam.HaltDeceleration := GVL_CELL_SETTINGS.lrRobotHaltDeceleration;
+GVL_AXIS_GROUP.AxisGroup.MotionParam.HaltJerk := GVL_CELL_SETTINGS.lrRobotHaltJerk;
 GROUP_XYZ(
 	FaultRequest := stAxisGroupFaultRequest,
 	xResetPermit := xRobotHmiPermit,

@@ -1,6 +1,7 @@
 TYPE ST_AXIS_TIMEOUTS :
 STRUCT
 	xDisableOnError : BOOL := TRUE; // Отключать привод при логической ошибке
+    tPowerFeedbackLossTimeout : TIME := T#500MS; // Потеря силовой готовности при сохраняющемся запросе питания
     tPowerTimeout   : TIME := T#5S; // Время ожидания включения или отключения питания
     tResetTimeout   : TIME := T#5S; // Время ожидания сброса ошибки
     tStopTimeout    : TIME := T#5S; // Время ожидания остановки

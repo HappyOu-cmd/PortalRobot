@@ -14,4 +14,6 @@ IF udiHmiCommandNowMs >= udiIssuedAtMs THEN
 ELSE
 	uliAgeMs := ULINT#4294967296 + UDINT_TO_ULINT(udiHmiCommandNowMs) - UDINT_TO_ULINT(udiIssuedAtMs);
 END_IF;
-IsHmiCommandFresh := uliAgeMs <= ULINT#3000;
+IsHmiCommandFresh := uliAgeMs <= UDINT_TO_ULINT(
+	TIME_TO_UDINT(GVL_CELL_SETTINGS.tHmiCommandFreshnessTimeout)
+);

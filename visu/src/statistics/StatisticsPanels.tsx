@@ -20,6 +20,7 @@ import { Icon } from '@iconify/react';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { AppUser } from '../auth/client';
 import { Dialog } from '../components/ui/Dialog';
+import { SegmentedControl } from '../components/ui/ControlPrimitives';
 import {
   statisticsApi, toLocalInput,
   type OperatorInterval, type ShiftTemplate, type ShiftTemplateDraft,
@@ -211,10 +212,9 @@ export function StatisticsPanel({ user, onClose, demo = false }: { user: AppUser
     </header> : <header className="operator-statistics-heading">
       <div className="operator-statistics-heading__copy"><h2>Статистика оператора</h2><p>Результат смены и работа оборудования</p></div>
       <div className="operator-statistics-heading__controls">
-        <div className="operator-statistics-period" role="group" aria-label="Период статистики">
-          <button type="button" aria-pressed={preset === 'current-shift'} onClick={() => setPreset('current-shift')}>Текущая смена</button>
-          <button type="button" aria-pressed={preset === 'all'} onClick={() => setPreset('all')}>Всё время</button>
-        </div>
+        <SegmentedControl className="operator-statistics-period" value={preset}
+          options={[{ value: 'current-shift', label: 'Текущая смена' }, { value: 'all', label: 'Всё время' }]}
+          onChange={(value) => setPreset(value as StatisticsPreset)} ariaLabel="Период статистики" />
         {displayedSummary && <span className="operator-statistics-date"><Icon icon={calendarMonthOutlineIcon} aria-hidden="true" />{formatDateTime(displayedSummary.period.fromMs)} — {formatDateTime(displayedSummary.period.toMs)}</span>}
         <div className="operator-statistics-heading__actions">
           <button type="button" onClick={() => setRevision((value) => value + 1)} title="Обновить статистику" aria-label="Обновить статистику"><Icon icon={refreshIcon} className={loading ? 'spin' : ''} aria-hidden="true" /></button>

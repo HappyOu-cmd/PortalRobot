@@ -4,13 +4,23 @@ METHOD PRIVATE RunRobotModbus
 
 // Эффективная конфигурация всегда принадлежит RETAIN-GVL. HMI меняет только
 // подготовленные значения и затем выдаёт отдельный импульс Apply.
+// Новые RETAIN-поля после Online Change могут прийти нулевыми — нормализуем их
+// до безопасных штатных значений до первого использования FB_ROBOT.
+IF (GVL_ROBOT_MODBUS_RETAIN.tCommandStartTimeout < T#1S)
+OR (GVL_ROBOT_MODBUS_RETAIN.tCommandStartTimeout > T#600S) THEN
+	GVL_ROBOT_MODBUS_RETAIN.tCommandStartTimeout := T#30S;
+END_IF;
+IF (GVL_ROBOT_MODBUS_RETAIN.tCommandTimeout < T#1S)
+OR (GVL_ROBOT_MODBUS_RETAIN.tCommandTimeout > T#3600S) THEN
+	GVL_ROBOT_MODBUS_RETAIN.tCommandTimeout := T#600S;
+END_IF;
 GVL_ROBOT_MODBUS.Config.aIpAddress := GVL_ROBOT_MODBUS_RETAIN.aIpAddress;
 GVL_ROBOT_MODBUS.Config.uiPort := GVL_ROBOT_MODBUS_RETAIN.uiPort;
 GVL_ROBOT_MODBUS.Config.uiUnitId := GVL_ROBOT_MODBUS_RETAIN.uiUnitId;
 GVL_ROBOT_MODBUS.Config.tResponseTimeout := GVL_ROBOT_MODBUS_RETAIN.tResponseTimeout;
 GVL_ROBOT_MODBUS.Config.tPollInterval := GVL_ROBOT_MODBUS_RETAIN.tPollInterval;
 GVL_ROBOT_MODBUS.Config.tHeartbeatTimeout := GVL_ROBOT_MODBUS_RETAIN.tHeartbeatTimeout;
-GVL_ROBOT_MODBUS.Config.tCommandTimeout := T#600S;
+GVL_ROBOT_MODBUS.Config.tCommandTimeout := GVL_ROBOT_MODBUS_RETAIN.tCommandTimeout;
 GVL_ROBOT_MODBUS.xModeActive :=
 	GVL_ROBOT_MODBUS_RETAIN.eControlMode = E_ROBOT_CONTROL_MODE.MODBUS_TCP;
 GVL_HMI.xModbusMode := GVL_ROBOT_MODBUS.xModeActive;
@@ -26,6 +36,8 @@ IF NOT xModbusHmiInitialized THEN
 	GVL_HMI.udiModbusResponseTimeoutMs := TIME_TO_UDINT(GVL_ROBOT_MODBUS_RETAIN.tResponseTimeout);
 	GVL_HMI.udiModbusPollIntervalMs := TIME_TO_UDINT(GVL_ROBOT_MODBUS_RETAIN.tPollInterval);
 	GVL_HMI.udiModbusHeartbeatTimeoutMs := TIME_TO_UDINT(GVL_ROBOT_MODBUS_RETAIN.tHeartbeatTimeout);
+	GVL_HMI.udiModbusCommandStartTimeoutMs := TIME_TO_UDINT(GVL_ROBOT_MODBUS_RETAIN.tCommandStartTimeout);
+	GVL_HMI.udiModbusCommandTimeoutMs := TIME_TO_UDINT(GVL_ROBOT_MODBUS_RETAIN.tCommandTimeout);
 	xModbusHmiInitialized := TRUE;
 END_IF;
 
@@ -78,7 +90,11 @@ IF rtModbusSettingsApply.Q THEN
 	AND (GVL_HMI.udiModbusPollIntervalMs >= UDINT#10)
 	AND (GVL_HMI.udiModbusPollIntervalMs <= UDINT#5000)
 	AND (GVL_HMI.udiModbusHeartbeatTimeoutMs >= UDINT#500)
-	AND (GVL_HMI.udiModbusHeartbeatTimeoutMs <= UDINT#30000) THEN
+	AND (GVL_HMI.udiModbusHeartbeatTimeoutMs <= UDINT#30000)
+	AND (GVL_HMI.udiModbusCommandStartTimeoutMs >= UDINT#1000)
+	AND (GVL_HMI.udiModbusCommandStartTimeoutMs <= UDINT#600000)
+	AND (GVL_HMI.udiModbusCommandTimeoutMs >= UDINT#1000)
+	AND (GVL_HMI.udiModbusCommandTimeoutMs <= UDINT#3600000) THEN
 		GVL_ROBOT_MODBUS_RETAIN.aIpAddress[0] := UINT_TO_BYTE(GVL_HMI.uiModbusIpOctet1);
 		GVL_ROBOT_MODBUS_RETAIN.aIpAddress[1] := UINT_TO_BYTE(GVL_HMI.uiModbusIpOctet2);
 		GVL_ROBOT_MODBUS_RETAIN.aIpAddress[2] := UINT_TO_BYTE(GVL_HMI.uiModbusIpOctet3);
@@ -88,6 +104,8 @@ IF rtModbusSettingsApply.Q THEN
 		GVL_ROBOT_MODBUS_RETAIN.tResponseTimeout := UDINT_TO_TIME(GVL_HMI.udiModbusResponseTimeoutMs);
 		GVL_ROBOT_MODBUS_RETAIN.tPollInterval := UDINT_TO_TIME(GVL_HMI.udiModbusPollIntervalMs);
 		GVL_ROBOT_MODBUS_RETAIN.tHeartbeatTimeout := UDINT_TO_TIME(GVL_HMI.udiModbusHeartbeatTimeoutMs);
+		GVL_ROBOT_MODBUS_RETAIN.tCommandStartTimeout := UDINT_TO_TIME(GVL_HMI.udiModbusCommandStartTimeoutMs);
+		GVL_ROBOT_MODBUS_RETAIN.tCommandTimeout := UDINT_TO_TIME(GVL_HMI.udiModbusCommandTimeoutMs);
 		GVL_ROBOT_MODBUS.xReconnectRequest := GVL_ROBOT_MODBUS.xModeActive;
 		GVL_HMI.uiModbusSettingsRejectReason := UINT#0;
 	ELSE
@@ -131,7 +149,7 @@ GVL_ROBOT_MODBUS.Config.uiUnitId := GVL_ROBOT_MODBUS_RETAIN.uiUnitId;
 GVL_ROBOT_MODBUS.Config.tResponseTimeout := GVL_ROBOT_MODBUS_RETAIN.tResponseTimeout;
 GVL_ROBOT_MODBUS.Config.tPollInterval := GVL_ROBOT_MODBUS_RETAIN.tPollInterval;
 GVL_ROBOT_MODBUS.Config.tHeartbeatTimeout := GVL_ROBOT_MODBUS_RETAIN.tHeartbeatTimeout;
-GVL_ROBOT_MODBUS.Config.tCommandTimeout := T#600S;
+GVL_ROBOT_MODBUS.Config.tCommandTimeout := GVL_ROBOT_MODBUS_RETAIN.tCommandTimeout;
 
 ROBOT_MODBUS(
 	xEnable := GVL_ROBOT_MODBUS.xModeActive,

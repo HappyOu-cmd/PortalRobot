@@ -1,0 +1,149 @@
+.confirmation-overlay.operator-confirmation {
+  --confirmation-blue: #1769e8;
+  --confirmation-ink: #182333;
+  --confirmation-muted: #6c798a;
+  padding: 24px;
+  overflow: auto;
+  background: rgb(229 236 245 / 76%);
+  backdrop-filter: blur(8px);
+  color: var(--confirmation-ink);
+}
+.operator-confirmation .confirmation-modal {
+  display: grid;
+  grid-template-columns: 272px minmax(0, 1fr);
+  width: min(1200px, 100%);
+  min-height: 570px;
+  max-height: 100%;
+  padding: 10px;
+  overflow: auto;
+  border: 1px solid rgb(255 255 255 / 85%);
+  border-radius: 28px;
+  background: #eef1f5;
+  box-shadow: 0 24px 70px rgb(38 64 96 / 17%);
+  font-family: var(--font-ui, Inter, sans-serif);
+}
+.operator-confirmation .confirmation-context {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  padding: 28px 24px;
+  border-radius: 20px;
+  background: var(--confirmation-blue);
+  color: #fff;
+}
+.operator-confirmation .confirmation-context-label { color: rgb(255 255 255 / 74%); font-size: 11px; font-weight: 600; line-height: 1.6; letter-spacing: .06em; }
+.operator-confirmation .confirmation-machine-identity { display: grid; justify-items: start; gap: 14px; }
+.operator-confirmation .confirmation-equipment-icon { width: 64px; height: 64px; display: grid; place-items: center; border: 1px solid rgb(255 255 255 / 18%); border-radius: 20px; background: rgb(255 255 255 / 12%); }
+.operator-confirmation .confirmation-equipment-icon svg { width: 36px; height: 36px; stroke-width: 1.5; }
+.operator-confirmation .confirmation-machine-identity h2 { margin: 4px 0 0; font-size: 32px; font-weight: 600; line-height: 1.15; letter-spacing: -.04em; }
+.operator-confirmation .confirmation-machine-identity p { margin: 0; color: rgb(255 255 255 / 78%); font-size: 13px; line-height: 1.6; }
+.operator-confirmation .confirmation-stepper { display: grid; gap: 10px; margin: auto 0 0; padding: 24px 0 0; border-top: 1px solid rgb(255 255 255 / 22%); list-style: none; }
+.operator-confirmation .confirmation-stepper li { display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 9px 10px; border-radius: 12px; color: rgb(255 255 255 / 64%); }
+.operator-confirmation .confirmation-stepper i { display: grid; place-items: center; flex: 0 0 30px; height: 30px; border: 1px solid rgb(255 255 255 / 32%); border-radius: 50%; font-size: 12px; font-style: normal; font-weight: 600; }
+.operator-confirmation .confirmation-stepper i svg { width: 18px; height: 18px; }
+.operator-confirmation .confirmation-stepper li > span { font-size: 12px; line-height: 1.5; }
+.operator-confirmation .confirmation-stepper .active { background: rgb(255 255 255 / 14%); color: #fff; }
+.operator-confirmation .confirmation-stepper .active i { border-color: #fff; background: #fff; color: var(--confirmation-blue); }
+.operator-confirmation .confirmation-stepper .done { color: rgb(255 255 255 / 90%); }
+.operator-confirmation .confirmation-stepper .done i { border-color: transparent; background: rgb(255 255 255 / 18%); }
+.operator-confirmation .confirmation-workflow { min-width: 0; display: flex; flex-direction: column; padding: 22px 30px 14px; }
+.operator-confirmation .confirmation-workflow > header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.operator-confirmation .confirmation-workflow > header h2 { margin: 0; font-size: 20px; font-weight: 600; line-height: 1.4; letter-spacing: -.025em; }
+.operator-confirmation .confirmation-workflow > header div > span { display: block; margin-top: 5px; color: var(--confirmation-muted); font-size: 12px; }
+.operator-confirmation .confirmation-workflow > header button { width: 44px; height: 44px; flex: 0 0 44px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; background: rgb(255 255 255 / 75%); color: #60728a; box-shadow: 0 3px 12px rgb(38 64 96 / 5%); cursor: pointer; }
+.operator-confirmation .confirmation-workflow > header button svg { width: 22px; height: 22px; }
+.operator-confirmation .confirmation-question { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 26px; padding: 32px 0; }
+.operator-confirmation .question-heading h3 { max-width: 650px; margin: 0; font-size: 28px; font-weight: 600; line-height: 1.25; letter-spacing: -.035em; text-wrap: balance; }
+.operator-confirmation .question-heading p { margin: 12px 0 0; color: var(--confirmation-muted); font-size: 13px; line-height: 1.6; }
+.operator-confirmation .confirmation-choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.operator-confirmation .confirmation-choices.count-1 { grid-template-columns: minmax(0, 1fr); }
+.operator-confirmation .confirmation-choices.count-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.operator-confirmation .confirmation-choice {
+  --choice-color: var(--product-type-color, var(--confirmation-blue));
+  min-width: 0;
+  min-height: 216px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  padding: 22px;
+  border: 1px solid rgb(255 255 255 / 90%);
+  border-radius: 22px;
+  background: rgb(255 255 255 / 78%);
+  box-shadow: 0 7px 24px rgb(38 64 96 / 6%);
+  color: var(--confirmation-ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+.operator-confirmation .confirmation-choice.detail { --choice-color: #219465; }
+.operator-confirmation .confirmation-choice-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.operator-confirmation .confirmation-choice-icon { display: grid; place-items: center; flex: 0 0 56px; height: 56px; border-radius: 18px; background: color-mix(in srgb, var(--choice-color) 8%, white); color: var(--choice-color); }
+.operator-confirmation .confirmation-choice-icon > svg { width: 34px; height: 34px; stroke-width: 1.5; }
+.operator-confirmation .confirmation-choice strong { font-size: 21px; font-weight: 600; line-height: 1.3; letter-spacing: -.025em; }
+.operator-confirmation .confirmation-choice-description { color: var(--confirmation-muted); font-size: 12px; line-height: 1.5; }
+.operator-confirmation .confirmation-choice-action { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: auto; padding-top: 16px; color: var(--choice-color); font-size: 12px; font-weight: 600; }
+.operator-confirmation .confirmation-choice-action > svg { width: 22px; height: 22px; }
+.operator-confirmation .confirmation-choice .product-type-badge { padding: 5px 8px; border: 0; border-radius: 8px; font-size: 10px; font-weight: 600; }
+.operator-confirmation .confirmation-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.operator-confirmation .confirmation-actions button { min-height: 68px; padding: 16px; border: 1px solid rgb(131 152 177 / 18%); border-radius: 16px; background: #fff; color: #536277; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; touch-action: manipulation; }
+.operator-confirmation .confirmation-actions .primary { border-color: var(--confirmation-blue); background: var(--confirmation-blue); box-shadow: 0 7px 18px rgb(23 105 232 / 16%); color: #fff; }
+.operator-confirmation .confirmation-wait { display: grid; justify-items: center; gap: 16px; padding: 40px 0; text-align: center; }
+.operator-confirmation .confirmation-wait svg { width: 48px; height: 48px; color: var(--confirmation-blue); animation: confirmation-spin 1s linear infinite; }
+.operator-confirmation .confirmation-wait strong { font-size: 24px; font-weight: 600; }
+.operator-confirmation .confirmation-wait span { color: var(--confirmation-muted); font-size: 13px; }
+.operator-confirmation .confirmation-workflow > footer { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding-top: 18px; border-top: 1px solid rgb(131 152 177 / 18%); }
+.operator-confirmation .confirmation-workflow > footer button { flex-shrink: 0; min-height: 46px; padding: 12px 16px; border: 1px solid rgb(131 152 177 / 22%); border-radius: 12px; background: transparent; color: #536277; font: inherit; font-size: 12px; font-weight: 500; cursor: pointer; }
+.operator-confirmation .confirmation-workflow > footer > span { max-width: 250px; color: var(--confirmation-muted); font-size: 11px; line-height: 1.5; text-align: right; }
+.operator-confirmation button:focus-visible { outline: 3px solid var(--confirmation-blue); outline-offset: 4px; }
+.operator-confirmation button:disabled { cursor: not-allowed; opacity: .45; }
+.operator-confirmation .confirmation-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@media (hover: hover) {
+  .operator-confirmation .confirmation-choice:not(:disabled):hover { transform: translateY(-3px); border-color: var(--choice-color); background: #fff; box-shadow: 0 12px 26px rgb(38 64 96 / 10%); }
+  .operator-confirmation .confirmation-workflow > header button:not(:disabled):hover, .operator-confirmation .confirmation-workflow > footer button:not(:disabled):hover { background: #fff; color: var(--confirmation-blue); }
+  .operator-confirmation .confirmation-actions button:not(:disabled):hover { border-color: var(--confirmation-blue); box-shadow: 0 7px 18px rgb(23 105 232 / 16%); }
+}
+@media (max-width: 1050px) {
+  .operator-confirmation .confirmation-modal { grid-template-columns: 230px minmax(0, 1fr); }
+  .operator-confirmation .confirmation-context { padding: 24px 18px; }
+  .operator-confirmation .confirmation-workflow { padding: 20px; }
+  .operator-confirmation .confirmation-choice { padding: 18px; }
+  .operator-confirmation .confirmation-choices.count-3 { gap: 10px; }
+  .operator-confirmation .confirmation-choices.count-3 .confirmation-choice-top { flex-wrap: wrap; }
+}
+@media (max-width: 760px) {
+  .confirmation-overlay.operator-confirmation { padding: 12px; }
+  .operator-confirmation .confirmation-modal { grid-template-columns: minmax(0, 1fr); min-height: 0; border-radius: 22px; }
+  .operator-confirmation .confirmation-context { gap: 16px; padding: 20px; border-radius: 16px; }
+  .operator-confirmation .confirmation-context-label { font-size: 10px; }
+  .operator-confirmation .confirmation-machine-identity { grid-template-columns: 48px minmax(0, 1fr); gap: 5px 14px; }
+  .operator-confirmation .confirmation-equipment-icon { grid-row: span 2; width: 48px; height: 48px; border-radius: 14px; }
+  .operator-confirmation .confirmation-equipment-icon svg { width: 28px; height: 28px; }
+  .operator-confirmation .confirmation-machine-identity h2 { margin: 0; font-size: 24px; }
+  .operator-confirmation .confirmation-machine-identity p { font-size: 11px; }
+  .operator-confirmation .confirmation-stepper { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; padding-top: 12px; }
+  .operator-confirmation .confirmation-stepper li { flex-direction: column; padding: 8px 4px; gap: 8px; text-align: center; }
+  .operator-confirmation .confirmation-stepper li > span { font-size: 10px; }
+  .operator-confirmation .confirmation-workflow { padding: 22px 12px 10px; }
+  .operator-confirmation .confirmation-workflow > header h2 { font-size: 18px; }
+  .operator-confirmation .question-heading h3 { font-size: 24px; }
+  .operator-confirmation .confirmation-workflow > footer { flex-wrap: wrap; gap: 12px; }
+  .operator-confirmation .confirmation-workflow > footer > span { max-width: none; text-align: left; }
+}
+@media (max-width: 480px) {
+  .operator-confirmation .confirmation-choices, .operator-confirmation .confirmation-choices.count-3, .operator-confirmation .confirmation-actions { grid-template-columns: minmax(0, 1fr); }
+  .operator-confirmation .confirmation-choice { min-height: 190px; }
+}
+@media (max-height: 680px) and (min-width: 761px) {
+  .operator-confirmation .confirmation-modal { min-height: 0; }
+  .operator-confirmation .confirmation-context { gap: 16px; }
+  .operator-confirmation .confirmation-question { padding-block: 22px; gap: 20px; }
+  .operator-confirmation .confirmation-choice { min-height: 190px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .operator-confirmation .confirmation-choice { transition: none; }
+  .operator-confirmation .confirmation-choice:not(:disabled):hover { transform: none; }
+  .operator-confirmation .confirmation-wait svg { animation: none; }
+}

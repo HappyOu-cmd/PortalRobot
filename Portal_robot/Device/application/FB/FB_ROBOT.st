@@ -45,6 +45,9 @@ VAR_INPUT
 	xPointCheckActive : BOOL; // Текущая команда принадлежит проверке сохранённой точки
 	xTestAbort : BOOL; // Немедленная отмена активной команды виртуального теста
 	rPointCheckSpeedPercent : REAL; // Фактическая скорость проверки 0.1..100 %
+	lrGroupAccelerationFactor : LREAL := 1.0; // Общий разгон/торможение групповой траектории, 0.01..1.0
+	lrGroupJerkFactor : LREAL := 1.0; // Общий jerk групповой траектории, 0.01..1.0
+	tModbusStartTimeout : TIME := T#30S; // Ожидание создания транзакции внешним адаптером
 	FaultRequest        : ST_ROBOT_FAULT_REQUEST; // Единый контракт диагностической инъекции
 	tGripper1OpenTime   : TIME := T#500MS; // Время открытия первого захвата в модели
 	tGripper1CloseTime  : TIME := T#500MS; // Время закрытия первого захвата в модели
@@ -386,7 +389,7 @@ tonModbusStartTimeout(
 	IN := xMode
 		AND (eState = E_ROBOT_STATE.MODBUS)
 		AND NOT xModbusCommandStarted,
-	PT := T#30S
+	PT := tModbusStartTimeout
 );
 
 // Ошибка оси или группы является первопричиной в Motion-слое и отдельной
@@ -698,6 +701,8 @@ fbMotionManager(
 	FaultRequest := FaultRequest.stPoint,
 	xSpeedFactorOverride := xPointCheckActive,
 	lrSpeedFactorOverride := REAL_TO_LREAL(rPointCheckSpeedPercent) / 100.0,
+	lrAccelerationFactor := lrGroupAccelerationFactor,
+	lrJerkFactor := lrGroupJerkFactor,
     stMotionManager := stMotionManager,
     GroupData := GroupData,
     stPointManager := stPointManager

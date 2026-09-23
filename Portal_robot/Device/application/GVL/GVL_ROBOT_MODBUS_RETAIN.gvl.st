@@ -7,4 +7,6 @@ VAR_GLOBAL RETAIN
 	tResponseTimeout  : TIME := T#500MS;
 	tPollInterval     : TIME := T#50MS;
 	tHeartbeatTimeout : TIME := T#2S;
+	tCommandStartTimeout : TIME := T#30S;
+	tCommandTimeout   : TIME := T#600S;
 END_VAR

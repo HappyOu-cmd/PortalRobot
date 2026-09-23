@@ -32,6 +32,14 @@ VAR_GLOBAL
 	// дрожания обратной связи, но фиксирует последующее ручное перемещение.
 	lrStoppedPoseTolerance : LREAL := 1.0;
 
+	// Общий профиль динамики SoftMotion. Проценты масштабируют фактические
+	// динамические пределы каждой оси; Halt-параметры принадлежат группе XYZ.
+	rRobotAccelerationPercent : REAL := 100.0;
+	rRobotDecelerationPercent : REAL := 100.0;
+	rRobotJerkPercent : REAL := 100.0;
+	lrRobotHaltDeceleration : LREAL := 1000.0;
+	lrRobotHaltJerk : LREAL := 10000.0;
+
 	// Настройки ячейки редактируются из HMI только в остановленном безопасном состоянии.
 	xCellSettingsChangeAllowed : BOOL := FALSE;
 	stMachineTimeouts : ST_MACHINE_TIMEOUTS := (
@@ -45,6 +53,29 @@ VAR_GLOBAL
 		tChuckClose := T#10S,
 		tCycleStart := T#10S
 	); // Штатные пределы ожидания технологических подтверждений станков
+	stAxisTimeouts : ST_AXIS_TIMEOUTS := (
+		xDisableOnError := TRUE,
+		tPowerFeedbackLossTimeout := T#500MS,
+		tPowerTimeout := T#5S,
+		tResetTimeout := T#5S,
+		tStopTimeout := T#5S,
+		tHomeTimeout := T#30S,
+		tMoveTimeout := T#15S
+	); // Общий профиль ожиданий для осей X/Y/Z
+	stAxisGroupTimeouts : ST_AXIS_GROUP_TIMEOUTS := (
+		tPowerTimeout := T#5S,
+		tGroupTimeout := T#5S,
+		tStopTimeout := T#5S,
+		tHaltTimeout := T#5S,
+		tHomeTimeout := T#30S,
+		tMoveTimeout := T#30S
+	); // Ожидания координатной группы XYZ
+	tPointCheckStartTimeout : TIME := T#2S; // Ожидание фактического старта проверки точки
+	tSimulationDynamicsTimeout : TIME := T#60S; // Stop -> Disable -> Dynamic Limits -> Enable
+	tHmiWatchdogTimeout : TIME := T#2S; // Потеря основного heartbeat HMI
+	tMobileMotionWatchdogTimeout : TIME := T#2S; // Потеря heartbeat мобильного движения
+	tPointCheckWatchdogTimeout : TIME := T#2S; // Потеря владельца проверки точки
+	tHmiCommandFreshnessTimeout : TIME := T#3S; // Максимальный возраст подтверждаемой команды HMI
 
 	//Порядок команд для смены, загрузки и выгрузки станков
 	CHANGE_MACHINE : ARRAY [0..40] OF ST_MACHINE_RECIPE // Рецепт смены детали в станке

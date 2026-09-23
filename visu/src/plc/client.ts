@@ -180,6 +180,8 @@ export interface PlcRobotModbusInfo {
   responseTimeoutMs: number;
   pollIntervalMs: number;
   heartbeatTimeoutMs: number;
+  commandStartTimeout: number;
+  commandExecutionTimeout: number;
   configValid: boolean;
   connected: boolean;
   communicationAlive: boolean;
@@ -222,6 +224,13 @@ export interface PlcRobotModbusInfo {
 export interface PlcCellSettings {
   changeAllowed: boolean;
   pointCheckSpeedPercent: number;
+  robotMotion: {
+    accelerationPercent: number;
+    decelerationPercent: number;
+    jerkPercent: number;
+    haltDeceleration: number;
+    haltJerk: number;
+  };
   safetyHome: {
     x: number;
     y: number;
@@ -241,6 +250,24 @@ export interface PlcCellSettings {
     chuckOpen: number;
     chuckClose: number;
     cycleStart: number;
+    axisPowerFeedbackLoss: number;
+    axisPower: number;
+    axisReset: number;
+    axisStop: number;
+    axisHome: number;
+    axisMove: number;
+    groupPower: number;
+    groupEnable: number;
+    groupStop: number;
+    groupHalt: number;
+    groupHome: number;
+    groupMove: number;
+    pointCheckStart: number;
+    simulationDynamics: number;
+    hmiWatchdog: number;
+    mobileMotionWatchdog: number;
+    pointCheckWatchdog: number;
+    hmiCommandFreshness: number;
   };
 }
 
@@ -894,6 +921,13 @@ export function mapRuntimeInfo(values: Record<string, unknown>, current: PlcRunt
     cellSettings: {
       changeAllowed: booleanValue(values, 'xCellSettingsChangeAllowed', current.cellSettings.changeAllowed),
       pointCheckSpeedPercent: numberValue(values, 'rPointCheckSpeedPercent', current.cellSettings.pointCheckSpeedPercent),
+      robotMotion: {
+        accelerationPercent: numberValue(values, 'rRobotAccelerationPercent', current.cellSettings.robotMotion.accelerationPercent),
+        decelerationPercent: numberValue(values, 'rRobotDecelerationPercent', current.cellSettings.robotMotion.decelerationPercent),
+        jerkPercent: numberValue(values, 'rRobotJerkPercent', current.cellSettings.robotMotion.jerkPercent),
+        haltDeceleration: numberValue(values, 'lrRobotHaltDeceleration', current.cellSettings.robotMotion.haltDeceleration),
+        haltJerk: numberValue(values, 'lrRobotHaltJerk', current.cellSettings.robotMotion.haltJerk),
+      },
       safetyHome: {
         x: numberValue(values, 'lrSafetyHomeX', current.cellSettings.safetyHome.x),
         y: numberValue(values, 'lrSafetyHomeY', current.cellSettings.safetyHome.y),
@@ -913,6 +947,24 @@ export function mapRuntimeInfo(values: Record<string, unknown>, current: PlcRunt
         chuckOpen: secondsValue(values, 'stCellMachineTimeouts.tChuckOpen', current.cellSettings.timeouts.chuckOpen),
         chuckClose: secondsValue(values, 'stCellMachineTimeouts.tChuckClose', current.cellSettings.timeouts.chuckClose),
         cycleStart: secondsValue(values, 'stCellMachineTimeouts.tCycleStart', current.cellSettings.timeouts.cycleStart),
+        axisPowerFeedbackLoss: secondsValue(values, 'stCellAxisTimeouts.tPowerFeedbackLossTimeout', current.cellSettings.timeouts.axisPowerFeedbackLoss),
+        axisPower: secondsValue(values, 'stCellAxisTimeouts.tPowerTimeout', current.cellSettings.timeouts.axisPower),
+        axisReset: secondsValue(values, 'stCellAxisTimeouts.tResetTimeout', current.cellSettings.timeouts.axisReset),
+        axisStop: secondsValue(values, 'stCellAxisTimeouts.tStopTimeout', current.cellSettings.timeouts.axisStop),
+        axisHome: secondsValue(values, 'stCellAxisTimeouts.tHomeTimeout', current.cellSettings.timeouts.axisHome),
+        axisMove: secondsValue(values, 'stCellAxisTimeouts.tMoveTimeout', current.cellSettings.timeouts.axisMove),
+        groupPower: secondsValue(values, 'stCellAxisGroupTimeouts.tPowerTimeout', current.cellSettings.timeouts.groupPower),
+        groupEnable: secondsValue(values, 'stCellAxisGroupTimeouts.tGroupTimeout', current.cellSettings.timeouts.groupEnable),
+        groupStop: secondsValue(values, 'stCellAxisGroupTimeouts.tStopTimeout', current.cellSettings.timeouts.groupStop),
+        groupHalt: secondsValue(values, 'stCellAxisGroupTimeouts.tHaltTimeout', current.cellSettings.timeouts.groupHalt),
+        groupHome: secondsValue(values, 'stCellAxisGroupTimeouts.tHomeTimeout', current.cellSettings.timeouts.groupHome),
+        groupMove: secondsValue(values, 'stCellAxisGroupTimeouts.tMoveTimeout', current.cellSettings.timeouts.groupMove),
+        pointCheckStart: secondsValue(values, 'tPointCheckStartTimeout', current.cellSettings.timeouts.pointCheckStart),
+        simulationDynamics: secondsValue(values, 'tSimulationDynamicsTimeout', current.cellSettings.timeouts.simulationDynamics),
+        hmiWatchdog: secondsValue(values, 'tHmiWatchdogTimeout', current.cellSettings.timeouts.hmiWatchdog),
+        mobileMotionWatchdog: secondsValue(values, 'tMobileMotionWatchdogTimeout', current.cellSettings.timeouts.mobileMotionWatchdog),
+        pointCheckWatchdog: secondsValue(values, 'tPointCheckWatchdogTimeout', current.cellSettings.timeouts.pointCheckWatchdog),
+        hmiCommandFreshness: secondsValue(values, 'tHmiCommandFreshnessTimeout', current.cellSettings.timeouts.hmiCommandFreshness),
       },
     },
     testEnvironment: {
@@ -988,6 +1040,8 @@ export function mapRuntimeInfo(values: Record<string, unknown>, current: PlcRunt
       responseTimeoutMs: numberValue(values, 'udiModbusResponseTimeoutMs', current.robotModbus.responseTimeoutMs),
       pollIntervalMs: numberValue(values, 'udiModbusPollIntervalMs', current.robotModbus.pollIntervalMs),
       heartbeatTimeoutMs: numberValue(values, 'udiModbusHeartbeatTimeoutMs', current.robotModbus.heartbeatTimeoutMs),
+      commandStartTimeout: secondsValue(values, 'udiModbusCommandStartTimeoutMs', current.robotModbus.commandStartTimeout),
+      commandExecutionTimeout: secondsValue(values, 'udiModbusCommandTimeoutMs', current.robotModbus.commandExecutionTimeout),
       configValid: booleanValue(values, 'stRobotModbusStatus.xConfigValid', current.robotModbus.configValid),
       connected: booleanValue(values, 'stRobotModbusStatus.xConnected', current.robotModbus.connected),
       communicationAlive: booleanValue(values, 'stRobotModbusStatus.xCommunicationAlive', current.robotModbus.communicationAlive),

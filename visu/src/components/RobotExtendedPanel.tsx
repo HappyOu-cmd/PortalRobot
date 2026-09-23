@@ -1,9 +1,12 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { Activity, AlertCircle, CheckCircle2, Crosshair, Download, FileJson, FolderLock, Hand, Home, LoaderCircle, Network, RefreshCw, RotateCcw, Save, Settings2, Upload, X } from 'lucide-react';
+import { Activity, AlertCircle, CheckCircle2, Crosshair, Download, FileJson, FolderLock, Hand, LoaderCircle, Network, RefreshCw, RotateCcw, Save, Settings2, Upload, X } from 'lucide-react';
 import { Indicator } from './ui/Indicator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/Tabs';
-import { RobotSpeedEditor } from './RobotSpeedEditor';
+import { RobotJogConsole } from './RobotJogConsole';
+import { Icon } from '@iconify/react';
+import robotIcon from '@iconify-icons/material-symbols/precision-manufacturing-outline';
+import './robot-extended-panel.css';
 import { ACTIVE_POINT_LABELS, EDITOR_POINT_LABELS, MANUAL_POINT_OPTIONS, robotActionCommand, type RobotManualAction } from './robotManualControl';
 import { initialRobotControlTab, reconcileRobotControlTab, type RobotControlTab } from './robotControlTabs';
 import { SegmentedControl } from './ui/ControlPrimitives';
@@ -27,9 +30,9 @@ type RobotExtendedPanelProps = {
 
 type ActiveJog = { axis: number; direction: 'positive' | 'negative' } | null;
 
-const AXIS_NAMES = ['X', 'Y', 'Z'] as const;
+
 const EXPECTED_PROTOCOL_VERSION = 3;
-const STEP_VALUES = [0.1, 1, 10, 100];
+
 
 const EDITOR_POINT_GROUPS = [
   { title: 'Станок 1', indexes: [1, 2, 3] },
@@ -219,79 +222,14 @@ function allowedClass(allowed: boolean) {
   return allowed ? '' : 'command-unavailable';
 }
 
-function AxisSelector({
-  selectedAxis,
-  compact = false,
-  onSelect,
-}: {
-  selectedAxis: number;
-  compact?: boolean;
-  onSelect: (axis: number) => void;
+function RobotStatusItem({ label, value, tone = 'neutral' }: {
+  label: string;
+  value: string;
+  tone?: 'neutral' | 'blue' | 'green' | 'amber' | 'red';
 }) {
-  return <SegmentedControl
-    className={`robot-axis-selector ${compact ? 'compact' : ''}`}
-    value={String(selectedAxis)}
-    options={AXIS_NAMES.map((name, index) => ({ value: String(index + 1), label: <strong>{name}</strong>, className: `axis-${name.toLowerCase()}` }))}
-    onChange={(nextValue) => onSelect(Number(nextValue))}
-    ariaLabel="Выбор оси робота"
-  />;
-}
-
-function AxisJogButton({
-  axis,
-  direction,
-  allowed,
-  online,
-  onJog,
-}: {
-  axis: number;
-  direction: 'positive' | 'negative';
-  allowed: boolean;
-  online: boolean;
-  onJog: (active: boolean) => void;
-}) {
-  const pressedRef = useRef(false);
-
-  const finish = (event?: ReactPointerEvent<HTMLButtonElement>) => {
-    if (!pressedRef.current) return;
-    pressedRef.current = false;
-    if (event && event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    onJog(false);
-  };
-
-  const negative = direction === 'negative';
-
-  return <button
-    className={`robot-axis-jog-button ${negative ? 'negative' : 'positive'} ${allowedClass(allowed)}`}
-    type="button"
-    disabled={!online}
-    aria-disabled={!allowed}
-    aria-label={`${AXIS_NAMES[axis - 1]} ${negative ? 'в минус' : 'в плюс'}, удерживать для движения`}
-    onPointerDown={(event) => {
-      event.preventDefault();
-      pressedRef.current = true;
-      event.currentTarget.setPointerCapture(event.pointerId);
-      onJog(true);
-    }}
-    onPointerUp={finish}
-    onPointerCancel={finish}
-    onLostPointerCapture={() => finish()}
-    onBlur={() => finish()}
-  >
-    <b>{negative ? '−' : '+'}</b>
-  </button>;
-}
-
-function AxisLimits({ axis }: { axis: PlcRuntimeInfo['axisManual'][number] }) {
-  const range = Math.max(1, axis.maxPosition - axis.minPosition);
-  const position = Math.max(0, Math.min(100, (axis.actualPosition - axis.minPosition) / range * 100));
-
-  return <div className="axis-limit-line">
-    <span>{axis.minPosition.toFixed(0)} мм</span>
-    <div aria-label="Положение относительно программных пределов"><div style={{ width: `${position}%` }} /></div>
-    <span>{axis.maxPosition.toFixed(0)} мм</span>
+  return <div className="rx-runtime-item" data-tone={tone}>
+    <span>{label}</span>
+    <strong><i aria-hidden="true" />{value}</strong>
   </div>;
 }
 
@@ -326,7 +264,7 @@ export function RobotExtendedPanel({
   const focusedTargetRef = useRef<number | null>(null);
   const onlineRef = useRef(online);
   const onSendRef = useRef(onSend);
-  const axis = runtime.axisManual[selectedAxis - 1];
+
   const modbusMode = runtime.modbusMode;
   const modbus = runtime.robotModbus;
   const drivesPowered = runtime.robotManual.drivesPowered;
@@ -337,6 +275,10 @@ export function RobotExtendedPanel({
   const drivesStateText = runtime.robotManual.powerTransitionActive
     ? 'Переключение'
     : drivesPowered ? 'Включены' : runtime.robotManual.drivesOff ? 'Выключены' : 'Частично включены';
+  const robotBusy = modbusMode ? modbus.busy : runtime.robotManual.commandBusy;
+  const robotReady = modbusMode ? modbus.ready : runtime.robotReady;
+  const robotStateText = robotBusy ? 'Занят' : robotReady ? 'Готов' : 'Не готов';
+  const robotStateTone = robotBusy ? 'blue' : robotReady ? 'green' : 'red';
   const selectedEditorValue = runtime.pointEditor.points[selectedEditorPoint - 1];
   const magazinePointSelected = selectedEditorPoint === 11 || selectedEditorPoint === 12;
   const editorCoordinates = [editorDraft.x, editorDraft.y, editorDraft.z].map(pointNumber);
@@ -696,48 +638,33 @@ export function RobotExtendedPanel({
     onClose();
   };
 
-  return <><aside className={`side-panel robot-extended-panel ${className ?? ''}`} aria-label="Расширенное управление роботом">
+  return <><aside className={`side-panel robot-extended-panel robot-redesign ${className ?? ''}`} data-tab={tab} aria-label="Расширенное управление роботом">
     <header className="robot-extended-header">
-      <div><span>{modbusMode ? 'MODBUS TCP · ДИАГНОСТИКА И УПРАВЛЕНИЕ' : 'SOFTMOTION · РУЧНОЕ УПРАВЛЕНИЕ'}</span><h2>Расширенное управление роботом</h2></div>
+      <div className="rx-heading"><span className="rx-robot-icon"><Icon icon={robotIcon} /></span><div className="rx-heading-copy"><span>{modbusMode ? 'MODBUS TCP · ДИАГНОСТИКА И УПРАВЛЕНИЕ' : 'SOFTMOTION · РУЧНОЕ УПРАВЛЕНИЕ'}</span><div className="rx-title-row"><h2>Управление роботом</h2><span className="rx-heading-state" data-tone={robotStateTone}><i aria-hidden="true" />{robotStateText}</span></div></div></div>
       <button type="button" onClick={close} title="Закрыть"><X /></button>
     </header>
 
-    <div className="robot-extended-status-line">
-      <span><Indicator active={runtime.manualMode} tone="blue" />Режим: {runtime.manualMode ? 'Ручной' : 'Автомат'}</span>
-      <span><Indicator active={modbusMode ? modbus.ready || modbus.busy : runtime.robotReady || runtime.robotManual.commandBusy} tone={(modbusMode ? modbus.busy : runtime.robotManual.commandBusy) ? 'blue' : 'green'} />Робот: {modbusMode ? modbus.busy ? 'Занят' : modbus.ready ? 'Готов' : 'Не готов' : runtime.robotManual.commandBusy ? 'Занят' : runtime.robotReady ? 'Готов' : 'Не готов'}</span>
-      <span><Indicator active={online} tone={online ? 'green' : 'red'} />PLC: {online ? 'Подключен' : 'Нет связи'}</span>
+    <div className="rx-runtime-summary" aria-label="Параметры робота">
       {modbusMode ? <>
-        <span><Indicator active={modbus.communicationAlive} tone={modbus.communicationAlive ? 'green' : 'red'} />Modbus: {modbus.communicationAlive ? 'Обмен активен' : 'Нет обмена'}</span>
-        <span><Indicator active={modbus.drivesEnabled} tone={modbus.drivesEnabled ? 'green' : 'blue'} />Приводы робота: {modbus.drivesEnabled ? 'Включены' : 'Выключены'}</span>
+        <RobotStatusItem label="Modbus" value={modbus.communicationAlive ? 'Обмен активен' : 'Нет обмена'} tone={modbus.communicationAlive ? 'green' : 'red'} />
+        <RobotStatusItem label="Приводы" value={modbus.drivesEnabled ? 'Включены' : 'Выключены'} tone={modbus.drivesEnabled ? 'green' : 'neutral'} />
       </> : <>
-        <span><Indicator active={drivesPowered} tone={drivesPowered ? 'green' : 'blue'} />Приводы: {drivesStateText}</span>
-        <span className="robot-speed-status">Скорость: <b>{runtime.speedOverridePercent.toFixed(1)}%</b></span>
+        <RobotStatusItem label="Приводы" value={drivesStateText} tone={drivesPowered ? 'green' : runtime.robotManual.drivesOff ? 'neutral' : 'amber'} />
+        <RobotStatusItem label="Скорость" value={`${runtime.speedOverridePercent.toFixed(1)}%`} tone="blue" />
       </>}
     </div>
 
-    <div className={`robot-extended-command-deck ${modbusMode ? 'modbus' : ''}`}>
-      {!modbusMode && <button
-        type="button"
-        disabled={!online}
-        className={allowedClass(drivesToggleAllowed)}
-        aria-disabled={!drivesToggleAllowed}
-        onClick={() => send({ command: drivesActive ? 'robot.disableDrives' : 'robot.enableDrives' })}
-      ><Settings2 size={17} />{runtime.robotManual.powerTransitionActive ? 'Переключение…' : drivesActive ? 'Отключить приводы' : 'Включить приводы'}</button>}
-      <button type="button" disabled={!online} className={allowedClass(runtime.robotManual.resetAllowed)} aria-disabled={!runtime.robotManual.resetAllowed} onClick={() => send({ command: 'robot.reset' })}><RotateCcw size={17} />Сброс</button>
-      <button type="button" disabled={!online} className={`danger ${allowedClass(runtime.robotManual.stopAllowed)}`} aria-disabled={!runtime.robotManual.stopAllowed} onClick={stopRobot}><AlertCircle size={17} />Стоп</button>
-    </div>
-
-    <Tabs value={tab} onValueChange={changeTab} className="robot-extended-tabs-root">
-      <TabsList className={`robot-extended-tabs ${modbusMode ? 'modbus' : ''}`} aria-label="Разделы управления роботом">
+    <Tabs value={tab === 'position' ? 'jog' : tab} onValueChange={(next) => changeTab(next === 'jog' ? (runtime.continuousMode ? 'jog' : 'position') : next)} className="robot-extended-tabs-root">
+      <TabsList className={`robot-extended-tabs ${modbusMode ? 'modbus' : ''}`} data-active-tab={tab === 'position' ? 'jog' : tab} aria-label="Разделы управления роботом">
         {modbusMode ? <>
           <TabsTrigger value="diagnostics">Диагностика</TabsTrigger>
           <TabsTrigger value="registers">Регистры</TabsTrigger>
         </> : <>
-          <TabsTrigger value="jog">Пульт JOG</TabsTrigger>
-          <TabsTrigger value="position">Точное перемещение</TabsTrigger>
+          <TabsTrigger value="jog"><Crosshair size={18} />Пульт JOG</TabsTrigger>
+
         </>}
-        <TabsTrigger value="points">Точки</TabsTrigger>
-        <TabsTrigger value="grippers">Захваты</TabsTrigger>
+        <TabsTrigger value="points"><Save size={17} />Точки</TabsTrigger>
+        <TabsTrigger value="grippers"><Hand size={18} />Захваты</TabsTrigger>
       </TabsList>
 
       {modbusMode && <TabsContent value="diagnostics" className="robot-extended-tab-content">
@@ -755,86 +682,23 @@ export function RobotExtendedPanel({
 
       {!modbusMode && <TabsContent value="jog" className="robot-extended-tab-content">
         <div className="robot-extended-scroll">
-          <section className="robot-jog-console">
-            <div className="robot-section-title robot-jog-console-title">
-              <div><span>Пульт непрерывного JOG</span><small>{runtime.manualRecoveryActive ? 'Аварийное восстановление: доступно непрерывное движение одной оси' : axis.rejectReason || 'Удерживайте кнопку направления для движения выбранной оси'}</small></div>
-              <Crosshair size={21} />
-            </div>
-
-            <AxisSelector selectedAxis={selectedAxis} onSelect={selectAxis} />
-
-            <div className="robot-jog-axis-summary">
-              <div><span>Выбранная ось</span><strong>{AXIS_NAMES[selectedAxis - 1]}</strong></div>
-              <div><span>Фактическая позиция</span><strong>{axis.actualPosition.toFixed(1)} <i>мм</i></strong></div>
-              <div><span>Состояние привода</span><strong className={axis.driveReady ? 'ready' : ''}><Indicator active={axis.driveReady} tone={axis.driveReady ? 'green' : 'blue'} />{axis.driveReady ? 'Привод готов' : 'Привод не готов'}</strong></div>
-            </div>
-            <AxisLimits axis={axis} />
-
-            <div className="robot-jog-pad" aria-label={`Управление осью ${AXIS_NAMES[selectedAxis - 1]}`}>
-              <AxisJogButton axis={selectedAxis} direction="negative" allowed={axis.jogNegativeAllowed} online={online} onJog={(active) => handleJog(selectedAxis, 'negative', active)} />
-              <div className="robot-jog-pad-center"><strong>{AXIS_NAMES[selectedAxis - 1]}</strong></div>
-              <AxisJogButton axis={selectedAxis} direction="positive" allowed={axis.jogPositiveAllowed} online={online} onJog={(active) => handleJog(selectedAxis, 'positive', active)} />
-            </div>
-
-            <div className="robot-jog-speed-panel">
-              <RobotSpeedEditor
-                value={runtime.speedOverridePercent}
-                online={online}
-                onChange={(value) => send({ command: 'robot.speedOverride', value })}
-                details={<><span>Текущая скорость оси: {axis.commandVelocity.toFixed(1)} мм/с</span><span>100%: {axis.maxVelocity.toFixed(0)} мм/с</span></>}
-              />
-            </div>
-            <button type="button" disabled={!online} className={`robot-jog-stop ${allowedClass(runtime.robotManual.stopAllowed)}`} aria-disabled={!runtime.robotManual.stopAllowed} onClick={stopRobot}><AlertCircle size={20} />СТОП</button>
-            {axis.rejectReason && <div className="robot-reject-banner"><AlertCircle size={18} /><span>{axis.rejectReason}</span></div>}
-          </section>
+          <RobotJogConsole
+            runtime={runtime}
+            online={online}
+            selectedAxis={selectedAxis}
+            continuous={tab !== 'position'}
+            target={targets[selectedAxis - 1]}
+            onSelectAxis={selectAxis}
+            onModeChange={(continuous) => changeTab(continuous ? 'jog' : 'position')}
+            onTargetChange={(next) => setTargets((current) => current.map((value, index) => index === selectedAxis - 1 ? next : value))}
+            onTargetFocus={() => { focusedTargetRef.current = selectedAxis; }}
+            onTargetBlur={() => { focusedTargetRef.current = null; commitTarget(selectedAxis); }}
+            onJog={(direction, active) => handleJog(selectedAxis, direction, active)}
+            onSend={send}
+            numericTarget={() => numericTarget(selectedAxis)}
+          />
         </div>
       </TabsContent>}
-
-      {!modbusMode && <TabsContent value="position" className="robot-extended-tab-content">
-        <div className="robot-extended-scroll">
-          <section className="robot-extended-section robot-position-section">
-            <div className="robot-section-title"><div><span>Точное перемещение оси</span><small>Шаговый JOG, абсолютная координата и Home</small></div><Crosshair size={19} /></div>
-            <AxisSelector selectedAxis={selectedAxis} onSelect={selectAxis} />
-
-            <div className="axis-card">
-              <div className="axis-card-head"><strong>Ось {AXIS_NAMES[selectedAxis - 1]}</strong><span><Indicator active={axis.driveReady} tone={axis.driveReady ? 'green' : 'blue'} />{axis.driveReady ? 'Привод готов' : 'Привод не готов'}</span></div>
-              <div className="axis-position-grid">
-                <div><small>Факт. позиция</small><strong>{axis.actualPosition.toFixed(1)} <i>мм</i></strong></div>
-                <div><small>Цель</small><input
-                  value={targets[selectedAxis - 1]}
-                  inputMode="decimal"
-                  onFocus={() => { focusedTargetRef.current = selectedAxis; }}
-                  onChange={(event) => setTargets((current) => current.map((value, index) => index === selectedAxis - 1 ? event.target.value : value))}
-                  onBlur={() => { focusedTargetRef.current = null; commitTarget(selectedAxis); }}
-                /><i>мм</i></div>
-                <div><small>Отклонение</small><strong>{axis.deviation.toFixed(1)} <i>мм</i></strong></div>
-              </div>
-              <AxisLimits axis={axis} />
-
-              <div className="step-selector"><span>Шаг</span><SegmentedControl
-                className="step-selector-control"
-                value={String(runtime.manualStep)}
-                options={STEP_VALUES.map((value) => ({ value: String(value), label: `${value} мм` }))}
-                disabled={!online}
-                onChange={(nextValue) => send({ command: 'robot.manualStep', value: Number(nextValue) })}
-                ariaLabel="Шаг перемещения"
-              /></div>
-              <div className="axis-step-command-row">
-                <button type="button" disabled={!online} className={`short-move-button ${allowedClass(axis.moveRelativeNegativeAllowed)}`} aria-disabled={!axis.moveRelativeNegativeAllowed} onClick={() => send({ command: 'robot.axis.moveRelative', machine: selectedAxis, value: -runtime.manualStep })}>− {runtime.manualStep} мм</button>
-                <button type="button" disabled={!online} className={`axis-go-button ${allowedClass(axis.moveAbsoluteAllowed)}`} aria-disabled={!axis.moveAbsoluteAllowed} onClick={() => send({ command: 'robot.axis.moveAbsolute', machine: selectedAxis, value: numericTarget(selectedAxis) })}>Перейти к координате</button>
-                <button type="button" disabled={!online} className={`short-move-button ${allowedClass(axis.moveRelativePositiveAllowed)}`} aria-disabled={!axis.moveRelativePositiveAllowed} onClick={() => send({ command: 'robot.axis.moveRelative', machine: selectedAxis, value: runtime.manualStep })}>+ {runtime.manualStep} мм</button>
-              </div>
-              <div className="axis-card-footer">
-                <span><Indicator active={axis.homed} tone={axis.homed ? 'green' : 'blue'} />{axis.homed ? 'Home выполнен' : 'Home не выполнен'}</span>
-                <strong>{axis.stepName || 'Ожидание команды'}</strong>
-                <button type="button" disabled={!online} className={`axis-home-button ${allowedClass(axis.homeAllowed)}`} aria-disabled={!axis.homeAllowed} onClick={() => send({ command: 'robot.axis.home', machine: selectedAxis })}><Home size={15} />Выполнить Home</button>
-              </div>
-            </div>
-            {axis.rejectReason && <div className="robot-reject-banner"><AlertCircle size={18} /><span>{axis.rejectReason}</span></div>}
-          </section>
-        </div>
-      </TabsContent>}
-
       <TabsContent value="points" className="robot-extended-tab-content">
         <div className="robot-extended-scroll">
           <section className="robot-extended-section points-section">
@@ -951,6 +815,21 @@ export function RobotExtendedPanel({
         </div>
       </TabsContent>
     </Tabs>
+    <footer className="rx-footer">
+    <div className={`robot-extended-command-deck ${modbusMode ? 'modbus' : ''}`}>
+      {!modbusMode && <button
+        type="button"
+        disabled={!online}
+        className={`drive-toggle ${allowedClass(drivesToggleAllowed)}`}
+        data-drive-state={online && drivesPowered ? 'on' : 'off'}
+        aria-disabled={!drivesToggleAllowed}
+        onClick={() => send({ command: drivesActive ? 'robot.disableDrives' : 'robot.enableDrives' })}
+      ><Settings2 size={17} />{runtime.robotManual.powerTransitionActive ? 'Переключение…' : drivesActive ? 'Отключить приводы' : 'Включить приводы'}</button>}
+      <button type="button" disabled={!online} className={allowedClass(runtime.robotManual.resetAllowed)} aria-disabled={!runtime.robotManual.resetAllowed} onClick={() => send({ command: 'robot.reset' })}><RotateCcw size={17} />Сброс</button>
+      <button type="button" disabled={!online} className={`danger ${allowedClass(runtime.robotManual.stopAllowed)}`} aria-disabled={!runtime.robotManual.stopAllowed} onClick={stopRobot}><AlertCircle size={17} />Стоп</button>
+    </div>
+
+    </footer>
   </aside>
 
   <Dialog.Root open={backupMenuOpen} onOpenChange={(open) => { if (!backupBusy) setBackupMenuOpen(open); }}>

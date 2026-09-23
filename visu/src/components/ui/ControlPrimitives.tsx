@@ -47,6 +47,8 @@ export function SegmentedControl({
   ariaLabel,
   disabled = false,
   animated = true,
+  animationStyle = 'slide',
+  thumbFullHeight = false,
   className,
 }: {
   value: string;
@@ -55,6 +57,8 @@ export function SegmentedControl({
   ariaLabel: string;
   disabled?: boolean;
   animated?: boolean;
+  animationStyle?: 'stretch' | 'slide';
+  thumbFullHeight?: boolean;
   className?: string;
 }) {
   type SegmentPosition = {
@@ -118,7 +122,7 @@ export function SegmentedControl({
 
     if (activeIndex >= 0 && nextIndex >= 0 && activeIndex !== nextIndex && from && to) {
       setThumbPosition(to);
-      if (!animated) {
+      if (!animated || animationStyle === 'slide') {
         setAnimation(null);
         setRipple(null);
         onChange(nextValue);
@@ -155,9 +159,9 @@ export function SegmentedControl({
 
   const thumbStyle = thumbPosition ? {
     '--thumb-left': `${thumbPosition.left}px`,
-    '--thumb-top': `${thumbPosition.top}px`,
+    '--thumb-top': thumbFullHeight ? '0px' : `${thumbPosition.top}px`,
     '--thumb-width': `${thumbPosition.width}px`,
-    '--thumb-height': `${thumbPosition.height}px`,
+    '--thumb-height': thumbFullHeight && trackRef.current ? `${trackRef.current.clientHeight}px` : `${thumbPosition.height}px`,
     ...(animation ? {
       '--thumb-from-left': `${animation.from.left}px`,
       '--thumb-from-width': `${animation.from.width}px`,
@@ -170,21 +174,21 @@ export function SegmentedControl({
   } as CSSProperties : undefined;
 
   return <div
-    className={cn('ui-segmented', !animated && 'is-static', disabled && 'is-disabled', className)}
+    className={cn('ui-segmented', !animated && 'is-static', animationStyle === 'slide' && 'is-slide', disabled && 'is-disabled', className)}
     role="group"
     aria-label={ariaLabel}
     style={{ '--segment-count': Math.max(options.length, 1) } as CSSProperties}
   >
     <div ref={trackRef} className="ui-segmented__track">
       {ripple && <span
-        key={ripple.key}
+        key={`ripple-${ripple.key}`}
         className="ui-segmented__ripple"
         style={{ left: ripple.left, top: ripple.top }}
         aria-hidden="true"
         onAnimationEnd={() => setRipple(null)}
       />}
       {thumbPosition && <span
-        key={animation?.key ?? 'thumb'}
+        key={`thumb-${animation?.key ?? 'idle'}`}
         className="ui-segmented__thumb"
         style={thumbStyle}
         aria-hidden="true"
