@@ -15,6 +15,35 @@ VAR
 	MACHINE_1_FAULT: FB_MACHINE_FAULT_INJECTOR; // Инъекция обратной связи первого станка
 	MACHINE_2_FAULT: FB_MACHINE_FAULT_INJECTOR; // Инъекция обратной связи второго станка
 	MACHINE_3_FAULT: FB_MACHINE_FAULT_INJECTOR; // Инъекция обратной связи третьего станка
+	TWIN_AXIS_1 : FB_AXIS;
+	TWIN_AXIS_2 : FB_AXIS;
+	TWIN : ARRAY [1..2] OF FB_TWO_PALLET;
+	TWIN_SIM : ARRAY [1..2] OF FB_TWO_PALLET_SIMULATION;
+	astTwinCommand : ARRAY [1..2] OF ST_TWO_PALLET_COMMAND;
+	axTwinConfigurationChanged : ARRAY [1..2] OF BOOL;
+	axTwinExternalCommandRejected : ARRAY [1..2] OF BOOL;
+	audiTwinWarningSeen : ARRAY [1..2] OF UDINT;
+	audiPartWarningSeen : ARRAY [1..2] OF UDINT;
+	astMagazineWarningMerged : ARRAY [1..2] OF ST_WARNING_EVENT;
+	uiTwin : UINT;
+	uiTwinPallet : UINT;
+	uiTwinSlot : UINT;
+	udiTwinSnapshot : UDINT;
+	xTwinStartup : BOOL;
+	xTwinSimulationInitialized : BOOL;
+	axTwinSimIoOwned : ARRAY [1..2] OF BOOL;
+	axTwinSafetyBusy : ARRAY [1..2] OF BOOL;
+	axButtonStationInput : ARRAY [1..4] OF BOOL; // Физическая кнопка или виртуальный вход SIMULATION
+	axButtonStationEmergencyStopInput : ARRAY [1..4] OF BOOL; // Физический грибок или виртуальный вход SIMULATION
+	axTwinRobotStopLatched : ARRAY [1..2] OF BOOL;
+	xTwinRobotClear : BOOL;
+	xTwinRobotOperation : BOOL; // Текущая, ожидающая отключения или уже выданная операция магазина
+	xTwinOtherLoaded : BOOL;
+	xTwinAutoSwapEnabled : BOOL;
+	axTwinAutoSwapPending : ARRAY [1..2] OF BOOL; // Законченная палета ждёт окна автоматического обмена
+	xTwinInventoryCommand : BOOL;
+	uiTwinRequestResult : UINT;
+	stTwinRequest : ST_TWO_PALLET_REQUEST;
 	fbMagazine1    : FB_MAGAZINE; // Первый статичный магазин
 	fbMagazine2    : FB_MAGAZINE; // Второй статичный магазин
 	ROBOT          : FB_ROBOT; // Координация движений и захвата робота
@@ -175,7 +204,7 @@ VAR
 	uiTestMagazine : UINT;
 	uiTestFaultOwnerCount : UINT;
 	adwTestMagazineFaultMask : ARRAY [1..2] OF DWORD;
-	xMachineUseInitialized : BOOL; // Однократная синхронизация выбора станков после старта/Online Change
+	xApplicationStartupInitialized : BOOL; // Однократная инициализация безопасных настроек после старта/Online Change
 END_VAR
 
 VAR CONSTANT
@@ -205,9 +234,11 @@ RunSafety();
 RunMotion();
 RunRobotModbus();
 RunTestControl();
+RunTwoPallet();
 RunCellControl();
 RunMachines();
 RunMagazine();
+RunTwoPalletAxis();
 RunRobot();
 RunAlarms();
 RunSignalTower();

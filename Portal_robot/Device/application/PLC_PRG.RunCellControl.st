@@ -23,6 +23,10 @@ TYPE_CONFIG(
 );
 
 CELL_MANAGER(
+	axMagazineAutoSwapPending := axTwinAutoSwapPending,
+	xMagazineExchangeActive := (GVL_TWO_PALLET.uiMode = 1) AND (
+		GVL_TWO_PALLET.astStatus[1].xBusy OR GVL_TWO_PALLET.astStatus[2].xBusy
+		OR GVL_TWO_PALLET.astStatus[1].xCompleted OR GVL_TWO_PALLET.astStatus[2].xCompleted),
 	xStart := GVL_CELL_CONTROL.xStart,
 	xStop := GVL_CELL_CONTROL.xStop,
 	xTestAbort := xTestAbortActive,

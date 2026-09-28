@@ -95,6 +95,7 @@ ELSIF GVL_MAGAZINE.astCommand[2].xExecute OR GVL_MAGAZINE.astCommand[2].xStop TH
 END_IF;
 
 xHmiRobotActionBaseAllowed := xRobotHmiPermit
+	AND NOT GVL_TWO_PALLET.astStatus[1].xBusy AND NOT GVL_TWO_PALLET.astStatus[2].xBusy
 	AND NOT xPointCheckActive
 	AND xHmiConnectionAlive
 	AND NOT GVL_CELL_CONTROL.xGlobalError
@@ -147,6 +148,16 @@ xHmiRobotPointAllowed := xHmiRobotActionBaseAllowed
 			AND (stRobotHmiCommand.uiMagazineId <= UINT#2)
 		)
 	);
+
+// Вручную входить к палетам можно только после подтверждения рабочей конфигурации.
+IF (GVL_TWO_PALLET.uiMode = 1)
+AND ((stRobotHmiCommand.eSetPoint = E_POINT_NAME.MAGAZINE_SAFE)
+	OR (stRobotHmiCommand.eSetPoint = E_POINT_NAME.MAGAZINE_CHANGE)
+	OR (stRobotHmiCommand.eSetPoint = E_POINT_NAME.MAGAZINE_IN_SLOT)) THEN
+	IF (stRobotHmiCommand.uiMagazineId >= 1) AND (stRobotHmiCommand.uiMagazineId <= 2) THEN
+		xHmiRobotPointAllowed := xHmiRobotPointAllowed AND NOT GVL_HMI.xModbusMode AND GVL_TWO_PALLET.astStatus[stRobotHmiCommand.uiMagazineId].xReady;
+	ELSE xHmiRobotPointAllowed := FALSE; END_IF;
+END_IF;
 
 // Захваты не зависят от питания и состояния Motion-слоя. В ручном режиме ими
 // можно пользоваться при любой внешней аварии, пока исправен сам блок захвата
@@ -395,6 +406,7 @@ IF xPointCheckActive THEN
 END_IF;
 
 ROBOT(
+	xMagazineMotionInhibit := (GVL_TWO_PALLET.uiMode = 1) AND (GVL_TWO_PALLET.astStatus[1].xBusy OR GVL_TWO_PALLET.astStatus[2].xBusy),
 	xTestInitialize := xTestInitializePulse,
 	auiTestGripperContent := GVL_HMI.stTestScenario.auiGripperContent,
 	auiTestGripperType := GVL_HMI.stTestScenario.auiGripperType,
@@ -544,6 +556,13 @@ xHmiRobotStatusPointAllowed := xHmiRobotActionBaseAllowed
 			AND (GVL_HMI.uiRobotManualMagazine <= UINT#2)
 		)
 	);
+IF (GVL_TWO_PALLET.uiMode = 1) AND ((eHmiRobotStatusPoint = E_POINT_NAME.MAGAZINE_SAFE)
+	OR (eHmiRobotStatusPoint = E_POINT_NAME.MAGAZINE_CHANGE) OR (eHmiRobotStatusPoint = E_POINT_NAME.MAGAZINE_IN_SLOT)) THEN
+	IF (GVL_HMI.uiRobotManualMagazine >= 1) AND (GVL_HMI.uiRobotManualMagazine <= 2) THEN
+		xHmiRobotStatusPointAllowed := xHmiRobotStatusPointAllowed AND NOT GVL_HMI.xModbusMode
+			AND GVL_TWO_PALLET.astStatus[GVL_HMI.uiRobotManualMagazine].xReady;
+	ELSE xHmiRobotStatusPointAllowed := FALSE; END_IF;
+END_IF;
 IF eHmiRobotStatusAction = E_ROBOT_ACTION.MOVE_TO_POINT THEN
 	GVL_HMI.stRobotHmiStatus.xPointsAllowed := xHmiRobotStatusPointAllowed;
 ELSE

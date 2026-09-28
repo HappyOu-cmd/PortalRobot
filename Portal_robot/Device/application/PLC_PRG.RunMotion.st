@@ -394,6 +394,7 @@ FOR uiMachine := 1 TO 3 DO
 		* REAL_TO_LREAL(GVL_CELL_SETTINGS.rRobotJerkPercent) / 100.0;
 
 	axManualAxisBaseAllowed[uiMachine] := xRobotHmiPermit
+		AND NOT GVL_TWO_PALLET.astStatus[1].xBusy AND NOT GVL_TWO_PALLET.astStatus[2].xBusy
 		AND NOT xPointCheckActive
 		AND xHmiConnectionAlive
 		AND NOT GVL_HMI.xModbusMode
@@ -729,6 +730,7 @@ FOR uiMachine := 1 TO 3 DO
 	GVL_HMI.astAxisHmiStatus[uiMachine].eState := GVL_AXIS.arrAxis[uiMachine].Diag.iStep;
 
 	axManualAxisBaseAllowed[uiMachine] := xRobotHmiPermit
+		AND NOT GVL_TWO_PALLET.astStatus[1].xBusy AND NOT GVL_TWO_PALLET.astStatus[2].xBusy
 		AND xHmiConnectionAlive
 		AND NOT GVL_HMI.xModbusMode
 		AND (NOT GVL_CELL_CONTROL.xGlobalError OR xManualRecoveryActive)

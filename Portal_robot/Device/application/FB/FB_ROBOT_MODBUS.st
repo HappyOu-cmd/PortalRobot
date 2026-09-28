@@ -1,3 +1,4 @@
+{attribute 'no_assign'}
 FUNCTION_BLOCK FB_ROBOT_MODBUS
 VAR_INPUT
 	xEnable          : BOOL; // Применён режим MODBUS_TCP

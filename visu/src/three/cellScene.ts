@@ -20,11 +20,15 @@ import { createEnclosure, type EnclosureRig, updateEnclosure } from './enclosure
 import { createControlCabinets, disposeControlCabinets, updateControlCabinets, type ControlCabinetsRig } from './controlCabinets';
 import { createMpgPendant, disposeMpgPendant, updateMpgPendant, type MpgPendantRig } from './mpgPendant';
 import { createStaticMagazine, type StaticMagazineRig, updateStaticMagazineRig } from './staticMagazine';
+import { createTwoPalletMagazine, TWO_PALLET_DIMENSIONS, updateTwoPalletMagazine, type TwoPalletMagazineRig } from './twoPalletMagazine';
+import { TwoPalletPreviewController, type TwoPalletPose } from '../model/twoPalletPreview';
+import { twinSignalPattern } from '../model/twoPalletControl';
 import { OperationalEffects, type SceneEffectAnchors } from './OperationalEffects';
-import { COLORS, disposeObject, logicalPosition, material, mm } from './primitives';
+import { COLORS, disposeObject, logicalPosition, mm } from './primitives';
 import { inspectionKey, inspectionSlot, type EquipmentInspection, type InspectionTarget, type InspectionNode } from '../model/equipmentInspection';
 import { EquipmentInspectionLayer, inspectionBounds, isObjectVisible, type InspectionEntry } from './equipmentInspection';
 import { Workshop } from './workshop';
+import { InspectionWorker } from './inspectionWorker';
 
 export type CameraPreset = 'iso' | 'front' | 'side' | 'top';
 
@@ -71,12 +75,16 @@ export class CellScene {
   private controlCabinetsRig?: ControlCabinetsRig;
   private mpgPendantRig?: MpgPendantRig;
   private staticMagazineRigs: StaticMagazineRig[] = [];
+  private twoPalletRigs: TwoPalletMagazineRig[] = [];
+  private twoPalletControllers = [new TwoPalletPreviewController(), new TwoPalletPreviewController()];
+  private twoPalletDisplayPoses: (TwoPalletPose | null)[] = [null, null];
   private easterEggController?: EasterEggController;
   private easterEggMode: EasterEggMode = 'off';
   private easterEggRevision = 0;
   private operationalEffects?: OperationalEffects;
   private workshop?: Workshop;
-  private fallbackFloor?: THREE.Group;
+  private inspectionWorker?: InspectionWorker;
+  private fallbackGrid?: THREE.Group;
   private state: CellState;
   private layout: CellLayout;
   private animationFrame = 0;
@@ -186,28 +194,15 @@ export class CellScene {
     this.scene.add(fill);
   }
 
-  private createFloor(layout: CellLayout): THREE.Group {
+  private createGroundGrid(layout: CellLayout): THREE.Group {
     const root = new THREE.Group();
     const length = mm(layout.floor.lengthX);
     const width = mm(layout.floor.widthY);
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(length, width), material(COLORS.floor, { roughness: 0.9 }));
-    floor.rotation.x = -Math.PI / 2;
-    floor.position.set(length / 2, -0.012, -width / 2);
-    floor.receiveShadow = true;
-    root.add(floor);
-
     const grid = new THREE.GridHelper(Math.max(length, width), Math.round(Math.max(length, width) / 0.5), COLORS.grid, 0xd6dfe6);
     grid.position.set(length / 2, 0.002, -width / 2);
     (grid.material as THREE.Material).opacity = 0.46;
     (grid.material as THREE.Material).transparent = true;
     root.add(grid);
-
-    const boundary = new THREE.LineSegments(
-      new THREE.EdgesGeometry(new THREE.BoxGeometry(length, 0.018, width)),
-      new THREE.LineBasicMaterial({ color: COLORS.blue, transparent: true, opacity: 0.65 }),
-    );
-    boundary.position.set(length / 2, 0.006, -width / 2);
-    root.add(boundary);
     return root;
   }
 
@@ -215,17 +210,17 @@ export class CellScene {
     if (this.preview) return;
     this.workshop?.dispose();
     this.workshop = undefined;
-    if (this.fallbackFloor) {
-      this.cellRoot.remove(this.fallbackFloor);
-      disposeObject(this.fallbackFloor);
-      this.fallbackFloor = undefined;
+    if (this.fallbackGrid) {
+      this.cellRoot.remove(this.fallbackGrid);
+      disposeObject(this.fallbackGrid);
+      this.fallbackGrid = undefined;
     }
     if (enabled) {
       this.workshop = new Workshop(this.layout);
       this.cellRoot.add(this.workshop.root);
     } else {
-      this.fallbackFloor = this.createFloor(this.layout);
-      this.cellRoot.add(this.fallbackFloor);
+      this.fallbackGrid = this.createGroundGrid(this.layout);
+      this.cellRoot.add(this.fallbackGrid);
     }
     this.controls.maxDistance = enabled ? 36 : 26;
     if (this.scene.fog instanceof THREE.Fog) {
@@ -237,6 +232,8 @@ export class CellScene {
   }
 
   rebuild(layout: CellLayout): void {
+    this.twoPalletRigs = [];
+    this.twoPalletDisplayPoses = [null, null];
     this.inspectionLayer?.update(this.cellRoot, undefined, null, 0, true);
     this.inspectionEntries = [];
     this.inspectionModelSignature = '';
@@ -251,13 +248,15 @@ export class CellScene {
     this.operationalEffects = undefined;
     this.workshop?.dispose();
     this.workshop = undefined;
-    this.fallbackFloor = undefined;
+    this.fallbackGrid = undefined;
+    this.inspectionWorker?.dispose();
+    this.inspectionWorker = undefined;
     this.machineRigs.forEach(disposeMachineRig);
     this.scene.remove(this.cellRoot);
     disposeObject(this.cellRoot);
     this.cellRoot = new THREE.Group();
     this.cellRoot.name = 'Cell';
-    if (this.preview) this.cellRoot.add(this.createFloor(layout));
+    if (this.preview) this.cellRoot.add(this.createGroundGrid(layout));
     else this.setWorkshopScene(this.visualEffects.workshopEnabled, false);
     this.machineRigs = layout.machine.machines.map((_, index) => createMachine(layout, index));
     this.machineRigs.forEach((rig) => this.cellRoot.add(rig.root));
@@ -265,6 +264,8 @@ export class CellScene {
     this.cellRoot.add(this.portalRig.root);
     // The small confirmation view only needs the equipment and its positions.
     if (!this.preview) {
+      this.inspectionWorker = new InspectionWorker(layout);
+      this.cellRoot.add(this.inspectionWorker.root);
       this.enclosureRig = createEnclosure(layout);
       this.cellRoot.add(this.enclosureRig.root);
       this.controlCabinetsRig = createControlCabinets(layout);
@@ -283,6 +284,19 @@ export class CellScene {
       this.cellRoot.add(rig.root);
       return rig;
     });
+    if (!this.preview) {
+      this.twoPalletRigs = [0, 1].map((index) => {
+        const rig = createTwoPalletMagazine(layout, index);
+        const position = layout.twoPalletMagazines[index].position;
+        rig.root.position.copy(logicalPosition(position.x, position.y, position.z));
+        rig.root.rotation.y = Math.PI / 2;
+        rig.root.name = `TwoPalletMagazine_${index + 1}`;
+        rig.root.userData.magazineId = index + 1;
+        rig.root.visible = this.state.magazineMode === 1;
+        this.cellRoot.add(rig.root);
+        return rig;
+      });
+    }
     if (!this.preview) {
       this.easterEggController = new EasterEggController(layout, this.onDriftTelemetry, this.driftSettings);
       this.easterEggController.setMode(this.easterEggMode, this.easterEggRevision);
@@ -309,6 +323,21 @@ export class CellScene {
 
   setState(state: CellState): void {
     this.state = state;
+  }
+
+  setTwoPalletControllers(controllers: TwoPalletPreviewController[]): void {
+    this.twoPalletControllers = controllers;
+  }
+
+  focusTwoPalletMagazine(index = 0): void {
+    const rig = this.twoPalletRigs[index];
+    if (!rig) return;
+    this.focusTarget = null;
+    this.activeFocusKey = 'preset';
+    const standRise = mm(this.layout.twoPalletMagazines[index].legHeightMm - 735);
+    const target = rig.root.localToWorld(new THREE.Vector3(0, TWO_PALLET_DIMENSIONS.top - 0.39 + standRise, 0))
+      .add(new THREE.Vector3(0.38, 0, 0));
+    this.startCameraFlight({ target, position: target.clone().add(new THREE.Vector3(1.7, 1.35, 2.85)), fov: 34 });
   }
 
   setLayout(layout: CellLayout): void {
@@ -344,7 +373,7 @@ export class CellScene {
   }
 
   private refreshInspectionEntries(): void {
-    const signature = this.machineRigs.map((rig) => rig.door?.uuid ?? 'loading').join(',');
+    const signature = `${this.state.magazineMode ?? 0}:` + this.machineRigs.map((rig) => rig.door?.uuid ?? 'loading').join(',');
     if (signature === this.inspectionModelSignature && this.inspectionEntries.length) return;
     this.inspectionModelSignature = signature;
     const entries: InspectionEntry[] = [];
@@ -360,7 +389,7 @@ export class CellScene {
         'gripper-2': [rig.gripper.gripper2], rotation: parts(rig.root.getObjectByName('gripper_rotary_actuator'), rig.root.getObjectByName('gripper_hub')),
       } });
     }
-    this.staticMagazineRigs.forEach((rig, index) => {
+    (this.state.magazineMode === 1 ? this.twoPalletRigs : this.staticMagazineRigs).forEach((rig, index) => {
       const cassette: THREE.Object3D[] = [];
       rig.root.traverse((object) => { if (object.name.includes('cassette') && object instanceof THREE.Mesh) cassette.push(object); });
       entries.push({ target: { kind: 'magazine', index }, root: rig.root, parts: { cassette } });
@@ -393,7 +422,7 @@ export class CellScene {
     const entry = inspection ? this.inspectionEntries.find((item) => inspectionKey(item.target) === inspectionKey(inspection.target)) : undefined;
     if (this.slotMarker) this.slotMarker.visible = false;
     if (entry && inspection?.target.kind === 'magazine') {
-      const rig = this.staticMagazineRigs[inspection.target.index];
+      const rig = (this.state.magazineMode === 1 ? this.twoPalletRigs : this.staticMagazineRigs)[inspection.target.index];
       const slot = inspectionSlot(this.state, inspection.target);
       if (slot !== null) {
         if (!this.slotMarker) {
@@ -402,9 +431,16 @@ export class CellScene {
           this.slotMarker.rotation.x = -Math.PI / 2;
           this.slotMarker.userData.inspectionNode = 'slot';
         }
-        rig.root.add(this.slotMarker);
-        this.slotMarker.scale.setScalar(Math.min(rig.pitchX, rig.pitchY) * 0.88);
-        this.slotMarker.position.set(-4.5 * rig.pitchX + (slot % 10) * rig.pitchX, rig.workingHeight + 0.005, -Math.floor(slot / 10) * rig.pitchY);
+        if ('pallets' in rig) {
+          const pallet = this.state.magazines[inspection.target.index].twin?.robotPallet ?? 1;
+          rig.pallets[pallet - 1].add(this.slotMarker);
+          this.slotMarker.scale.setScalar(0.07 * 0.88);
+          this.slotMarker.position.set((slot % 12 - 5.5) * 0.07, 0.025, (Math.floor(slot / 12) - 3.5) * 0.07);
+        } else {
+          rig.root.add(this.slotMarker);
+          this.slotMarker.scale.setScalar(Math.min(rig.pitchX, rig.pitchY) * 0.88);
+          this.slotMarker.position.set(-4.5 * rig.pitchX + (slot % 10) * rig.pitchX, rig.workingHeight + 0.005, -Math.floor(slot / 10) * rig.pitchY);
+        }
         this.slotMarker.visible = true;
         entry.parts.slot = [this.slotMarker];
       } else entry.parts.slot = [];
@@ -640,6 +676,7 @@ export class CellScene {
     const roots = this.inspectionEnabled ? this.inspectionEntries.map((entry) => entry.root) : [
       ...this.machineRigs.map((rig) => rig.root),
       ...this.staticMagazineRigs.map((rig) => rig.root),
+      ...this.twoPalletRigs.map((rig) => rig.root),
     ];
     const hit = this.raycaster.intersectObjects(roots.filter(isObjectVisible), true).find((item) => isObjectVisible(item.object));
     if (this.inspectionEnabled && this.onEquipmentInspect) {
@@ -687,6 +724,12 @@ export class CellScene {
       rig.root.localToWorld(new THREE.Vector3(machineWidth / 2, 0.03, 0.58)),
     ));
     const magazines = this.staticMagazineRigs.map((rig, index) => {
+      if (this.state.magazineMode === 1 && this.twoPalletRigs[index]) {
+        const standRise = mm(this.layout.twoPalletMagazines[index].legHeightMm - 735);
+        return this.projectAnchor(this.twoPalletRigs[index].root.localToWorld(new THREE.Vector3(
+          0, TWO_PALLET_DIMENSIONS.top + 0.21 + standRise, 0,
+        )));
+      }
       const config = this.layout.staticMagazines[index];
       return this.projectAnchor(rig.root.localToWorld(new THREE.Vector3(
         0,
@@ -719,6 +762,14 @@ export class CellScene {
       const anchor = this.effectAnchors.magazines[index];
       const config = this.layout.staticMagazines[index];
       if (!anchor || !config) return;
+      if (this.state.magazineMode === 1 && this.twoPalletRigs[index]) {
+        const root = this.twoPalletRigs[index].root;
+        const standRise = mm(this.layout.twoPalletMagazines[index].legHeightMm - 735);
+        root.localToWorld(anchor.ground.set(0, 0.012, 0));
+        root.localToWorld(anchor.service.set(0, TWO_PALLET_DIMENSIONS.top + 0.06 + standRise, 0));
+        if (anchor.operation) root.localToWorld(anchor.operation.set(0.51, TWO_PALLET_DIMENSIONS.top + standRise, 0));
+        return;
+      }
       const centerZ = -mm((12 - 1) * config.pitchY) / 2;
       rig.root.localToWorld(anchor.ground.set(0, 0.012, centerZ));
       rig.root.localToWorld(anchor.service.set(0, mm(config.workingHeight) + 0.12, centerZ));
@@ -747,6 +798,41 @@ export class CellScene {
     }
     const now = performance.now();
     const dt = Math.min(this.clock.getDelta(), 0.05);
+    this.staticMagazineRigs.forEach((rig) => { rig.root.visible = this.state.magazineMode !== 1; });
+    this.twoPalletRigs.forEach((rig, index) => {
+      rig.root.visible = this.state.magazineMode === 1;
+      const controller = this.twoPalletControllers[index];
+      const twin = this.state.magazines[index]?.twin;
+      const targetPose = (() => {
+        if (!twin?.live) return controller.pose;
+        const work = twin.selected === 2 ? twin.config.workP2 : twin.config.workP1;
+        const span = work - twin.config.exchange;
+        return { p1: twin.p1, p2: twin.p2, lift: twin.lift,
+          carriage: Math.abs(span) > 0.001 ? Math.max(0, Math.min(1, (twin.position - twin.config.exchange) / span)) : 0,
+          selector: twin.selected === 2 ? 1 : 0 };
+      })();
+      let displayPose = this.twoPalletDisplayPoses[index];
+      if (!displayPose || !twin?.confirmed) {
+        displayPose = { ...targetPose };
+        this.twoPalletDisplayPoses[index] = displayPose;
+      } else {
+        const blend = 1 - Math.exp(-dt * 12);
+        for (const key of ['p1', 'p2', 'lift', 'carriage', 'selector'] as const) {
+          displayPose[key] += (targetPose[key] - displayPose[key]) * blend;
+        }
+      }
+      updateTwoPalletMagazine(rig, controller, twin?.pallets, !twin?.live || twin.confirmed, displayPose);
+      if (twin?.live || twin?.manualLockOut !== undefined || twin?.manualStopOut !== undefined) {
+        rig.lock.position.z = (twin.manualLockOut ?? twin.sensors.lockOut) ? 0.022 : 0;
+        rig.stop.position.z = (twin.manualStopOut ?? twin.sensors.stopOut) ? 0.022 : 0;
+      } else if (twin) {
+        const p1 = twinSignalPattern(twin.config, 1), p2 = twinSignalPattern(twin.config, 2);
+        const lockOut = Number(p1.lockOut) + (Number(p2.lockOut) - Number(p1.lockOut)) * displayPose.selector;
+        const stopOut = Number(p1.stopOut) + (Number(p2.stopOut) - Number(p1.stopOut)) * displayPose.selector;
+        rig.lock.position.z = lockOut * 0.022;
+        rig.stop.position.z = stopOut * 0.022;
+      }
+    });
     this.inspectionElapsed += dt;
     this.inspectionLayer.restoreVisibility();
     if (this.controlCabinetsRig) updateControlCabinets(this.controlCabinetsRig, this.state.controlCabinets, dt, !!this.inspection);
@@ -795,6 +881,7 @@ export class CellScene {
     this.operationalEffects?.update(dt, this.sceneActivity, this.effectAnchors);
     this.easterEggController?.update(dt, this.camera);
     this.workshop?.update(dt, this.reducedMotion.matches || !!this.inspection || this.easterEggMode !== 'off');
+    this.inspectionWorker?.update(dt, this.reducedMotion.matches || !!this.inspection || this.easterEggMode !== 'off');
     this.updateInspection();
     if (!this.easterEggController?.controlsCamera) {
       this.updateCameraFocus(dt);
@@ -831,6 +918,8 @@ export class CellScene {
     this.workshop?.dispose();
     this.workshop = undefined;
     this.machineRigs.forEach(disposeMachineRig);
+    this.inspectionWorker?.dispose();
+    this.inspectionWorker = undefined;
     disposeObject(this.cellRoot);
     this.renderer.dispose();
     this.renderer.domElement.remove();

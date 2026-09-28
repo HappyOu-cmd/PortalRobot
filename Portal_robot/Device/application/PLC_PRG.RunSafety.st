@@ -2,10 +2,23 @@ METHOD PRIVATE RunSafety
 
 // --- BEGIN IMPLEMENTATION ---
 
+FOR uiTwin := 1 TO 2 DO
+	axTwinSafetyBusy[uiTwin] := (GVL_TWO_PALLET.uiMode = 1) AND (GVL_TWO_PALLET.astStatus[uiTwin].xBusy
+		OR (GVL_TWO_PALLET.astInput[uiTwin].xAxisBound AND NOT GVL_TWO_PALLET.astInput[uiTwin].xStandstill));
+END_FOR;
+FOR uiMachine := UINT#1 TO UINT#4 DO
+	axButtonStationInput[uiMachine] := GVL_CELL_SAFETY_IO.axDoorUnlockButtonInput[uiMachine]
+		OR ((GVL_CELL_SETTINGS.eTestEnvironment = E_CELL_TEST_ENVIRONMENT.SIMULATION)
+			AND GVL_CELL_SAFETY_IO.axSimDoorUnlockButtonInput[uiMachine]);
+	axButtonStationEmergencyStopInput[uiMachine] := GVL_CELL_SAFETY_IO.axEmergencyStopButtonStationInput[uiMachine]
+		OR ((GVL_CELL_SETTINGS.eTestEnvironment = E_CELL_TEST_ENVIRONMENT.SIMULATION)
+			AND GVL_CELL_SAFETY_IO.axSimEmergencyStopButtonStationInput[uiMachine]);
+END_FOR;
 CELL_SAFETY(
+	axMagazineMechanismBusy := axTwinSafetyBusy,
 	axDoorLockClosedInput := GVL_CELL_SAFETY_IO.axDoorLockClosedInput,
-	axDoorUnlockButtonInput := GVL_CELL_SAFETY_IO.axDoorUnlockButtonInput,
-	axEmergencyStopButtonStationInput := GVL_CELL_SAFETY_IO.axEmergencyStopButtonStationInput,
+	axDoorUnlockButtonInput := axButtonStationInput,
+	axEmergencyStopButtonStationInput := axButtonStationEmergencyStopInput,
 	axEmergencyStopCabinetInput := GVL_CELL_SAFETY_IO.axEmergencyStopCabinetInput,
 	xEmergencyStopMpgInput := GVL_CELL_SAFETY_IO.xEmergencyStopMpgInput,
 	xPhaseRelayOkInput := GVL_CELL_SAFETY_IO.xPhaseRelayOkInput,

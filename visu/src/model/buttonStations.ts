@@ -8,7 +8,7 @@ export interface ButtonStationState {
 
 export type ButtonStationStates = Record<EnclosureDoorId, ButtonStationState>;
 
-/** Optional GVL_HMI feedback; TRUE means pressed, regardless of physical contact polarity. */
+/** PLC safety status: the emergency-stop contact is published as released and inverted in the HMI. */
 export const BUTTON_STATIONS = [
   { id: 'magazine-1-front', plcIndex: 1 },
   { id: 'magazine-1-rear', plcIndex: 2 },

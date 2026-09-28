@@ -1,0 +1,9 @@
+TYPE ST_TWO_PALLET_ERRORS :
+STRUCT
+	dwErrorActive : DWORD;
+	dwErrorLast : DWORD;
+	dwAlarmActive : DWORD;
+	stErrorActive : ST_TWO_PALLET_ERROR;
+	stErrorLast : ST_TWO_PALLET_ERROR;
+END_STRUCT
+END_TYPE

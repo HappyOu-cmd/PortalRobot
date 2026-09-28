@@ -6,6 +6,9 @@ VAR_GLOBAL
 	axDoorLockClosedInput : ARRAY [1..4] OF BOOL := [TRUE, TRUE, TRUE, TRUE];
 	axDoorUnlockButtonInput : ARRAY [1..4] OF BOOL := [FALSE, FALSE, FALSE, FALSE];
 	axEmergencyStopButtonStationInput : ARRAY [1..4] OF BOOL := [FALSE, FALSE, FALSE, FALSE];
+	// Виртуальные входы постов: учитываются только в среде SIMULATION.
+	axSimDoorUnlockButtonInput : ARRAY [1..4] OF BOOL := [FALSE, FALSE, FALSE, FALSE];
+	axSimEmergencyStopButtonStationInput : ARRAY [1..4] OF BOOL := [FALSE, FALSE, FALSE, FALSE];
 	axEmergencyStopCabinetInput : ARRAY [1..2] OF BOOL := [FALSE, FALSE];
 	xEmergencyStopMpgInput : BOOL := FALSE;
 	xPhaseRelayOkInput    : BOOL := TRUE;

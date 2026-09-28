@@ -1,3 +1,4 @@
+import { twinSymbols, executeTwinCommand } from './two-pallet-channel.mjs';
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
@@ -142,6 +143,7 @@ const faultRequiredSymbols = [
 
 const requiredSymbols = [...new Set([
   ...cellModeSymbols,
+  ...twinSymbols,
   ...commandSymbols,
   'udiPlcHeartbeat',
   'xGlobalError',
@@ -189,9 +191,8 @@ const requiredSymbols = [...new Set([
   'stCellSafetyStatus.xSafetyRelayResetAllowed',
   'stCellSafetyStatus.xSafetyRelayResetActive',
   ...[1, 2, 3, 4].flatMap((index) => [
-    `astButtonStationIoStatus[${index}].xEmergencyStopPressed`,
-    `astButtonStationIoStatus[${index}].xButtonPressed`,
-    `astButtonStationIoStatus[${index}].xButtonLightOn`,
+    `stCellSafetyStatus.axButtonStationPressed[${index}]`,
+    `stCellSafetyStatus.axButtonStationLightOn[${index}]`,
     `astEnclosureDoorStatus[${index}].xLocked`,
     `astEnclosureDoorStatus[${index}].xUnlockAllowed`,
     `astEnclosureDoorStatus[${index}].xUnlockOutput`,
@@ -1149,6 +1150,17 @@ async function executeCommandDirect(message) {
 
 async function executeCommandPrepared(message) {
   const requestId = String(message.requestId ?? Date.now());
+  // Stop has an independent acknowledged channel; it cannot wait behind configuration/JOG payload.
+  if (message.command === 'twin.command' && message.action === 15) {
+    if (![1, 2].includes(message.magazine)) throw new Error('Неверный номер магазина');
+    const path = `astMagazineCommand[${message.magazine}].xStop`;
+    message._plcReceipt = { path, sequence: await pulseValue(path) };
+    return requestId;
+  }
+  if (message.command === 'twin.command' || message.command === 'twin.mode') {
+    message._plcReceipt = await executeTwinCommand(message, { channel: commandChannel, write: writeValue, types: DataType });
+    return requestId;
+  }
   if (message.command === 'cell.manual') {
     await cellModeChannel.run(message.value);
     return requestId;

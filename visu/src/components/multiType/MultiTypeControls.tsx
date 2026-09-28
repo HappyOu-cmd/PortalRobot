@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { BarChart3, Boxes, CheckCircle2, ChevronRight, Clock3, EthernetPort, MapPin, TriangleAlert } from 'lucide-react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { BarChart3, Boxes, CheckCircle2, ChevronRight, Clock3, EthernetPort, MapPin, TriangleAlert, X } from 'lucide-react';
 import type { ProductType } from '../../model/types';
 import type { PlcCellSettings, PlcRobotModbusInfo, PlcTestEnvironmentInfo } from '../../plc/client';
 import { SegmentedControl } from '../ui/ControlPrimitives';
@@ -112,7 +112,7 @@ function ModeApplicationStatus({ requested, applied }: { requested: string; appl
 	</div>;
 }
 
-export function CellSettingsPanel({ online, modbusMode, modbus, testEnvironment, configurationValid, typeCount, typeCountAllowed, magazineConfigAllowed, settings, accelerationEnabled, accelerationActive, accelerationAllowed, onModeChange, onTestEnvironmentChange, onTypeCountChange, onAutoDistribute, onModbusSettingChange, onModbusApply, onSettingChange, onAccelerationChange, onStatisticsSettings, onClose, className }: {
+export function CellSettingsPanel({ online, modbusMode, modbus, testEnvironment, configurationValid, typeCount, typeCountAllowed, magazineConfigAllowed, settings, accelerationEnabled, accelerationActive, accelerationAllowed, onModeChange, onTestEnvironmentChange, onTypeCountChange, onAutoDistribute, onModbusSettingChange, onModbusApply, onSettingChange, onAccelerationChange, onStatisticsSettings, onClose, magazineControl, className }: {
 	online: boolean;
 	modbusMode: boolean;
 	modbus: PlcRobotModbusInfo;
@@ -121,6 +121,7 @@ export function CellSettingsPanel({ online, modbusMode, modbus, testEnvironment,
 	typeCount: number;
 	typeCountAllowed: boolean;
 	magazineConfigAllowed: boolean;
+	magazineControl?: ReactNode;
 	settings: PlcCellSettings;
 	accelerationEnabled: boolean;
 	accelerationActive: boolean;
@@ -166,13 +167,14 @@ export function CellSettingsPanel({ online, modbusMode, modbus, testEnvironment,
 		setActiveTopic(topic);
 	};
 
-	return <aside className={`side-panel cell-settings-panel ${className ?? ''}`}>
-		<div className="panel-heading"><div><span>ИНЖЕНЕРНЫЕ ПАРАМЕТРЫ</span><h2>Настройки ячейки</h2></div><button onClick={onClose} title="Закрыть"><ChevronRight /></button></div>
+	return <aside className={`side-panel cell-settings-panel utility-panel ${className ?? ''}`} aria-label="Настройки ячейки">
+		<header className="utility-panel-header"><span className="utility-panel-icon" aria-hidden="true"><Boxes /></span><div><span>ИНЖЕНЕРНЫЕ ПАРАМЕТРЫ</span><h2>Настройки ячейки</h2></div><button className="utility-panel-close" type="button" onClick={onClose} title="Закрыть" aria-label="Закрыть настройки ячейки"><X aria-hidden="true" /></button></header>
 		<button className="cell-statistics-settings-link" type="button" onClick={onStatisticsSettings}><BarChart3 /><span><b>Статистика</b><small>Расписание смен и редактор статистики</small></span><ChevronRight /></button>
-		<VercelTabs className="settings-topic-tabs cell-settings-topic-tabs" tabs={CELL_SETTINGS_TOPICS} activeTab={activeTopic} onTabChange={selectTopic} ariaLabel="Темы инженерных настроек" panelId="cell-settings-topic-panel" />
+		<VercelTabs className="settings-topic-tabs cell-settings-topic-tabs utility-panel-tabs" tabs={CELL_SETTINGS_TOPICS} activeTab={activeTopic} onTabChange={selectTopic} ariaLabel="Темы инженерных настроек" panelId="cell-settings-topic-panel" />
 		<div className="settings-topic-viewport cell-settings-topic-viewport">
 		<div className={`settings-topic-content cell-settings-topic-content ${topicDirection > 0 ? 'from-right' : 'from-left'}`} id="cell-settings-topic-panel" role="tabpanel" key={activeTopic}>
 		{activeTopic === 'cell' && <>
+        {magazineControl}
       <section className="cell-config-section test-environment-settings">
 			<div className="cell-config-title"><Boxes /><div><h3>Среда выполнения</h3></div></div>
           <SegmentedControl

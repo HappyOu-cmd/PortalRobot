@@ -1,5 +1,6 @@
 TYPE ST_AXIS_STATUS :
 STRUCT
+	xStandstill : BOOL; // MC_ReadStatus: подтверждённый останов, включая Disabled/ErrorStop
     xPowered            : BOOL; // На привод подано питание
 	xPowerStageOn        : BOOL; // Фактическое подтверждение включения силовой части
 	xDriveStartOn        : BOOL; // Фактическое подтверждение снятого QuickStop

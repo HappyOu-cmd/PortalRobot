@@ -2,16 +2,26 @@ METHOD PRIVATE SetApplicationDefaults
 
 // --- BEGIN IMPLEMENTATION ---
 
-// Начальное состояние FB_MACHINE — DISABLED, поэтому и выбор станков для
-// автоматической обработки обязан начинаться с FALSE. Отдельный флаг нужен,
-// чтобы исправление сработало и при Online Change, когда новый initializer GVL
+// При старте PLC ячейка всегда включается в ручном режиме: автоматический цикл
+// требует явного переключения оператором. Однократный флаг также повторно
+// применяет безопасные значения при Online Change, когда initializer GVL
 // может не перезаписать уже существующее значение. Инициализация выполняется до
-// RunCellControl, чтобы менеджер ячейки не увидел ложный выбор даже на один цикл.
-IF NOT xMachineUseInitialized THEN
+// RunCellControl, чтобы автомат не увидел прежние настройки даже на один цикл.
+IF NOT xApplicationStartupInitialized THEN
+	GVL_CELL_CONTROL.xManual := TRUE;
 	FOR uiMachine := 1 TO 3 DO
 		GVL_HMI.axMachineUsed[uiMachine] := FALSE;
 	END_FOR;
-	xMachineUseInitialized := TRUE;
+	// RETAIN uiMode переживает перезапуск PLC, поэтому явно выбираем двухпалетный
+	// тип на старте. При реальной смене типа старые базы магазинов недействительны.
+	IF GVL_TWO_PALLET.uiMode <> UINT#1 THEN
+		GVL_TWO_PALLET.uiMode := UINT#1;
+		GVL_POINT.astRetainPoints[UINT#14].xConfigured := FALSE;
+		GVL_POINT.astRetainPoints[UINT#15].xConfigured := FALSE;
+		xPointTableReady := FALSE;
+	END_IF;
+	GVL_CELL_SETTINGS.eTestEnvironment := E_CELL_TEST_ENVIRONMENT.SIMULATION;
+	xApplicationStartupInitialized := TRUE;
 END_IF;
 
 // При первом запуске этой схемы намеренно отбрасываем прежние инженерные

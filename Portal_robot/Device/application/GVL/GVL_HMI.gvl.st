@@ -1,5 +1,25 @@
 {attribute 'qualified_only'}
 VAR_GLOBAL
+	{attribute 'symbol' := 'readwrite'}
+	stTwinRequest : ST_TWO_PALLET_REQUEST;
+	{attribute 'symbol' := 'readwrite'}
+	udiTwinCommandSeq : UDINT;
+	{attribute 'symbol' := 'readwrite'}
+	udiTwinIssuedAtMs : UDINT;
+	{attribute 'symbol' := 'read'}
+	udiTwinAckSeq : UDINT;
+	{attribute 'symbol' := 'read'}
+	uiTwinResult : UINT;
+	{attribute 'symbol' := 'read'}
+	uiMagazineMode : UINT;
+	{attribute 'symbol' := 'read'}
+	xMagazineModeAllowed : BOOL;
+	{attribute 'symbol' := 'read'}
+	astTwinStatus : ARRAY [1..2] OF ST_TWO_PALLET_STATUS;
+	{attribute 'symbol' := 'read'}
+	astTwinConfig : ARRAY [1..2] OF ST_TWO_PALLET_CONFIG;
+	{attribute 'symbol' := 'read'}
+	astTwinStore : ARRAY [1..2] OF ST_TWO_PALLET_STORE;
 	{attribute 'symbol' := 'read'}
 	udiHmiCommandClockMs : UDINT;
 	{attribute 'symbol' := 'readwrite'}
@@ -408,6 +428,7 @@ VAR_GLOBAL
 	stCellSafetyStatus : ST_CELL_SAFETY_STATUS; // Готовность грибков, реле и дверей
 	stCellSafetyDiag   : ST_CELL_SAFETY_DIAG; // Отклонённые команды безопасности
 	stCellSafetyError  : ST_CELL_SAFETY_ERRORS; // Отдельные Safety-аварии
+	{attribute 'symbol' := 'read'}
 	astButtonStationIoStatus : ARRAY [1..4] OF ST_BUTTON_STATION_IO_STATUS;
 	stFrontControlCabinetIoStatus : ST_CONTROL_CABINET_IO_STATUS;
 	{attribute 'symbol' := 'read'}

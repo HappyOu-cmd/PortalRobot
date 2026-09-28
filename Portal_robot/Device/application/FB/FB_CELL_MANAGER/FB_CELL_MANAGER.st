@@ -1,5 +1,7 @@
 FUNCTION_BLOCK FB_CELL_MANAGER
 VAR_INPUT
+	axMagazineAutoSwapPending : ARRAY [1..GVL_CELL_SETTINGS.MagazineCount] OF BOOL; // Палета ждёт окна обмена
+	xMagazineExchangeActive : BOOL; // До окончания обмена не выдавать новый маршрут роботу
 	xStart            : BOOL; // Импульс запуска цикла или отмены остановки
 	xStop             : BOOL; // Импульс контролируемой остановки
 	xTestAbort        : BOOL; // Немедленная отмена только тестового прогона
@@ -42,6 +44,7 @@ VAR_OUTPUT
 	FaultStatus        : ST_FAULT_INJECTION_STATUS; // Инъекция логической ошибки ячейки
 END_VAR
 VAR
+	xActiveMagazineAutoSwapPending : BOOL; // Удержать владельца и цикл до обмена его палеты
 	eState               : E_CELL_MANAGER_STATE := E_CELL_MANAGER_STATE.IDLE; // Состояние универсального автомата
 	eMagazineOperation   : E_MAGAZINE_OPERATION; // Выполняемая операция магазина
 	eMachineOperation    : E_MACHINE_OPERATION; // Зафиксированная операция станка
@@ -55,6 +58,13 @@ VAR
 	xMagazine1Available  : BOOL;
 	xMagazine2Available  : BOOL;
 	xAlternateMagazineAvailable : BOOL; // Второй магазин готов принять непрерывный автоматический цикл
+	xUseAlternateMagazineForDetail : BOOL; // У текущего магазина нет слота детали, у второго есть
+	xAnyMagazineDetailSlotAvailable : BOOL; // Есть доступный слот детали хотя бы в одном магазине
+	xNoDetailDestinationCondition : BOOL; // Робот держит готовую деталь без доступного слота
+	xNoBlankStockCondition : BOOL; // Нет заготовок и текущей работы для автоматического цикла
+	xDetailDestinationWarningActive : BOOL; // Предупреждение об отсутствии места уже выдано
+	xBlankStockWarningActive : BOOL; // Предупреждение об отсутствии заготовок уже выдано
+	xMachineWorkPending : BOOL; // Станок занят/обрабатывает, запускается или содержит изделие
 	xAnyMachineBusy      : BOOL; // Хотя бы один станок обслуживается
 	xMachineServiceStarted : BOOL; // Выбранный станок вошёл в рецепт
 	xReselectAfterRobotRelease : BOOL; // После снятия команды требуется повторный выбор
@@ -92,6 +102,7 @@ VAR
 	lrStoppedPoseZ      : LREAL; // Доверенная координата Z штатной остановки
 	uiReadyMachines      : UINT; // Число доступных маршрутных целей
 	uiMachine            : UINT; // Индекс станка
+	uiMagazineIndex      : UINT; // Индекс магазина при поиске свободного слота
 	uiCandidateMachine   : UINT; // Результат выбора
 	uiSelectedMachine    : UINT; // Зафиксированный станок
 	uiSelectedType       : UINT; // Тип маршрута
@@ -134,6 +145,8 @@ VAR CONSTANT
 	WRN_START_MACHINE_CHOICE   : UINT := UINT#20;
 	WRN_OPERATOR_REPLY_REJECTED: UINT := UINT#21;
 	WRN_OPERATOR_CANCEL_REJECTED: UINT := UINT#22;
+	WRN_NO_DETAIL_DESTINATION  : UINT := UINT#29;
+	WRN_NO_BLANK_STOCK         : UINT := UINT#30;
 END_VAR
 
 // --- BEGIN IMPLEMENTATION ---
@@ -176,6 +189,35 @@ IF uiActiveMagazine = UINT#1 THEN
 ELSIF uiActiveMagazine = UINT#2 THEN
 	xAlternateMagazineAvailable := xMagazine1Available;
 END_IF;
+
+// Если деталь уже у робота, сначала переключаем владение на второй магазин,
+// если там есть совместимый свободный слот. Это происходит только на границе
+// операций и не прерывает уже выданную команду.
+xUseAlternateMagazineForDetail := FALSE;
+IF xRunning
+AND stRobotStatus.xDetailAvailable
+AND ((eState = E_CELL_MANAGER_STATE.PLAN_TARGET)
+	OR (eState = E_CELL_MANAGER_STATE.WAIT_TARGET)
+	OR (eState = E_CELL_MANAGER_STATE.SELECT_FALLBACK)
+	OR (eState = E_CELL_MANAGER_STATE.WAIT_MAGAZINE))
+AND (uiDetailPayloadType >= UINT#1)
+AND (uiDetailPayloadType <= Config.uiTypeCount) THEN
+	IF uiActiveMagazine = UINT#1 THEN
+		IF (astMagazineStatus[1].stTypeStatus.aiFreeSlot[uiDetailPayloadType] = SINT#0)
+		AND xMagazine2Available THEN
+			IF astMagazineStatus[2].stTypeStatus.aiFreeSlot[uiDetailPayloadType] > SINT#0 THEN
+				xUseAlternateMagazineForDetail := TRUE;
+			END_IF;
+		END_IF;
+	ELSIF uiActiveMagazine = UINT#2 THEN
+		IF (astMagazineStatus[2].stTypeStatus.aiFreeSlot[uiDetailPayloadType] = SINT#0)
+		AND xMagazine1Available THEN
+			IF astMagazineStatus[1].stTypeStatus.aiFreeSlot[uiDetailPayloadType] > SINT#0 THEN
+				xUseAlternateMagazineForDetail := TRUE;
+			END_IF;
+		END_IF;
+	END_IF;
+END_IF;
 IF xRunning
 AND (uiActiveMagazine >= UINT#1)
 AND (uiActiveMagazine <= UINT#2) THEN
@@ -184,13 +226,17 @@ AND (uiActiveMagazine <= UINT#2) THEN
 	// источником истины и будет уложен уже в выбранный магазин. Проверяем также
 	// итоговый xEnabled: FB_MAGAZINE может завершить отключение и снять
 	// xDisablePending раньше, чем робот достигнет границы перепланирования.
-	IF (astMagazineStatus[uiActiveMagazine].xFinished
+	// xFinished в DONE ещё не означает конец цикла: механизм палет получает
+	// окно только после RELEASE_MAGAZINE. До обмена сохраняем старого владельца.
+	IF (((astMagazineStatus[uiActiveMagazine].xFinished
+			AND NOT axMagazineAutoSwapPending[uiActiveMagazine])
 		OR ((astMagazineStatus[uiActiveMagazine].xDisablePending
 			OR NOT astMagazineStatus[uiActiveMagazine].xEnabled)
 			AND ((eState = E_CELL_MANAGER_STATE.PLAN_TARGET)
 				OR (eState = E_CELL_MANAGER_STATE.WAIT_TARGET)
 				OR (eState = E_CELL_MANAGER_STATE.SELECT_FALLBACK)
 				OR (eState = E_CELL_MANAGER_STATE.WAIT_MAGAZINE))))
+		OR xUseAlternateMagazineForDetail)
 	AND NOT astMagazineStatus[uiActiveMagazine].xBusy
 	AND NOT stRobotStatus.xBusy THEN
 		IF xAlternateMagazineAvailable THEN
@@ -247,8 +293,10 @@ END_IF;
 
 IF (uiActiveMagazine >= UINT#1) AND (uiActiveMagazine <= UINT#2) THEN
 	stMagazineStatus := astMagazineStatus[uiActiveMagazine];
+	xActiveMagazineAutoSwapPending := axMagazineAutoSwapPending[uiActiveMagazine];
 ELSE
 	stMagazineStatus := astMagazineStatus[1];
+	xActiveMagazineAutoSwapPending := FALSE;
 END_IF;
 
 // HOME_SAFETY — это диапазон вокруг именованной точки, а не требование
@@ -330,9 +378,19 @@ END_FOR;
 
 uiReadyMachines := UINT#0;
 xAnyMachineBusy := FALSE;
+xMachineWorkPending := FALSE;
 FOR uiMachine := FIRST_MACHINE TO LAST_MACHINE DO
 	IF astMachineStatus[uiMachine].xBusy THEN
 		xAnyMachineBusy := TRUE;
+		xMachineWorkPending := TRUE;
+	END_IF;
+	IF astMachineStatus[uiMachine].xProcessing
+	OR astMachineStatus[uiMachine].xPartReady
+	OR axMachineStartPending[uiMachine]
+	OR ((astMachineStatus[uiMachine].ePartState = E_PART_STATE.LOADED)
+		AND ((astMachineStatus[uiMachine].ePartType = E_PART_TYPE.PART)
+			OR (astMachineStatus[uiMachine].ePartType = E_PART_TYPE.DETAIL))) THEN
+		xMachineWorkPending := TRUE;
 	END_IF;
 	IF IsMachineEligible(uiMachine := uiMachine) THEN
 		uiReadyMachines := uiReadyMachines + UINT#1;
@@ -353,6 +411,54 @@ uiCandidateMachine := SelectMachineBeforeTake();
 IF uiCandidateMachine = UINT#0 THEN
 	uiCandidateMachine := SelectMachineForUnload(uiCurrentMachine := UINT#0);
 END_IF;
+
+// Для готовой детали пригоден только свободный слот её типа в магазине,
+// который сейчас включён и доступен роботу. Свободная ячейка в отключённом
+// или неисправном магазине не считается маршрутом.
+xAnyMagazineDetailSlotAvailable := FALSE;
+IF (uiDetailPayloadType >= UINT#1)
+AND (uiDetailPayloadType <= Config.uiTypeCount) THEN
+	FOR uiMagazineIndex := UINT#1 TO GVL_CELL_SETTINGS.MagazineCount DO
+		IF astMagazineStatus[uiMagazineIndex].xEnabled
+		AND astMagazineStatus[uiMagazineIndex].xReady
+		AND NOT astMagazineStatus[uiMagazineIndex].xBusy
+		AND NOT astMagazineStatus[uiMagazineIndex].xError
+		AND NOT astMagazineStatus[uiMagazineIndex].xDisablePending THEN
+			IF astMagazineStatus[uiMagazineIndex].stTypeStatus.aiFreeSlot[uiDetailPayloadType] > SINT#0 THEN
+				xAnyMagazineDetailSlotAvailable := TRUE;
+			END_IF;
+		END_IF;
+	END_FOR;
+END_IF;
+
+// WARNING: место требуется только для готовой детали, уже находящейся у робота.
+// Деталь в станке и полная палета заготовок при пустом роботе не создают W29.
+xNoDetailDestinationCondition := (xRunning OR rtStart.Q)
+	AND NOT xManual
+	AND NOT xMagazineExchangeActive
+	AND stRobotStatus.xDetailAvailable
+	AND (uiDetailPayloadType >= UINT#1)
+	AND (uiDetailPayloadType <= Config.uiTypeCount)
+	AND NOT xAnyMagazineDetailSlotAvailable
+	AND ((eState = E_CELL_MANAGER_STATE.PLAN_TARGET)
+		OR (eState = E_CELL_MANAGER_STATE.WAIT_TARGET)
+		OR (eState = E_CELL_MANAGER_STATE.SELECT_FALLBACK)
+		OR (eState = E_CELL_MANAGER_STATE.WAIT_MAGAZINE)
+		OR (rtStart.Q AND (eState = E_CELL_MANAGER_STATE.IDLE)));
+
+xNoBlankStockCondition := (xRunning OR rtStart.Q)
+	AND NOT xManual
+	AND NOT xMagazineExchangeActive
+	AND NOT stRobotStatus.xBlankAvailable
+	AND NOT stRobotStatus.xDetailAvailable
+	AND astMagazineStatus[1].xOutBlank
+	AND astMagazineStatus[2].xOutBlank
+	AND NOT xMachineWorkPending
+	AND (uiCandidateMachine = UINT#0)
+	AND ((eState = E_CELL_MANAGER_STATE.PLAN_TARGET)
+		OR (eState = E_CELL_MANAGER_STATE.WAIT_TARGET)
+		OR (eState = E_CELL_MANAGER_STATE.WAIT_MAGAZINE)
+		OR (rtStart.Q AND (eState = E_CELL_MANAGER_STATE.IDLE)));
 
 CASE Config.uiTypeCount OF
 	UINT#1: uiOperatorTypeMask := UINT#1;
@@ -578,6 +684,29 @@ AND xManual THEN
 	eState := E_CELL_MANAGER_STATE.IDLE;
 END_IF;
 
+// Условия ожидания не являются ошибкой и не останавливают ячейку. Каждое
+// предупреждение регистрируется один раз на непрерывный эпизод; после очистки
+// причины новое появление условия создаст новую запись журнала.
+IF xNoDetailDestinationCondition
+AND NOT xDetailDestinationWarningActive THEN
+	Diag.stWarning.uiCode := WRN_NO_DETAIL_DESTINATION;
+	Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
+	IF Diag.stWarning.udiSequence = UDINT#0 THEN
+		Diag.stWarning.udiSequence := UDINT#1;
+	END_IF;
+END_IF;
+xDetailDestinationWarningActive := xNoDetailDestinationCondition;
+
+IF xNoBlankStockCondition
+AND NOT xBlankStockWarningActive THEN
+	Diag.stWarning.uiCode := WRN_NO_BLANK_STOCK;
+	Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
+	IF Diag.stWarning.udiSequence = UDINT#0 THEN
+		Diag.stWarning.udiSequence := UDINT#1;
+	END_IF;
+END_IF;
+xBlankStockWarningActive := xNoBlankStockCondition;
+
 IF rtStop.Q OR xManual THEN
 	xStopRequested := TRUE;
 ELSIF rtStart.Q AND xRunning
@@ -622,6 +751,12 @@ IF xTestAbort THEN
 	eState := E_CELL_MANAGER_STATE.TEST_ABORT_STOP;
 END_IF;
 
+// Магазин получает окно только на границе операций; активный обмен удерживает
+// планировщик, а не просто блокирует уже выданную команду до её тайм-аута.
+IF xMagazineExchangeActive AND ((eState = E_CELL_MANAGER_STATE.PLAN_TARGET)
+	OR (eState = E_CELL_MANAGER_STATE.WAIT_TARGET) OR (eState = E_CELL_MANAGER_STATE.WAIT_MAGAZINE)) THEN
+	IF xStopRequested THEN xRunning := FALSE; eState := E_CELL_MANAGER_STATE.IDLE; END_IF;
+ELSE
 CASE eState OF
 	E_CELL_MANAGER_STATE.IDLE:
 		xRunning := FALSE;
@@ -985,7 +1120,7 @@ CASE eState OF
 						eState := E_CELL_MANAGER_STATE.WAIT_MAGAZINE;
 					END_IF;
 				ELSE
-					IF stMagazineStatus.xFinished THEN
+					IF stMagazineStatus.xFinished AND NOT xActiveMagazineAutoSwapPending THEN
 						xRunning := FALSE;
 						eState := E_CELL_MANAGER_STATE.IDLE;
 					ELSE
@@ -1126,7 +1261,7 @@ CASE eState OF
 				uiSelectedMachine := UINT#0;
 				uiSelectedType := UINT#0;
 				eMachineOperation := E_MACHINE_OPERATION.NONE;
-				IF stMagazineStatus.xFinished THEN
+				IF stMagazineStatus.xFinished AND NOT xActiveMagazineAutoSwapPending THEN
 					xRunning := FALSE;
 					eState := E_CELL_MANAGER_STATE.IDLE;
 				ELSE
@@ -1209,7 +1344,7 @@ CASE eState OF
 					ELSE
 						eState := E_CELL_MANAGER_STATE.WAIT_MAGAZINE;
 					END_IF;
-				ELSIF stMagazineStatus.xFinished THEN
+				ELSIF stMagazineStatus.xFinished AND NOT xActiveMagazineAutoSwapPending THEN
 					xRunning := FALSE;
 					eState := E_CELL_MANAGER_STATE.IDLE;
 				END_IF;
@@ -1405,7 +1540,7 @@ CASE eState OF
 				ELSE
 					eState := E_CELL_MANAGER_STATE.WAIT_MAGAZINE;
 				END_IF;
-			ELSIF stMagazineStatus.xFinished THEN
+			ELSIF stMagazineStatus.xFinished AND NOT xActiveMagazineAutoSwapPending THEN
 				xRunning := FALSE;
 				eState := E_CELL_MANAGER_STATE.IDLE;
 			END_IF;
@@ -1457,6 +1592,7 @@ CASE eState OF
 			eState := E_CELL_MANAGER_STATE.IDLE;
 		END_IF;
 END_CASE;
+END_IF;
 
 // Фиксируем позу только после завершённой штатной остановки или нормального
 // окончания цикла. Аварийный переход оставляет xSafetyHomeRequired активным.
@@ -1475,6 +1611,9 @@ IF eState <> E_CELL_MANAGER_STATE.ERROR THEN
 	xResetAllowed := FALSE;
 END_IF;
 
+Status.xMagazineExchangeAllowed := NOT xStopRequested
+	AND ((eState = E_CELL_MANAGER_STATE.IDLE) OR (eState = E_CELL_MANAGER_STATE.PLAN_TARGET)
+		OR (eState = E_CELL_MANAGER_STATE.WAIT_TARGET) OR (eState = E_CELL_MANAGER_STATE.WAIT_MAGAZINE));
 Status.xRunning := xRunning;
 Status.xStopPending := xStopRequested AND xRunning;
 Status.xBusy := xRunning

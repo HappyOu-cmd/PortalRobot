@@ -62,6 +62,10 @@ export const CELL_LAYOUT_PRESET: CellLayout = {
       workingHeight: 900,
     },
   ],
+  twoPalletMagazines: [
+    { position: { x: 4210, y: -800, z: 0 }, legHeightMm: 735 },
+    { position: { x: 9210, y: -800, z: 0 }, legHeightMm: 735 },
+  ],
   animation: {
     motionResponse: 7,
     mechanismResponse: 6,

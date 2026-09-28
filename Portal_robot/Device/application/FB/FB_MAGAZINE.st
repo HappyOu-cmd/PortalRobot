@@ -1,6 +1,7 @@
 FUNCTION_BLOCK FB_MAGAZINE
 VAR_INPUT
 	uiMagazineId : UINT; // Идентификатор экземпляра 1..2
+	xMechanismReady : BOOL := TRUE;
 	xTestInitialize : BOOL;
 	xTestEnabled : BOOL;
 	stRobotStatus     : ST_ROBOT_STATUS; // Текущие статусы робота
@@ -25,7 +26,7 @@ VAR_INPUT
 	lrHmiEditPitchX   : LREAL;
 	lrHmiEditPitchY   : LREAL;
 	xRobotOwnsMagazine : BOOL; // Автомат удерживает этот магазин в текущем цикле
-	xRobotCanWorkWithMagazine : BOOL; // Интерфейс робота и обязательные точки готовы
+	xRobotCanWorkWithMagazine : BOOL; // Интерфейс и точки готовы для роботной операции, не для включения магазина
 	xSharedGeometryEditAllowed : BOOL; // Оба магазина выключены; общий шаг можно менять
 	uiRows            : UINT; // Число строк матрицы магазина
 	uiColumns         : UINT; // Число столбцов матрицы магазина
@@ -119,26 +120,22 @@ VAR CONSTANT
 	WRN_RESET_GLOBAL_ERROR   : UINT := 2; // Глобальная ошибка ещё активна
 	WRN_RESET_ROBOT_ERROR    : UINT := 3; // Ошибка робота ещё активна
 	WRN_ENABLE_GLOBAL_ERROR  : UINT := 4; // Включение запрещено глобальной ошибкой
-	WRN_ENABLE_CONTENT       : UINT := 5; // Содержимое магазина не позволяет включение
+	WRN_ENABLE_CONTENT       : UINT := 5; // Архив: содержимое больше не блокирует включение
 	WRN_DISABLE_PENDING      : UINT := 6; // Отключение магазина уже запрошено
 	WRN_FILL_ENABLED         : UINT := 7; // Заполнение запрещено для включённого магазина
 	WRN_FILL_GEOMETRY        : UINT := 8; // Активная матрица магазина задана неверно
 	WRN_CLEAR_ENABLED        : UINT := 9; // Очистка запрещена для включённого магазина
 	WRN_SIM_ERROR_NOT_ALLOWED: UINT := 10; // Тестовая ошибка запрещена текущим состоянием
-	WRN_ENABLE_ROBOT_NOT_READY : UINT := 15; // Робот не может работать с магазином
 	WRN_EDIT_REJECTED : UINT := 14; // Редактирование включённого/занятого магазина запрещено
 	WRN_GEOMETRY_EDIT_REJECTED : UINT := 16; // PLC отклонил изменение общего шага X/Y
+	WRN_ENABLE_GEOMETRY      : UINT := 15; // Геометрия магазина не позволяет включение
+	WRN_ENABLE_OWN_ERROR     : UINT := 17; // Включение запрещено собственной ошибкой магазина
 END_VAR
 
 // --- BEGIN IMPLEMENTATION ---
 
-// Инвентарь не RETAIN: после запуска PLC обе статичные кассеты пусты.
+// Инвентарь загружает владелец банков RunTwoPallet; здесь сбрасывается только автомат.
 IF NOT xStartupInitialized THEN
-	FOR iInventoryIndex := 1 TO GVL_CELL_SETTINGS.MagazineSlots DO
-		stInventory.aSlots[iInventoryIndex].xInPosition := FALSE;
-		stInventory.aSlots[iInventoryIndex].eDetailType := E_DETAIL_TYPE.NONE;
-		stInventory.aSlots[iInventoryIndex].uiProductType := UINT#0;
-	END_FOR;
 	xFaultContextCaptured := FALSE;
 	xRobotInMagazineAtFault := FALSE;
 	xRobotStopRequired := FALSE;
@@ -369,10 +366,9 @@ AND xMachineHasDestination THEN
 	Status.xCanEnable := TRUE;
 END_IF;
 
-Status.xEnableCheckRobotReady := xRobotCanWorkWithMagazine;
+Status.xEnableCheckRobotReady := xRobotCanWorkWithMagazine AND xMechanismReady;
 Status.xEnableCheckRobotReleased := NOT xRobotInMagazineContext;
 Status.xEnableCheckNoError := NOT xGlobalError
-	AND NOT stRobotStatus.xError
 	AND (Diag.eState <> E_MAGAZINE_STATE.ERROR)
 	AND (Error.dwErrorActive = DWORD#0);
 Status.xEnableCheckContent := Status.xCanEnable;
@@ -381,11 +377,11 @@ Status.xEnableCheckGeometry := (iActiveSlotCount > SINT#0)
 	AND (lrPitchX <= LREAL#5000.0)
 	AND (lrPitchY >= LREAL#1.0)
 	AND (lrPitchY <= LREAL#5000.0);
+// Включение магазина не зависит от готовности робота, таблицы его точек
+// нахождения вне зоны магазина или содержимого текущей палеты. Эти условия
+// остаются проверками конкретной операции и автоматического цикла.
 Status.xEnableSequenceAllowed := (Diag.eState = E_MAGAZINE_STATE.DISABLED)
-	AND Status.xEnableCheckRobotReady
-	AND Status.xEnableCheckRobotReleased
 	AND Status.xEnableCheckNoError
-	AND Status.xEnableCheckContent
 	AND Status.xEnableCheckGeometry;
 
 // Finished остаётся прежним по смыслу, но теперь оценивает единственную кассету.
@@ -462,11 +458,10 @@ AND (Diag.eState = E_MAGAZINE_STATE.DISABLED)
 AND NOT Status.xEnableSequenceAllowed THEN
 	IF xGlobalError THEN
 		Diag.stWarning.uiCode := WRN_ENABLE_GLOBAL_ERROR;
-	ELSIF NOT Status.xEnableCheckRobotReady
-	OR NOT Status.xEnableCheckRobotReleased THEN
-		Diag.stWarning.uiCode := WRN_ENABLE_ROBOT_NOT_READY;
+	ELSIF NOT Status.xEnableCheckGeometry THEN
+		Diag.stWarning.uiCode := WRN_ENABLE_GEOMETRY;
 	ELSE
-		Diag.stWarning.uiCode := WRN_ENABLE_CONTENT;
+		Diag.stWarning.uiCode := WRN_ENABLE_OWN_ERROR;
 	END_IF;
 	Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
 	IF Diag.stWarning.udiSequence = UDINT#0 THEN
@@ -647,7 +642,7 @@ CASE Diag.eState OF
 		// Автоматический владелец держит xExecute до завершения операции. Если
 		// команда пришла раньше включения магазина, фронт был бы поглощён в
 		// DISABLED; в IDLE принимаем также активный уровень запроса.
-		ELSIF rtExecute.Q OR xExecuteRequest THEN
+		ELSIF (rtExecute.Q OR xExecuteRequest) AND xMechanismReady THEN
 			IF xManualCommand THEN
 				CASE stHmiCommand.eSetPoint OF
 					E_POINT_NAME.MAGAZINE_TAKE_DETAIL:
@@ -1124,7 +1119,7 @@ Status.xDisablePending := xDisableRequest AND Status.xEnabled;
 Status.xPowerAllowed := Status.xEnabled OR Status.xEnableSequenceAllowed;
 Status.xFillAllowed := (iActiveSlotCount > SINT#0) AND Status.xEditAllowed;
 Status.xClearAllowed := Status.xEditAllowed;
-Status.xReady := (Diag.eState = E_MAGAZINE_STATE.IDLE)
+Status.xReady := xMechanismReady AND  (Diag.eState = E_MAGAZINE_STATE.IDLE)
 	AND xRobotCanWorkWithMagazine
 	AND (Error.dwErrorActive = DWORD#0);
 Status.xBusy := (Diag.eState <> E_MAGAZINE_STATE.DISABLED)

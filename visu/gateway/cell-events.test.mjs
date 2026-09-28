@@ -63,6 +63,17 @@ test('inspection logs E-stop edges and observes already pressed buttons on conne
   assert.equal(pressed[0].status, 'active');
   assert.equal(pressed[0].timestampMs, 4000);
   assert.equal(pressed[0].details.observedOnConnect, false);
+
+  const station = new CellEventClassifier();
+  const releasedPath = 'stCellSafetyStatus.axEmergencyStopReleased[1]';
+  const stationPressed = station.process(snapshot({ [releasedPath]: false }), 5000)
+    .filter((event) => event.eventType === 'equipment-diagnostic');
+  assert.deepEqual(stationPressed.map((event) => [event.code, event.status]), [
+    ['io:station:magazine-1-front:emergency-stop', 'active'],
+  ]);
+  const stationReleased = station.process(snapshot({ [releasedPath]: true }), 6000)
+    .filter((event) => event.eventType === 'equipment-diagnostic');
+  assert.equal(stationReleased[0].status, 'restored');
 });
 
 test('inspection logs unsafe relay and enabled-magazine door conditions with inverted OK polarity', () => {

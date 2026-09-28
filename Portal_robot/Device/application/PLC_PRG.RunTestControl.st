@@ -15,6 +15,8 @@ xTestStable := NOT GVL_CELL_MANAGER.Status.xRunning
 	AND NOT GVL_ROBOT.Status.xBusy
 	AND NOT GVL_MAGAZINE.astStatus[1].xBusy
 	AND NOT GVL_MAGAZINE.astStatus[2].xBusy
+	AND NOT GVL_TWO_PALLET.astInput[1].xPowered
+	AND NOT GVL_TWO_PALLET.astInput[2].xPowered
 	AND NOT xMotionBusy
 	AND NOT SIMULATION_DYNAMICS.xBusy;
 FOR uiTestIndex := UINT#1 TO UINT#3 DO
@@ -25,6 +27,7 @@ END_FOR;
 
 GVL_HMI.xTestEnvironmentChangeAllowed := xTestStable;
 GVL_HMI.xTestScenarioApplyAllowed := xTestStable
+	AND (GVL_TWO_PALLET.uiMode = 0) // Existing scenarios describe static 120-slot magazines
 	AND GVL_HMI.xTestSessionActive
 	AND (GVL_CELL_SETTINGS.eTestEnvironment <> E_CELL_TEST_ENVIRONMENT.NORMAL)
 	AND ((GVL_CELL_SETTINGS.eTestEnvironment <> E_CELL_TEST_ENVIRONMENT.SC500_BENCH)

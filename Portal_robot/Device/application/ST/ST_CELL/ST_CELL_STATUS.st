@@ -1,5 +1,6 @@
 TYPE ST_CELL_STATUS :
 STRUCT
+	xMagazineExchangeAllowed : BOOL; // Планировщик не держит незавершённый маршрут
 	xRunning           : BOOL; // Автоматический цикл запущен
 	xStopPending       : BOOL; // Запрошена остановка после безопасного шага
 	xBusy              : BOOL; // Менеджер выполняет автоматический цикл

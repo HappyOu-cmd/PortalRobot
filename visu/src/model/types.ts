@@ -88,6 +88,7 @@ export interface CellLayout {
   productPartMaterials: [ProductPartMaterials, ProductPartMaterials, ProductPartMaterials];
   gripperPayloadPose: GripperPayloadPoseLayout;
   staticMagazines: StaticMagazineLayout[];
+  twoPalletMagazines: { position: Vec3Mm; legHeightMm: number }[];
   animation: {
     motionResponse: number;
     mechanismResponse: number;
@@ -198,6 +199,7 @@ export interface MagazineState {
 }
 
 export interface MagazineData {
+  twin?: import('./twoPalletControl').TwinState;
   slots: SlotType[];
   productTypes: ProductType[];
   state: MagazineState;
@@ -213,6 +215,8 @@ export interface EnclosureDoorState {
 export type EnclosureDoorStates = Record<EnclosureDoorId, EnclosureDoorState>;
 
 export interface CellState {
+  magazineMode?: 0 | 1;
+  magazineModeAllowed?: boolean;
 	robot: RobotState;
   machines: MachineState[];
   magazines: [MagazineData, MagazineData];

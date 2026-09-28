@@ -1,5 +1,6 @@
 FUNCTION_BLOCK FB_ROBOT
 VAR_INPUT
+	xMagazineMotionInhibit : BOOL; // Обмен палет удерживает неподвижный робот до завершения
 	xTestInitialize : BOOL;
 	auiTestGripperContent : ARRAY [1..2] OF UINT;
 	auiTestGripperType : ARRAY [1..2] OF UINT;
@@ -231,6 +232,10 @@ END_IF;
 IF xMode
 AND xExternalCommandInhibit
 AND (eState = E_ROBOT_STATE.IDLE) THEN
+	Command.xExecute := FALSE;
+END_IF;
+
+IF xMagazineMotionInhibit AND (eState = E_ROBOT_STATE.IDLE) THEN
 	Command.xExecute := FALSE;
 END_IF;
 

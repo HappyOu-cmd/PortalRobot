@@ -17,8 +17,9 @@ export const CELL_EVENT_SOURCES = Object.freeze({
 // Existing I/O feedback, recorded separately from the PLC alarm catalogue.
 const INSPECTION_IO = [
   ...['magazine-1-front', 'magazine-1-rear', 'magazine-2-front', 'magazine-2-rear'].map((id, index) => ({
-    path: `astButtonStationIoStatus[${index + 1}].xEmergencyStopPressed`, code: `io:station:${id}:emergency-stop`,
+    path: `stCellSafetyStatus.axEmergencyStopReleased[${index + 1}]`, code: `io:station:${id}:emergency-stop`,
     label: `Аварийный пост ${index + 1}`, activeText: 'аварийная кнопка нажата', restoredText: 'аварийная кнопка освобождена',
+    faultWhenFalse: true,
   })),
   ...['magazine-1-front', 'magazine-1-rear', 'magazine-2-front', 'magazine-2-rear'].map((id, index) => ({
     path: `stCellSafetyStatus.axDoorReady[${index + 1}]`, code: `io:station:${id}:door-lock`,
@@ -445,6 +446,9 @@ export class CellEventClassifier {
       transition(`${status}.ePartType`, 'part', () => `Станок ${machine}: тип изделия — ${numberValue(current, `${status}.ePartType`) === 1 ? 'готовая деталь' : numberValue(current, `${status}.ePartType`) === 2 ? 'заготовка' : 'не определён'}`);
     }
 
+    if (changed('uiMagazineMode')) push(this.event(4, 'magazine-mode', 'changed',
+      numberValue(current, 'uiMagazineMode') === 1 ? 'Выбраны два двухпалетных магазина: 384 места' : 'Выбраны два статичных магазина: 240 мест',
+      { oldValue: previous.uiMagazineMode, newValue: current.uiMagazineMode }));
     for (let magazine = 1; magazine <= 2; magazine += 1) {
       const statusRoot = `astMagazineStatus[${magazine}]`;
       const diagRoot = `astMagazineDiag[${magazine}]`;
@@ -460,14 +464,28 @@ export class CellEventClassifier {
         selectedBlank: numberValue(current, `${statusRoot}.iSelectedBlank`),
         selectedFreeSlot: numberValue(current, `${statusRoot}.iSelectedFreeSlot`),
       });
-      const changedSlots = [];
-      for (let slot = 1; slot <= 120; slot += 1) {
-        const path = `astMagazineInventory[${magazine}].aSlots[${slot}].eDetailType`;
-        if (changed(path)) changedSlots.push({ magazine, slot, from: previous[path], to: current[path] });
+      const twin = numberValue(current, 'uiMagazineMode') === 1;
+      if (twin) {
+        const root = `astTwinStatus[${magazine}]`;
+        const steps = { 0: 'ожидание', 20: 'опускание П2', 30: 'возврат к оператору', 40: 'переключение зацепления', 50: 'подача к роботу', 60: 'подъём П2', 100: 'ручное опускание', 110: 'ручной подъём', 120: 'ручной выбор палеты', 130: 'ручной ход', 150: 'Home', 160: 'JOG' };
+        for (const [field, label] of [['uiStep', 'шаг'], ['uiRobotPallet', 'палета у робота'], ['xConfirmed', 'подтверждение расстановки'], ['xHomeRequired', 'требование Home']]) {
+          magazineTransition(`${root}.${field}`, 'pallet-state', () => `Магазин ${magazine}: ${label} — ${field === 'uiStep' ? steps[current[`${root}.${field}`]] ?? current[`${root}.${field}`] : current[`${root}.${field}`]}`, 'changed', { magazine });
+        }
       }
-      if (changedSlots.length) push(this.event(4, 'slot-content', 'changed', changedSlots.length === 1
-        ? `Магазин ${magazine}: изменилось содержимое слота ${changedSlots[0].slot}`
-        : `Магазин ${magazine}: изменилось содержимое ${changedSlots.length} слотов`, { details: { magazine, slots: changedSlots } }));
+      // Смена активной палеты не должна выглядеть как перезапись её 96 слотов.
+      for (const pallet of twin ? [1, 2] : [0]) {
+        const inventory = twin ? `astTwinStore[${magazine}].astPallet[${pallet}]` : `astMagazineInventory[${magazine}]`;
+        const changedSlots = [];
+        for (let slot = 1; slot <= (twin ? 96 : 120); slot += 1) {
+          const path = `${inventory}.aSlots[${slot}].eDetailType`;
+          if (changed(path) && !changed('uiMagazineMode')) changedSlots.push({ magazine, pallet, slot, from: previous[path], to: current[path] });
+        }
+        const identity = `Магазин ${magazine}${twin ? `, П${pallet}` : ''}`;
+        if (changedSlots.length) push(this.event(4, 'slot-content', 'changed', changedSlots.length === 1
+          ? `${identity}: изменилось содержимое слота ${changedSlots[0].slot}`
+          : `${identity}: изменилось содержимое ${changedSlots.length} слотов`, { details: { magazine, pallet, slots: changedSlots } }));
+        if (twin) magazineTransition(`astTwinStore[${magazine}].axLoaded[${pallet}]`, 'pallet-loading', () => `${identity}: загрузка ${boolValue(current, `astTwinStore[${magazine}].axLoaded[${pallet}]`) ? 'подтверждена' : 'требует подтверждения'}`, 'changed', { magazine, pallet });
+      }
     }
 
     if (changed('stCellStatus.uiActiveMagazine')) {
@@ -610,7 +628,10 @@ const COMMAND_LABELS = {
 
 export function describeOperatorCommand(message) {
   const command = String(message.command ?? 'unknown');
-  const label = COMMAND_LABELS[command]
+  const twinActions = ['', 'включить', 'подтвердить расстановку', 'выключить', 'обмен', 'питание оси', 'отключить ось', 'сброс привода', 'Home', 'опустить П2', 'поднять П2', 'зацепить П1', 'зацепить П2', 'к оператору', 'к роботу', 'стоп', 'сброс магазина', 'JOG +', 'JOG −', 'отпустить JOG', 'загрузка завершена', 'очистить палету', 'заполнить палету', 'изменить слот', 'параметры', 'запомнить операторскую координату', 'запомнить рабочую координату', 'подтвердить и включить', 'отказаться от включения', 'втянуть замок', 'выдвинуть замок', 'втянуть фиксатор', 'выдвинуть фиксатор', 'автоматическая смена палет'];
+  const label = (command === 'twin.mode' ? `Тип магазинов: ${message.value === 1 ? 'двухпалетные' : 'статичные'}`
+    : command === 'twin.command' ? `Магазин ${message.magazine}: ${message.action === 33
+      ? `автоматическая смена ${message.value === 1 ? 'включена' : 'выключена'}` : twinActions[message.action] ?? message.action}` : undefined) ?? COMMAND_LABELS[command]
     ?? (command.startsWith('machine.') ? `Команда станку ${message.machine}: ${command.slice(8)}`
       : command.startsWith('fault.') ? `Диагностическая команда: ${command.slice(6)}`
         : command.startsWith('robot.modbus.') ? `Изменить настройку Modbus: ${command.slice(13)}`

@@ -91,9 +91,10 @@ export function FaultInjectionPanel({ values, online, send, onClose, className }
     }
   };
 
-  return <aside className={`side-panel fault-injection-panel ${className ?? ''}`}>
-    <FaultPanelHeading eyebrow="РУЧНОЕ УПРАВЛЕНИЕ · ДИАГНОСТИКА" title="Инъекции ошибок" onClose={onClose} />
+  return <aside className={`side-panel fault-injection-panel utility-panel ${className ?? ''}`} aria-label="Инъекции ошибок">
+    <FaultPanelHeading eyebrow="РУЧНОЕ УПРАВЛЕНИЕ · ДИАГНОСТИКА" title="Инъекции ошибок" kind="fault" onClose={onClose} />
     <FaultModeBanner requested={requested} enabled={enabled} online={online} />
+    <div className="utility-panel-scroll fault-panel-scroll">
 
     <section className="fault-injection-mode">
       <h3>Режим инъекций</h3>
@@ -186,6 +187,7 @@ export function FaultInjectionPanel({ values, online, send, onClose, className }
       <FaultStatusLine status={machineStatus} />
     </section>
 
-    <div className="panel-actions"><button type="button" disabled={!online} onClick={releaseHeld}><RotateCcw />Снять удерживаемые инъекции</button></div>
+    </div>
+    <div className="panel-actions fault-panel-actions"><button type="button" disabled={!online} onClick={releaseHeld}><RotateCcw />Снять удерживаемые инъекции</button></div>
   </aside>;
 }

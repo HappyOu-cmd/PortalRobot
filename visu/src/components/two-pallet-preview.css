@@ -1,0 +1,40 @@
+.two-pallet-preview { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; min-width: 0; }
+.two-pallet-preview > section { min-width: 0; }
+.two-pallet-preview > section:nth-child(-n+2) { grid-column: 1 / -1; }
+.two-pallet-preview .two-pallet-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.two-pallet-preview button,
+.manual-static-magazine .manual-magazine-actions button {
+  min-height: 44px;
+  flex: 1 1 125px;
+  padding: 8px 11px;
+  border: 1px solid #cad7e0;
+  border-radius: 8px;
+  background: #fff;
+  color: #29465b;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.two-pallet-preview button.primary,
+.two-pallet-preview button[aria-pressed=true] { background: #1769d2; border-color: #1769d2; color: #fff; }
+.two-pallet-preview button:disabled,
+.manual-static-magazine .manual-magazine-actions button:disabled { opacity: .45; cursor: default; }
+.two-pallet-preview button:focus-visible,
+.manual-static-magazine .manual-magazine-actions button:focus-visible { outline: 2px solid #1769d2; outline-offset: 2px; }
+.two-pallet-preview .panel-note { margin: 12px 0 0; }
+.two-pallet-step { margin: 0 0 12px; padding: 10px 12px; border-left: 3px solid #1769d2; border-radius: 4px; background: #edf4fb; color: #29465b; font-size: 12px; line-height: 1.5; }
+.two-pallet-readouts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px; margin-bottom: 14px; }
+.two-pallet-readouts > div { display: flex; justify-content: space-between; gap: 12px; min-width: 0; font-size: 12px; }
+.two-pallet-readouts span { color: #74838f; }
+.two-pallet-readouts strong { font-variant-numeric: tabular-nums; text-align: right; }
+.two-pallet-speed { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-top: 14px; color: #546a79; font-size: 12px; }
+.two-pallet-speed input { grid-column: 1 / -1; width: 100%; margin: 0; accent-color: #1769d2; }
+.two-pallet-control-group { padding-top: 12px; border-top: 1px solid #e4eaf0; }
+.two-pallet-control-group > strong { color: #3d5668; font-size: 12px; }
+.two-pallet-preview .magazine-matrix { margin-top: 12px; gap: 8px 5px; }
+
+@media (max-width: 680px) {
+  .two-pallet-preview { grid-template-columns: minmax(0, 1fr); }
+  .two-pallet-preview > section { grid-column: 1 / -1; }
+  .two-pallet-readouts { grid-template-columns: minmax(0, 1fr); }
+}

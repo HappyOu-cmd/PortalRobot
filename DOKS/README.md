@@ -24,6 +24,7 @@
 | [16-cell-warnings.md](16-cell-warnings.md) | Реестр предупреждений ячейки |
 | [19-discrete-signal-list.md](19-discrete-signal-list.md) | Предварительная таблица дискретных сигналов станков, захватов, пультов и цепи безопасности |
 | [20-smoke-and-integration-test-catalog.md](20-smoke-and-integration-test-catalog.md) | Человеческое описание входов и ожидаемых результатов Smoke, Regression и генеральных сценариев ячейки |
+| [21-two-pallet-magazine-control-plan.md](21-two-pallet-magazine-control-plan.md) | План управления новым двухпалетным магазином; раздел 13 — локальный 3D-прототип перед ячейкой и проверка анимаций без OPC UA. Управляющий алгоритм PLC ещё не реализован |
 
 ## Карта правил
 

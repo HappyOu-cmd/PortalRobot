@@ -1,3 +1,4 @@
+import { mapTwinSnapshot } from './twoPalletMapping';
 import alarmCatalog from '../../alarm-catalog.json';
 import { BUTTON_STATIONS, DEFAULT_BUTTON_STATIONS } from '../model/buttonStations';
 import { DEFAULT_CONTROL_CABINETS } from '../model/controlCabinets';
@@ -369,6 +370,8 @@ interface GatewayMessage {
 }
 
 export interface PlcCommand {
+  revision?: number;
+  twinConfig?: Record<string, number | boolean>;
   command: string;
   machine?: number;
   magazine?: number;
@@ -649,16 +652,19 @@ export function mapPlcSnapshot(
 
   const magazines = current.magazines.map((magazine, magazineIndex) => {
     const number = magazineIndex + 1;
-    const slots = magazine.slots.map((slot, index): SlotType => {
+    const capacity = numberValue(values, 'uiMagazineMode', 1) === 1 ? 96 : 120;
+    const slots = Array.from({ length: capacity }, (_, index): SlotType => {
+      const slot = magazine.slots[index] ?? 'empty';
       const root = `astMagazineInventory[${number}].aSlots[${index + 1}]`;
       if (!booleanValue(values, `${root}.xInPosition`, slot !== 'empty')) return 'empty';
       const detailType = numberValue(values, `${root}.eDetailType`, slot === 'blank' ? 1 : slot === 'detail' ? 2 : 0);
       return detailType === 1 ? 'blank' : detailType === 2 ? 'detail' : 'empty';
     }).slice(0, 120);
-    const productTypes = magazine.productTypes.map((type, index) =>
-      productTypeValue(values, `astMagazineInventory[${number}].aSlots[${index + 1}].uiProductType`, type)).slice(0, 120);
+    const productTypes = Array.from({ length: capacity }, (_, index) =>
+      productTypeValue(values, `astMagazineInventory[${number}].aSlots[${index + 1}].uiProductType`, magazine.productTypes[index] ?? 1)).slice(0, 120);
     const status = `astMagazineStatus[${number}]`;
     return {
+      twin: numberValue(values, 'uiMagazineMode', 1) === 1 ? mapTwinSnapshot(values, number, magazine.twin) : undefined,
       slots,
       productTypes,
       state: {
@@ -705,11 +711,10 @@ export function mapPlcSnapshot(
   const mpg = current.mpgPendant ?? DEFAULT_MPG_PENDANT;
   for (const { id, plcIndex } of BUTTON_STATIONS) {
     const previous = buttonStations[id];
-    const path = `astButtonStationIoStatus[${plcIndex}]`;
     buttonStations[id] = {
-      emergencyStopPressed: booleanValue(values, `${path}.xEmergencyStopPressed`, previous.emergencyStopPressed),
-      buttonPressed: booleanValue(values, `${path}.xButtonPressed`, previous.buttonPressed),
-      buttonLightOn: booleanValue(values, `${path}.xButtonLightOn`, previous.buttonLightOn),
+      emergencyStopPressed: !booleanValue(values, `stCellSafetyStatus.axEmergencyStopReleased[${plcIndex}]`, !previous.emergencyStopPressed),
+      buttonPressed: booleanValue(values, `stCellSafetyStatus.axButtonStationPressed[${plcIndex}]`, previous.buttonPressed),
+      buttonLightOn: booleanValue(values, `stCellSafetyStatus.axButtonStationLightOn[${plcIndex}]`, previous.buttonLightOn),
     };
   }
   const enclosureDoors = { ...current.enclosureDoors };
@@ -743,6 +748,8 @@ export function mapPlcSnapshot(
     },
     machines,
     magazines,
+    magazineMode: numberValue(values, 'uiMagazineMode', 1) === 1 ? 1 : 0,
+    magazineModeAllowed: booleanValue(values, 'xMagazineModeAllowed', false),
     enclosureDoors,
     buttonStations,
     mpgPendant: {

@@ -51,8 +51,9 @@ export function SimulationSettingsPanel({ values, online, send, onClose, classNa
     setDirty(false);
   };
 
-  return <aside className={`side-panel simulation-settings-panel ${className ?? ''}`}>
-    <FaultPanelHeading eyebrow="НАСТРОЙКИ · ВИРТУАЛЬНОЕ ОБОРУДОВАНИЕ" title="Настройки симуляции" onClose={onClose} />
+  return <aside className={`side-panel simulation-settings-panel utility-panel ${className ?? ''}`} aria-label="Настройки симуляции">
+    <FaultPanelHeading eyebrow="НАСТРОЙКИ · ВИРТУАЛЬНОЕ ОБОРУДОВАНИЕ" title="Настройки симуляции" kind="simulation" onClose={onClose} />
+    <div className="utility-panel-scroll simulation-panel-scroll">
     <section>
       <h3>Время обработки</h3>
       <div className="simulation-fields-grid">
@@ -84,6 +85,7 @@ export function SimulationSettingsPanel({ values, online, send, onClose, classNa
       </div>
     </section>
     {!valid && <p className="simulation-validation">Все значения должны быть больше нуля.</p>}
+    </div>
     <div className="simulation-panel-actions">
       <button type="button" onClick={() => { setDraft(structuredClone(DEFAULT_SIMULATION_SETTINGS)); setDirty(true); }}><RotateCcw />По умолчанию</button>
       <button className="primary" type="button" disabled={!online || !dirty || !valid} onClick={apply}><Save />Применить</button>

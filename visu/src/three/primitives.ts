@@ -113,6 +113,8 @@ export const COLORS = {
   background: 0xfdfdfe,
   floor: 0xe8edf2,
   grid: 0xb9c6d0,
+  fenceFrame: 0xe5c51d,
+  fenceMesh: 0x727342,
   blue: 0x1769d2,
   blueDark: 0x0f3f76,
   graphite: 0x26323c,

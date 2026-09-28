@@ -1,9 +1,9 @@
-import { CheckCircle2, ChevronRight, Clock3 } from 'lucide-react';
+import { CheckCircle2, Clock3, ShieldAlert, X } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type { FaultInjectionStatus } from '../../model/faultSimulation';
 
-export function FaultPanelHeading({ eyebrow, title, onClose }: { eyebrow: string; title: string; onClose: () => void }) {
-  return <div className="panel-heading"><div><span>{eyebrow}</span><h2>{title}</h2></div><button type="button" onClick={onClose} title="Закрыть"><ChevronRight /></button></div>;
+export function FaultPanelHeading({ eyebrow, title, kind, onClose }: { eyebrow: string; title: string; kind: 'fault' | 'simulation'; onClose: () => void }) {
+  return <header className="utility-panel-header"><span className="utility-panel-icon" aria-hidden="true">{kind === 'fault' ? <ShieldAlert /> : <Clock3 />}</span><div><span>{eyebrow}</span><h2>{title}</h2></div><button className="utility-panel-close" type="button" onClick={onClose} title="Закрыть" aria-label={`Закрыть ${title.toLowerCase()}`}><X aria-hidden="true" /></button></header>;
 }
 
 export function FaultModeBanner({ requested, enabled, online }: { requested: boolean; enabled: boolean; online: boolean }) {

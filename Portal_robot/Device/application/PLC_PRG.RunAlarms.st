@@ -24,17 +24,17 @@ xAlarmResetRequired := GVL_CELL_MANAGER.Status.xError
 	OR (NOT GVL_HMI.xModbusMode AND (GVL_POINT_MANAGER.PointManager.Error.dwAlarmActive <> DWORD#0))
 	OR (NOT GVL_HMI.xModbusMode AND (GVL_ROBOT.GripperError.dwAlarmActive <> DWORD#0));
 
-xAlarmResetAllowed := xAlarmResetRequired
+xAlarmResetAllowed := ((GVL_TWO_PALLET.uiMode = 0) OR ((NOT GVL_TWO_PALLET.astStatus[1].xError OR GVL_TWO_PALLET.astStatus[1].xResetAllowed) AND (NOT GVL_TWO_PALLET.astStatus[2].xError OR GVL_TWO_PALLET.astStatus[2].xResetAllowed))) AND xAlarmResetRequired
 	AND (CELL_SAFETY.Error.dwAlarmActive = DWORD#0)
 	AND (NOT GVL_CELL_MANAGER.Status.xError OR GVL_CELL_MANAGER.Status.xResetAllowed)
 	AND (NOT GVL_ROBOT.Status.xError OR GVL_ROBOT.Status.xResetAllowed)
 	AND (NOT GVL_MACHINE.Status[1].xError OR GVL_MACHINE.Status[1].xResetAllowed)
 	AND (NOT GVL_MACHINE.Status[2].xError OR GVL_MACHINE.Status[2].xResetAllowed)
 	AND (NOT GVL_MACHINE.Status[3].xError OR GVL_MACHINE.Status[3].xResetAllowed)
-	AND (NOT GVL_MAGAZINE.astStatus[1].xError
+	AND (NOT GVL_MAGAZINE.astPartStatus[1].xError
 		OR (GVL_MAGAZINE.astError[1].dwAlarmActive = DWORD#0)
 		OR fbMagazine1.FaultStatus.xResetAllowed)
-	AND (NOT GVL_MAGAZINE.astStatus[2].xError
+	AND (NOT GVL_MAGAZINE.astPartStatus[2].xError
 		OR (GVL_MAGAZINE.astError[2].dwAlarmActive = DWORD#0)
 		OR fbMagazine2.FaultStatus.xResetAllowed)
 	AND (GVL_HMI.xModbusMode OR NOT GVL_AXIS.arrAxis[1].Status.xError OR AXIS_X.FaultStatus.xResetAllowed)
@@ -50,6 +50,20 @@ xAlarmResetAllowed := xAlarmResetRequired
 		OR (GVL_ROBOT.Status.xResetAllowed AND ROBOT.FaultStatus.stPoint.xResetAllowed))
 	AND (GVL_HMI.xModbusMode OR (GVL_ROBOT.GripperError.dwAlarmActive = DWORD#0)
 		OR (GVL_ROBOT.Status.xResetAllowed AND ROBOT.FaultStatus.stGripper.xResetAllowed));
+
+// Два владельца предупреждений используют один источник журнала и общий счётчик.
+FOR uiTwin := 1 TO 2 DO
+	IF GVL_MAGAZINE.astDiag[uiTwin].stWarning.udiSequence <> audiPartWarningSeen[uiTwin] THEN
+		audiPartWarningSeen[uiTwin] := GVL_MAGAZINE.astDiag[uiTwin].stWarning.udiSequence;
+		astMagazineWarningMerged[uiTwin].uiCode := GVL_MAGAZINE.astDiag[uiTwin].stWarning.uiCode;
+		astMagazineWarningMerged[uiTwin].udiSequence := astMagazineWarningMerged[uiTwin].udiSequence + 1;
+	END_IF;
+	IF GVL_TWO_PALLET.astDiag[uiTwin].stWarning.udiSequence <> audiTwinWarningSeen[uiTwin] THEN
+		audiTwinWarningSeen[uiTwin] := GVL_TWO_PALLET.astDiag[uiTwin].stWarning.udiSequence;
+		astMagazineWarningMerged[uiTwin].uiCode := GVL_TWO_PALLET.astDiag[uiTwin].stWarning.uiCode;
+		astMagazineWarningMerged[uiTwin].udiSequence := astMagazineWarningMerged[uiTwin].udiSequence + 1;
+	END_IF;
+END_FOR;
 
 // В журнал передаются все активные ошибки и предупреждения каждого функционального блока.
 astAlarmSource[1].eSource := E_ALARM_SOURCE.CELL;
@@ -86,13 +100,13 @@ astAlarmSource[6].eSource := E_ALARM_SOURCE.MAGAZINE_LOGIC_1;
 astAlarmSource[6].dwAlarmActive := GVL_MAGAZINE.astError[1].dwAlarmActive;
 astAlarmSource[6].xRobotStopRequired := GVL_MAGAZINE.astStatus[1].xRobotStopRequired;
 astAlarmSource[6].xGlobalError := GVL_CELL_CONTROL.xGlobalError;
-astAlarmSource[6].stWarning := GVL_MAGAZINE.astDiag[1].stWarning;
+astAlarmSource[6].stWarning := astMagazineWarningMerged[1];
 
 astAlarmSource[7].eSource := E_ALARM_SOURCE.MAGAZINE_LOGIC_2;
 astAlarmSource[7].dwAlarmActive := GVL_MAGAZINE.astError[2].dwAlarmActive;
 astAlarmSource[7].xRobotStopRequired := GVL_MAGAZINE.astStatus[2].xRobotStopRequired;
 astAlarmSource[7].xGlobalError := GVL_CELL_CONTROL.xGlobalError;
-astAlarmSource[7].stWarning := GVL_MAGAZINE.astDiag[2].stWarning;
+astAlarmSource[7].stWarning := astMagazineWarningMerged[2];
 
 // Числовые коды 7 и 8 зарезервированы, чтобы старые записи SQLite не начали
 // отображаться как аварии осей X/Y после удаления приводов магазинов.

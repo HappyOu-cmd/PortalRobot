@@ -4,9 +4,9 @@ STRUCT
 	xDisablePending  : BOOL; // Отключение выполнится после выхода робота и завершения операции
 	xPowerAllowed    : BOOL; // Команда включения/отключения может быть принята
 	xEnableSequenceAllowed : BOOL; // PLC разрешает ввести подготовленный магазин в автомат
-	xEnableCheckRobotReady : BOOL; // Интерфейс робота и обязательные точки готовы
-	xEnableCheckRobotReleased : BOOL; // Робот находится вне этого магазина
-	xEnableCheckNoError : BOOL; // Нет ошибок магазина, робота и ячейки
+	xEnableCheckRobotReady : BOOL; // Диагностика готовности роботной операции; не блокирует включение
+	xEnableCheckRobotReleased : BOOL; // Диагностика положения робота; не блокирует включение
+	xEnableCheckNoError : BOOL; // Нет ошибок магазина и глобальных ошибок ячейки
 	xEnableCheckContent : BOOL; // Содержимое кассеты допускает полезную операцию
 	xEnableCheckGeometry : BOOL; // Матрица содержит от 1 до 120 активных слотов
 	xFillAllowed     : BOOL; // Кнопка заполнения магазина заготовками доступна
@@ -23,7 +23,7 @@ STRUCT
 	xCanTake         : BOOL; // Операция TAKE доступна по содержимому магазина
 	xCanPut          : BOOL; // Операция PUT доступна по содержимому магазина
 	xCanChange       : BOOL; // Операция CHANGE доступна по содержимому магазина
-	xCanEnable       : BOOL; // Содержимое магазина позволяет повторное включение
+	xCanEnable       : BOOL; // Содержимое позволяет взять/положить груз; не блокирует включение
 	xFinished        : BOOL; // Магазин требует обслуживания оператором
 	udiProducedPartsTotal : UDINT; // Подтверждённые укладки готовой детали с момента запуска PLC
 	uiMagazineId    : UINT; // 1 или 2

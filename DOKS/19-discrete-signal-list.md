@@ -119,6 +119,8 @@ DI — сигнал от оборудования к управляющему к
 | S-DI-01 | Кнопки открытия дверей 1–4 | `axDoorUnlockButtonInput[1..4]` | Пост → PLC | 4 | Кнопка нажата; фронт команды обрабатывает PLC |
 | S-DI-02 | Обратная связь замков дверей 1–4 | `axDoorLockClosedInput[1..4]` | Замок → PLC | 4 | Замок закрыт; двери 1/2 относятся к магазину 1, 3/4 — к магазину 2 |
 | S-DI-03 | Грибки кнопочных постов 1–4 | `axEmergencyStopButtonStationInput[1..4]` | Пост → PLC | 4 | Грибок нажат |
+| SIM-DI-01 | Виртуальные кнопки постов 1–4 | `axSimDoorUnlockButtonInput[1..4]` | CODESYS → PLC | 4 | Учитываются только в среде `SIMULATION`; физические кнопки продолжают действовать |
+| SIM-DI-02 | Виртуальные грибки постов 1–4 | `axSimEmergencyStopButtonStationInput[1..4]` | CODESYS → PLC | 4 | Учитываются только в среде `SIMULATION`; физические грибки продолжают действовать |
 | S-DI-04 | Грибки двух шкафов | `axEmergencyStopCabinetInput[1..2]` | Шкаф → PLC | 2 | Грибок нажат; 1 — шкаф оператора, 2 — шкаф управления |
 | S-DI-05 | Грибок MPG-пульта | `xEmergencyStopMpgInput` | MPG → PLC | 1 | Грибок нажат |
 | S-DI-06 | Реле контроля фаз | `xPhaseRelayOkInput` | Реле → PLC | 1 | Реле в норме |

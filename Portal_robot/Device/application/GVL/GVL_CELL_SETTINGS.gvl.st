@@ -1,15 +1,15 @@
 {attribute 'qualified_only'}
 VAR_GLOBAL CONSTANT
 	MagazineCount : INT := 2; // Два независимых статичных магазина
-	MagazineRows : UINT := 12; // Фиксированная матрица статичной кассеты
-	MagazineColumns : UINT := 10;
 	MagazineSlots : SINT := 120; // Одна кассета 12 x 10 в каждом магазине
 	NumberDetail : SINT := 120;
 END_VAR
 
 VAR_GLOBAL
-	// Не RETAIN: после каждого запуска PLC тестовая среда всегда NORMAL.
-	eTestEnvironment : E_CELL_TEST_ENVIRONMENT := E_CELL_TEST_ENVIRONMENT.NORMAL;
+	MagazineRows : UINT := 12;
+	MagazineColumns : UINT := 10;
+	// Не RETAIN: после каждого запуска PLC тестовая среда всегда SIMULATION.
+	eTestEnvironment : E_CELL_TEST_ENVIRONMENT := E_CELL_TEST_ENVIRONMENT.SIMULATION;
 	eTestSpeedProfile : E_TEST_SPEED_PROFILE := E_TEST_SPEED_PROFILE.REALTIME;
 	xSimulationAccelerationEnable : BOOL := FALSE; // Ускорять таймеры и динамику SoftMotion в тестовом профиле FAST
 	uiSimulationTimeFactor : UINT := 1; // Запрошенный коэффициент 1..100; можно менять в любой момент

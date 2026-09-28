@@ -1,3 +1,5 @@
+import { TwoPalletControl, MagazineModeSwitch } from './components/magazine/TwoPalletControl';
+import { createTwinState, changeOfflineMagazineMode, commandTwinPreview, syncTwinPreview, twinMagazine, TWIN_COMMANDS, TWIN_CONFIG_FIELDS, type TwinAction, type TwinCommandData, type TwinConfig, type TwinState } from './model/twoPalletControl';
 import conveyorBeltOutlineIcon from '@iconify-icons/material-symbols/conveyor-belt-outline';
 import displaySettingsOutlineIcon from '@iconify-icons/material-symbols/display-settings-outline';
 import microwaveGenOutlineIcon from '@iconify-icons/material-symbols/microwave-gen-outline';
@@ -19,6 +21,8 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { CellViewport } from './components/CellViewport';
+import { TwoPalletPreviewControl } from './components/TwoPalletPreviewControl';
+import { TwoPalletPreviewController } from './model/twoPalletPreview';
 import { CellHeaderControls } from './components/CellHeaderControls';
 import { MachineExtendedPanel } from './components/machine/MachineExtendedPanel';
 import { EnclosureManualControl } from './components/EnclosureManualControl';
@@ -195,7 +199,7 @@ const QUICK_MAGAZINE_MATRIX_ID = 'quick-magazine-matrix';
 const WORKSPACE_INTERACTIVE_SELECTOR = 'button, input, a, [role="button"], [data-interactive]';
 const WORKSPACE_OPEN_PANEL_SELECTOR = [
   '.side-panel', '.test-workbench', '.cell-quick-panel', '.machine-quick-panel', '.robot-quick-panel',
-  '.magazine-quick-panel', '.safety-quick-panel', '.cyclogram-panel', '.alarm-panel', '.magazine-screen',
+  '.magazine-quick-panel', '.two-pallet-control', '.safety-quick-panel', '.cyclogram-panel', '.alarm-panel', '.magazine-screen',
   '.cell-event-panel', '.statistics-panel', '.statistics-settings-panel', '.confirmation-overlay', '.magazine-matrix-card', '.profile-area', '.command-error',
 ].map((selector) => `${selector}:not(.ios-motion-exiting)`).join(', ');
 const sameData = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
@@ -353,7 +357,14 @@ const PAGE_TITLES: Record<Page, string> = {
   users: 'Управление пользователями', statistics: 'Статистика', 'statistics-settings': 'Настройки статистики',
 };
 const cloneLayout = (): CellLayout => structuredClone(DEFAULT_LAYOUT);
-const cloneState = (): CellState => structuredClone(DEFAULT_STATE);
+const cloneState = (): CellState => {
+  const state = structuredClone(DEFAULT_STATE);
+  return {
+    ...state,
+    magazineMode: 1,
+    magazines: state.magazines.map((magazine) => twinMagazine(magazine, createTwinState(true))) as CellState['magazines'],
+  };
+};
 const distributeProductTypes = (activeCount: number, machineTypes: ProductType[]): ProductType[] => {
   const weights = ([1, 2, 3] as ProductType[]).map((type) => machineTypes.filter((value) => value === type).length);
   const totalWeight = Math.max(1, weights.reduce((sum, value) => sum + value, 0));
@@ -440,7 +451,7 @@ const INITIAL_RUNTIME: PlcRuntimeInfo = {
     },
   },
   testEnvironment: {
-    requested: 0, applied: 0, speedProfile: 0, changeAllowed: false, scenarioApplyAllowed: false,
+    requested: 1, applied: 1, speedProfile: 0, changeAllowed: false, scenarioApplyAllowed: false,
     simulatorActive: false, benchKey: false, benchKeyLost: false, rejectReason: 0,
   },
   startReadiness: {
@@ -576,7 +587,8 @@ function ExtendedControlIcon() {
       stroke="currentColor"
       strokeWidth="1.5"
     >
-      <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 5.25h16.5m-16.5 4.5h16.5m-16.5 4.5h16.5m-16.5 4.5h16.5" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+      <circle cx="12" cy="12" r="3" />
     </svg>
   );
 }
@@ -1432,7 +1444,7 @@ function AlarmScreen({ events, online, resetAllowed, safetyRelayResetAllowed, sa
           <ShieldAlert size={20} />{safetyRelayResetActive ? 'Сброс реле…' : 'Сбросить реле безопасности'}
         </button>
         <button className="alarm-reset-warnings" type="button" onClick={onResetWarnings} disabled={!online || activeWarnings === 0}><AlertCircle size={20} />Сбросить предупреждения</button>
-        <button className={`alarm-reset-all ${resetAllowed ? '' : 'command-unavailable'}`} type="button" onClick={onResetAlarms} disabled={!online} aria-disabled={!resetAllowed}><RotateCcw size={20} />Сбросить аварии</button>
+        <button className={`alarm-reset-all ${resetAllowed ? '' : 'command-unavailable'}`} type="button" onClick={onResetAlarms} disabled={!online || !resetAllowed} aria-disabled={!resetAllowed}><RotateCcw size={20} />Сбросить аварии</button>
         <button className="panel-close-button" type="button" onClick={onClose} aria-label="Закрыть аварии" title="Закрыть"><X /></button>
       </div>
     </header>
@@ -1545,6 +1557,14 @@ function loadLayout(): CellLayout {
         position: {
           ...magazine.position,
           ...savedStaticMagazines?.[index]?.position,
+        },
+      })),
+      twoPalletMagazines: fallback.twoPalletMagazines.map((magazine, index) => ({
+        legHeightMm: Math.min(1500, Math.max(600, Number(saved.twoPalletMagazines?.[index]?.legHeightMm) || magazine.legHeightMm)),
+        position: {
+          ...magazine.position,
+          ...(savedStaticMagazines?.[index]?.position.x !== undefined ? { x: savedStaticMagazines[index].position.x } : {}),
+          ...saved.twoPalletMagazines?.[index]?.position,
         },
       })),
       animation: { ...fallback.animation, ...saved.animation },
@@ -1830,7 +1850,7 @@ function MagazineScreen({ magazine, magazineNumber, step, typeCount, onClose, on
     <div className="magazine-screen-grid">
       <section className="magazine-map-panel"><div className="magazine-section-head"><div><span>СОДЕРЖИМОЕ</span><h3>Кассета · {state.columns} × {state.rows}</h3></div></div><div className="magazine-slot-editor"><div><span>Записывать в слот</span><div className="magazine-content-selector"><button className={editContent === 'empty' ? 'active' : ''} type="button" onClick={() => setEditContent('empty')}>Пусто</button><button className={editContent === 'blank' ? 'active' : ''} type="button" onClick={() => setEditContent('blank')}>Заготовка</button><button className={editContent === 'detail' ? 'active' : ''} type="button" onClick={() => setEditContent('detail')}>Изделие</button></div></div><ProductTypeSelector label="Тип изделия" value={editProductType} count={typeCount} disabled={editContent === 'empty' || !state.editAllowed} onChange={setEditProductType} /></div><div className="magazine-map"><MagazineMatrix slots={slots} productTypes={productTypes} columns={state.columns} activeCount={activeCount} onSlotClick={state.editAllowed ? (index) => onSlotApply(index, editContent, editProductType) : undefined} /></div><div className="magazine-map-footer"><span><i className="slot blank" />Заготовки <b>{blanks}</b></span><span><i className="slot detail" />Детали <b>{details}</b></span><span><i className="slot empty" />Пусто <b>{empty}</b></span><strong>{state.editAllowed ? 'Редактирование разрешено' : 'Редактирование доступно только при выключенном магазине'}</strong></div></section>
       <aside className="magazine-side-column">
-        <section className="magazine-diagnostics"><div className="magazine-section-head"><div><span>ДИАГНОСТИКА</span><h3>{step}</h3></div></div><div className="diagnostic-list"><span>Текущая операция <b>{operationText}</b></span><span>TAKE / PUT / CHANGE <b>{state.canTake ? 'Да' : 'Нет'} / {state.canPut ? 'Да' : 'Нет'} / {state.canChange ? 'Да' : 'Нет'}</b></span><span>Робот готов к магазину <b>{state.enableCheckRobotReady ? 'Да' : 'Нет'}</b></span><span>Геометрия кассеты <b>{state.enableCheckGeometry ? 'Настроена' : 'Некорректна'}</b></span></div>{state.activeErrors.length ? <div className="magazine-error"><AlertCircle /><span>{state.activeErrors[0]}</span></div> : <div className="magazine-ok"><CheckCircle2 /><span>Активных ошибок нет</span></div>}</section>
+        <section className="magazine-diagnostics"><div className="magazine-section-head"><div><span>ДИАГНОСТИКА</span><h3>{step}</h3></div></div><div className="diagnostic-list"><span>Текущая операция <b>{operationText}</b></span><span>TAKE / PUT / CHANGE <b>{state.canTake ? 'Да' : 'Нет'} / {state.canPut ? 'Да' : 'Нет'} / {state.canChange ? 'Да' : 'Нет'}</b></span><span>Роботная операция доступна <b>{state.enableCheckRobotReady ? 'Да' : 'Нет'}</b></span><span>Геометрия кассеты <b>{state.enableCheckGeometry ? 'Настроена' : 'Некорректна'}</b></span></div>{state.activeErrors.length ? <div className="magazine-error"><AlertCircle /><span>{state.activeErrors[0]}</span></div> : <div className="magazine-ok"><CheckCircle2 /><span>Активных ошибок нет</span></div>}</section>
         <section className="magazine-settings"><div className="magazine-section-head"><div><span>НАСТРОЙКИ</span><h3>Шаг кассеты</h3></div><Settings /></div><div className="magazine-settings-grid"><MagazineSettingField key={`${magazineNumber}-pitchX`} label="Шаг по X, мм" value={state.pitchX} min={1} max={5000} step={0.1} disabled={!state.pitchEditAllowed} onCommit={(value) => onSetting('magazine.pitchX', 'pitchX', value)} /><MagazineSettingField key={`${magazineNumber}-pitchY`} label="Шаг по Y, мм" value={state.pitchY} min={1} max={5000} step={0.1} disabled={!state.pitchEditAllowed} onCommit={(value) => onSetting('magazine.pitchY', 'pitchY', value)} /></div><p className="magazine-settings-note">Смещения Safe Z и Change Z настраиваются вместе с базовой точкой соответствующего магазина в редакторе точек робота.</p></section>
       </aside>
     </div>
@@ -1843,10 +1863,7 @@ function MagazineReadinessDialog({ magazineNumber, state, onClose }: {
   onClose: () => void;
 }) {
   const checks: Array<[string, boolean, string]> = [
-    ['Робот готов работать с магазином', state.enableCheckRobotReady, 'Проверьте интерфейс робота, таблицу точек и ошибки робота'],
-    ['Робот освободил магазин', state.enableCheckRobotReleased, 'Дождитесь выхода робота из магазина'],
-    ['Нет активных ошибок', state.enableCheckNoError, 'Устраните ошибку и выполните Reset'],
-    ['Содержимое позволяет выполнить операцию', state.enableCheckContent, 'Заполните или отредактируйте кассету'],
+    ['Нет ошибок магазина и ячейки', state.enableCheckNoError, 'Устраните ошибку и выполните Reset'],
     ['Геометрия кассеты настроена', state.enableCheckGeometry, 'Проверьте размеры матрицы и шаг между слотами'],
   ];
   const readyCount = checks.filter(([, ready]) => ready).length;
@@ -1904,9 +1921,10 @@ function PartMaterialField({ label, value, onChange }: {
   </div>;
 }
 
-function SettingsPanel({ layout, setLayout, fontPreset, onFontPreset, easterEggMode, driftSettings, visualEffects, onVisualEffectsChange, onDriftSettings, onEasterEggMode, onNextEasterEgg, onClose, className }: {
+function SettingsPanel({ layout, setLayout, magazineMode, fontPreset, onFontPreset, easterEggMode, driftSettings, visualEffects, onVisualEffectsChange, onDriftSettings, onEasterEggMode, onNextEasterEgg, onClose, className }: {
   layout: CellLayout;
   setLayout: (layout: CellLayout) => void;
+  magazineMode: 0 | 1;
   fontPreset: FontPreset;
   onFontPreset: (preset: FontPreset) => void;
   easterEggMode: EasterEggMode;
@@ -1938,10 +1956,10 @@ function SettingsPanel({ layout, setLayout, fontPreset, onFontPreset, easterEggM
     setActiveTopic(topic);
   };
   return (
-    <aside className={`side-panel settings-panel ${className ?? ''}`}>
-      <div className="panel-heading"><div><span>НАСТРОЙКИ · СОХРАНЯЮТСЯ АВТОМАТИЧЕСКИ</span><h2>Визуализация</h2></div><button onClick={onClose} title="Закрыть"><ChevronRight /></button></div>
+    <aside className={`side-panel settings-panel utility-panel ${className ?? ''}`} aria-label="Настройки визуализации">
+      <header className="utility-panel-header"><span className="utility-panel-icon" aria-hidden="true"><Icon icon={displaySettingsOutlineIcon} width={28} height={28} /></span><div><span>НАСТРОЙКИ · СОХРАНЯЮТСЯ АВТОМАТИЧЕСКИ</span><h2>Визуализация</h2></div><button className="utility-panel-close" type="button" onClick={onClose} title="Закрыть" aria-label="Закрыть настройки визуализации"><X aria-hidden="true" /></button></header>
       <VercelTabs
-        className="settings-topic-tabs"
+        className="settings-topic-tabs utility-panel-tabs"
         tabs={SETTINGS_TOPICS}
         activeTab={activeTopic}
         onTabChange={selectTopic}
@@ -2046,7 +2064,15 @@ function SettingsPanel({ layout, setLayout, fontPreset, onFontPreset, easterEggM
         <NumberField label="Просвет между опорами Y" labelPosition="above" value={layout.portal.widthY + 2 * getPortalRailClearanceMm(layout.portal.frameDepthY, layout.robot.zColumnWidth) - layout.portal.supportSize} min={100 + 2 * getPortalRailClearanceMm(layout.portal.frameDepthY, layout.robot.zColumnWidth) - layout.portal.supportSize} max={4000} onChange={(v) => change((d) => { d.portal.widthY = v + d.portal.supportSize - 2 * getPortalRailClearanceMm(d.portal.frameDepthY, d.robot.zColumnWidth); })} />
         <NumberField label="Высота опор" labelPosition="above" value={getPortalSupportHeightMm(layout.portal)} min={1200 - PORTAL_MOUNTING.supportCapHeight} max={4000 - PORTAL_MOUNTING.supportCapHeight} step={1} onChange={(v) => change((d) => { d.portal.frameBottomZ = v + PORTAL_MOUNTING.supportCapHeight; })} />
       </div></section>}
-      {activeTopic === 'equipment' && selectedEquipmentTarget.kind === 'magazine' && <section><h3>Статичный {selectedEquipmentTarget.label} · 12 × 10</h3>
+      {activeTopic === 'equipment' && selectedEquipmentTarget.kind === 'magazine' && magazineMode === 1 && <section><h3>Двухпалетный {selectedEquipmentTarget.label} · 2 × 96</h3>
+        <p>Положение корпуса в 3D. Матрицы П1 и П2 движутся внутри магазина; шаг и геометрия изделия задаются в PLC и общих настройках изделия.</p>
+        <div className="field-grid">
+          <NumberField label="Позиция X" labelPosition="above" value={layout.twoPalletMagazines[selectedEquipmentTarget.index].position.x} min={0} max={15000} onChange={(v) => change((d) => { d.twoPalletMagazines[selectedEquipmentTarget.index].position.x = v; })} />
+          <NumberField label="Позиция Y" labelPosition="above" value={layout.twoPalletMagazines[selectedEquipmentTarget.index].position.y} min={-5000} max={5000} onChange={(v) => change((d) => { d.twoPalletMagazines[selectedEquipmentTarget.index].position.y = v; })} />
+          <NumberField label="Высота ножек" unit="мм" labelPosition="above" showSlider={false} value={layout.twoPalletMagazines[selectedEquipmentTarget.index].legHeightMm} min={600} max={1500} step={1} onChange={(v) => change((d) => { d.twoPalletMagazines[selectedEquipmentTarget.index].legHeightMm = v; })} />
+        </div>
+      </section>}
+      {activeTopic === 'equipment' && selectedEquipmentTarget.kind === 'magazine' && magazineMode === 0 && <section><h3>Статичный {selectedEquipmentTarget.label} · 12 × 10</h3>
         <p>Одна неподвижно установленная кассета с единой матрицей на 120 изделий. Диаметр и глубина гнёзд автоматически подстраиваются под геометрию изделия; приводов у магазина нет.</p>
         <div className="field-grid">
           <NumberField label="Позиция X" labelPosition="above" value={layout.staticMagazines[selectedEquipmentTarget.index].position.x} min={0} max={15000} onChange={(v) => change((d) => { d.staticMagazines[selectedEquipmentTarget.index].position.x = v; })} />
@@ -2063,15 +2089,52 @@ function SettingsPanel({ layout, setLayout, fontPreset, onFontPreset, easterEggM
   );
 }
 
-function ManualPanel({ state, layout, setState, machineIndex, setMachineIndex, onClose, plcDataEnabled, onPlcDataChange, className }: {
-  state: CellState; layout: CellLayout; setState: Dispatch<SetStateAction<CellState>>; machineIndex: number; setMachineIndex: (index: number) => void; onClose: () => void;
+function ManualPanel({ state, layout, setState, machineIndex, setMachineIndex, magazineIndex, setMagazineIndex, onClose, plcDataEnabled, onPlcDataChange, onMagazineModeChange, twoPalletControllers, onTwoPalletFocus, className }: {
+  state: CellState; layout: CellLayout; setState: Dispatch<SetStateAction<CellState>>; machineIndex: number; setMachineIndex: (index: number) => void;
+  magazineIndex: number; setMagazineIndex: (index: number) => void; onClose: () => void;
   plcDataEnabled: boolean; onPlcDataChange: (enabled: boolean) => void; className?: string;
+  onMagazineModeChange: (mode: 0 | 1) => void; twoPalletControllers: TwoPalletPreviewController[]; onTwoPalletFocus: (index: number) => void;
 }) {
-  const [manualMagazine, setManualMagazine] = useState(0);
   const [activeManualTopic, setActiveManualTopic] = useState<ManualTopic>('robot');
   const [topicDirection, setTopicDirection] = useState<1 | -1>(1);
   const updateRobot = (patch: Partial<CellState['robot']>) => setState({ ...state, robot: { ...state.robot, ...patch } });
   const updateMachine = (patch: Partial<CellState['machines'][number]>) => { const machines = [...state.machines]; machines[machineIndex] = { ...machines[machineIndex], ...patch }; setState({ ...state, machines }); };
+  const updateStaticMagazine = (update: (magazine: CellState['magazines'][number]) => void) => {
+    if (plcDataEnabled) return;
+    setState((current) => {
+      if (current.magazineMode === 1) return current;
+      const magazines = structuredClone(current.magazines);
+      update(magazines[magazineIndex]);
+      return { ...current, magazines };
+    });
+  };
+  const updateTwinPallet = (pallet: 1 | 2, action: 'fill' | 'clear' | 'slot', slot?: number) => {
+    if (plcDataEnabled) return;
+    setState((current) => {
+      if (current.magazineMode !== 1) return current;
+      const magazines = structuredClone(current.magazines);
+      const twin = magazines[magazineIndex].twin;
+      if (!twin) return current;
+      const inventory = twin.pallets[pallet - 1];
+      if (action === 'slot' && slot !== undefined) {
+        const values: SlotType[] = ['empty', 'blank', 'detail'];
+        inventory.slots[slot] = values[(values.indexOf(inventory.slots[slot]) + 1) % values.length];
+      } else if (action !== 'slot') inventory.slots.fill(action === 'fill' ? 'blank' : 'empty');
+      magazines[magazineIndex] = twinMagazine(magazines[magazineIndex], twin);
+      return { ...current, magazines };
+    });
+  };
+  const updateTwinPreviewState = (patch: Partial<TwinState>) => {
+    if (plcDataEnabled) return;
+    setState((current) => {
+      if (current.magazineMode !== 1) return current;
+      const magazines = structuredClone(current.magazines);
+      const twin = magazines[magazineIndex].twin;
+      if (!twin) return current;
+      magazines[magazineIndex] = twinMagazine(magazines[magazineIndex], { ...twin, ...patch });
+      return { ...current, magazines };
+    });
+  };
   const travelLimits = getRobotTravelLimits(layout);
   const activeTopicIndex = MANUAL_TOPICS.findIndex((topic) => topic.id === activeManualTopic);
   const selectManualTopic = (topic: ManualTopic) => {
@@ -2079,12 +2142,16 @@ function ManualPanel({ state, layout, setState, machineIndex, setMachineIndex, o
     if (nextIndex === activeTopicIndex) return;
     setTopicDirection(nextIndex > activeTopicIndex ? 1 : -1);
     setActiveManualTopic(topic);
+    if (topic === 'magazines' && state.magazineMode === 1) onTwoPalletFocus(magazineIndex);
   };
-  return <aside className={`side-panel manual-panel ${className ?? ''}`}>
-    <div className="panel-heading"><div><span>ТЕСТ МОДЕЛИ</span><h2>Ручное управление</h2></div><button onClick={onClose} title="Закрыть"><ChevronRight /></button></div>
-    <VercelTabs className="settings-topic-tabs manual-topic-tabs" tabs={MANUAL_TOPICS} activeTab={activeManualTopic} onTabChange={selectManualTopic} ariaLabel="Темы ручного управления" panelId="manual-topic-panel" />
+  return <aside className={`side-panel manual-panel ${className ?? ''}`} aria-label="Ручное управление моделью">
+    <header className="manual-header">
+      <div className="manual-heading"><span className="manual-heading-icon" aria-hidden="true"><Icon icon={touchAppOutlineIcon} width={28} height={28} /></span><div><span>ТЕСТ МОДЕЛИ</span><h2>Ручное управление</h2></div></div>
+      <button className="manual-close" type="button" onClick={onClose} title="Закрыть" aria-label="Закрыть ручное управление"><X aria-hidden="true" /></button>
+    </header>
+    <VercelTabs className="manual-topic-tabs" tabs={MANUAL_TOPICS} activeTab={activeManualTopic} onTabChange={selectManualTopic} ariaLabel="Темы ручного управления" panelId="manual-topic-panel" />
     <div className="settings-topic-viewport manual-topic-viewport">
-      <div className={`settings-topic-content manual-topic-content ${topicDirection > 0 ? 'from-right' : 'from-left'}`} id="manual-topic-panel" role="tabpanel" key={activeManualTopic}>
+      <div className={`settings-topic-content manual-topic-content ${topicDirection > 0 ? 'from-right' : 'from-left'}`} id="manual-topic-panel" role="tabpanel" data-topic={activeManualTopic} key={activeManualTopic}>
         {activeManualTopic === 'enclosure' && <EnclosureManualControl doors={state.enclosureDoors} buttonStations={state.buttonStations} plcDataEnabled={plcDataEnabled} onChange={(id, patch) => setState({
           ...state,
           enclosureDoors: { ...state.enclosureDoors, [id]: { ...state.enclosureDoors[id], ...patch } },
@@ -2186,36 +2253,96 @@ function ManualPanel({ state, layout, setState, machineIndex, setMachineIndex, o
           />
           <p className="panel-note">Локальная авария меняет только модель HMI и не отправляет команду в PLC.</p>
         </section>}
-        {activeManualTopic === 'magazines' && <section><h3>Локальная проверка статичных магазинов</h3><SegmentedControl
-          className="manual-magazine-selector"
-          value={String(manualMagazine)}
-          options={state.magazines.map((_, index) => ({ value: String(index), label: `Магазин ${index + 1}`, className: `magazine-${index + 1}` }))}
-          onChange={(nextValue) => setManualMagazine(Number(nextValue))}
-          ariaLabel="Выбор магазина"
-        />
-          <ToggleSwitch
-            label="Авария магазина"
-            checked={state.magazines[manualMagazine].state.error || state.magazines[manualMagazine].state.activeErrors.length > 0}
-            disabled={plcDataEnabled}
-            onChange={(value) => {
-              const magazines = structuredClone(state.magazines);
-              magazines[manualMagazine].state = {
-                ...magazines[manualMagazine].state,
-                error: value,
-                activeErrors: value ? ['Локальная авария магазина'] : [],
-              };
-              setState({ ...state, magazines });
-            }}
-          />
-          <p className="panel-note">Локальная авария меняет только модель HMI и не отправляет команду в PLC.</p>
-          <MagazineMatrix slots={state.magazines[manualMagazine].slots} columns={10} onSlotClick={plcDataEnabled ? undefined : (index) => { const values: SlotType[] = ['empty', 'blank', 'detail']; const magazines = structuredClone(state.magazines); const slots = magazines[manualMagazine].slots; slots[index] = values[(values.indexOf(slots[index]) + 1) % values.length]; setState({ ...state, magazines }); }} />
-        </section>}
+        {activeManualTopic === 'magazines' && <>
+          <section className="manual-magazine-selection">
+            <h3>Источник и тип магазина</h3>
+            <ToggleSwitch label="Получать все состояния из OPC UA" checked={plcDataEnabled} onChange={onPlcDataChange} />
+            <span className="manual-magazine-field-label">Тип обоих магазинов</span>
+            <SegmentedControl
+              className="manual-magazine-type-selector"
+              value={String(state.magazineMode ?? 0)}
+              options={[{ value: '0', label: 'Статичные · 120 мест' }, { value: '1', label: 'Двухпалетные · 2 × 96' }]}
+              disabled={plcDataEnabled || state.magazines.some((magazine) => magazine.twin?.busy)}
+              onChange={(nextValue) => {
+                if (plcDataEnabled) return;
+                onMagazineModeChange(Number(nextValue) as 0 | 1);
+                if (nextValue === '1') onTwoPalletFocus(magazineIndex);
+              }}
+              ariaLabel="Тип магазинов в локальной модели"
+            />
+            <span className="manual-magazine-field-label">Выбранный магазин</span>
+            <SegmentedControl
+              className="manual-magazine-selector"
+              value={String(magazineIndex)}
+              options={state.magazines.map((_, index) => ({ value: String(index), label: `Магазин ${index + 1}`, className: `magazine-${index + 1}` }))}
+              onChange={(nextValue) => {
+                const index = Number(nextValue);
+                setMagazineIndex(index);
+                if (state.magazineMode === 1) onTwoPalletFocus(index);
+              }}
+              ariaLabel="Выбор магазина"
+            />
+            <p className="panel-note">Для локального управления отключите OPC UA. Переключатель типа меняет оба магазина в 3D-модели.</p>
+          </section>
+          {state.magazineMode === 1 ? (!plcDataEnabled && state.magazines[magazineIndex].twin
+            ? <TwoPalletPreviewControl
+              key={magazineIndex}
+              controller={twoPalletControllers[magazineIndex]}
+              twin={state.magazines[magazineIndex].twin}
+              magazineNumber={magazineIndex + 1}
+              onFocus={() => onTwoPalletFocus(magazineIndex)}
+              onPalletChange={updateTwinPallet}
+              onSwap={() => {
+                twoPalletControllers[magazineIndex].swap();
+                updateTwinPreviewState({ step: 20, confirmed: false, enabled: false });
+              }}
+              onReset={(pallet) => {
+                twoPalletControllers[magazineIndex].reset(pallet);
+                updateTwinPreviewState({ step: 0, robotPallet: pallet, confirmed: false, enabled: false });
+              }}
+              onSelect={(pallet) => {
+                twoPalletControllers[magazineIndex].select(pallet);
+                updateTwinPreviewState({ manualLockOut: undefined, manualStopOut: undefined, confirmed: false, enabled: false });
+              }}
+              onLockChange={(manualLockOut) => updateTwinPreviewState({ manualLockOut, confirmed: false, enabled: false })}
+              onStopChange={(manualStopOut) => updateTwinPreviewState({ manualStopOut, confirmed: false, enabled: false })}
+            />
+            : <section><h3>Двухпалетный магазин</h3><p className="panel-note">Отключите OPC UA, чтобы управлять локальной моделью.</p></section>)
+            : <section className="manual-static-magazine"><h3>Статичный магазин {magazineIndex + 1} · 120 мест</h3>
+              <ToggleSwitch label="Магазин включён" checked={state.magazines[magazineIndex].state.enabled} disabled={plcDataEnabled}
+                onChange={(enabled) => updateStaticMagazine((magazine) => { magazine.state.enabled = enabled; magazine.state.ready = enabled && !magazine.state.error; })} />
+              <ToggleSwitch label="Авария магазина"
+                checked={state.magazines[magazineIndex].state.error || state.magazines[magazineIndex].state.activeErrors.length > 0}
+                disabled={plcDataEnabled}
+                onChange={(error) => updateStaticMagazine((magazine) => {
+                  magazine.state.error = error;
+                  magazine.state.activeErrors = error ? ['Локальная авария магазина'] : [];
+                  magazine.state.ready = magazine.state.enabled && !error;
+                })}
+              />
+              <div className="manual-magazine-actions">
+                <button type="button" disabled={plcDataEnabled} onClick={() => updateStaticMagazine((magazine) => { magazine.slots.fill('blank'); })}>Заполнить заготовками</button>
+                <button type="button" disabled={plcDataEnabled} onClick={() => updateStaticMagazine((magazine) => { magazine.slots.fill('empty'); })}>Очистить</button>
+              </div>
+              <p className="panel-note">Нажмите на место, чтобы выбрать: пусто → заготовка → деталь. Изменения остаются в локальной модели.</p>
+              <MagazineMatrix slots={state.magazines[magazineIndex].slots} columns={10} onSlotClick={plcDataEnabled ? undefined : (index) => updateStaticMagazine((magazine) => {
+                const values: SlotType[] = ['empty', 'blank', 'detail'];
+                magazine.slots[index] = values[(values.indexOf(magazine.slots[index]) + 1) % values.length];
+              })} />
+            </section>}
+        </>}
       </div>
     </div>
   </aside>;
 }
 
 export function App() {
+  const [twoPalletControllers] = useState(() => [new TwoPalletPreviewController(), new TwoPalletPreviewController()]);
+  const localMagazineBanks = useRef(new Map<number, CellState['magazines']>());
+  if (!localMagazineBanks.current.has(0)) {
+    localMagazineBanks.current.set(0, structuredClone(DEFAULT_STATE.magazines));
+  }
+  const [twoPalletFocusRequest, setTwoPalletFocusRequest] = useState({ revision: 0, index: 0 });
   const [layout, setLayout] = useState<CellLayout>(loadLayout);
   const [fontPreset, setFontPreset] = useState<FontPreset>(loadFontPreset);
   const [easterEggMode, setEasterEggMode] = useState<EasterEggMode>(loadEasterEggMode);
@@ -2404,6 +2531,56 @@ export function App() {
     magazines[index].state = { ...magazines[index].state, ...patch };
     return { ...current, magazines };
   });
+  const changeMagazineMode = (mode: 0 | 1) => {
+    if (rejectGuestAction()) return;
+    if (plcDataEnabled) {
+      if (!usePlcData) { setCommandError('Нет связи с PLC'); return; }
+      sendPlcCommand({ command: 'twin.mode', value: mode });
+    } else {
+      if (cellState.magazines.some((m) => m.twin?.busy)) { setCommandError('Сначала остановите обмен палет'); return; }
+      setCellState((current) => {
+        const next = changeOfflineMagazineMode(current, mode, localMagazineBanks.current);
+        next.magazines.forEach((m, i) => {
+          if (m.twin) {
+            const twin = m.twin;
+            const carriage = twin.selected === 2 ? twin.p2 : twin.p1;
+            twoPalletControllers[i].follow({ p1: twin.p1, p2: twin.p2, carriage, lift: twin.lift, selector: twin.selected === 2 ? 1 : 0 }, true);
+          }
+        });
+        return next;
+      });
+    }
+    setMatrixQuickOpen(false);
+  };
+  const sendTwin = (action: TwinAction, data: TwinCommandData = {}, index = selectedMagazine) => {
+    if (rejectGuestAction()) return;
+    if (plcDataEnabled) {
+      if (!usePlcData) { setCommandError('Нет связи с PLC'); return; }
+      const twinConfig = data.config ? Object.fromEntries((Object.keys(TWIN_CONFIG_FIELDS) as (keyof TwinConfig)[]).map((key) => [TWIN_CONFIG_FIELDS[key], data.config![key]])) : undefined;
+      const value = action === 'autoSwap' ? (data.autoSwapEnabled ? 1 : 0) : data.pallet ?? 0;
+      sendPlcCommand({ command: 'twin.command', magazine: index + 1, action: TWIN_COMMANDS[action], value,
+        revision: data.revision, slot: data.slot, content: data.content, productType: data.productType, twinConfig });
+    } else setCellState((current) => {
+      const magazines = [...current.magazines] as CellState['magazines'];
+      const twin = magazines[index].twin;
+      if (!twin) return current;
+      magazines[index] = twinMagazine(magazines[index], commandTwinPreview(twin, twoPalletControllers[index], action, data));
+      return { ...current, magazines };
+    });
+  };
+  useEffect(() => {
+    if (plcDataEnabled) return;
+    const timer = window.setInterval(() => {
+      twoPalletControllers.forEach((controller) => controller.tick(0.05));
+      setCellState((current) => {
+        if (current.magazineMode !== 1) return current;
+        const magazines = current.magazines.map((magazine, index) => magazine.twin
+          ? twinMagazine(magazine, syncTwinPreview(magazine.twin, twoPalletControllers[index])) : magazine) as CellState['magazines'];
+        return sameData(current.magazines, magazines) ? current : { ...current, magazines };
+      });
+    }, 50);
+    return () => window.clearInterval(timer);
+  }, [plcDataEnabled, twoPalletControllers]);
   const sendMagazineCommand = (index: number, action: string, value?: boolean) => {
     if (rejectGuestAction()) return;
     if (usePlcData) sendPlcCommand({ command: `magazine.${action}`, magazine: index + 1, ...(value === undefined ? {} : { value }) });
@@ -2617,6 +2794,20 @@ export function App() {
   };
   const changePlcDataSource = (enabled: boolean) => {
     if (rejectGuestAction()) return;
+    // Simulation uses its own configuration and never carries trusted PLC state back online.
+    twoPalletControllers.forEach((controller) => controller.stop());
+    if (!enabled) {
+      localMagazineBanks.current.clear();
+      localMagazineBanks.current.set(0, structuredClone(DEFAULT_STATE.magazines));
+      setCellState((current) => ({ ...current, magazines: current.magazines.map((m, i) => {
+        if (current.magazineMode !== 1) return m;
+        const twin = createTwinState(true);
+        if (m.twin) twin.pallets = structuredClone(m.twin.pallets).map((p) => ({ ...p, loaded: false })) as typeof twin.pallets;
+        twoPalletControllers[i].reset(1);
+        return twinMagazine(m, twin);
+      }) as CellState['magazines'] }));
+    } else setCellState((current) => ({ ...current, magazines: current.magazines.map((m) => m.twin
+      ? twinMagazine(m, { ...createTwinState(), pallets: m.twin.pallets }) : m) as CellState['magazines'] }));
     plcDataEnabledRef.current = enabled;
     setPlcDataEnabled(enabled);
   };
@@ -3210,6 +3401,9 @@ export function App() {
       <CellViewport
         layout={layout}
         state={cellState}
+        twoPalletControllers={twoPalletControllers}
+        twoPalletFocusRevision={twoPalletFocusRequest.revision}
+        twoPalletFocusIndex={twoPalletFocusRequest.index}
         robotCoordinatesRef={robotCoordinatesRef}
         selectedMachine={selectedMachine}
         cameraPreset="front"
@@ -3262,6 +3456,7 @@ export function App() {
       <AnimatedPresence open={page === 'settings'}><SettingsPanel
         layout={layout}
         setLayout={setLayout}
+        magazineMode={cellState.magazineMode ?? 0}
         fontPreset={fontPreset}
         onFontPreset={setFontPreset}
         easterEggMode={easterEggMode}
@@ -3273,8 +3468,8 @@ export function App() {
         onNextEasterEgg={showNextEasterEgg}
         onClose={() => setPage('monitoring')}
       /></AnimatedPresence>
-      <AnimatedPresence open={page === 'cell-settings'}><CellSettingsPanel online={usePlcData} modbusMode={plcRuntime.modbusMode} modbus={plcRuntime.robotModbus} testEnvironment={plcRuntime.testEnvironment} configurationValid={plcRuntime.multiTypeConfigurationValid} typeCount={plcRuntime.multiTypeCount} typeCountAllowed={plcRuntime.multiTypeCountAllowed} magazineConfigAllowed={plcRuntime.multiTypeMagazineConfigAllowed} settings={plcRuntime.cellSettings} accelerationEnabled={simulationAccelerationEnabled} accelerationActive={simulationAccelerationActive} accelerationAllowed={simulationControlsAllowed} onModeChange={changeRobotControlMode} onTestEnvironmentChange={(value) => { sendPlcCommand({ command: 'test.environment.set', value }); }} onTypeCountChange={(value) => sendPlcCommand({ command: 'multi.typeCount', value })} onAutoDistribute={() => sendPlcCommand({ command: 'multi.autoDistribute' })} onModbusSettingChange={changeModbusSetting} onModbusApply={applyModbusSettings} onSettingChange={changeCellSetting} onAccelerationChange={changeSimulationAcceleration} onStatisticsSettings={() => setPage('statistics-settings')} onClose={() => setPage('monitoring')} /></AnimatedPresence>
-      <AnimatedPresence open={page === 'manual'}><ManualPanel state={cellState} layout={layout} setState={setCellState} machineIndex={manualMachine} setMachineIndex={setManualMachine} onClose={() => setPage('monitoring')} plcDataEnabled={plcDataEnabled} onPlcDataChange={changePlcDataSource} /></AnimatedPresence>
+      <AnimatedPresence open={page === 'cell-settings'}><CellSettingsPanel magazineControl={<section><MagazineModeSwitch mode={cellState.magazineMode ?? 1} allowed={!plcDataEnabled || !!cellState.magazineModeAllowed} onChange={changeMagazineMode} /><button onClick={() => setPage('magazine')}>Управление магазинами и восстановление</button></section>} online={usePlcData} modbusMode={plcRuntime.modbusMode} modbus={plcRuntime.robotModbus} testEnvironment={plcRuntime.testEnvironment} configurationValid={plcRuntime.multiTypeConfigurationValid} typeCount={plcRuntime.multiTypeCount} typeCountAllowed={plcRuntime.multiTypeCountAllowed} magazineConfigAllowed={plcRuntime.multiTypeMagazineConfigAllowed} settings={plcRuntime.cellSettings} accelerationEnabled={simulationAccelerationEnabled} accelerationActive={simulationAccelerationActive} accelerationAllowed={simulationControlsAllowed} onModeChange={changeRobotControlMode} onTestEnvironmentChange={(value) => { sendPlcCommand({ command: 'test.environment.set', value }); }} onTypeCountChange={(value) => sendPlcCommand({ command: 'multi.typeCount', value })} onAutoDistribute={() => sendPlcCommand({ command: 'multi.autoDistribute' })} onModbusSettingChange={changeModbusSetting} onModbusApply={applyModbusSettings} onSettingChange={changeCellSetting} onAccelerationChange={changeSimulationAcceleration} onStatisticsSettings={() => setPage('statistics-settings')} onClose={() => setPage('monitoring')} /></AnimatedPresence>
+      <AnimatedPresence open={page === 'manual'}><ManualPanel state={cellState} layout={layout} setState={setCellState} machineIndex={manualMachine} setMachineIndex={setManualMachine} magazineIndex={selectedMagazine} setMagazineIndex={setSelectedMagazine} onClose={() => setPage('monitoring')} plcDataEnabled={plcDataEnabled} onPlcDataChange={changePlcDataSource} onMagazineModeChange={changeMagazineMode} twoPalletControllers={twoPalletControllers} onTwoPalletFocus={(index) => setTwoPalletFocusRequest((current) => ({ revision: current.revision + 1, index }))} /></AnimatedPresence>
       <AnimatedPresence open={page === 'injections'}><FaultInjectionPanel values={faultSimulationValues} online={isPlcOnline} send={sendPlcCommand} onClose={() => setPage('monitoring')} /></AnimatedPresence>
       <AnimatedPresence open={page === 'simulation-settings'}><SimulationSettingsPanel values={faultSimulationValues} online={isPlcOnline} send={sendPlcCommand} onClose={() => setPage('monitoring')} /></AnimatedPresence>
       <AnimatedPresence open={page === 'robot'}><RobotExtendedPanel robot={cellState.robot} magazines={cellState.magazines} runtime={plcRuntime} online={usePlcData} editorEditable={Boolean(authUser)} onListPointBackups={pointBackupApi.list} onExportPointBackup={pointBackupApi.exportCurrent} onPreparePointImport={pointBackupApi.prepareImport} onSend={sendPlcCommand} onClose={() => setPage('monitoring')} /></AnimatedPresence>
@@ -3295,7 +3490,8 @@ export function App() {
         onManualMotion={(mechanism, action) => requestMachineMotion(action, mechanism)}
         onOpenAlarms={() => setPage('alarms')}
       />}</AnimatedPresence>
-      <AnimatedPresence open={page === 'magazine'}><MagazineScreen magazine={cellState.magazines[selectedMagazine]} magazineNumber={(selectedMagazine + 1) as 1 | 2} step={usePlcData ? plcRuntime.magazineSteps[selectedMagazine] : 'Локальная модель'} typeCount={plcRuntime.multiTypeCount} onClose={() => setPage('monitoring')} onToggleEnabled={() => toggleMagazineEnabled(selectedMagazine)} onCommand={(action) => sendMagazineCommand(selectedMagazine, action)} onFill={() => fillMagazine(selectedMagazine)} onClear={() => clearMagazine(selectedMagazine)} onSlotApply={(index, content, productType) => applyMagazineSlot(index, content, productType, selectedMagazine)} onSetting={updateMagazineSetting} /></AnimatedPresence>
+      <AnimatedPresence open={page === 'magazine' && cellState.magazineMode !== 1}><MagazineScreen magazine={cellState.magazines[selectedMagazine]} magazineNumber={(selectedMagazine + 1) as 1 | 2} step={usePlcData ? plcRuntime.magazineSteps[selectedMagazine] : 'Локальная модель'} typeCount={plcRuntime.multiTypeCount} onClose={() => setPage('monitoring')} onToggleEnabled={() => toggleMagazineEnabled(selectedMagazine)} onCommand={(action) => sendMagazineCommand(selectedMagazine, action)} onFill={() => fillMagazine(selectedMagazine)} onClear={() => clearMagazine(selectedMagazine)} onSlotApply={(index, content, productType) => applyMagazineSlot(index, content, productType, selectedMagazine)} onSetting={updateMagazineSetting} /></AnimatedPresence>
+      <AnimatedPresence open={page === 'magazine' && cellState.magazineMode === 1}><TwoPalletControl full state={cellState} selected={selectedMagazine} onSelect={setSelectedMagazine} onCommand={sendTwin} local={!plcDataEnabled} connected={!plcDataEnabled || usePlcData} manualReady={!plcDataEnabled || (plcRuntime.manualMode && !plcRuntime.cellRunning)} safetyReady={!plcDataEnabled || (plcRuntime.safety.ready && !plcRuntime.globalError)} hmiAlive={!plcDataEnabled || plcRuntime.hmiConnectionAlive} onClose={() => setPage('monitoring')} /></AnimatedPresence>
       <AnimatedPresence open={page === 'alarms'}><AlarmScreen events={plcAlarmEvents} online={isPlcOnline}
         resetAllowed={usePlcData && plcRuntime.cellResetAllowed}
         safetyRelayResetAllowed={usePlcData && plcRuntime.safety.safetyRelayResetAllowed}
@@ -3372,7 +3568,7 @@ export function App() {
           onExtended={() => setPage('robot')}
           onClose={() => setBottomSection(null)}
         /></AnimatedPresence>
-        <AnimatedPresence open={bottomSection === 'magazine'}><MagazineQuickPanel
+        <AnimatedPresence open={bottomSection === 'magazine' && cellState.magazineMode !== 1}><MagazineQuickPanel
           magazines={cellState.magazines}
           selectedIndex={selectedMagazine}
           onSelect={(index) => { setSelectedMagazine(index); setMatrixQuickOpen(false); }}
@@ -3384,6 +3580,7 @@ export function App() {
           onExtended={() => { setMatrixQuickOpen(false); setPage('magazine'); }}
           onClose={() => { setMatrixQuickOpen(false); setBottomSection(null); }}
         /></AnimatedPresence>
+        <AnimatedPresence open={bottomSection === 'magazine' && cellState.magazineMode === 1}><TwoPalletControl state={cellState} selected={selectedMagazine} onSelect={setSelectedMagazine} onCommand={sendTwin} local={!plcDataEnabled} connected={!plcDataEnabled || usePlcData} manualReady={!plcDataEnabled || (plcRuntime.manualMode && !plcRuntime.cellRunning)} safetyReady={!plcDataEnabled || (plcRuntime.safety.ready && !plcRuntime.globalError)} hmiAlive={!plcDataEnabled || plcRuntime.hmiConnectionAlive} onExtended={() => setPage('magazine')} onClose={() => setBottomSection(null)} /></AnimatedPresence>
         <AnimatedPresence open={bottomSection === 'cyclogram'}><CyclogramPanel
           history={cyclogramHistory}
           onClose={() => setBottomSection(null)}

@@ -7,6 +7,8 @@
   --mx-ink: #182333;
   box-sizing: border-box;
   width: min(548px, 100vw);
+  max-width: calc(100% - 28px);
+  right: 14px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -15,7 +17,7 @@
   color: var(--mx-ink);
   font-family: var(--font-ui, Inter, sans-serif);
   font-variant-numeric: tabular-nums;
-  border-left: 1px solid rgb(255 255 255 / 65%);
+  border: 0;
   box-shadow: -8px 0 28px rgb(38 64 96 / 7%);
 }
 .machine-extended-panel *, .machine-extended-panel *::before, .machine-extended-panel *::after { box-sizing: border-box; }
@@ -245,3 +247,6 @@
   .machine-extended-panel :is(.mx-progress i, .mx-button, .mx-feedback-grid > button) { transition: none; }
   .machine-extended-panel .mx-tabs-list::before { transition: none; }
 }
+
+/* Полноэкранная карточка плывёт с отступом от верхнего хедера — правило в DOKS/01. */
+.side-panel.machine-extended-panel { top: var(--panel-top, 14px); bottom: 14px; border-radius: 16px; }

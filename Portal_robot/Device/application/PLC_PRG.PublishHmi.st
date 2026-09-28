@@ -243,3 +243,9 @@ FOR uiHmiCommandIndex := UINT#1 TO UINT#121 DO
 	END_IF;
 END_FOR;
 GVL_HMI.udiCellSettingAckSeq := udiCellSettingSnapshot;
+
+GVL_HMI.uiMagazineMode := GVL_TWO_PALLET.uiMode;
+GVL_HMI.xMagazineModeAllowed := GVL_TWO_PALLET.xModeChangeAllowed;
+GVL_HMI.astTwinStatus := GVL_TWO_PALLET.astStatus;
+GVL_HMI.astTwinConfig := GVL_TWO_PALLET.astActiveConfig;
+GVL_HMI.astTwinStore := GVL_TWO_PALLET.astStore;

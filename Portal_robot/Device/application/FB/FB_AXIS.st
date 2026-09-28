@@ -1035,6 +1035,8 @@ fbReadAxisError(
 // ======================================================
 // 8. ИТОГОВЫЕ СТАТУСЫ (запись в структуру)
 // ======================================================
+AxisData.Status.xStandstill := fbReadStatus.Valid AND NOT AxisData.Status.xMotionBusy
+	AND (fbReadStatus.StandStill OR fbReadStatus.Disabled OR fbReadStatus.Errorstop);
 AxisData.Status.lrActualPosition := LREAL_TO_REAL(fbReadPosition.Position);
 
 // Повторно собираем актуальные ошибки (для полноты)

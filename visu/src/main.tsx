@@ -31,6 +31,7 @@ import '@fontsource/commissioner/700.css';
 import './styles/tailwind.css';
 import './styles/theme.css';
 import './styles/global.css';
+import './styles/utility-panels.css';
 
 const phoneDevice = /Android|iPhone|iPod|Mobile/i.test(navigator.userAgent);
 const mobilePoints = phoneDevice || location.pathname === '/mobile' || location.pathname.startsWith('/mobile/');

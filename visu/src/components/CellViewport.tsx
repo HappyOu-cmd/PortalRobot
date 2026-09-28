@@ -19,6 +19,7 @@ import {
 } from '../model/visualEffects';
 import { CellScene, type CameraPreset, type EquipmentAnchors } from '../three/cellScene';
 import { DEFAULT_CONTROL_CABINETS } from '../model/controlCabinets';
+import type { TwoPalletPreviewController } from '../model/twoPalletPreview';
 
 export interface EquipmentStatus {
   title: string;
@@ -47,6 +48,9 @@ interface CellViewportProps {
   inspectionEvents?: PlcAlarmEvent[];
   inspectionDataMode?: 'live' | 'stale' | 'local';
   latestCellLogEvent?: CellLogEvent | null;
+  twoPalletControllers?: TwoPalletPreviewController[];
+  twoPalletFocusRevision?: number;
+  twoPalletFocusIndex?: number;
   onInspectionOpenChange?: (open: boolean) => void;
   equipmentStatuses?: {
     machines: EquipmentStatus[];
@@ -75,6 +79,9 @@ export function CellViewport({
   inspectionEvents = [],
   inspectionDataMode = 'local',
   latestCellLogEvent = null,
+  twoPalletControllers,
+  twoPalletFocusRevision = 0,
+  twoPalletFocusIndex = 0,
   onInspectionOpenChange,
   equipmentStatuses,
 }: CellViewportProps) {
@@ -204,6 +211,12 @@ export function CellViewport({
     sceneRef.current?.setState(sceneState);
   }, [state, inspectionDataMode]);
   useEffect(() => sceneRef.current?.setRenderingEnabled(renderingEnabled), [renderingEnabled]);
+  useEffect(() => {
+    if (twoPalletControllers) sceneRef.current?.setTwoPalletControllers(twoPalletControllers);
+  }, [twoPalletControllers]);
+  useEffect(() => {
+    if (twoPalletFocusRevision > 0) sceneRef.current?.focusTwoPalletMagazine(twoPalletFocusIndex);
+  }, [twoPalletFocusRevision, twoPalletFocusIndex]);
   useEffect(() => sceneRef.current?.setInspectionEnabled(inspectionAvailable && easterEggMode === 'off'), [inspectionAvailable, easterEggMode]);
   useEffect(() => sceneRef.current?.setInspection(inspectionClosing ? null : inspection), [inspection, inspectionClosing]);
   useEffect(() => sceneRef.current?.setEasterEgg(easterEggMode, easterEggRevision), [easterEggMode, easterEggRevision]);

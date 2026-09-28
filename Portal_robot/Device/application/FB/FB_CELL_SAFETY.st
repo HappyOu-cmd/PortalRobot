@@ -2,6 +2,7 @@ FUNCTION_BLOCK FB_CELL_SAFETY
 VAR_INPUT
 	axDoorLockClosedInput : ARRAY [1..4] OF BOOL;
 	axDoorUnlockButtonInput : ARRAY [1..4] OF BOOL;
+	axMagazineMechanismBusy : ARRAY [1..2] OF BOOL; // Только новый механизм, включая фактическое движение оси
 	axEmergencyStopButtonStationInput : ARRAY [1..4] OF BOOL;
 	axEmergencyStopCabinetInput : ARRAY [1..2] OF BOOL;
 	xEmergencyStopMpgInput : BOOL;
@@ -95,7 +96,7 @@ FOR uiDoor := UINT#1 TO UINT#4 DO
 	ELSE
 		uiMagazine := UINT#2;
 	END_IF;
-	astEnclosureDoorStatus[uiDoor].xUnlockAllowed := NOT astMagazineStatus[uiMagazine].xEnabled;
+	astEnclosureDoorStatus[uiDoor].xUnlockAllowed := NOT astMagazineStatus[uiMagazine].xEnabled AND NOT axMagazineMechanismBusy[uiMagazine];
 	axDoorButtonLampOutput[uiDoor] := astEnclosureDoorStatus[uiDoor].xUnlockAllowed;
 
 	IF artDoorButton[uiDoor].Q THEN
@@ -129,6 +130,8 @@ FOR uiDoor := UINT#1 TO UINT#4 DO
 	astButtonStationIoStatus[uiDoor].xButtonLightOn := axDoorButtonLampOutput[uiDoor];
 	Status.axEmergencyStopReleased[uiDoor] := NOT axEmergencyStopStation[uiDoor];
 	Status.axDoorReady[uiDoor] := astEnclosureDoorStatus[uiDoor].xUnlockAllowed OR axDoorLocked[uiDoor];
+	Status.axButtonStationPressed[uiDoor] := astButtonStationIoStatus[uiDoor].xButtonPressed;
+	Status.axButtonStationLightOn[uiDoor] := astButtonStationIoStatus[uiDoor].xButtonLightOn;
 END_FOR;
 
 FOR uiDoor := UINT#1 TO UINT#2 DO
@@ -190,10 +193,10 @@ IF xEmergencyStopMpg THEN dwLiveFaultMask := dwLiveFaultMask OR ERR_ESTOP_MPG; E
 IF NOT xPhaseRelayOk THEN dwLiveFaultMask := dwLiveFaultMask OR ERR_PHASE_RELAY; END_IF;
 IF NOT xPressureRelayOk THEN dwLiveFaultMask := dwLiveFaultMask OR ERR_PRESSURE_RELAY; END_IF;
 IF NOT xSafetyRelayOk THEN dwLiveFaultMask := dwLiveFaultMask OR ERR_SAFETY_RELAY; END_IF;
-IF astMagazineStatus[1].xEnabled AND NOT axDoorLocked[1] THEN dwLiveFaultMask := dwLiveFaultMask OR ERR_DOOR_1_UNLOCKED; END_IF;
-IF astMagazineStatus[1].xEnabled AND NOT axDoorLocked[2] THEN dwLiveFaultMask := dwLiveFaultMask OR ERR_DOOR_2_UNLOCKED; END_IF;
-IF astMagazineStatus[2].xEnabled AND NOT axDoorLocked[3] THEN dwLiveFaultMask := dwLiveFaultMask OR ERR_DOOR_3_UNLOCKED; END_IF;
-IF astMagazineStatus[2].xEnabled AND NOT axDoorLocked[4] THEN dwLiveFaultMask := dwLiveFaultMask OR ERR_DOOR_4_UNLOCKED; END_IF;
+IF (astMagazineStatus[1].xEnabled OR axMagazineMechanismBusy[1]) AND NOT axDoorLocked[1] THEN dwLiveFaultMask := dwLiveFaultMask OR ERR_DOOR_1_UNLOCKED; END_IF;
+IF (astMagazineStatus[1].xEnabled OR axMagazineMechanismBusy[1]) AND NOT axDoorLocked[2] THEN dwLiveFaultMask := dwLiveFaultMask OR ERR_DOOR_2_UNLOCKED; END_IF;
+IF (astMagazineStatus[2].xEnabled OR axMagazineMechanismBusy[2]) AND NOT axDoorLocked[3] THEN dwLiveFaultMask := dwLiveFaultMask OR ERR_DOOR_3_UNLOCKED; END_IF;
+IF (astMagazineStatus[2].xEnabled OR axMagazineMechanismBusy[2]) AND NOT axDoorLocked[4] THEN dwLiveFaultMask := dwLiveFaultMask OR ERR_DOOR_4_UNLOCKED; END_IF;
 
 Error.dwErrorActive := dwLiveFaultMask;
 Error.dwAlarmActive := dwLiveFaultMask;

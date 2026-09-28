@@ -9,5 +9,7 @@ STRUCT
 	xSafetyRelayResetActive  : BOOL; // Полный секундный импульс сброса реле сейчас активен
 	axEmergencyStopReleased  : ARRAY [1..7] OF BOOL; // 4 поста, 2 шкафа, MPG
 	axDoorReady              : ARRAY [1..4] OF BOOL; // Замок закрыт либо связанный магазин выключен
+	axButtonStationPressed   : ARRAY [1..4] OF BOOL; // Фактический вход кнопки поста, с учётом симуляции
+	axButtonStationLightOn   : ARRAY [1..4] OF BOOL; // Выход подсветки кнопки поста
 END_STRUCT
 END_TYPE

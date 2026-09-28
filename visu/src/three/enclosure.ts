@@ -4,19 +4,19 @@ import { getPortalPostXsMm, getPortalRailClearanceMm } from '../config/portalMea
 import { ENCLOSURE_DOORS, isEnclosureDoorUnsecured } from '../model/enclosure';
 import { DEFAULT_BUTTON_STATION_STATE, type ButtonStationStates } from '../model/buttonStations';
 import type { CellLayout, EnclosureDoorId, EnclosureDoorStates } from '../model/types';
-import { damp, logicalPosition, material, mm } from './primitives';
+import { COLORS, damp, logicalPosition, material, mm } from './primitives';
 import { createButtonStation, updateButtonStation, type ButtonStationRig } from './buttonStation';
 
-const YELLOW = 0xe5c51d;
-const WIRE = 0x727342;
+const YELLOW = COLORS.fenceFrame;
+const WIRE = COLORS.fenceMesh;
 const PALE_RED = new THREE.Color(0xffa19b);
 const RED = new THREE.Color(0xef181d);
 const FRAME = 0.03;
 const DEPTH = 0.03;
+const FLOOR_TO_MAGAZINE_FENCE_MM = 950;
 const DOOR_WIDTH = 0.9; // Dimension shown in «Доп скриношты 3».
 const GAP = 0.008;
 const BODY_OVERLAP = 0.04;
-const PALLET_OVERLAP = 0.02;
 type XYZ = [number, number, number];
 
 interface DoorRig {
@@ -202,11 +202,9 @@ export function createEnclosure(layout: CellLayout): EnclosureRig {
   const headerHeight = Math.max(0.43, top - machineRoof + BODY_OVERLAP);
   const headerBottom = top - headerHeight;
   const lowerTop = headerBottom;
-  // The bottom of each moving leaf reaches its pallet instead of deriving
-  // its elevation from an arbitrary fixed door height.
-  const magazineBottoms = layout.staticMagazines.map((magazine) =>
-    mm(magazine.position.z + magazine.workingHeight - portal.position.z)
-      - FRAME - GAP - PALLET_OVERLAP);
+  // Door and adjacent fixed fence begin 950 mm above the cell floor.
+  const magazineBottoms = layout.staticMagazines.map(() =>
+    mm(FLOOR_TO_MAGAZINE_FENCE_MM - portal.position.z));
   const sideBottom = magazineBottoms.length ? Math.min(...magazineBottoms) : lowerTop - 0.9;
   const fixedFrame = material(YELLOW, { roughness: 0.52, metalness: 0.24 });
   const fixedWire = material(WIRE, { roughness: 0.65, metalness: 0.3 });
