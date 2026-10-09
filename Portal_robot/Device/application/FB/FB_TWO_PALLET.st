@@ -3,17 +3,17 @@ VAR_INPUT
 	xSelected : BOOL;
 	xManual : BOOL;
 	xSafe : BOOL;
-	xRobotClear : BOOL; // Окно планировщика и освобождение зоны для обмена в автоматическом режиме
-	xRobotIdle : BOOL; // Останов робота без проверки точек, интерфейса и зоны магазина
+	xRobotSwapWindow : BOOL; // Робот не выполняет и не ожидает операцию именно с этим магазином
 	xRobotOperation : BOOL; // Текущая или уже выданная операция с этим магазином
 	xRobotGeometryReady : BOOL; // Точки робота нужны для работы ячейки, но не для включения магазина
 	xRobotMagazineReady : BOOL; // Ошибки и геометрия магазина; содержимое не блокирует включение
-	xConnection : BOOL;
+	xConnection : BOOL; // Heartbeat HMI нужен только для ручных команд
 	xStopRequest : BOOL;
 	xAutoSwap : BOOL;
 	xOtherLoaded : BOOL;
 	xActivePalletEditAllowed : BOOL;
 	xConfigurationChanged : BOOL;
+    xIoPneumaticOverride : BOOL; // Прямое воздействие на катушки снимает подтверждение расстановки
 	xExternalCommandRejected : BOOL;
 	Command : ST_TWO_PALLET_COMMAND;
 	Config : ST_TWO_PALLET_CONFIG;
@@ -53,6 +53,7 @@ VAR
 	xAutomaticState : BOOL;
 	xAxisMotionState : BOOL;
 	xManualState : BOOL;
+	xEnableBaseAllowed : BOOL;
 	xAutoSwapAllowed : BOOL;
 	xExchangeStartedManual : BOOL; // Обмен начат в ручном режиме: без проверки роботной зоны/точек
 	xCommandPresent : BOOL;
@@ -261,6 +262,13 @@ IF xConfigurationChanged THEN
 	END_IF;
 END_IF;
 
+IF xIoPneumaticOverride THEN
+    Status.xConfirmed := FALSE;
+    Status.xEnabled := FALSE;
+    Status.udiRevision := Status.udiRevision + UDINT#1;
+    IF Status.udiRevision = UDINT#0 THEN Status.udiRevision := UDINT#1; END_IF;
+END_IF;
+
 IF NOT xSelected
 	OR NOT xSafe
 	OR NOT Input.xAxisBound
@@ -271,10 +279,6 @@ IF NOT xSelected
 	OR (xIdle AND (uiCandidate <> uiConfirmedCandidate)) THEN
 	Status.xConfirmed := FALSE;
 END_IF;
-// Пропадание heartbeat выключает автоматическую обработку, но само по себе
-// не перемещает механику и не стирает уже проверенную идентичность палет.
-IF NOT xConnection THEN Status.xEnabled := FALSE; END_IF;
-
 // Первая невыполненная предпосылка для HMI.
 Diag.uiReason := UINT#0;
 IF NOT xSelected THEN
@@ -328,9 +332,9 @@ END_IF;
 IF xSelected
 	AND NOT xIdle
 	AND (((NOT xBase) AND NOT (xManualPneumaticState AND xPneumaticBase))
-		OR ((NOT xConnection) AND NOT xManualPneumaticState) OR xStopRequest
-		OR (xAutomaticState AND ((xExchangeStartedManual AND (NOT xManual OR NOT xRobotIdle))
-			OR (NOT xExchangeStartedManual AND NOT xRobotClear)))) THEN
+		OR ((NOT xConnection) AND xManualState AND NOT xManualPneumaticState) OR xStopRequest
+		OR (xAutomaticState AND ((xExchangeStartedManual AND NOT xManual)
+			OR NOT xRobotSwapWindow))) THEN
 	Error.dwErrorActive := Error.dwErrorActive OR ERR_SEQUENCE_INTERRUPTED;
 	Diag.eState := E_TWO_PALLET_STATE.IDLE;
 	Output.xStop := TRUE;
@@ -385,17 +389,17 @@ Status.xConfirmAllowed := xRecovery
 	AND (Error.dwErrorActive = DWORD#0);
 Status.xStartAllowed := Status.xConfirmAllowed
 	AND xRobotMagazineReady;
-Status.xEnableAllowed := xBase
-	AND xConnection
+// Общая технологическая готовность не зависит от heartbeat HMI.
+xEnableBaseAllowed := xBase
 	AND xIdle
 	AND Status.xConfirmed
 	AND xRobotMagazineReady
 	AND (uiCandidate = Status.uiRobotPallet)
 	AND Input.xPowered
 	AND (Error.dwErrorActive = DWORD#0);
-// Операторский обмен выключенного магазина разрешён и в работающем автоцикле.
-// В автоматическом режиме требуется окно планировщика и освобождённая зона;
-// в ручном режиме остаётся останов робота без проверки его точек/зоны.
+Status.xEnableAllowed := xEnableBaseAllowed AND xConnection;
+// Обмен не требует глобальной остановки робота: проверяется только отсутствие
+// текущей или уже выданной операции именно с этим магазином.
 Status.xSwapAllowed := xBase
 	AND xConnection
 	AND xIdle
@@ -406,9 +410,9 @@ Status.xSwapAllowed := xBase
 	AND (uiCandidate = Status.uiRobotPallet)
 	AND NOT Status.xEnabled
 	AND NOT xStopRequest
-	AND ((xManual AND xRobotIdle) OR (NOT xManual AND xRobotClear));
-xAutoSwapAllowed := Status.xEnableAllowed
-	AND xRobotClear
+	AND xRobotSwapWindow;
+xAutoSwapAllowed := xEnableBaseAllowed
+	AND xRobotSwapWindow
 	AND Status.xEnabled
 	AND xOtherLoaded;
 Status.xPowerAllowed := xRecovery
@@ -958,7 +962,7 @@ IF tonState.Q THEN
 END_IF;
 
 IF (((NOT xBase) AND NOT (xManualPneumaticState AND xPneumaticBase))
-	OR ((NOT xConnection) AND NOT xManualPneumaticState))
+	OR ((NOT xConnection) AND xManualState AND NOT xManualPneumaticState))
 	AND (ePreviousState <> E_TWO_PALLET_STATE.IDLE)
 	OR Output.xStop THEN
 	Output.xMove := FALSE;
@@ -1062,6 +1066,9 @@ Status.xEdit1Allowed := xSelected
 Status.xEdit2Allowed := xSelected
 	AND ((Status.uiRobotPallet <> UINT#2) OR (NOT Status.xEnabled AND xActivePalletEditAllowed));
 Status.xEditAllowed := Status.xEdit1Allowed OR Status.xEdit2Allowed;
+Status.xLoadAllowed := Status.xConfirmed AND NOT Status.xBusy AND NOT xOtherLoaded
+	AND (((Status.uiRobotPallet = UINT#1) AND Status.xEdit2Allowed)
+		OR ((Status.uiRobotPallet = UINT#2) AND Status.xEdit1Allowed));
 
 Status.xReady := xSelected
 	AND Status.xEnabled
@@ -1073,8 +1080,7 @@ Status.xReady := xSelected
 	AND Input.xPowered
 	AND xRobotGeometryReady
 	AND xRobotMagazineReady
-	AND xSafe
-	AND xConnection;
+	AND xSafe;
 
 IF NOT xSelected THEN
 	Status.xEnabled := FALSE;

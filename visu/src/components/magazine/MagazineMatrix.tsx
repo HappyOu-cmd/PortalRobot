@@ -1,5 +1,6 @@
 import viewGridOutlineIcon from '@iconify-icons/mdi/view-grid-outline';
 import { Icon } from '@iconify/react';
+import { useLayoutEffect, useRef } from 'react';
 import type { ProductType, SlotType } from '../../model/types';
 
 export interface MagazineMatrixProps {
@@ -9,6 +10,8 @@ export interface MagazineMatrixProps {
   activeCount?: number;
   productTypes?: ProductType[];
   editMode?: 'content' | 'product-type';
+  bottomUp?: boolean;
+  showNumbers?: boolean;
 }
 
 export interface MagazineMatrixCardProps {
@@ -28,14 +31,33 @@ const SLOT_LABELS: Record<SlotType, string> = {
   detail: 'деталь',
 };
 
-export function MagazineMatrix({ slots, onSlotClick, columns = 10, activeCount = slots.length, productTypes, editMode = 'content' }: MagazineMatrixProps) {
+export function MagazineMatrix({ slots, onSlotClick, columns = 10, activeCount = slots.length, productTypes, editMode = 'content', bottomUp = false, showNumbers = false }: MagazineMatrixProps) {
+  const matrixRef = useRef<HTMLDivElement>(null);
+  const columnCount = Math.max(1, columns);
+  const visibleCount = Math.min(slots.length, Math.max(0, activeCount));
+  const slotIndexes = Array.from({ length: visibleCount }, (_, index) => index);
+  if (bottomUp) {
+    slotIndexes.sort((left, right) => Math.floor(right / columnCount) - Math.floor(left / columnCount) || left - right);
+  }
+
+  useLayoutEffect(() => {
+    if (!bottomUp || !matrixRef.current) return;
+    const matrix = matrixRef.current;
+    const scrollToBottom = () => { matrix.scrollTop = matrix.scrollHeight; };
+    scrollToBottom();
+    const frame = window.requestAnimationFrame(scrollToBottom);
+    return () => window.cancelAnimationFrame(frame);
+  }, [bottomUp, columnCount, visibleCount]);
+
   return (
     <div
-      className={`magazine-matrix ${onSlotClick ? 'editable' : ''} ${productTypes ? 'product-types' : ''}`.trim()}
-      style={{ gridTemplateColumns: `repeat(${Math.max(1, columns)}, 1fr)` }}
-      aria-label={`Матрица магазина на ${activeCount} слотов`}
+      ref={matrixRef}
+      className={`magazine-matrix ${onSlotClick ? 'editable' : ''} ${productTypes ? 'product-types' : ''} ${showNumbers ? 'numbered' : ''}`.trim()}
+      style={{ gridTemplateColumns: `repeat(${columnCount}, 1fr)` }}
+      aria-label={`Матрица магазина на ${visibleCount} слотов`}
     >
-      {slots.slice(0, activeCount).map((slot, index) => {
+      {slotIndexes.map((index) => {
+        const slot = slots[index];
         const productType = productTypes?.[index] ?? 1;
         return (
         <button

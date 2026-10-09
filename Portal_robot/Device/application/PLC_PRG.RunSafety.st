@@ -61,7 +61,7 @@ AND (udiCellModeCommandSnapshot <> GVL_HMI.udiCellModeAckSeq) THEN
 	AND NOT GVL_CELL_CONTROL.xGlobalError THEN
 		uiCellModeRejectReason := UINT#2;
 	ELSIF NOT GVL_HMI.xCellManualRequest
-	AND GVL_CELL_CONTROL.xGlobalError THEN
+	AND (GVL_CELL_CONTROL.xGlobalError OR GVL_HMI.xIoEmergencyStopActive) THEN
 		uiCellModeRejectReason := UINT#3;
 	ELSE
 		GVL_CELL_CONTROL.xManual := GVL_HMI.xCellManualRequest;
@@ -74,12 +74,13 @@ AND (udiCellModeCommandSnapshot <> GVL_HMI.udiCellModeAckSeq) THEN
 	// Ack публикуется после фактического режима в PublishHmi, включая отказ.
 END_IF;
 
-IF GVL_CELL_CONTROL.xGlobalError THEN
+IF GVL_CELL_CONTROL.xGlobalError OR GVL_HMI.xIoEmergencyStopActive THEN
 	GVL_CELL_CONTROL.xManual := TRUE;
 END_IF;
 
 // Разрешения рассчитываются после применения режима и Safety текущего скана.
-xRobotHmiPermit := GVL_CELL_CONTROL.xManual AND NOT GVL_CELL_MANAGER.Status.xRunning;
+xRobotHmiPermit := GVL_CELL_CONTROL.xManual AND NOT GVL_CELL_MANAGER.Status.xRunning
+    AND NOT GVL_HMI.xIoEmergencyStopActive;
 xRobotAutoPowerOff := NOT GVL_CELL_CONTROL.xManual
 	AND (GVL_ROBOT.Status.xError
 		OR GVL_AXIS.arrAxis[1].Status.xError

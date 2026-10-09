@@ -22,7 +22,7 @@
                       <Single Type="System.Guid">d9b2b2cc-ea99-4c3b-aa42-1e5c49e65b84</Single>
                     </Key>
                     <Value>
-                      <Single Type="System.Guid">e96fd1f9-3d03-44f2-82df-1ea832ac24f7</Single>
+                      <Single Type="System.Guid">3fe5920a-4b84-4acf-a2c0-c04494c55ea0</Single>
                     </Value>
                   </Entry>
                 </Dictionary>
@@ -41,11 +41,12 @@
           <Single Name="TextDocument" Type="{f3878285-8e4f-490b-bb1b-9acbb7eb04db}" Method="IArchivable">
             <Single Name="TextBlobForSerialisation" Type="string">{attribute 'qualified_only'}
 VAR_GLOBAL
-	AutoCommand : ST_MAGAZINE_COMMAND; // Автоматическая команда магазину
-	Command : ST_ROBOT_COMMAND; // Команда роботу от магазина
-	Status  : ST_MAGAZINE_STATUS; // Рабочие статусы магазина
-	Diag    : ST_MAGAZINE_DIAG; // Состояние автомата магазина
-	Error   : ST_MAGAZINE_ERRORS; // Ошибки магазина
+	astPartStatus : ARRAY [1..2] OF ST_MAGAZINE_STATUS; // Статус только операций робота, без механического обмена
+	astAutoCommand : ARRAY [1..GVL_CELL_SETTINGS.MagazineCount] OF ST_MAGAZINE_COMMAND;
+	astCommand : ARRAY [1..GVL_CELL_SETTINGS.MagazineCount] OF ST_ROBOT_COMMAND;
+	astStatus : ARRAY [1..GVL_CELL_SETTINGS.MagazineCount] OF ST_MAGAZINE_STATUS;
+	astDiag : ARRAY [1..GVL_CELL_SETTINGS.MagazineCount] OF ST_MAGAZINE_DIAG;
+	astError : ARRAY [1..GVL_CELL_SETTINGS.MagazineCount] OF ST_MAGAZINE_ERRORS;
 END_VAR
 </Single>
             <Single Name="LineInfoPersistence" Type="string">140666d2-7c9b-4b48-944d-c0e1f61ed89d_Decl_LineIds</Single>
@@ -55,7 +56,7 @@ END_VAR
         <Single Name="ParameterList" Type="bool">False</Single>
         <Single Name="AddAttributeSubsequent" Type="bool">False</Single>
       </Single>
-      <Single Name="ParentSVNodeGuid" Type="System.Guid">e96fd1f9-3d03-44f2-82df-1ea832ac24f7</Single>
+      <Single Name="ParentSVNodeGuid" Type="System.Guid">3fe5920a-4b84-4acf-a2c0-c04494c55ea0</Single>
       <Array Name="Path" Type="string">
         <Single Type="string">Device</Single>
         <Single Type="string">PLC Logic</Single>

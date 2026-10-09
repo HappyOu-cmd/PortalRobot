@@ -158,7 +158,7 @@ test('all mapped pulse gateway commands use the acknowledged transport', async (
   assert.doesNotMatch(source, /setTimeout\([^\n]*writeValue[^\n]*150/);
 });
 
-test('all 31 actual gateway settings write a separate payload; rejected settings never report applied', async () => {
+test('all 39 actual gateway settings write a separate payload; horn uses seconds, filters milliseconds, rejections never report applied', async () => {
   const source = readFileSync(new URL('./server.mjs', import.meta.url), 'utf8');
   const start = source.indexOf('async function executeCommandPrepared(');
   const body = source.slice(start, source.indexOf('async function executeCommand(message)', start));
@@ -181,15 +181,33 @@ test('all 31 actual gateway settings write a separate payload; rejected settings
     writes.length = 0;
     const message = { command: name, value: 5 };
     await command(message);
-    assert.deepEqual(writes, [['uiCellSettingIndex', index + 1], ['lrCellSettingRequest', index < 4 ? 5 : 5000]]);
+    const expectedValue = definition.dataType === DataType.Int64 && !['tInputFilterRise', 'tInputFilterFall'].includes(definition.path) ? 5000 : 5;
+    assert.deepEqual(writes, [['uiCellSettingIndex', index + 1], ['lrCellSettingRequest', expectedValue]]);
     assert.equal(message._plcApplied, true);
     assert.equal(message._plcReceipt.sequence, 9);
   }
-  assert.equal(tested, 31);
+  assert.equal(tested, 39);
+  for (const [seconds, milliseconds] of [[0, 0], [0.1, 100], [2, 2000], [60, 60000]]) {
+    writes.length = 0;
+    await command({ command: 'cell.settings.alarmHornDuration', value: seconds });
+    assert.deepEqual(writes, [['uiCellSettingIndex', 39], ['lrCellSettingRequest', milliseconds]]);
+  }
+  for (const [name, index] of [['inputFilterRise', 37], ['inputFilterFall', 38]]) {
+    for (const value of [0, 5000]) {
+      writes.length = 0;
+      await command({ command: `cell.settings.${name}`, value });
+      assert.deepEqual(writes, [['uiCellSettingIndex', index], ['lrCellSettingRequest', value]]);
+    }
+  }
   for (plcResult of [2, 3, 4]) {
     const message = { command: 'cell.settings.safetyHomeToleranceX', value: 12 };
     await assert.rejects(command(message), /отклонил/);
     assert.equal(message._plcApplied, undefined);
+    for (const name of ['inputFilterRise', 'inputFilterFall']) {
+      const filterMessage = { command: `cell.settings.${name}`, value: 20 };
+      await assert.rejects(command(filterMessage), /отклонил/);
+      assert.equal(filterMessage._plcApplied, undefined);
+    }
   }
   writes.length = 0;
   await assert.rejects(command({ command: 'cell.settings.pointCheckSpeed', value: 'NaN' }), /конечным числом/);

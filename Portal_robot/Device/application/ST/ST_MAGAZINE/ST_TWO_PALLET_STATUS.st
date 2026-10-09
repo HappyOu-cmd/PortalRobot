@@ -33,6 +33,7 @@ STRUCT
 	xEditAllowed : BOOL;
 	xEdit1Allowed : BOOL;
 	xEdit2Allowed : BOOL;
+	xLoadAllowed : BOOL; // Подтвердить загрузку текущей операторской палеты
 	xConfigAllowed : BOOL;
 	xCompleted : BOOL;
 	xCommandAccepted : BOOL;

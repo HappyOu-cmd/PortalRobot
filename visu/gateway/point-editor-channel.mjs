@@ -32,9 +32,17 @@ export class PointEditorChannel {
       while (this.ack() !== sequence && this.now() < deadline) await this.pause(40);
       if (this.ack() !== sequence) throw new Error('PLC не подтвердил команду редактора. Не повторяйте движение до проверки состояния');
       const result = await this.readResult(sequence);
+      if (result.sequence !== sequence || result.index !== message.index) {
+        throw new Error('Результат редактора не соответствует отправленной команде PLC');
+      }
       message._pointEditorResult = result.point;
       message._pointEditorConfirmed = true;
       if (result.result !== 1) throw new Error(result.reason || 'PLC отклонил команду редактора');
+      if (!result.point || ![result.point.x, result.point.y, result.point.z,
+        result.point.magazineSafeZ, result.point.magazineChangeZ, result.point.speedFactor].every(Number.isFinite)) {
+        throw new Error('PLC вернул недостоверные данные точки; черновик не изменён');
+      }
+      message._pointEditorReply = { sequence, index: message.index, command: message.command, point: result.point };
       return requestId;
     } catch (error) {
       if (message._pointEditorSequence && !message._pointEditorConfirmed) this.uncertain = message._pointEditorSequence;

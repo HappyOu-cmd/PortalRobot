@@ -41,6 +41,76 @@ npm run gateway
 использовать `opc.tcp://127.0.0.1:4840`. Переменная действует только в текущем
 окне; после изменения перезапустить gateway.
 
+## Логин и пароль OPC UA
+
+Для входа gateway использует учётную запись самого PLC. Учётные записи
+веб-интерфейса HMI на OPC UA server не передаются.
+
+Перед запуском задать `OPCUA_USERNAME` и `OPCUA_PASSWORD` в текущем PowerShell.
+Пароль вводится в локальном диалоге, не записывается в исходники и историю команд:
+
+```powershell
+cd 'C:\Users\KOKSHAROV IR\Desktop\Project\Portal robot\visu'
+$env:OPCUA_ENDPOINT = 'opc.tcp://192.168.20.80:4840'
+$plcLogin = Get-Credential -Message 'Учётная запись PLC для OPC UA'
+$env:OPCUA_USERNAME = $plcLogin.UserName
+$env:OPCUA_PASSWORD = $plcLogin.GetNetworkCredential().Password
+try { npm run dev:live }
+finally {
+    Remove-Item Env:OPCUA_USERNAME, Env:OPCUA_PASSWORD -ErrorAction SilentlyContinue
+    $plcLogin = $null
+}
+```
+
+Остановить предыдущий `dev:live` через Ctrl+C перед запуском. Основное подключение
+и отдельная сессия диагностики используют одинаковые данные PLC при каждом
+переподключении. В журнале запуска виден только тип входа `UserName`/`Anonymous`.
+Без обеих переменных сохраняется Anonymous; если задана только одна, запуск
+останавливается с ошибкой конфигурации. После отказа пароля перехода на Anonymous нет.
+
+На PLC оставить `CmpOPCUAServer → UserAuthentication = ENABLED` и предоставить
+группе выбранного пользователя доступ к `RemoteConnections → OPCUAServer` и
+нужному набору символов. Сервер должен объявлять токен `UserName` для выбранного
+endpoint. Ошибка `Cannot find USERNAME user token policy in end point description`
+возникает до проверки пароля и означает отсутствие такого токена.
+
+Текущие настройки gateway используют канал `None/None`. Если сервер передаёт
+сертификат и объявляет шифрование пользовательского токена, `node-opcua` шифрует
+пароль по этой политике. Если сервер не передаёт сертификат, для диагностического
+входа потребуется `AllowUserPasswordOnPlaintext = YES` на PLC, OK и перезапуск
+Runtime. В этом случае пароль передаётся открытым текстом; такой вариант применять
+только для проверки в доверенной локальной сети. После проверки создать сертификат
+OPC UA server на PLC и вернуть запрет передачи паролей открытым текстом.
+Сертификат сервера PLC и сертификат клиента gateway — разные файлы.
+
+Настройки: [официальная документация CODESYS](https://content.helpme-codesys.com/en/CODESYS%20Communication/_comm_dlg_device_security_settings.html).
+
+## Сертификат OPC UA gateway
+
+Основное подключение и отдельная сессия диагностики используют один
+`applicationUri`: `urn:<имя-компьютера>:PortalRobotHmiGateway`. Отображаемое имя
+приложения — `Portal Robot HMI Gateway`.
+
+Gateway дожидается инициализации общего закрытого ключа до запуска двух сессий,
+чтобы первое подключение не зависело от порядка их выполнения.
+
+При первом подключении `node-opcua` создаёт сертификат и закрытый ключ в
+`visu/gateway/data/opcua-pki/<имя-компьютера>/`. Сертификат находится в
+`own/certs/client_certificate.pem`; его URI в `subjectAltName` совпадает с
+`applicationUri`. При повторных запусках используются те же файлы. На другом
+компьютере выбирается отдельный каталог по имени хоста. PKI входит в
+игнорируемый `gateway/data` и в Git не переносится.
+
+Предупреждение `NODE-OPCUA-W06` означает несовпадение URI сертификата и клиента.
+После обновления этой настройки нужно перезапустить gateway; общий сертификат
+`NodeOPCUA-Client` из AppData больше не используется. Если на контроллере
+включена проверка клиентских сертификатов, новый сертификат gateway нужно
+добавить в доверенные через штатные настройки контроллера.
+
+Разрешение анонимного входа на OPC UA server настраивается отдельно:
+эта правка сертификата не устраняет ошибку
+`Cannot find ANONYMOUS user token policy in end point description`.
+
 ## IP веб-интерфейса и доступ с панели
 
 На компьютере HMI запускать Vite с внешним bind:

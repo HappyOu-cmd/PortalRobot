@@ -30,12 +30,11 @@ GVL_HMI.xTestScenarioApplyAllowed := xTestStable
 	AND (GVL_TWO_PALLET.uiMode = 0) // Existing scenarios describe static 120-slot magazines
 	AND GVL_HMI.xTestSessionActive
 	AND (GVL_CELL_SETTINGS.eTestEnvironment <> E_CELL_TEST_ENVIRONMENT.NORMAL)
-	AND ((GVL_CELL_SETTINGS.eTestEnvironment <> E_CELL_TEST_ENVIRONMENT.SC500_BENCH)
-		OR GVL_TEST_IO.xSc500BenchKeyInput)
 	AND ((GVL_CELL_SETTINGS.eTestEnvironment <> E_CELL_TEST_ENVIRONMENT.SIMULATION)
 		OR NOT GVL_ROBOT_MODBUS.xModeActive
 		OR GVL_ROBOT_MODBUS.Status.xSimulatorActive);
-GVL_HMI.xSc500BenchKeyActive := GVL_TEST_IO.xSc500BenchKeyInput;
+// Старые OPC UA поля сохранены для совместимости; физический ключ исключён.
+GVL_HMI.xSc500BenchKeyActive := FALSE;
 
 IF rtTestEnvironmentApply.Q THEN
 	GVL_HMI.uiTestRejectReason := UINT#0;
@@ -44,8 +43,8 @@ IF rtTestEnvironmentApply.Q THEN
 	ELSIF GVL_HMI.uiTestEnvironmentRequest > UINT#2 THEN
 		GVL_HMI.uiTestRejectReason := UINT#2; // invalid environment
 	ELSIF (GVL_HMI.uiTestEnvironmentRequest = UINT#2)
-	AND (NOT GVL_ROBOT_MODBUS.xModeActive OR NOT GVL_TEST_IO.xSc500BenchKeyInput) THEN
-		GVL_HMI.uiTestRejectReason := UINT#3; // bench requires Modbus and physical key
+	AND NOT GVL_ROBOT_MODBUS.xModeActive THEN
+		GVL_HMI.uiTestRejectReason := UINT#3; // bench requires Modbus
 	ELSIF (GVL_HMI.uiTestEnvironmentRequest = UINT#1)
 	AND GVL_ROBOT_MODBUS.xModeActive
 	AND NOT GVL_ROBOT_MODBUS.Status.xSimulatorActive THEN
@@ -56,8 +55,10 @@ IF rtTestEnvironmentApply.Q THEN
 			UINT#1: GVL_CELL_SETTINGS.eTestEnvironment := E_CELL_TEST_ENVIRONMENT.SIMULATION;
 			UINT#2: GVL_CELL_SETTINGS.eTestEnvironment := E_CELL_TEST_ENVIRONMENT.SC500_BENCH;
 		END_CASE;
+		IF GVL_CELL_SETTINGS.eTestEnvironment = E_CELL_TEST_ENVIRONMENT.NORMAL THEN
+			GVL_CELL_SETTINGS.xErrorSimulationEnabled := FALSE;
+		END_IF;
 		GVL_CELL_SETTINGS.eTestSpeedProfile := E_TEST_SPEED_PROFILE.REALTIME;
-		xSc500BenchKeyLost := FALSE;
 	END_IF;
 END_IF;
 
@@ -82,17 +83,6 @@ IF rtTestSpeedProfileApply.Q THEN
 		GVL_HMI.uiSimulationTimeFactor := GVL_CELL_SETTINGS.uiSimulationTimeFactor;
 	ELSE
 		GVL_HMI.uiTestRejectReason := UINT#5; // speed profile is simulation-only
-	END_IF;
-END_IF;
-
-// Losing the physical key does not interrupt the current SC-500 command.
-// As soon as it finishes, robot readiness is removed and no next command can start.
-IF (GVL_CELL_SETTINGS.eTestEnvironment = E_CELL_TEST_ENVIRONMENT.SC500_BENCH)
-AND NOT GVL_TEST_IO.xSc500BenchKeyInput THEN
-	xSc500BenchKeyLost := TRUE;
-	IF NOT GVL_ROBOT_MODBUS.Status.xBusy THEN
-		xRobotInterfaceReady := FALSE;
-		xDrivesReady := FALSE;
 	END_IF;
 END_IF;
 
@@ -254,7 +244,7 @@ END_IF;
 
 GVL_HMI.uiTestEnvironmentApplied := TO_UINT(GVL_CELL_SETTINGS.eTestEnvironment);
 GVL_HMI.uiTestSpeedProfileApplied := TO_UINT(GVL_CELL_SETTINGS.eTestSpeedProfile);
-GVL_HMI.xSc500BenchKeyLost := xSc500BenchKeyLost;
+GVL_HMI.xSc500BenchKeyLost := FALSE;
 IF GVL_CELL_SETTINGS.eTestEnvironment = E_CELL_TEST_ENVIRONMENT.SIMULATION THEN
 	IF GVL_HMI.xTestSessionActive THEN
 		GVL_CELL_SETTINGS.xSimulationAccelerationEnable :=

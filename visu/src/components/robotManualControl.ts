@@ -5,6 +5,8 @@ export const EDITOR_POINT_LABELS = [
   'HOME_SAFETY — безопасный повторный запуск',
   'Магазин 1 — базовая точка детали',
   'Магазин 2 — базовая точка детали',
+  'ГК 1 — базовая точка',
+  'ГК 2 — базовая точка',
 ] as const;
 
 export const MANUAL_POINT_OPTIONS = [
@@ -21,6 +23,10 @@ export const MANUAL_POINT_OPTIONS = [
   { value: 14, label: 'Магазин — безопасно над слотом' },
   { value: 15, label: 'Магазин — смена захвата над слотом' },
   { value: 16, label: 'Магазин — внутри слота' },
+  { value: 17, label: 'ГК 1 — безопасный подход' },
+  { value: 19, label: EDITOR_POINT_LABELS[12] },
+  { value: 20, label: 'ГК 2 — безопасный подход' },
+  { value: 22, label: EDITOR_POINT_LABELS[13] },
 ] as const;
 
 // PLC E_POINT_NAME values differ from the compact manual-selection codes above.
@@ -32,6 +38,8 @@ export const ACTIVE_POINT_LABELS: Record<number, string> = {
   19: MANUAL_POINT_OPTIONS[10].label,
   20: MANUAL_POINT_OPTIONS[12].label,
   21: MANUAL_POINT_OPTIONS[11].label,
+  24: EDITOR_POINT_LABELS[12], 25: 'ГК 1 — безопасный подход', 26: 'ГК 1 — безопасный подход',
+  27: EDITOR_POINT_LABELS[13], 28: 'ГК 2 — безопасный подход', 29: 'ГК 2 — безопасный подход',
 };
 
 export function currentRobotPointLabel(point: number, online = true): string {
@@ -44,7 +52,7 @@ export type RobotManualAction = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
 // Both quick and extended controls use the same gateway transaction payload.
 export function robotActionCommand(action: RobotManualAction, point = 1, slot = 1, magazine = 1) {
-  const magazinePoint = action === 1 && point >= 14;
+  const magazinePoint = action === 1 && point >= 14 && point <= 16;
   return {
     command: 'robot.action', action,
     point: action === 1 ? point : 0,

@@ -10,16 +10,17 @@ const TEST_REJECT_REASONS = [
 	'',
 	'оборудование или цикл ещё заняты',
 	'неизвестная тестовая среда',
-	'для стенда нужны Modbus и физический ключ',
+	'для стенда нужен Modbus',
 	'PLC не видит признак Python-симулятора',
 	'FAST разрешён только в остановленной симуляции',
 ];
 
-type CellSettingsTopic = 'cell' | 'robot' | 'safety' | 'timeouts' | 'products';
+type CellSettingsTopic = 'cell' | 'robot' | 'safety' | 'io' | 'timeouts' | 'products';
 const CELL_SETTINGS_TOPICS = [
   { id: 'cell' as const, label: 'Ячейка' },
   { id: 'robot' as const, label: 'Робот' },
   { id: 'safety' as const, label: 'Безопасность' },
+  { id: 'io' as const, label: 'Входы / выходы' },
   { id: 'timeouts' as const, label: 'Таймауты' },
   { id: 'products' as const, label: 'Изделия' },
 ];
@@ -112,7 +113,7 @@ function ModeApplicationStatus({ requested, applied }: { requested: string; appl
 	</div>;
 }
 
-export function CellSettingsPanel({ online, modbusMode, modbus, testEnvironment, configurationValid, typeCount, typeCountAllowed, magazineConfigAllowed, settings, accelerationEnabled, accelerationActive, accelerationAllowed, onModeChange, onTestEnvironmentChange, onTypeCountChange, onAutoDistribute, onModbusSettingChange, onModbusApply, onSettingChange, onAccelerationChange, onStatisticsSettings, onClose, magazineControl, className }: {
+export function CellSettingsPanel({ online, modbusMode, modbus, testEnvironment, configurationValid, typeCount, typeCountAllowed, magazineConfigAllowed, settings, accelerationEnabled, accelerationActive, accelerationAllowed, onModeChange, onTestEnvironmentChange, onTypeCountChange, onAutoDistribute, onModbusSettingChange, onModbusApply, onSettingChange, onAccelerationChange, onStatisticsSettings, showStatisticsSettings = true, onClose, magazineControl, geometryControl, geometryTimeouts, className }: {
 	online: boolean;
 	modbusMode: boolean;
 	modbus: PlcRobotModbusInfo;
@@ -122,6 +123,8 @@ export function CellSettingsPanel({ online, modbusMode, modbus, testEnvironment,
 	typeCountAllowed: boolean;
 	magazineConfigAllowed: boolean;
 	magazineControl?: ReactNode;
+  geometryControl?: ReactNode;
+  geometryTimeouts?: ReactNode;
 	settings: PlcCellSettings;
 	accelerationEnabled: boolean;
 	accelerationActive: boolean;
@@ -135,6 +138,7 @@ export function CellSettingsPanel({ online, modbusMode, modbus, testEnvironment,
 	onSettingChange: (command: string, value: number) => void;
 	onAccelerationChange: (enabled: boolean) => void;
 	onStatisticsSettings: () => void;
+	showStatisticsSettings?: boolean;
 	onClose: () => void;
 	className?: string;
 }) {
@@ -169,12 +173,13 @@ export function CellSettingsPanel({ online, modbusMode, modbus, testEnvironment,
 
 	return <aside className={`side-panel cell-settings-panel utility-panel ${className ?? ''}`} aria-label="Настройки ячейки">
 		<header className="utility-panel-header"><span className="utility-panel-icon" aria-hidden="true"><Boxes /></span><div><span>ИНЖЕНЕРНЫЕ ПАРАМЕТРЫ</span><h2>Настройки ячейки</h2></div><button className="utility-panel-close" type="button" onClick={onClose} title="Закрыть" aria-label="Закрыть настройки ячейки"><X aria-hidden="true" /></button></header>
-		<button className="cell-statistics-settings-link" type="button" onClick={onStatisticsSettings}><BarChart3 /><span><b>Статистика</b><small>Расписание смен и редактор статистики</small></span><ChevronRight /></button>
+		{showStatisticsSettings && <button className="cell-statistics-settings-link" type="button" onClick={onStatisticsSettings}><BarChart3 /><span><b>Расписание смен</b><small>Шаблоны производственных смен</small></span><ChevronRight /></button>}
 		<VercelTabs className="settings-topic-tabs cell-settings-topic-tabs utility-panel-tabs" tabs={CELL_SETTINGS_TOPICS} activeTab={activeTopic} onTabChange={selectTopic} ariaLabel="Темы инженерных настроек" panelId="cell-settings-topic-panel" />
 		<div className="settings-topic-viewport cell-settings-topic-viewport">
 		<div className={`settings-topic-content cell-settings-topic-content ${topicDirection > 0 ? 'from-right' : 'from-left'}`} id="cell-settings-topic-panel" role="tabpanel" key={activeTopic}>
 		{activeTopic === 'cell' && <>
         {magazineControl}
+        {geometryControl}
       <section className="cell-config-section test-environment-settings">
 			<div className="cell-config-title"><Boxes /><div><h3>Среда выполнения</h3></div></div>
           <SegmentedControl
@@ -256,7 +261,23 @@ export function CellSettingsPanel({ online, modbusMode, modbus, testEnvironment,
 			</div>
 			<p className={`cell-settings-access ${editable ? 'allowed' : ''}`}>{editable ? 'Изменение разрешено PLC.' : !online ? 'Нет связи с PLC.' : 'Для изменения остановите ячейку и все движения, снимите активные ошибки.'}</p>
 		</section>}
+		{activeTopic === 'io' && <section className="cell-config-section">
+			<div className="cell-config-title"><Clock3 /><div><h3>Фильтрация физических входов</h3></div></div>
+			<div className="cell-settings-grid">
+				{field('Передний фронт 0 → 1', 'cell.settings.inputFilterRise', settings.inputFilters.riseMs, 'мс', 0, 5000, 1, online && settings.inputFilters.changeAllowed)}
+				{field('Задний фронт 1 → 0', 'cell.settings.inputFilterFall', settings.inputFilters.fallMs, 'мс', 0, 5000, 1, online && settings.inputFilters.changeAllowed)}
+			</div>
+			<p className="panel-note">Сигнал меняется после непрерывного удержания нового уровня. 0 мс отключает задержку соответствующего фронта.</p>
+			<p className="panel-note">Срабатывание грибков, потеря нормы реле и подтверждений позиции и кнопка Стоп проходят без задержки опасного фронта. Концевики и датчики Home подключены к серводрайверам; здесь их фильтрация не настраивается. Энкодер MPG требует аппаратного счётчика; его обработка пока не реализована.</p>
+			<div className="cell-config-title"><Clock3 /><div><h3>Гудок при аварии</h3></div></div>
+			<div className="cell-settings-grid">{field('Длительность звука', 'cell.settings.alarmHornDuration', settings.alarmHornDurationSeconds, 'с', 0, 60, 0.1, online && settings.inputFilters.changeAllowed)}</div>
+			<p className="panel-note">Новая авария запускает короткий звук. Следующая новая авария начинает отсчёт заново; предупреждения звука не вызывают. 0 с отключает гудок.</p>
+			<div className="point-state"><span>Физические I/O</span><strong>{settings.inputFilters.physicalActive ? 'Подключены к автоматам PLC' : 'Не активны'}</strong></div>
+			<p className={`panel-note${settings.inputFilters.mappingVerified ? '' : ' warning'}`}>{settings.inputFilters.mappingVerified ? 'Привязка физических каналов подтверждена наладчиком.' : 'Привязка ещё не подтверждена. В режиме «Обычная ячейка» физические выходы заблокированы.'}</p>
+			<p className={`cell-settings-access ${settings.inputFilters.changeAllowed ? 'allowed' : ''}`}>{!online ? 'Нет связи с PLC.' : settings.inputFilters.changeAllowed ? 'Изменение разрешено PLC.' : 'Для настройки включите ручной режим, остановите оборудование и отключите приводы магазинов.'}</p>
+		</section>}
 		{activeTopic === 'timeouts' && <>
+      {geometryTimeouts}
 			<details className="cell-settings-disclosure" open>
 				<summary><Clock3 /><div><strong>Станки и робот</strong><span>Технологические подтверждения, 1–600 секунд</span></div><ChevronRight /></summary>
 				<div className="cell-settings-grid timeout-grid">

@@ -5,6 +5,9 @@ END_VAR
 
 // --- BEGIN IMPLEMENTATION ---
 
+fbAlarmHorn(astSource := astAlarmSource, tDuration := GVL_CELL_SETTINGS.tAlarmHornDuration);
+GVL_CELL_SAFETY_IO.xAlarmHornOutput := fbAlarmHorn.xSound;
+
 // Приоритет: авария > предупреждение > работа > готовность > остановлена/не готова.
 // Вызывать после RunAlarms: используются актуальные сводные состояния этого скана.
 IF GVL_ALARM.Status.xAlarmActive THEN

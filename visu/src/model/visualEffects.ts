@@ -9,6 +9,8 @@ export interface VisualIndicatorSettings {
 }
 
 export interface VisualEffectSettings {
+  /** Скорость рисунка ленты ГК, м/с; не задаёт скорость привода. */
+  geometryConveyorSpeed: number;
   /** Показывать дополнительный цех с маршрутом и циклом погрузчика. */
   workshopEnabled: boolean;
   cameraFocus: boolean;
@@ -28,6 +30,7 @@ const createDefaultIndicatorSettings = (): VisualIndicatorSettings => ({
 });
 
 export const DEFAULT_VISUAL_EFFECT_SETTINGS: VisualEffectSettings = {
+  geometryConveyorSpeed: 0.24,
   workshopEnabled: true,
   cameraFocus: false,
   alarmBeacons: false,
@@ -103,6 +106,7 @@ export function normalizeVisualEffectSettings(value: unknown): VisualEffectSetti
   const savedMagazines = Array.isArray(savedIndicators.magazines) ? savedIndicators.magazines : [];
   return {
     // Для ранее сохранённых настроек оставляем новые элементы включёнными.
+    geometryConveyorSpeed: boundedNumber(saved.geometryConveyorSpeed, DEFAULT_VISUAL_EFFECT_SETTINGS.geometryConveyorSpeed, 0, 2),
     workshopEnabled: saved.workshopEnabled !== false,
     cameraFocus: saved.cameraFocus === true,
     alarmBeacons: saved.alarmBeacons === true,

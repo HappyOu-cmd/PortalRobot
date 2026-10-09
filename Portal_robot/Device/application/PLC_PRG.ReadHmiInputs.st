@@ -111,7 +111,8 @@ GVL_CELL_CONTROL.xReset := GVL_HMI.xCellReset;
 GVL_ALARM.Command.xResetWarnings := GVL_HMI.xAlarmResetWarnings;
 
 // Режим инъекции ошибок включается отдельным переключателем страницы CELL_SETTINGS.
-GVL_CELL_SETTINGS.xErrorSimulationEnabled := GVL_HMI.xErrorSimulationEnable;
+GVL_CELL_SETTINGS.xErrorSimulationEnabled := GVL_HMI.xErrorSimulationEnable
+	AND (GVL_CELL_SETTINGS.eTestEnvironment <> E_CELL_TEST_ENVIRONMENT.NORMAL);
 
 // Ползунок меняет только запрошенное значение. Отдельный FB применяет его к
 // таймерам и Dynamic Limits безопасной транзакцией перед следующим тестом.
@@ -149,6 +150,17 @@ GVL_CELL_SETTINGS.xCellSettingsChangeAllowed :=
 	AND NOT SIMULATION_DYNAMICS.xBusy
 	AND NOT GVL_ROBOT.Status.xBusy;
 
+GVL_CELL_SETTINGS.xIoFilterSettingsChangeAllowed := xHmiConnectionAlive
+	AND GVL_CELL_CONTROL.xManual
+	AND NOT GVL_CELL_MANAGER.Status.xRunning
+	AND NOT GVL_ROBOT.Status.xBusy AND NOT xMotionBusy
+	AND NOT xPowerTransitionActive AND NOT SIMULATION_DYNAMICS.xBusy
+	AND NOT GVL_MACHINE.Status[1].xBusy AND NOT GVL_MACHINE.Status[1].xProcessing
+	AND NOT GVL_MACHINE.Status[2].xBusy AND NOT GVL_MACHINE.Status[2].xProcessing
+	AND NOT GVL_MACHINE.Status[3].xBusy AND NOT GVL_MACHINE.Status[3].xProcessing
+	AND NOT GVL_TWO_PALLET.astStatus[1].xBusy AND NOT GVL_TWO_PALLET.astStatus[2].xBusy
+	AND NOT GVL_TWO_PALLET.astInput[1].xPowered AND NOT GVL_TWO_PALLET.astInput[2].xPowered;
+
 // Independent requested value; publication cannot overwrite an incoming write.
 xCellSettingRejected := FALSE;
 udiCellSettingSnapshot := GVL_HMI.udiCellSettingCommandSeq;
@@ -157,7 +169,10 @@ AND (udiCellSettingSnapshot <> GVL_HMI.udiCellSettingAckSeq) THEN
 	GVL_HMI.uiCellSettingResult := UINT#3;
 	IF NOT IsHmiCommandFresh(udiIssuedAtMs := GVL_HMI.udiCellSettingIssuedAtMs) THEN
 		GVL_HMI.uiCellSettingResult := UINT#4; // Expired: never apply later
-	ELSIF NOT GVL_CELL_SETTINGS.xCellSettingsChangeAllowed
+	ELSIF ((((GVL_HMI.uiCellSettingIndex = UINT#37) OR (GVL_HMI.uiCellSettingIndex = UINT#38) OR (GVL_HMI.uiCellSettingIndex = UINT#39))
+		AND NOT GVL_CELL_SETTINGS.xIoFilterSettingsChangeAllowed)
+		OR (((GVL_HMI.uiCellSettingIndex <> UINT#37) AND (GVL_HMI.uiCellSettingIndex <> UINT#38) AND (GVL_HMI.uiCellSettingIndex <> UINT#39))
+			AND NOT GVL_CELL_SETTINGS.xCellSettingsChangeAllowed))
 	OR (((GVL_HMI.uiCellSettingIndex = UINT#4)
 		OR (GVL_HMI.uiCellSettingIndex = UINT#25)
 		OR (GVL_HMI.uiCellSettingIndex = UINT#29))
@@ -346,13 +361,28 @@ AND (udiCellSettingSnapshot <> GVL_HMI.udiCellSettingAckSeq) THEN
 					GVL_CELL_SETTINGS.lrRobotHaltJerk := GVL_HMI.lrCellSettingRequest;
 					GVL_HMI.uiCellSettingResult := UINT#1;
 				END_IF;
+			UINT#37:
+				IF (GVL_HMI.lrCellSettingRequest >= 0.0) AND (GVL_HMI.lrCellSettingRequest <= 5000.0) THEN
+					GVL_CELL_SETTINGS.tInputFilterRise := UDINT_TO_TIME(LREAL_TO_UDINT(GVL_HMI.lrCellSettingRequest));
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
+			UINT#38:
+				IF (GVL_HMI.lrCellSettingRequest >= 0.0) AND (GVL_HMI.lrCellSettingRequest <= 5000.0) THEN
+					GVL_CELL_SETTINGS.tInputFilterFall := UDINT_TO_TIME(LREAL_TO_UDINT(GVL_HMI.lrCellSettingRequest));
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
+			UINT#39:
+				IF (GVL_HMI.lrCellSettingRequest >= 0.0) AND (GVL_HMI.lrCellSettingRequest <= 60000.0) THEN
+					GVL_CELL_SETTINGS.tAlarmHornDuration := UDINT_TO_TIME(LREAL_TO_UDINT(GVL_HMI.lrCellSettingRequest));
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
 		END_CASE;
 	END_IF;
 	xCellSettingRejected := GVL_HMI.uiCellSettingResult <> UINT#1;
 END_IF;
 
 // =============================================================================
-// Транзакционный редактор 12 фиксированных инженерных точек
+// Транзакционный редактор 14 фиксированных инженерных точек
 // =============================================================================
 xPointEditorAllHomed := GVL_AXIS.arrAxis[1].Status.xHomed
 	AND GVL_AXIS.arrAxis[2].Status.xHomed
@@ -382,6 +412,7 @@ AND (GVL_HMI.udiPointEditorCommandSeq <> udiLastPointEditorCommandSeq) THEN
 	GVL_HMI.uiPointEditorRejectReason := UINT#0;
 	xPointEditorRequestValid := FALSE;
 	xPointEditorMagazinePoint := FALSE;
+	uiPointEditorGeometryStation := UINT#0;
 	ePointEditorName := E_POINT_NAME.NONE;
 	uiPointStorageIndex := UINT#0;
 
@@ -398,11 +429,15 @@ AND (GVL_HMI.udiPointEditorCommandSeq <> udiLastPointEditorCommandSeq) THEN
 		UINT#10: ePointEditorName := E_POINT_NAME.HOME_SAFETY; uiPointStorageIndex := UINT#13;
 		UINT#11: ePointEditorName := E_POINT_NAME.MAGAZINE_1_DETAIL; uiPointStorageIndex := UINT#14;
 		UINT#12: ePointEditorName := E_POINT_NAME.MAGAZINE_2_DETAIL; uiPointStorageIndex := UINT#15;
+		UINT#13: ePointEditorName := E_POINT_NAME.GEOMETRY_1_PLACE; uiPointEditorGeometryStation := UINT#1;
+		UINT#14: ePointEditorName := E_POINT_NAME.GEOMETRY_2_PLACE; uiPointEditorGeometryStation := UINT#2;
 	END_CASE;
 	xPointEditorRequestValid := (ePointEditorName <> E_POINT_NAME.NONE)
-		AND (uiPointStorageIndex <> UINT#0);
+		AND ((uiPointStorageIndex <> UINT#0) OR (uiPointEditorGeometryStation <> UINT#0));
 	xPointEditorMagazinePoint := (ePointEditorName = E_POINT_NAME.MAGAZINE_1_DETAIL)
 		OR (ePointEditorName = E_POINT_NAME.MAGAZINE_2_DETAIL);
+	xPointEditorGeometrySave := (GVL_HMI.uiPointEditorCommand = UINT#2)
+		AND (uiPointEditorGeometryStation <> UINT#0);
 
 	IF (GVL_HMI.uiPointEditorCommand <> UINT#1)
 	AND (GVL_HMI.uiPointEditorCommand <> UINT#2)
@@ -412,6 +447,17 @@ AND (GVL_HMI.udiPointEditorCommandSeq <> udiLastPointEditorCommandSeq) THEN
 		GVL_HMI.uiPointEditorRejectReason := UINT#2; // Неверный индекс точки
 	ELSIF NOT xHmiConnectionAlive THEN
 		GVL_HMI.uiPointEditorRejectReason := UINT#3; // HMI offline
+	ELSIF xPointEditorGeometrySave THEN
+		// SAVE только изменяет данные. Режим, Home, движение, ошибки и состояние
+		// ГК не блокируют запись. CAPTURE/CHECK сохраняют прежние допуски.
+		IF GVL_HMI.xModbusMode
+		OR (GVL_CELL_SETTINGS.eTestEnvironment = E_CELL_TEST_ENVIRONMENT.SC500_BENCH) THEN
+			GVL_HMI.uiPointEditorRejectReason := UINT#5;
+		ELSIF NOT GVL_POINT_MANAGER.PointManager.Diag.xXLimitValid
+		OR NOT GVL_POINT_MANAGER.PointManager.Diag.xYLimitValid
+		OR NOT GVL_POINT_MANAGER.PointManager.Diag.xZLimitValid THEN
+			GVL_HMI.uiPointEditorRejectReason := UINT#13;
+		END_IF;
 	ELSIF NOT GVL_CELL_CONTROL.xManual THEN
 		GVL_HMI.uiPointEditorRejectReason := UINT#4; // Требуется ручной режим
 	ELSIF GVL_HMI.xModbusMode THEN
@@ -435,7 +481,9 @@ AND (GVL_HMI.udiPointEditorCommandSeq <> udiLastPointEditorCommandSeq) THEN
 		OR NOT GVL_POINT_MANAGER.PointManager.Diag.xYLimitValid
 		OR NOT GVL_POINT_MANAGER.PointManager.Diag.xZLimitValid) THEN
 		GVL_HMI.uiPointEditorRejectReason := UINT#13; // Software limits недоступны
-	ELSE
+	END_IF;
+
+	IF GVL_HMI.uiPointEditorRejectReason = UINT#0 THEN
 		IF GVL_HMI.uiPointEditorCommand = UINT#1 THEN
 			// CAPTURE возвращает согласованный снимок одного PLC-цикла и не пишет Persistent.
 			GVL_HMI.stPointEditorResultPoint.Name := '';
@@ -459,7 +507,7 @@ AND (GVL_HMI.udiPointEditorCommandSeq <> udiLastPointEditorCommandSeq) THEN
 			OR (GVL_POINT.Points[ePointEditorName].Y <> GVL_HMI.alrPointEditorDraftXYZ[2])
 			OR (GVL_POINT.Points[ePointEditorName].Z <> GVL_HMI.alrPointEditorDraftXYZ[3])
 			OR (GVL_POINT.Points[ePointEditorName].SpeedFactor <> GVL_HMI.lrPointEditorDraftSpeedFactor)
-			OR (xPointEditorMagazinePoint
+			OR ((xPointEditorMagazinePoint OR (uiPointEditorGeometryStation <> UINT#0))
 				AND ((GVL_POINT.Points[ePointEditorName].MagazineSafeZ <>
 					GVL_HMI.lrPointEditorDraftMagazineSafeZ)
 				OR (GVL_POINT.Points[ePointEditorName].MagazineChangeZ <>
@@ -478,7 +526,8 @@ AND (GVL_HMI.udiPointEditorCommandSeq <> udiLastPointEditorCommandSeq) THEN
 				AND (GVL_HMI.alrPointEditorDraftXYZ[3] <= alrRobotSoftwareMaxPosition[3]);
 			IF NOT xPointEditorDraftValid THEN
 				GVL_HMI.uiPointEditorRejectReason := UINT#14; // XYZ вне software limits
-			ELSIF NOT ((GVL_HMI.lrPointEditorDraftSpeedFactor > 0.1)
+			ELSIF NOT (((GVL_HMI.lrPointEditorDraftSpeedFactor > 0.1)
+				OR ((uiPointEditorGeometryStation <> UINT#0) AND (GVL_HMI.lrPointEditorDraftSpeedFactor >= 0.1)))
 			AND (GVL_HMI.lrPointEditorDraftSpeedFactor <= 1.0)) THEN
 				GVL_HMI.uiPointEditorRejectReason := UINT#15; // Недопустимая скорость
 			ELSIF xPointEditorMagazinePoint
@@ -487,6 +536,36 @@ AND (GVL_HMI.udiPointEditorCommandSeq <> udiLastPointEditorCommandSeq) THEN
 				OR (GVL_HMI.lrPointEditorDraftMagazineChangeZ < -LREAL#10000.0)
 				OR (GVL_HMI.lrPointEditorDraftMagazineChangeZ > LREAL#10000.0)) THEN
 				GVL_HMI.uiPointEditorRejectReason := UINT#22; // Смещения магазина вне диапазона
+			ELSIF (uiPointEditorGeometryStation <> UINT#0)
+			AND NOT ((GVL_HMI.lrPointEditorDraftMagazineSafeZ < LREAL#0.0)
+				AND (GVL_HMI.lrPointEditorDraftMagazineSafeZ >= -LREAL#10000.0)
+				AND ((GVL_HMI.alrPointEditorDraftXYZ[3] + GVL_HMI.lrPointEditorDraftMagazineSafeZ) >= alrRobotSoftwareMinPosition[3])
+				AND ((GVL_HMI.alrPointEditorDraftXYZ[3] + GVL_HMI.lrPointEditorDraftMagazineSafeZ) <= alrRobotSoftwareMaxPosition[3])) THEN
+				GVL_HMI.uiPointEditorRejectReason := UINT#22; // SAFE_Z ГК должен поднимать робот в пределах оси
+			ELSIF uiPointEditorGeometryStation <> UINT#0 THEN
+				// Единственный владелец базы ГК: действующая конфигурация NORMAL/SIMULATION.
+				stGeometryConfig.lrX := GVL_HMI.alrPointEditorDraftXYZ[1];
+				stGeometryConfig.lrY := GVL_HMI.alrPointEditorDraftXYZ[2];
+				stGeometryConfig.lrZ := GVL_HMI.alrPointEditorDraftXYZ[3];
+				stGeometryConfig.lrSafeZ := GVL_HMI.lrPointEditorDraftMagazineSafeZ;
+				stGeometryConfig.lrChangeZ := stGeometryConfig.lrSafeZ; // Совместимый legacy-канал, отдельного CHANGE нет
+				stGeometryConfig.lrSpeedFactor := GVL_HMI.lrPointEditorDraftSpeedFactor;
+				stGeometryConfig.xConfigured := TRUE;
+				IF GVL_CELL_SETTINGS.eTestEnvironment = E_CELL_TEST_ENVIRONMENT.NORMAL THEN
+					GVL_GEOMETRY_CONTROL.astConfig[uiPointEditorGeometryStation] := stGeometryConfig;
+				ELSE
+					GVL_GEOMETRY_CONTROL.astSimulationConfig[uiPointEditorGeometryStation] := stGeometryConfig;
+				END_IF;
+				GVL_GEOMETRY_CONTROL.astActiveConfig[uiPointEditorGeometryStation] := stGeometryConfig;
+				GVL_HMI.stPointEditorResultPoint.Name := '';
+				GVL_HMI.stPointEditorResultPoint.X := stGeometryConfig.lrX;
+				GVL_HMI.stPointEditorResultPoint.Y := stGeometryConfig.lrY;
+				GVL_HMI.stPointEditorResultPoint.Z := stGeometryConfig.lrZ;
+				GVL_HMI.stPointEditorResultPoint.MagazineSafeZ := stGeometryConfig.lrSafeZ;
+				GVL_HMI.stPointEditorResultPoint.MagazineChangeZ := LREAL#0.0;
+				GVL_HMI.stPointEditorResultPoint.SpeedFactor := stGeometryConfig.lrSpeedFactor;
+				GVL_HMI.stPointEditorResultPoint.xConfigured := TRUE;
+				GVL_HMI.uiPointEditorResult := UINT#1;
 			ELSE
 				GVL_POINT.astRetainPoints[uiPointStorageIndex].Name := '';
 				GVL_POINT.astRetainPoints[uiPointStorageIndex].X :=
@@ -619,5 +698,3 @@ stSafetyFaultRequest.xEmergencyStopMpg := GVL_HMI.xSimSafetyEmergencyStopMpg;
 stSafetyFaultRequest.xPhaseRelayFault := GVL_HMI.xSimSafetyPhaseRelayFault;
 stSafetyFaultRequest.xPressureRelayFault := GVL_HMI.xSimSafetyPressureRelayFault;
 stSafetyFaultRequest.xSafetyRelayFault := GVL_HMI.xSimSafetyRelayFault;
-
-

@@ -187,10 +187,11 @@ const sameActivity = (left, right) => (left?.activityId ?? left?.id) === right?.
   && left?.label === right?.label && left?.category === right?.category;
 
 export class CyclogramStore {
-  constructor({ databasePath = ':memory:', retentionHours = 24, checkpointMs = 5_000 } = {}) {
+  constructor({ databasePath = ':memory:', retentionHours = 24, checkpointMs = 5_000, autoPrune = true } = {}) {
     if (databasePath !== ':memory:') mkdirSync(dirname(databasePath), { recursive: true });
     this.databasePath = databasePath;
     this.retentionMs = Math.max(1, Number(retentionHours) || 24) * 60 * 60 * 1_000;
+    this.autoPrune = autoPrune;
     this.checkpointMs = Math.max(1_000, Number(checkpointMs) || 5_000);
     this.db = new DatabaseSync(databasePath);
     this.db.exec(`
@@ -276,7 +277,7 @@ export class CyclogramStore {
     }
 
     if (shouldCheckpoint) this.lastCheckpointMs = timestampMs;
-    if (timestampMs - this.lastPruneMs >= 60 * 60 * 1_000) this.prune(timestampMs);
+    if (this.autoPrune && timestampMs - this.lastPruneMs >= 60 * 60 * 1_000) this.prune(timestampMs);
     return { closed, opened, changed: closed.length > 0 || opened.length > 0 };
   }
 
@@ -292,11 +293,16 @@ export class CyclogramStore {
     return { closed, opened: [], changed: closed.length > 0 };
   }
 
-  clear() {
-    this.deleteAll.run();
+  clear({ compact = true } = {}) {
+    const deleted = this.deleteAll.run().changes;
     this.openIntervals.clear();
     this.lastCheckpointMs = 0;
     this.lastPruneMs = 0;
+    if (compact && this.databasePath !== ':memory:') {
+      try { this.db.exec('VACUUM'); }
+      catch (error) { console.warn(`[Cyclogram] Database compaction failed: ${error instanceof Error ? error.message : String(error)}`); }
+    }
+    return deleted;
   }
 
   prune(timestamp = Date.now()) {

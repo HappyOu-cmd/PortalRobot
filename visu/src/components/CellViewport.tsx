@@ -38,6 +38,7 @@ interface CellViewportProps {
   preview?: boolean;
   onMachineSelect: (index: number) => void;
   onMagazineSelect?: (magazineId: 1 | 2) => void;
+  onGeometrySelect?: (stationId: 1 | 2) => void;
   easterEggMode?: EasterEggMode;
   easterEggRevision?: number;
   driftSettings?: DriftSettings;
@@ -69,6 +70,7 @@ export function CellViewport({
   preview = false,
   onMachineSelect,
   onMagazineSelect,
+  onGeometrySelect,
   easterEggMode = 'off',
   easterEggRevision = 0,
   driftSettings = DEFAULT_DRIFT_SETTINGS,
@@ -135,6 +137,7 @@ export function CellViewport({
   });
   const selectRef = useRef(onMachineSelect);
   const magazineSelectRef = useRef(onMagazineSelect);
+  const geometrySelectRef = useRef(onGeometrySelect);
   const machineStatusRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const magazineStatusRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
@@ -145,6 +148,9 @@ export function CellViewport({
   useEffect(() => {
     magazineSelectRef.current = onMagazineSelect;
   }, [onMagazineSelect]);
+  useEffect(() => {
+    geometrySelectRef.current = onGeometrySelect;
+  }, [onGeometrySelect]);
 
   useEffect(() => {
     if (!robotCoordinatesRef) {
@@ -186,6 +192,7 @@ export function CellViewport({
       (target, node) => inspectRef.current(target, node),
       preview,
       visualEffects,
+      (stationId) => geometrySelectRef.current?.(stationId),
     );
     sceneRef.current = scene;
     scene.setDriftSettings(driftSettings);
@@ -203,6 +210,7 @@ export function CellViewport({
     // A frozen green lamp must not imply that the disconnected PLC is still running.
     const sceneState = inspectionDataMode === 'stale' ? {
       ...state,
+      geometryControl: state.geometryControl ? { ...state.geometryControl, stations: state.geometryControl.stations.map(station => ({ ...station, running: false })) } : undefined,
       controlCabinets: {
         ...state.controlCabinets,
         signalTower: DEFAULT_CONTROL_CABINETS.signalTower,

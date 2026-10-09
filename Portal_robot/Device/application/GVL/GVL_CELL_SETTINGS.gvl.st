@@ -42,6 +42,10 @@ VAR_GLOBAL
 
 	// Настройки ячейки редактируются из HMI только в остановленном безопасном состоянии.
 	xCellSettingsChangeAllowed : BOOL := FALSE;
+	xIoFilterSettingsChangeAllowed : BOOL := FALSE; // Разрешение фильтров и длительности гудка; применимо и в Modbus
+	tAlarmHornDuration : TIME := T#2S; // Звук новой аварии 0..60 с; 0 отключает звук
+	tInputFilterRise : TIME := T#20MS; // Стабильный передний фронт обычных DI, 0..5000 мс
+	tInputFilterFall : TIME := T#20MS; // Стабильный задний фронт обычных DI, 0..5000 мс
 	stMachineTimeouts : ST_MACHINE_TIMEOUTS := (
 		tRobotMove := T#60S,
 		tRobotAction := T#10S,

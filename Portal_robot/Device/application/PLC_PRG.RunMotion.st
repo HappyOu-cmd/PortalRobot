@@ -254,20 +254,20 @@ GVL_AXIS.arrAxis[3].Command.xDisable := GVL_AXIS.arrAxis[1].Command.xDisable;
 // Stop получает только текущий владелец движения: одна ось либо координатная группа.
 GVL_AXIS.arrAxis[1].Command.xStop := ((xHmiStopAccepted AND NOT GVL_HMI.xModbusMode)
 	OR xMobileMotionStopRequest
-	OR SIMULATION_DYNAMICS.xMotionStopRequest)
+	OR SIMULATION_DYNAMICS.xMotionStopRequest OR GVL_HMI.xIoEmergencyStopActive)
 	AND NOT xGroupMotionBusy AND (uiManualAxisOwner = UINT#1);
 GVL_AXIS.arrAxis[2].Command.xStop := ((xHmiStopAccepted AND NOT GVL_HMI.xModbusMode)
 	OR xMobileMotionStopRequest
-	OR SIMULATION_DYNAMICS.xMotionStopRequest)
+	OR SIMULATION_DYNAMICS.xMotionStopRequest OR GVL_HMI.xIoEmergencyStopActive)
 	AND NOT xGroupMotionBusy AND (uiManualAxisOwner = UINT#2);
 GVL_AXIS.arrAxis[3].Command.xStop := ((xHmiStopAccepted AND NOT GVL_HMI.xModbusMode)
 	OR xMobileMotionStopRequest
-	OR SIMULATION_DYNAMICS.xMotionStopRequest)
+	OR SIMULATION_DYNAMICS.xMotionStopRequest OR GVL_HMI.xIoEmergencyStopActive)
 	AND NOT xGroupMotionBusy AND (uiManualAxisOwner = UINT#3);
 GVL_AXIS_GROUP.AxisGroup.Command.xStopCmd :=
 	NOT GVL_HMI.xModbusMode
 	AND (xHmiStopAccepted OR xRobotProgramStopRequest OR xPointCheckStopRequest
-		OR xPointCheckStopping OR SIMULATION_DYNAMICS.xMotionStopRequest)
+		OR xPointCheckStopping OR SIMULATION_DYNAMICS.xMotionStopRequest OR GVL_HMI.xIoEmergencyStopActive)
 	AND xGroupMotionBusy;
 
 // Из новых запросов также выбирается только одна ось. Если движение уже идёт,

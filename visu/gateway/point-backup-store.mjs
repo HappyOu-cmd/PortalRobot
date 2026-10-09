@@ -3,7 +3,8 @@ import { mkdir, lstat, readFile, readdir, realpath, rename, unlink, writeFile } 
 import { basename, extname, isAbsolute, join, relative, resolve } from 'node:path';
 
 export const POINT_BACKUP_FORMAT = 'portal-robot-points';
-export const POINT_BACKUP_VERSION = 1;
+export const POINT_BACKUP_VERSION = 2;
+export const POINT_EDITOR_COUNT = 14;
 export const POINT_BACKUP_MAX_BYTES = 256 * 1024;
 
 export class PointBackupStoreError extends Error {
@@ -43,15 +44,17 @@ export function validatePointBackup(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new PointBackupStoreError('Резервная копия должна быть JSON-объектом', 400, 'POINT_BACKUP_SCHEMA_INVALID');
   }
-  if (value.format !== POINT_BACKUP_FORMAT || Number(value.version) !== POINT_BACKUP_VERSION) {
+  const sourceVersion = Number(value.version);
+  if (value.format !== POINT_BACKUP_FORMAT || ![1, POINT_BACKUP_VERSION].includes(sourceVersion)) {
     throw new PointBackupStoreError('Неподдерживаемый формат резервной копии точек', 400, 'POINT_BACKUP_VERSION_UNSUPPORTED');
   }
   const exportedAtMs = Date.parse(String(value.exportedAt ?? ''));
   if (!Number.isFinite(exportedAtMs)) {
     throw new PointBackupStoreError('В резервной копии отсутствует корректная дата экспорта', 400, 'POINT_BACKUP_SCHEMA_INVALID');
   }
-  if (!Array.isArray(value.points) || value.points.length < 1 || value.points.length > 12) {
-    throw new PointBackupStoreError('Резервная копия должна содержать от 1 до 12 точек', 400, 'POINT_BACKUP_SCHEMA_INVALID');
+  const sourceCapacity = sourceVersion === 1 ? 12 : POINT_EDITOR_COUNT;
+  if (!Array.isArray(value.points) || value.points.length < 1 || value.points.length > sourceCapacity) {
+    throw new PointBackupStoreError(`Резервная копия должна содержать от 1 до ${sourceCapacity} точек`, 400, 'POINT_BACKUP_SCHEMA_INVALID');
   }
 
   const indexes = new Set();
@@ -59,23 +62,27 @@ export function validatePointBackup(value) {
   const points = value.points.map((raw, offset) => {
     const index = Number(raw?.index);
     const pointId = Number(raw?.pointId);
-    if (!Number.isInteger(index) || index < 1 || index > 12 || indexes.has(index)) {
+    if (!Number.isInteger(index) || index < 1 || index > sourceCapacity || indexes.has(index)) {
       throw new PointBackupStoreError(`Некорректный или повторяющийся индекс точки ${index}`, 400, 'POINT_BACKUP_SCHEMA_INVALID');
     }
     if (!Number.isInteger(pointId) || pointId < 1 || pointIds.has(pointId)) {
       throw new PointBackupStoreError(`Некорректный или повторяющийся PointId ${pointId}`, 400, 'POINT_BACKUP_SCHEMA_INVALID');
     }
+    if (index >= 13 && pointId !== (index === 13 ? 24 : 27)) {
+      throw new PointBackupStoreError(`PointId базы ГК не соответствует индексу ${index}`, 400, 'POINT_BACKUP_SCHEMA_INVALID');
+    }
     indexes.add(index);
     pointIds.add(pointId);
     const configured = raw.configured === true;
     const speedFactor = finiteNumber(raw.speedFactor, 'speedFactor', index);
-    // Версия формата остаётся 1: старые экспорты нельзя ломать. Отсутствующие
-    // поля геометрии магазина мигрируют в 0 и после импорта оставляют точку
-    // ненастроенной до явного ввода обоих смещений оператором.
+    // Старые магазинные экспорты без смещений остаются совместимыми.
     const magazineSafeZ = finiteNumber(raw.magazineSafeZ ?? 0, 'magazineSafeZ', index);
     const magazineChangeZ = finiteNumber(raw.magazineChangeZ ?? 0, 'magazineChangeZ', index);
-    if (configured && (speedFactor <= 0.1 || speedFactor > 1)) {
+    if (configured && (speedFactor < 0.1 || (index < 13 && speedFactor === 0.1) || speedFactor > 1)) {
       throw new PointBackupStoreError(`Недопустимая скорость точки ${index}`, 400, 'POINT_BACKUP_SCHEMA_INVALID');
+    }
+    if (configured && index >= 13 && (magazineSafeZ >= 0 || magazineSafeZ < -10000)) {
+      throw new PointBackupStoreError(`Недопустимое смещение SAFE_Z точки ${index}`, 400, 'POINT_BACKUP_SCHEMA_INVALID');
     }
     return {
       index,
@@ -90,6 +97,17 @@ export function validatePointBackup(value) {
       configured,
     };
   }).sort((left, right) => left.index - right.index);
+
+  // Миграция при чтении: оригинал файла не меняется. Ненастроенные добавленные
+  // базы не участвуют в SAVE-очереди импорта и не стирают текущие настройки ГК.
+  for (const [index, pointId, station] of [[13, 24, 1], [14, 27, 2]]) {
+    if (!indexes.has(index)) {
+      if (pointIds.has(pointId)) throw new PointBackupStoreError('PointId ГК занимает неверный индекс', 400, 'POINT_BACKUP_SCHEMA_INVALID');
+      points.push({ index, pointId, label: `ГК ${station} — базовая точка`, x: 0, y: 0, z: 0,
+        magazineSafeZ: 0, magazineChangeZ: 0, speedFactor: 0, configured: false });
+    }
+  }
+  points.sort((left, right) => left.index - right.index);
 
   return {
     format: POINT_BACKUP_FORMAT,

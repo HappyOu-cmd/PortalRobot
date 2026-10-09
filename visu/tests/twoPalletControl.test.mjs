@@ -51,6 +51,36 @@ test('operator swap requires a confirmed but disabled magazine; automatic enable
   f.send('disable'); f.send('swap'); assert.equal(f.state.busy, true);
 });
 
+test('only the operator pallet accepts loading confirmation; edits and manual swap consume it', () => {
+  const f = fixture(); f.confirm();
+  const robot = f.state.robotPallet, operator = 3 - robot;
+  assert.equal(f.state.allowed.load, true);
+  f.send('loaded', { pallet: robot });
+  assert.equal(f.state.pallets[robot - 1].loaded, false);
+  f.send('fill', { pallet: operator });
+  f.send('loaded', { pallet: operator });
+  assert.equal(f.state.pallets[operator - 1].loaded, true);
+  assert.equal(f.state.allowed.load, false);
+  f.send('slot', { pallet: operator, slot: 1, content: 0 });
+  assert.equal(f.state.pallets[operator - 1].loaded, false);
+  assert.equal(f.state.allowed.load, true);
+  f.send('loaded', { pallet: operator });
+  f.send('swap');
+  assert.equal(f.state.pallets[operator - 1].loaded, false);
+  assert.equal(f.state.pallets[robot - 1].loaded, false);
+});
+
+test('manual reposition and confirmation of the other robot pallet clears stale loading flags', () => {
+  const f = fixture(); f.confirm(); f.send('loaded', { pallet: 2 });
+  assert.equal(f.state.pallets[1].loaded, true);
+  f.send('lower'); f.settle(); f.send('toOperator'); f.settle();
+  f.send('select2'); f.settle(); f.send('toRobot'); f.settle();
+  f.send('raise'); f.settle(); f.confirm();
+  assert.equal(f.state.robotPallet, 2);
+  assert.equal(f.state.pallets[0].loaded, false);
+  assert.equal(f.state.pallets[1].loaded, false);
+});
+
 test('manual P2 raise works at operator and intermediate carriage positions without moving the carriage', () => {
   for (const carriage of [0, 0.35]) {
     const f = fixture(); f.confirm(); f.send('lower'); f.settle();
@@ -191,9 +221,10 @@ test('live automatic operation preserves PLC swap and inventory permissions with
   const state = mapPlcSnapshot({ uiMagazineMode: 1, xCellManual: false, 'stCellStatus.xRunning': true,
     'stRobotStatus.xBusy': false, 'astTwinStatus[1].uiRobotPallet': 2, 'astTwinStatus[1].xEnabled': false,
     'astTwinStatus[1].xSwapAllowed': true, 'astTwinStatus[1].xEdit1Allowed': true,
-    'astTwinStatus[1].xEdit2Allowed': true }, structuredClone(DEFAULT_STATE));
+    'astTwinStatus[1].xEdit2Allowed': true, 'astTwinStatus[1].xLoadAllowed': true }, structuredClone(DEFAULT_STATE));
   assert.equal(state.magazines[0].twin.allowed.swap, true);
   assert.equal(state.magazines[0].twin.allowed.edit1, true); assert.equal(state.magazines[0].twin.allowed.edit2, true);
+  assert.equal(state.magazines[0].twin.allowed.load, true);
 });
 
 test('drive teaching stores the current operator and selected-pallet work coordinates', () => {

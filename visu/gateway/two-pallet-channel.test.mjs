@@ -53,6 +53,8 @@ test('invalid slot, revision and incomplete parameters cause no writes', async (
   }
   assert.equal(new Set(twinSymbols).size, twinSymbols.length);
   assert.ok(twinSymbols.includes('astTwinStore[2].astPallet[2].aSlots[96].eDetailType'));
+  assert.ok(twinSymbols.includes('astTwinStatus[1].xLoadAllowed'));
+  assert.ok(twinSymbols.includes('astTwinStatus[2].xLoadAllowed'));
 });
 
 const twinConfig = () => Object.fromEntries(Object.entries(twinConfigTypes)

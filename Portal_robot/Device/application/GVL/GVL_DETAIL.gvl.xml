@@ -22,7 +22,7 @@
                       <Single Type="System.Guid">d9b2b2cc-ea99-4c3b-aa42-1e5c49e65b84</Single>
                     </Key>
                     <Value>
-                      <Single Type="System.Guid">e96fd1f9-3d03-44f2-82df-1ea832ac24f7</Single>
+                      <Single Type="System.Guid">3fe5920a-4b84-4acf-a2c0-c04494c55ea0</Single>
                     </Value>
                   </Entry>
                 </Dictionary>
@@ -41,7 +41,7 @@
           <Single Name="TextDocument" Type="{f3878285-8e4f-490b-bb1b-9acbb7eb04db}" Method="IArchivable">
             <Single Name="TextBlobForSerialisation" Type="string">{attribute 'qualified_only'}
 VAR_GLOBAL
-	arrDetail : ARRAY [1..GVL_CELL_SETTINGS.NumberDetail] OF ST_DETAIL; // Содержимое слотов магазина
+	astMagazine : ARRAY [1..GVL_CELL_SETTINGS.MagazineCount] OF ST_MAGAZINE_INVENTORY; // Три зоны двух магазинов
 END_VAR
 </Single>
             <Single Name="LineInfoPersistence" Type="string">d8836dd7-5791-496b-a2a9-89d873eea5a7_Decl_LineIds</Single>
@@ -51,7 +51,7 @@ END_VAR
         <Single Name="ParameterList" Type="bool">False</Single>
         <Single Name="AddAttributeSubsequent" Type="bool">False</Single>
       </Single>
-      <Single Name="ParentSVNodeGuid" Type="System.Guid">e96fd1f9-3d03-44f2-82df-1ea832ac24f7</Single>
+      <Single Name="ParentSVNodeGuid" Type="System.Guid">3fe5920a-4b84-4acf-a2c0-c04494c55ea0</Single>
       <Array Name="Path" Type="string">
         <Single Type="string">Device</Single>
         <Single Type="string">PLC Logic</Single>

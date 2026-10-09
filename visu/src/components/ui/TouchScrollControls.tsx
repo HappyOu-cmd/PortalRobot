@@ -18,6 +18,7 @@ const TOUCH_SCROLL_SELECTOR = [
   '.cell-event-table',
   '.statistics-content',
   '.statistics-settings-content',
+  '.admin-panel__content',
   '.robot-extended-scroll',
   '.robot-extended-tabs',
   '.cell-settings-topic-viewport',

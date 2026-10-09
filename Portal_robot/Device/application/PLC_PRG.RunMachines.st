@@ -18,6 +18,8 @@ MACHINE_1.stPoints.eChuckApproach := E_POINT_NAME.MACHINE_1_CHUCK_APROACH;
 MACHINE_1.stPoints.eInside := E_POINT_NAME.MACHINE_1_INSIDE;
 MACHINE_1.stPoints.eNone := E_POINT_NAME.NONE;
 
+// NORMAL получает только физическую обратную связь; обе тестовые среды — модель.
+IF GVL_CELL_SETTINGS.eTestEnvironment <> E_CELL_TEST_ENVIRONMENT.NORMAL THEN
 // Виртуальные устройства исполняют команду предыдущего цикла. Затем слой
 // инъекции формирует обратную связь, которую увидит технологический автомат.
 MACHINE_1_SIM(
@@ -66,21 +68,30 @@ MACHINE_3_SIM(
 	tCycleTime := GVL_HMI.tMachineCycleTime[3]
 );
 
+END_IF;
+IF GVL_CELL_SETTINGS.eTestEnvironment = E_CELL_TEST_ENVIRONMENT.NORMAL THEN
+	astMachineStatusRaw := GVL_MACHINE.astPhysicalInput;
+ELSE
+	astMachineStatusRaw[1] := MACHINE_1_SIM.Status;
+	astMachineStatusRaw[2] := MACHINE_2_SIM.Status;
+	astMachineStatusRaw[3] := MACHINE_3_SIM.Status;
+END_IF;
+
 MACHINE_1_FAULT(
 	Request := astMachineFaultRequest[1],
-	MachineStatusRaw := MACHINE_1_SIM.Status,
+	MachineStatusRaw := astMachineStatusRaw[1],
 	RobotStatusRaw := GVL_ROBOT.Status,
 	NominalTimeouts := GVL_CELL_SETTINGS.stMachineTimeouts
 );
 MACHINE_2_FAULT(
 	Request := astMachineFaultRequest[2],
-	MachineStatusRaw := MACHINE_2_SIM.Status,
+	MachineStatusRaw := astMachineStatusRaw[2],
 	RobotStatusRaw := GVL_ROBOT.Status,
 	NominalTimeouts := GVL_CELL_SETTINGS.stMachineTimeouts
 );
 MACHINE_3_FAULT(
 	Request := astMachineFaultRequest[3],
-	MachineStatusRaw := MACHINE_3_SIM.Status,
+	MachineStatusRaw := astMachineStatusRaw[3],
 	RobotStatusRaw := GVL_ROBOT.Status,
 	NominalTimeouts := GVL_CELL_SETTINGS.stMachineTimeouts
 );
@@ -95,6 +106,7 @@ MACHINE_1(
 	xGlobalError := GVL_CELL_CONTROL.xGlobalError,
 	xManualMode := GVL_CELL_CONTROL.xManual,
 	xAutomaticUseEnabled := GVL_HMI.axMachineUsed[1],
+	xSafetyDoorControlEnabled := GVL_CELL_SETTINGS.eTestEnvironment <> E_CELL_TEST_ENVIRONMENT.NORMAL,
 	xHmiOpenSafetyDoor := GVL_HMI.axMachineManualSafetyDoorOpen[1],
 	xHmiCloseSafetyDoor := GVL_HMI.axMachineManualSafetyDoorClose[1],
 	xHmiOpenHatch := GVL_HMI.axMachineManualHatchOpen[1],
@@ -143,6 +155,7 @@ MACHINE_2(
 	xGlobalError := GVL_CELL_CONTROL.xGlobalError,
 	xManualMode := GVL_CELL_CONTROL.xManual,
 	xAutomaticUseEnabled := GVL_HMI.axMachineUsed[2],
+	xSafetyDoorControlEnabled := GVL_CELL_SETTINGS.eTestEnvironment <> E_CELL_TEST_ENVIRONMENT.NORMAL,
 	xHmiOpenSafetyDoor := GVL_HMI.axMachineManualSafetyDoorOpen[2],
 	xHmiCloseSafetyDoor := GVL_HMI.axMachineManualSafetyDoorClose[2],
 	xHmiOpenHatch := GVL_HMI.axMachineManualHatchOpen[2],
@@ -191,6 +204,7 @@ MACHINE_3(
 	xGlobalError := GVL_CELL_CONTROL.xGlobalError,
 	xManualMode := GVL_CELL_CONTROL.xManual,
 	xAutomaticUseEnabled := GVL_HMI.axMachineUsed[3],
+	xSafetyDoorControlEnabled := GVL_CELL_SETTINGS.eTestEnvironment <> E_CELL_TEST_ENVIRONMENT.NORMAL,
 	xHmiOpenSafetyDoor := GVL_HMI.axMachineManualSafetyDoorOpen[3],
 	xHmiCloseSafetyDoor := GVL_HMI.axMachineManualSafetyDoorClose[3],
 	xHmiOpenHatch := GVL_HMI.axMachineManualHatchOpen[3],

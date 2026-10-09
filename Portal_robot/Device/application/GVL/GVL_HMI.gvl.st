@@ -1,5 +1,53 @@
 {attribute 'qualified_only'}
 VAR_GLOBAL
+	stGeometryRequest : ST_GEOMETRY_REQUEST;
+	udiGeometryCommandSeq : UDINT;
+	udiGeometryIssuedAtMs : UDINT;
+	audiGeometryStopSeq : ARRAY [1..2] OF UDINT;
+	{attribute 'symbol' := 'read'}
+	audiGeometryStopAck : ARRAY [1..2] OF UDINT;
+	{attribute 'symbol' := 'read'}
+	udiGeometryAckSeq : UDINT;
+	{attribute 'symbol' := 'read'}
+	uiGeometryResult : UINT;
+	{attribute 'symbol' := 'read'}
+	stGeometryCapture : ST_GEOMETRY_CONFIG;
+	{attribute 'symbol' := 'read'}
+	astGeometryStatus : ARRAY [1..2] OF ST_GEOMETRY_STATUS;
+	audiGeometryProducedNormal : ARRAY [1..2] OF UDINT;
+	audiGeometryProducedSimulation : ARRAY [1..2] OF UDINT;
+	{attribute 'symbol' := 'read'}
+	astGeometryConfig : ARRAY [1..2] OF ST_GEOMETRY_CONFIG;
+	{attribute 'symbol' := 'read'}
+	astGeometryCalls : ARRAY [1..3] OF ST_GEOMETRY_CALL;
+	{attribute 'symbol' := 'read'}
+	astGeometryEvents : ARRAY [1..100] OF ST_GEOMETRY_EVENT;
+	{attribute 'symbol' := 'read'}
+	udiGeometryEventSequence : UDINT;
+	{attribute 'symbol' := 'read'}
+	auiGeometryPeriod : ARRAY [1..3] OF UINT;
+	{attribute 'symbol' := 'read'}
+	auiGeometryCount : ARRAY [1..3] OF UINT;
+	{attribute 'symbol' := 'read'}
+	axGeometryCallAllowed : ARRAY [1..3] OF BOOL;
+	{attribute 'symbol' := 'read'}
+	axGeometryCancelAllowed : ARRAY [1..3] OF BOOL;
+	{attribute 'symbol' := 'read'}
+	xGeometryAutoEnabled : BOOL;
+	{attribute 'symbol' := 'read'}
+	xGeometryAutoChangeAllowed : BOOL;
+	{attribute 'symbol' := 'read'}
+	xGeometrySupported : BOOL;
+	{attribute 'symbol' := 'read'}
+	xGeometryWaitWhenOccupied : BOOL;
+	{attribute 'symbol' := 'read'}
+	xGeometrySettingsAllowed : BOOL;
+	{attribute 'symbol' := 'read'}
+	tGeometryTransportTimeout : TIME;
+	{attribute 'symbol' := 'read'}
+	tGeometryFeedbackTimeout : TIME;
+	{attribute 'symbol' := 'read'}
+	tGeometryResetPulse : TIME;
 	{attribute 'symbol' := 'readwrite'}
 	stTwinRequest : ST_TWO_PALLET_REQUEST;
 	{attribute 'symbol' := 'readwrite'}
@@ -62,8 +110,8 @@ VAR_GLOBAL
 	uiTestSpeedProfileApplied : UINT;
 	xTestEnvironmentChangeAllowed : BOOL;
 	xTestScenarioApplyAllowed : BOOL;
-	xSc500BenchKeyActive : BOOL;
-	xSc500BenchKeyLost : BOOL;
+	xSc500BenchKeyActive : BOOL; // Устаревшее OPC UA поле, всегда FALSE; физический ключ удалён
+	xSc500BenchKeyLost : BOOL; // Устаревшее OPC UA поле, всегда FALSE
 	uiTestRejectReason : UINT;
 	udiTestScenarioAckSeq : UDINT;
 	uiTestScenarioResult : UINT;
@@ -124,6 +172,17 @@ VAR_GLOBAL
 	tPointCheckWatchdogTimeout : TIME;
 	{attribute 'symbol' := 'read'}
 	tHmiCommandFreshnessTimeout : TIME;
+	{attribute 'symbol' := 'read'}
+	tAlarmHornDuration : TIME; // Подтверждённая длительность звука
+	tInputFilterRise : TIME := T#20MS;
+	{attribute 'symbol' := 'read'}
+	tInputFilterFall : TIME := T#20MS;
+	{attribute 'symbol' := 'read'}
+	xIoFilterSettingsChangeAllowed : BOOL;
+	{attribute 'symbol' := 'read'}
+	xPhysicalIoActive : BOOL;
+	{attribute 'symbol' := 'read'}
+	xPhysicalIoMappingVerified : BOOL;
 	xCellSettingsChangeAllowed : BOOL; // PLC разрешает изменение настроек ячейки
 	// Команды и настройки, получаемые от HMI.
 	{attribute 'symbol' := 'read'}
@@ -217,7 +276,7 @@ VAR_GLOBAL
 	rRobotManualSpeedPercent : REAL := 0.1; // Общий override скорости JOG, MoveAbsolute и движения к точкам, 0.1..100 %; имя сохранено для OPC UA
 	{attribute 'symbol' := 'readwrite'}
 	lrRobotManualStep : LREAL := 1.0; // Шаг короткого относительного перемещения, мм
-	// Транзакционный редактор 12 фиксированных инженерных точек.
+	// Транзакционный редактор 14 фиксированных инженерных точек.
 	{attribute 'symbol' := 'readwrite'}
 	uiPointEditorIndex : UINT := UINT#1;
 	{attribute 'symbol' := 'readwrite'}
@@ -397,16 +456,16 @@ VAR_GLOBAL
 	lrActualX       : LREAL; // Текущая координата X
 	lrActualY       : LREAL; // Текущая координата Y
 	lrActualZ       : LREAL; // Текущая координата Z
-	astPointEditorPoints : ARRAY [1..12] OF ST_POINT; // Подтверждённые значения фиксированных точек
-	auiPointEditorPointId : ARRAY [1..12] OF UINT; // Фактические числовые E_POINT_NAME
+	astPointEditorPoints : ARRAY [1..14] OF ST_POINT; // Прежние 12 точек и базы ГК 1/2
+	auiPointEditorPointId : ARRAY [1..14] OF UINT; // Фактические числовые E_POINT_NAME
 	stPointEditorResultPoint : ST_POINT; // Результат Capture либо подтверждённого Save
 	udiPointEditorAckSeq : UDINT; // Последняя обработанная транзакция
 	uiPointEditorResult : UINT; // 0 ожидание, 1 выполнено, 2 отклонено
 	uiPointEditorRejectReason : UINT; // Подробная причина отклонения для HMI
 	xPointEditorCaptureAllowed : BOOL; // Авторитетное разрешение PLC на Capture
 	xPointEditorSaveAllowed : BOOL; // Авторитетное разрешение PLC на Save
-	axPointCheckAllowed : ARRAY [1..12] OF BOOL;
-	auiPointCheckRejectReason : ARRAY [1..12] OF UINT;
+	axPointCheckAllowed : ARRAY [1..14] OF BOOL;
+	auiPointCheckRejectReason : ARRAY [1..14] OF UINT;
 	xPointCheckActive : BOOL;
 	uiPointCheckIndex : UINT;
 	uiPointCheckState : UINT; // 0 idle, 1 running, 2 completed, 3 stopped, 4 failed
@@ -480,6 +539,89 @@ VAR_GLOBAL
 	stAlarmStatus : ST_ALARM_STATUS; // Сводный статус аварий и предупреждений
 	astAlarmEvent : ARRAY [1..100] OF ST_ALARM_EVENT; // Журнал активных и зафиксированных событий
 
+
+    {attribute 'symbol' := 'read'}
+    xIoDoOverrideAllowed : BOOL;
+    {attribute 'symbol' := 'read'}
+    xIoManualControlActive : BOOL;
+    {attribute 'symbol' := 'read'}
+    xIoManualStartAllowed : BOOL;
+    {attribute 'symbol' := 'read'}
+    uiIoDoBlockReason : UINT;
+    {attribute 'symbol' := 'read'}
+    adwIoDoAllowed : ARRAY [1..2] OF DWORD;
+    {attribute 'symbol' := 'read'}
+    adwIoDoOnAllowed : ARRAY [1..2] OF DWORD;
+    {attribute 'symbol' := 'read'}
+    adwIoForcedDo : ARRAY [1..2] OF DWORD;
+    {attribute 'symbol' := 'read'}
+    adwIoInhibitedDo : ARRAY [1..2] OF DWORD;
+    {attribute 'symbol' := 'read'}
+    xIoEmergencyStopActive : BOOL;
+    {attribute 'symbol' := 'read'}
+    xIoEmergencyResetAllowed : BOOL;
+    {attribute 'symbol' := 'readwrite'}
+    uiIoEmergencyAction : UINT; // 1 остановить; 2 снять программный останов
+    {attribute 'symbol' := 'readwrite'}
+    udiIoEmergencyIssuedAtMs : UDINT;
+    {attribute 'symbol' := 'readwrite'}
+    udiIoEmergencyCommandSeq : UDINT;
+    {attribute 'symbol' := 'read'}
+    udiIoEmergencyAckSeq : UDINT;
+    {attribute 'symbol' := 'read'}
+    uiIoEmergencyResult : UINT;
+
+    // Физическая диагностика. Команда — payload, время, затем Seq; статусы только чтение.
+    {attribute 'symbol' := 'readwrite'}
+    uiIoOverrideIndex : UINT;
+    {attribute 'symbol' := 'readwrite'}
+    uiIoOverrideAction : UINT; // 1..3 DI; 4..6 DO; 7 вернуть всё программе; 8 включить ручное I/O; 9 завершить ручное I/O
+    {attribute 'symbol' := 'readwrite'}
+    xIoOverrideValue : BOOL;
+    {attribute 'symbol' := 'readwrite'}
+    udiIoOverrideIssuedAtMs : UDINT;
+    {attribute 'symbol' := 'readwrite'}
+    udiIoOverrideCommandSeq : UDINT;
+    {attribute 'symbol' := 'readwrite'}
+    udiIoOverrideHeartbeat : UDINT; // Только открытая страница I/O; watchdog 3 с
+    {attribute 'symbol' := 'readwrite'}
+    udiIoOverrideHeartbeatAtMs : UDINT; // Время PLC, при STOP не превращает старый heartbeat в новую аренду
+    {attribute 'symbol' := 'read'}
+    udiIoOverrideAckSeq : UDINT;
+    {attribute 'symbol' := 'read'}
+    uiIoOverrideResult : UINT; // 1 применено; 2 запрещено; 3 некорректно; 4 просрочено
+    {attribute 'symbol' := 'read'}
+    xIoOverrideAllowed : BOOL;
+    {attribute 'symbol' := 'read'}
+    uiIoOverrideBlockReason : UINT; // 0 ручное I/O активно; 2 не ручной режим; 3 нет останова для входа; 7 включите ручное I/O
+    {attribute 'symbol' := 'read'}
+    uiIoForcedCount : UINT;
+    {attribute 'symbol' := 'read'}
+    adwIoRawDi : ARRAY [1..3] OF DWORD;
+    {attribute 'symbol' := 'read'}
+    adwIoUsedDi : ARRAY [1..3] OF DWORD;
+    {attribute 'symbol' := 'read'}
+    adwIoForcedDi : ARRAY [1..3] OF DWORD;
+    {attribute 'symbol' := 'read'}
+    adwIoDo : ARRAY [1..2] OF DWORD;
+    {attribute 'symbol' := 'read'}
+    asIoJournal : ARRAY [1..100] OF STRING(96); // Seq;мс;DI/DO;index;kind;old;new
+    {attribute 'symbol' := 'read'}
+    udiIoJournalRevision : UDINT; // Seqlock: нечётный — запись, чётный — целостный FIFO
+    {attribute 'symbol' := 'read'}
+    udiIoJournalSequence : UDINT;
+    {attribute 'symbol' := 'read'}
+    uiIoJournalHead : UINT;
+    {attribute 'symbol' := 'read'}
+    uiIoJournalCount : UINT;
+    {attribute 'symbol' := 'read'}
+    sIoClockMs : STRING(24);
+
 	// Совместимость с существующей визуализацией до штатного обновления XML.
 	HMI : ST_HMI; // Старый путь GVL_HMI.HMI.ActualX/Y/Z
+END_VAR
+
+VAR_GLOBAL RETAIN
+    {attribute 'symbol' := 'read'}
+    udiIoBootCounter : UDINT; // Меняется при старте приложения; подмены и FIFO не RETAIN
 END_VAR

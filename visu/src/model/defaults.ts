@@ -14,6 +14,7 @@ const emptyMachine = (): MachineState => ({
   powerAllowed: true,
   resetAllowed: false,
   manualControlAllowed: false,
+  manualDoorControlEnabled: true,
   manualDoorOpenAllowed: false,
   manualDoorCloseAllowed: false,
   manualHatchOpenAllowed: false,

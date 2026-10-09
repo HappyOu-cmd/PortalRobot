@@ -11,12 +11,14 @@ import { ACTIVE_POINT_LABELS, EDITOR_POINT_LABELS, MANUAL_POINT_OPTIONS, robotAc
 import { initialRobotControlTab, reconcileRobotControlTab, type RobotControlTab } from './robotControlTabs';
 import { SegmentedControl } from './ui/ControlPrimitives';
 import type { PlcCommand, PlcRuntimeInfo } from '../plc/client';
+import type { PlcPointEditorCommand, PlcPointEditorReply } from '../plc/pointEditorRequests';
 import type { CellState } from '../model/types';
 import type { PointBackupDocument, PointBackupItem } from '../points/client';
 
 type RobotExtendedPanelProps = {
   robot: CellState['robot'];
   magazines: CellState['magazines'];
+  geometryControl?: CellState['geometryControl'];
   runtime: PlcRuntimeInfo;
   online: boolean;
   editorEditable: boolean;
@@ -24,6 +26,7 @@ type RobotExtendedPanelProps = {
   onExportPointBackup: (name: string) => Promise<PointBackupItem>;
   onPreparePointImport: (id: string) => Promise<PointBackupDocument>;
   onSend: (command: PlcCommand) => void;
+  onPointCommand: (command: PlcPointEditorCommand) => Promise<PlcPointEditorReply>;
   onClose: () => void;
   className?: string;
 };
@@ -40,13 +43,14 @@ const EDITOR_POINT_GROUPS = [
   { title: 'Станок 3', indexes: [7, 8, 9] },
   { title: 'Безопасность', indexes: [10] },
   { title: 'Магазины', indexes: [11, 12] },
+  { title: 'Геом. контроль', indexes: [13, 14] },
 ] as const;
 
 type PointDraft = { x: string; y: string; z: string; magazineSafeZ: string; magazineChangeZ: string; speedFactor: string };
 type PointPendingCommand = 'capture' | 'save' | 'import' | null;
 type ImportedPoint = PointDraft & { index: number; label: string };
 
-function pointDraft(point: PlcRuntimeInfo['pointEditor']['points'][number] | undefined): PointDraft {
+function pointDraft(point: PlcPointEditorReply['point'] | undefined): PointDraft {
   return {
     x: String(point?.x ?? 0),
     y: String(point?.y ?? 0),
@@ -234,9 +238,9 @@ function RobotStatusItem({ label, value, tone = 'neutral' }: {
 }
 
 export function RobotExtendedPanel({
-  robot, magazines, runtime, online, editorEditable,
+  robot, magazines, geometryControl, runtime, online, editorEditable,
   onListPointBackups, onExportPointBackup, onPreparePointImport,
-  onSend, onClose, className,
+  onSend, onPointCommand, onClose, className,
 }: RobotExtendedPanelProps) {
   const [tab, setTab] = useState<RobotControlTab>(() => initialRobotControlTab(runtime.modbusMode, runtime.continuousMode));
   const [selectedAxis, setSelectedAxis] = useState(1);
@@ -247,8 +251,8 @@ export function RobotExtendedPanel({
   const [editorDraft, setEditorDraft] = useState<PointDraft>(() => pointDraft(runtime.pointEditor.points[0]));
   const [editorDirty, setEditorDirty] = useState(false);
   const [editorPending, setEditorPending] = useState<PointPendingCommand>(null);
-  const [editorAckBaseline, setEditorAckBaseline] = useState(runtime.pointEditor.ackSeq);
   const [editorMessage, setEditorMessage] = useState('');
+  const [editorRejected, setEditorRejected] = useState(false);
   const [importProgress, setImportProgress] = useState<{ completed: number; total: number } | null>(null);
   const [backupMenuOpen, setBackupMenuOpen] = useState(false);
   const [backups, setBackups] = useState<PointBackupItem[]>([]);
@@ -259,8 +263,9 @@ export function RobotExtendedPanel({
   const [backupError, setBackupError] = useState('');
   const [targets, setTargets] = useState(() => runtime.axisManual.map((item) => String(item.targetPosition)));
   const activeJogRef = useRef<ActiveJog>(null);
-  const pointImportQueueRef = useRef<ImportedPoint[]>([]);
-  const pointImportTotalRef = useRef(0);
+  const editorBusyRef = useRef(false);
+  const editorDraftOwnedRef = useRef(false);
+  const editorMountedRef = useRef(true);
   const focusedTargetRef = useRef<number | null>(null);
   const onlineRef = useRef(online);
   const onSendRef = useRef(onSend);
@@ -281,16 +286,22 @@ export function RobotExtendedPanel({
   const robotStateTone = robotBusy ? 'blue' : robotReady ? 'green' : 'red';
   const selectedEditorValue = runtime.pointEditor.points[selectedEditorPoint - 1];
   const magazinePointSelected = selectedEditorPoint === 11 || selectedEditorPoint === 12;
+  const geometryPointSelected = selectedEditorPoint === 13 || selectedEditorPoint === 14;
+  const safeOffsetSelected = magazinePointSelected || geometryPointSelected;
+  const editorSaveAllowed = geometryPointSelected
+    ? !!geometryControl?.stations[selectedEditorPoint - 13]?.pointWriteAllowed
+    : runtime.pointEditor.saveAllowed;
   const editorCoordinates = [editorDraft.x, editorDraft.y, editorDraft.z].map(pointNumber);
   const editorSpeedFactor = pointNumber(editorDraft.speedFactor);
   const editorMagazineSafeZ = pointNumber(editorDraft.magazineSafeZ);
   const editorMagazineChangeZ = pointNumber(editorDraft.magazineChangeZ);
   const editorDraftValid = editorCoordinates.every(Number.isFinite)
     && Number.isFinite(editorSpeedFactor)
-    && editorSpeedFactor > 0.1
+    && (geometryPointSelected ? editorSpeedFactor >= 0.1 : editorSpeedFactor > 0.1)
     && editorSpeedFactor <= 1
     && (!magazinePointSelected || ([editorMagazineSafeZ, editorMagazineChangeZ].every(Number.isFinite)
-      && Math.abs(editorMagazineSafeZ) <= 10000 && Math.abs(editorMagazineChangeZ) <= 10000));
+      && Math.abs(editorMagazineSafeZ) <= 10000 && Math.abs(editorMagazineChangeZ) <= 10000))
+    && (!geometryPointSelected || (Number.isFinite(editorMagazineSafeZ) && editorMagazineSafeZ < 0 && editorMagazineSafeZ >= -10000));
   const magazineOffsetsConfigured = !magazinePointSelected
     || (editorMagazineSafeZ !== 0 && editorMagazineChangeZ !== 0);
   const selectedBackup = backups.find((item) => item.id === selectedBackupId) ?? null;
@@ -337,9 +348,8 @@ export function RobotExtendedPanel({
     if (tab === 'points' && next !== 'points' && editorDirty) cancelEditorDraft();
     stopActiveJog();
 
-    // When PLC is online, motion tabs show only the mode confirmed by the next
-    // snapshot. Offline mode is a local HMI sandbox, so let the operator inspect
-    // either motion tab without waiting for a confirmation that cannot arrive.
+    // Motion controls follow the mode confirmed by PLC; offline selection
+    // stays local so both console modes remain available for inspection.
     if (online && !modbusMode && (next === 'jog' || next === 'position')) {
       const continuous = next === 'jog';
       if (runtime.continuousMode !== continuous) {
@@ -369,6 +379,8 @@ export function RobotExtendedPanel({
   };
 
   const loadEditorPoint = (index: number) => {
+    editorDraftOwnedRef.current = false;
+    setEditorRejected(false);
     setSelectedEditorPoint(index);
     setEditorDraft(pointDraft(runtime.pointEditor.points[index - 1]));
     setEditorDirty(false);
@@ -376,50 +388,82 @@ export function RobotExtendedPanel({
   };
 
   const selectEditorPoint = (index: number) => {
-    if (editorPending) return;
+    if (editorBusyRef.current) return;
     if (index === selectedEditorPoint) return;
     if (editorDirty && !window.confirm('Черновик точки не сохранён. Отбросить изменения?')) return;
     loadEditorPoint(index);
   };
 
   const changeEditorDraft = (field: keyof PointDraft, value: string) => {
+    if (editorBusyRef.current) return;
+    editorDraftOwnedRef.current = true;
+    setEditorRejected(false);
     setEditorDraft((current) => ({ ...current, [field]: value }));
     setEditorDirty(true);
     setEditorMessage('');
   };
 
-  const captureEditorPoint = () => {
-    if (editorPending) return;
-    setEditorAckBaseline(runtime.pointEditor.ackSeq);
+  const captureEditorPoint = async () => {
+    if (editorBusyRef.current || !online || !editorEditable) return;
+    editorBusyRef.current = true;
+    editorDraftOwnedRef.current = true;
     setEditorPending('capture');
+    setEditorRejected(false);
     setEditorMessage('Ожидание подтверждения CAPTURE от PLC…');
-    send({
-      command: 'robot.point.capture', index: selectedEditorPoint,
-      speedFactor: Number.isFinite(editorSpeedFactor) ? editorSpeedFactor : 0,
-      draft: {
-        x: editorCoordinates[0], y: editorCoordinates[1], z: editorCoordinates[2],
-        magazineSafeZ: magazinePointSelected && Number.isFinite(editorMagazineSafeZ) ? editorMagazineSafeZ : 0,
-        magazineChangeZ: magazinePointSelected && Number.isFinite(editorMagazineChangeZ) ? editorMagazineChangeZ : 0,
+    try {
+      const reply = await onPointCommand({
+        command: 'robot.point.capture', index: selectedEditorPoint,
         speedFactor: Number.isFinite(editorSpeedFactor) ? editorSpeedFactor : 0,
-      },
-    });
+        draft: {
+          x: editorCoordinates[0], y: editorCoordinates[1], z: editorCoordinates[2],
+          magazineSafeZ: safeOffsetSelected && Number.isFinite(editorMagazineSafeZ) ? editorMagazineSafeZ : 0,
+          magazineChangeZ: magazinePointSelected && Number.isFinite(editorMagazineChangeZ) ? editorMagazineChangeZ : 0,
+          speedFactor: Number.isFinite(editorSpeedFactor) ? editorSpeedFactor : 0,
+        },
+      });
+      if (!editorMountedRef.current) return;
+      setEditorDraft((current) => ({ ...current, x: String(reply.point.x), y: String(reply.point.y), z: String(reply.point.z) }));
+      setEditorDirty(true);
+      setEditorMessage('Текущие XYZ зафиксированы в черновике. Для записи нажмите «Сохранить».');
+    } catch (error) {
+      setEditorRejected(true);
+      setEditorMessage(error instanceof Error ? error.message : 'Фиксация координат не подтверждена.');
+    } finally {
+      editorBusyRef.current = false;
+      setEditorPending(null);
+    }
   };
 
-  const saveEditorPoint = () => {
-    if (editorPending || !editorDraftValid) return;
-    setEditorAckBaseline(runtime.pointEditor.ackSeq);
+  const saveEditorPoint = async () => {
+    if (editorBusyRef.current || !editorDraftValid || !online || !editorEditable) return;
+    editorBusyRef.current = true;
+    editorDraftOwnedRef.current = true;
     setEditorPending('save');
+    setEditorRejected(false);
     setEditorMessage('Ожидание подтверждения SAVE от PLC…');
-    send({
-      command: 'robot.point.save',
-      index: selectedEditorPoint,
-      draft: {
-        x: editorCoordinates[0], y: editorCoordinates[1], z: editorCoordinates[2],
-        magazineSafeZ: magazinePointSelected ? editorMagazineSafeZ : 0,
-        magazineChangeZ: magazinePointSelected ? editorMagazineChangeZ : 0,
-        speedFactor: editorSpeedFactor,
-      },
-    });
+    try {
+      const reply = await onPointCommand({
+        command: 'robot.point.save',
+        index: selectedEditorPoint,
+        draft: {
+          x: editorCoordinates[0], y: editorCoordinates[1], z: editorCoordinates[2],
+          magazineSafeZ: safeOffsetSelected ? editorMagazineSafeZ : 0,
+          magazineChangeZ: magazinePointSelected ? editorMagazineChangeZ : 0,
+          speedFactor: editorSpeedFactor,
+        },
+      });
+      if (!editorMountedRef.current) return;
+      setEditorDraft(pointDraft(reply.point));
+      setEditorDirty(false);
+      setEditorMessage(reply.point.configured ? 'Точка сохранена и подтверждена PLC.'
+        : 'Точка сохранена, но не настроена: задайте ненулевые Safe Z и Change Z.');
+    } catch (error) {
+      setEditorRejected(true);
+      setEditorMessage(error instanceof Error ? error.message : 'Запись точки не подтверждена.');
+    } finally {
+      editorBusyRef.current = false;
+      setEditorPending(null);
+    }
   };
 
   const refreshPointBackups = async (silent = false) => {
@@ -455,34 +499,18 @@ export function RobotExtendedPanel({
     }
   };
 
-  const sendImportedPoint = (point: ImportedPoint, ackBaseline: number) => {
-    setSelectedEditorPoint(point.index);
-    setEditorDraft(point);
-    setEditorDirty(false);
-    setEditorAckBaseline(ackBaseline);
-    setEditorPending('import');
-    send({
-      command: 'robot.point.save',
-      index: point.index,
-      draft: {
-        x: pointNumber(point.x),
-        y: pointNumber(point.y),
-        z: pointNumber(point.z),
-        magazineSafeZ: pointNumber(point.magazineSafeZ),
-        magazineChangeZ: pointNumber(point.magazineChangeZ),
-        speedFactor: pointNumber(point.speedFactor),
-      },
-    });
-  };
-
   const importPoints = async (backupId: string) => {
-    if (!backupId || editorPending || backupBusy) return;
+    if (!backupId || editorBusyRef.current || backupBusy) return;
     if (!online || !editorEditable) {
       setBackupError('Импорт доступен только при связи с PLC и разрешённом редактировании точек.');
       return;
     }
+    editorBusyRef.current = true;
     setBackupBusy('import');
+    setEditorPending('import');
+    setEditorRejected(false);
     setBackupError('');
+    let importIndex = 0;
     try {
       const parsed = await onPreparePointImport(backupId);
 
@@ -494,7 +522,7 @@ export function RobotExtendedPanel({
         if (!index || seenPointIds.has(pointId) || raw.configured !== true) return [];
         seenPointIds.add(pointId);
         const values = [Number(raw.x), Number(raw.y), Number(raw.z), Number(raw.speedFactor), Number(raw.magazineSafeZ), Number(raw.magazineChangeZ)];
-        if (!values.every(Number.isFinite) || values[3] <= 0.1 || values[3] > 1
+        if (!values.every(Number.isFinite) || (index >= 13 ? values[3] < 0.1 : values[3] <= 0.1) || values[3] > 1
           || Math.abs(values[4]) > 10000 || Math.abs(values[5]) > 10000) {
           throw new Error(`Некорректные координаты или скорость точки ${raw.label ?? pointId}.`);
         }
@@ -509,22 +537,51 @@ export function RobotExtendedPanel({
       if (imported.length === 0) throw new Error('В файле нет настроенных точек, совместимых с текущей таблицей PLC.');
       if (editorDirty && !window.confirm('Текущий черновик не сохранён. Отбросить его и начать импорт?')) return;
 
-      const first = imported.shift();
-      if (!first) return;
-      pointImportQueueRef.current = imported;
-      pointImportTotalRef.current = imported.length + 1;
-      setImportProgress({ completed: 0, total: pointImportTotalRef.current });
-      setEditorMessage(`Импорт: запись точки 1 из ${pointImportTotalRef.current}…`);
+      if (!editorMountedRef.current) return;
+      editorDraftOwnedRef.current = true;
       setBackupMenuOpen(false);
-      sendImportedPoint(first, runtime.pointEditor.ackSeq);
+      for (const [offset, point] of imported.entries()) {
+        if (!editorMountedRef.current) return;
+        importIndex = point.index;
+        setSelectedEditorPoint(point.index);
+        setEditorDraft(point);
+        setEditorDirty(true);
+        setImportProgress({ completed: offset, total: imported.length });
+        setEditorMessage(`Импорт: запись точки ${offset + 1} из ${imported.length}…`);
+        const reply = await onPointCommand({
+          command: 'robot.point.save', index: point.index,
+          draft: {
+            x: pointNumber(point.x), y: pointNumber(point.y), z: pointNumber(point.z),
+            magazineSafeZ: pointNumber(point.magazineSafeZ), magazineChangeZ: pointNumber(point.magazineChangeZ),
+            speedFactor: pointNumber(point.speedFactor),
+          },
+        });
+        if (!editorMountedRef.current) return;
+        setEditorDraft(pointDraft(reply.point));
+        setEditorDirty(false);
+        setEditorMessage(reply.point.configured
+          ? `Импорт: PLC подтвердил ${offset + 1} из ${imported.length} точек.`
+          : `Импорт: PLC принял ${offset + 1} из ${imported.length} точек. Для базы магазина задайте ненулевые Safe Z и Change Z.`);
+      }
     } catch (error) {
-      setBackupError(error instanceof Error ? error.message : 'Не удалось подготовить резервную копию точек.');
+      const reason = error instanceof Error ? error.message : 'Не удалось импортировать точки.';
+      if (importIndex) {
+        setEditorRejected(true);
+        setEditorMessage(`Импорт остановлен на точке ${importIndex}: ${reason}`);
+      }
+      else setBackupError(reason);
     } finally {
+      editorBusyRef.current = false;
+      setEditorPending(null);
+      setImportProgress(null);
       setBackupBusy(null);
     }
   };
 
   const cancelEditorDraft = () => {
+    if (editorBusyRef.current) return;
+    editorDraftOwnedRef.current = false;
+    setEditorRejected(false);
     setEditorDraft(pointDraft(selectedEditorValue));
     setEditorDirty(false);
     setEditorMessage('Черновик отменён.');
@@ -540,71 +597,14 @@ export function RobotExtendedPanel({
   }, [runtime.axisManual]);
 
   useEffect(() => {
-    if (!editorPending || runtime.pointEditor.ackSeq === editorAckBaseline) return;
-
-    if (editorPending === 'import') {
-      if (runtime.pointEditor.result !== 1) {
-        pointImportQueueRef.current = [];
-        setImportProgress(null);
-        setEditorPending(null);
-        setEditorMessage(`Импорт остановлен на точке ${selectedEditorPoint}: ${runtime.pointEditor.rejectReason || 'PLC отклонил запись.'}`);
-        return;
-      }
-
-      const completed = pointImportTotalRef.current - pointImportQueueRef.current.length;
-      const next = pointImportQueueRef.current.shift();
-      if (next) {
-        setImportProgress({ completed, total: pointImportTotalRef.current });
-        setEditorMessage(`Импорт: записано ${completed} из ${pointImportTotalRef.current}, следующая — ${next.label}…`);
-        sendImportedPoint(next, runtime.pointEditor.ackSeq);
-      } else {
-        setImportProgress(null);
-        setEditorPending(null);
-        setEditorDirty(false);
-        setEditorDraft(pointDraft(runtime.pointEditor.resultPoint));
-        setEditorMessage(runtime.pointEditor.resultPoint.configured
-          ? `Импорт завершён: PLC подтвердил ${pointImportTotalRef.current} точек.`
-          : `Импорт завершён: PLC принял ${pointImportTotalRef.current} точек. Для старой базы магазина задайте ненулевые Safe Z и Change Z.`);
-      }
-      return;
-    }
-
-    if (runtime.pointEditor.result === 1) {
-      if (editorPending === 'capture') {
-        setEditorDraft((current) => ({
-          ...current,
-          x: String(runtime.pointEditor.resultPoint.x),
-          y: String(runtime.pointEditor.resultPoint.y),
-          z: String(runtime.pointEditor.resultPoint.z),
-        }));
-        setEditorDirty(true);
-        setEditorMessage('Текущие XYZ зафиксированы в черновике. Для записи нажмите «Сохранить».');
-      } else {
-        setEditorDraft(pointDraft(runtime.pointEditor.resultPoint));
-        setEditorDirty(false);
-        setEditorMessage(runtime.pointEditor.resultPoint.configured
-          ? 'Точка сохранена и подтверждена PLC.'
-          : 'Точка сохранена, но не настроена: задайте ненулевые Safe Z и Change Z.');
-      }
-    } else {
-      setEditorMessage(runtime.pointEditor.rejectReason || 'PLC отклонил команду редактора.');
-    }
-    setEditorPending(null);
-  }, [editorAckBaseline, editorPending, runtime.pointEditor]);
+    editorMountedRef.current = true;
+    return () => { editorMountedRef.current = false; };
+  }, []);
 
   useEffect(() => {
-    if (!editorPending) return undefined;
-    const timeout = window.setTimeout(() => {
-      pointImportQueueRef.current = [];
-      setImportProgress(null);
-      setEditorPending(null);
-      setEditorMessage('PLC не вернул AckSeq за 5 секунд. Сохранённая точка в HMI не изменена.');
-    }, 5_000);
-    return () => window.clearTimeout(timeout);
-  }, [editorAckBaseline, editorPending]);
-
-  useEffect(() => {
-    if (!editorDirty && !editorPending) setEditorDraft(pointDraft(selectedEditorValue));
+    // A late point-table notification must not overwrite an operator-owned draft
+    // or a value returned by a confirmed SAVE. Selection/Cancel reload the table.
+    if (!editorDraftOwnedRef.current && !editorDirty && !editorPending) setEditorDraft(pointDraft(selectedEditorValue));
   }, [editorDirty, editorPending, selectedEditorPoint, selectedEditorValue?.configured, selectedEditorValue?.magazineChangeZ, selectedEditorValue?.magazineSafeZ, selectedEditorValue?.speedFactor, selectedEditorValue?.x, selectedEditorValue?.y, selectedEditorValue?.z]);
 
   useEffect(() => {
@@ -654,14 +654,20 @@ export function RobotExtendedPanel({
       </>}
     </div>
 
-    <Tabs value={tab === 'position' ? 'jog' : tab} onValueChange={(next) => changeTab(next === 'jog' ? (runtime.continuousMode ? 'jog' : 'position') : next)} className="robot-extended-tabs-root">
+    <Tabs
+      value={tab === 'position' ? 'jog' : tab}
+      // Radix automatic activation fires on both mousedown and focus. If the
+      // dirty-draft prompt is canceled, the unchanged tab would prompt twice.
+      activationMode={editorDirty ? 'manual' : 'automatic'}
+      onValueChange={(next) => changeTab(next === 'jog' ? (runtime.continuousMode ? 'jog' : 'position') : next)}
+      className="robot-extended-tabs-root"
+    >
       <TabsList className={`robot-extended-tabs ${modbusMode ? 'modbus' : ''}`} data-active-tab={tab === 'position' ? 'jog' : tab} aria-label="Разделы управления роботом">
         {modbusMode ? <>
           <TabsTrigger value="diagnostics">Диагностика</TabsTrigger>
           <TabsTrigger value="registers">Регистры</TabsTrigger>
         </> : <>
           <TabsTrigger value="jog"><Crosshair size={18} />Пульт JOG</TabsTrigger>
-
         </>}
         <TabsTrigger value="points"><Save size={17} />Точки</TabsTrigger>
         <TabsTrigger value="grippers"><Hand size={18} />Захваты</TabsTrigger>
@@ -699,6 +705,7 @@ export function RobotExtendedPanel({
           />
         </div>
       </TabsContent>}
+
       <TabsContent value="points" className="robot-extended-tab-content">
         <div className="robot-extended-scroll">
           <section className="robot-extended-section points-section">
@@ -706,7 +713,7 @@ export function RobotExtendedPanel({
             <select value={selectedPoint} onChange={(event) => setSelectedPoint(Number(event.target.value))} aria-label="Точка робота">
               {MANUAL_POINT_OPTIONS.map((point) => <option value={point.value} key={point.value}>{point.value}. {point.label}</option>)}
             </select>
-			{selectedPoint >= 14 && <><label className="magazine-setting"><span>Магазин</span><select value={selectedMagazine} onChange={(event) => { setSelectedMagazine(Number(event.target.value)); setSelectedSlot(1); }}><option value={1}>Магазин 1</option><option value={2}>Магазин 2</option></select></label><label className="magazine-setting"><span>Активный слот</span><input type="number" min={1} max={Math.max(1, magazines[selectedMagazine - 1].state.rows * magazines[selectedMagazine - 1].state.columns)} value={selectedSlot} onChange={(event) => setSelectedSlot(Math.max(1, Math.min(magazines[selectedMagazine - 1].state.rows * magazines[selectedMagazine - 1].state.columns, Number(event.target.value))))} /></label></>}
+			{selectedPoint >= 14 && selectedPoint <= 16 && <><label className="magazine-setting"><span>Магазин</span><select value={selectedMagazine} onChange={(event) => { setSelectedMagazine(Number(event.target.value)); setSelectedSlot(1); }}><option value={1}>Магазин 1</option><option value={2}>Магазин 2</option></select></label><label className="magazine-setting"><span>Активный слот</span><input type="number" min={1} max={Math.max(1, magazines[selectedMagazine - 1].state.rows * magazines[selectedMagazine - 1].state.columns)} value={selectedSlot} onChange={(event) => setSelectedSlot(Math.max(1, Math.min(magazines[selectedMagazine - 1].state.rows * magazines[selectedMagazine - 1].state.columns, Number(event.target.value))))} /></label></>}
             <button type="button" disabled={!online} className={`point-go-button ${allowedClass(runtime.robotManual.pointsAllowed)}`} aria-disabled={!runtime.robotManual.pointsAllowed} onClick={() => sendAction(1)}>Перейти к точке</button>
             <div className="point-state"><span>Активная точка PLC</span><strong>{ACTIVE_POINT_LABELS[runtime.robotManual.activePoint] ?? 'Нет'}</strong></div>
             {!runtime.robotManual.pointsAllowed && runtime.robotManual.rejectReason && <div className="robot-reject-banner"><AlertCircle size={18} />{runtime.robotManual.rejectReason}</div>}
@@ -714,7 +721,7 @@ export function RobotExtendedPanel({
 
           <section className="robot-extended-section point-editor-section">
             <div className="robot-section-title point-editor-title">
-              <div><span>Редактор фиксированных точек</span><small>12 PERSISTENT-точек SoftMotion; «внутри станка» удалены</small></div>
+              <div><span>Редактор фиксированных точек</span><small>14 точек SoftMotion: станки, магазины и геом. контроль</small></div>
               <div className="point-editor-title-tools">
                 <button type="button" disabled={!editorEditable || Boolean(editorPending)} onClick={() => setBackupMenuOpen(true)}><FolderLock size={14} />Копии точек</button>
                 <b className={runtime.pointEditor.tableReady ? 'ready' : 'blocked'}>{runtime.pointEditor.tableReady ? 'Таблица готова' : 'Таблица не настроена'}</b>
@@ -745,25 +752,26 @@ export function RobotExtendedPanel({
                 <div className="point-editor-fields">
                   {(['x', 'y', 'z'] as const).map((field) => <label key={field}>
                     <span>{field.toUpperCase()}</span>
-                    <div><input type="number" step="0.1" disabled={!editorEditable} value={editorDraft[field]} onChange={(event) => changeEditorDraft(field, event.target.value)} /><small>мм</small></div>
+                    <div><input type="number" step="0.1" disabled={!editorEditable || Boolean(editorPending)} value={editorDraft[field]} onChange={(event) => changeEditorDraft(field, event.target.value)} /><small>мм</small></div>
                   </label>)}
                   {magazinePointSelected && <>
-                    <label><span>Смещение Safe Z</span><div><input type="text" inputMode="decimal" disabled={!editorEditable} value={editorDraft.magazineSafeZ} onChange={(event) => changeEditorDraft('magazineSafeZ', event.target.value)} /><small>мм</small></div></label>
-                    <label><span>Смещение Change Z</span><div><input type="text" inputMode="decimal" disabled={!editorEditable} value={editorDraft.magazineChangeZ} onChange={(event) => changeEditorDraft('magazineChangeZ', event.target.value)} /><small>мм</small></div></label>
+                    <label><span>Смещение Safe Z</span><div><input type="text" inputMode="decimal" disabled={!editorEditable || Boolean(editorPending)} value={editorDraft.magazineSafeZ} onChange={(event) => changeEditorDraft('magazineSafeZ', event.target.value)} /><small>мм</small></div></label>
+                    <label><span>Смещение Change Z</span><div><input type="text" inputMode="decimal" disabled={!editorEditable || Boolean(editorPending)} value={editorDraft.magazineChangeZ} onChange={(event) => changeEditorDraft('magazineChangeZ', event.target.value)} /><small>мм</small></div></label>
                   </>}
+                  {geometryPointSelected && <label><span>Смещение SAFE_Z</span><div><input type="text" inputMode="decimal" disabled={!editorEditable || Boolean(editorPending)} value={editorDraft.magazineSafeZ} onChange={(event) => changeEditorDraft('magazineSafeZ', event.target.value)} /><small>мм</small></div></label>}
                   <label className="speed-factor">
                     <span>Коэффициент скорости</span>
-                    <div><input type="number" min="0.11" max="1" step="0.01" disabled={!editorEditable} value={editorDraft.speedFactor} onChange={(event) => changeEditorDraft('speedFactor', event.target.value)} /><small>×</small></div>
+                    <div><input type="number" min={geometryPointSelected ? '0.1' : '0.11'} max="1" step="0.01" disabled={!editorEditable || Boolean(editorPending)} value={editorDraft.speedFactor} onChange={(event) => changeEditorDraft('speedFactor', event.target.value)} /><small>×</small></div>
                   </label>
                 </div>
-                {!editorDraftValid && <p className="point-editor-validation"><AlertCircle size={15} />Заполните XYZ числами; скорость — от 0.11 до 1.00{magazinePointSelected ? '; смещения Z — от -10000 до 10000 мм' : ''}.</p>}
+                {!editorDraftValid && <p className="point-editor-validation"><AlertCircle size={15} />Заполните XYZ числами; скорость — от {geometryPointSelected ? '0.10' : '0.11'} до 1.00{magazinePointSelected ? '; смещения Z — от -10000 до 10000 мм' : geometryPointSelected ? '; SAFE_Z — отрицательное смещение от -10000 мм' : ''}.</p>}
                 {editorDraftValid && !magazineOffsetsConfigured && <p className="point-editor-validation"><AlertCircle size={15} />Точка останется ненастроенной, пока хотя бы одно из смещений Safe Z или Change Z равно нулю.</p>}
                 <div className="point-editor-actions">
                   <button type="button" disabled={!editorEditable || !online || Boolean(editorPending)} className={allowedClass(runtime.pointEditor.captureAllowed)} aria-disabled={!runtime.pointEditor.captureAllowed || !editorEditable} onClick={captureEditorPoint}><Crosshair size={16} />{editorPending === 'capture' ? 'Фиксация…' : 'Зафиксировать текущие координаты'}</button>
                   <button type="button" disabled={Boolean(editorPending) || !editorDirty} onClick={cancelEditorDraft}>Отмена</button>
-                  <button type="button" disabled={!editorEditable || !online || Boolean(editorPending) || !editorDraftValid} className={`primary ${allowedClass(runtime.pointEditor.saveAllowed)}`} aria-disabled={!runtime.pointEditor.saveAllowed || !editorEditable} onClick={saveEditorPoint}><Save size={16} />{editorPending === 'save' ? 'Сохранение…' : 'Сохранить'}</button>
+                  <button type="button" disabled={!editorEditable || !online || Boolean(editorPending) || !editorDraftValid} className={`primary ${allowedClass(editorSaveAllowed)}`} aria-disabled={!editorSaveAllowed || !editorEditable} onClick={saveEditorPoint}><Save size={16} />{editorPending === 'save' ? 'Сохранение…' : 'Сохранить'}</button>
                 </div>
-                {editorMessage && <div className={`point-editor-message ${runtime.pointEditor.result === 2 && !editorPending ? 'rejected' : ''}`}>{runtime.pointEditor.result === 2 && !editorPending ? <AlertCircle size={17} /> : <CheckCircle2 size={17} />}{editorMessage}{importProgress && <span>{importProgress.completed}/{importProgress.total}</span>}</div>}
+                {editorMessage && <div className={`point-editor-message ${editorRejected && !editorPending ? 'rejected' : ''}`}>{editorRejected && !editorPending ? <AlertCircle size={17} /> : <CheckCircle2 size={17} />}{editorMessage}{importProgress && <span>{importProgress.completed}/{importProgress.total}</span>}</div>}
                 <footer><span>Последний AckSeq: {runtime.pointEditor.ackSeq}</span><span>{!editorEditable ? 'Только просмотр' : editorDirty ? 'Есть несохранённые изменения' : 'Черновик совпадает с PLC'}</span></footer>
               </div>
             </div>
@@ -816,19 +824,18 @@ export function RobotExtendedPanel({
       </TabsContent>
     </Tabs>
     <footer className="rx-footer">
-    <div className={`robot-extended-command-deck ${modbusMode ? 'modbus' : ''}`}>
-      {!modbusMode && <button
-        type="button"
-        disabled={!online}
-        className={`drive-toggle ${allowedClass(drivesToggleAllowed)}`}
-        data-drive-state={online && drivesPowered ? 'on' : 'off'}
-        aria-disabled={!drivesToggleAllowed}
-        onClick={() => send({ command: drivesActive ? 'robot.disableDrives' : 'robot.enableDrives' })}
-      ><Settings2 size={17} />{runtime.robotManual.powerTransitionActive ? 'Переключение…' : drivesActive ? 'Отключить приводы' : 'Включить приводы'}</button>}
-      <button type="button" disabled={!online} className={allowedClass(runtime.robotManual.resetAllowed)} aria-disabled={!runtime.robotManual.resetAllowed} onClick={() => send({ command: 'robot.reset' })}><RotateCcw size={17} />Сброс</button>
-      <button type="button" disabled={!online} className={`danger ${allowedClass(runtime.robotManual.stopAllowed)}`} aria-disabled={!runtime.robotManual.stopAllowed} onClick={stopRobot}><AlertCircle size={17} />Стоп</button>
-    </div>
-
+      <div className={`robot-extended-command-deck ${modbusMode ? 'modbus' : ''}`}>
+        {!modbusMode && <button
+          type="button"
+          disabled={!online}
+          className={`drive-toggle ${allowedClass(drivesToggleAllowed)}`}
+          data-drive-state={online && drivesPowered ? 'on' : 'off'}
+          aria-disabled={!drivesToggleAllowed}
+          onClick={() => send({ command: drivesActive ? 'robot.disableDrives' : 'robot.enableDrives' })}
+        ><Settings2 size={17} />{runtime.robotManual.powerTransitionActive ? 'Переключение…' : drivesActive ? 'Отключить приводы' : 'Включить приводы'}</button>}
+        <button type="button" disabled={!online} className={allowedClass(runtime.robotManual.resetAllowed)} aria-disabled={!runtime.robotManual.resetAllowed} onClick={() => send({ command: 'robot.reset' })}><RotateCcw size={17} />Сброс</button>
+        <button type="button" disabled={!online} className={`danger ${allowedClass(runtime.robotManual.stopAllowed)}`} aria-disabled={!runtime.robotManual.stopAllowed} onClick={stopRobot}><AlertCircle size={17} />Стоп</button>
+      </div>
     </footer>
   </aside>
 
@@ -847,7 +854,7 @@ export function RobotExtendedPanel({
         </header>
 
         <section className="point-backup-export">
-          <div><Download aria-hidden="true" /><span><b>Сохранить текущий снимок PLC</b><small>В копию попадут все 12 точек и признак их настройки</small></span></div>
+          <div><Download aria-hidden="true" /><span><b>Сохранить текущий снимок PLC</b><small>В копию попадут все 14 точек и признак их настройки</small></span></div>
           <label><span>Комментарий к копии</span><input type="text" maxLength={48} disabled={Boolean(backupBusy)} value={backupName} placeholder="Например: после наладки станков" onChange={(event) => setBackupName(event.target.value)} /></label>
           <button type="button" disabled={!online || !editorEditable || Boolean(backupBusy)} onClick={() => void exportPoints()}>{backupBusy === 'export' ? <LoaderCircle className="spin" /> : <Download />}<span>{backupBusy === 'export' ? 'Сохранение…' : 'Создать копию'}</span></button>
         </section>

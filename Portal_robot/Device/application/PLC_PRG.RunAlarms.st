@@ -6,7 +6,9 @@ METHOD PRIVATE RunAlarms
 // и каждый активный владелец общей команды готов принять тот же импульс сброса.
 // Диагностические защёлки симуляторов станков сюда не входят: они обслуживаются
 // отдельной командой «Сброс симулятора» на экране инъекций.
-xAlarmResetRequired := GVL_CELL_MANAGER.Status.xError
+xAlarmResetRequired := (GVL_GEOMETRY_CONTROL.xSupported AND (GVL_GEOMETRY_CONTROL.astStatus[1].xError
+	OR GVL_GEOMETRY_CONTROL.astStatus[2].xError))
+	OR GVL_CELL_MANAGER.Status.xError
 	OR (CELL_SAFETY.Error.dwAlarmActive <> DWORD#0)
 	OR GVL_ROBOT.Status.xError
 	OR GVL_MACHINE.Status[1].xError
@@ -26,6 +28,8 @@ xAlarmResetRequired := GVL_CELL_MANAGER.Status.xError
 
 xAlarmResetAllowed := ((GVL_TWO_PALLET.uiMode = 0) OR ((NOT GVL_TWO_PALLET.astStatus[1].xError OR GVL_TWO_PALLET.astStatus[1].xResetAllowed) AND (NOT GVL_TWO_PALLET.astStatus[2].xError OR GVL_TWO_PALLET.astStatus[2].xResetAllowed))) AND xAlarmResetRequired
 	AND (CELL_SAFETY.Error.dwAlarmActive = DWORD#0)
+	AND (NOT GVL_GEOMETRY_CONTROL.xSupported OR NOT GVL_GEOMETRY_CONTROL.astStatus[1].xError OR GVL_GEOMETRY_CONTROL.astStatus[1].xResetAllowed)
+	AND (NOT GVL_GEOMETRY_CONTROL.xSupported OR NOT GVL_GEOMETRY_CONTROL.astStatus[2].xError OR GVL_GEOMETRY_CONTROL.astStatus[2].xResetAllowed)
 	AND (NOT GVL_CELL_MANAGER.Status.xError OR GVL_CELL_MANAGER.Status.xResetAllowed)
 	AND (NOT GVL_ROBOT.Status.xError OR GVL_ROBOT.Status.xResetAllowed)
 	AND (NOT GVL_MACHINE.Status[1].xError OR GVL_MACHINE.Status[1].xResetAllowed)
@@ -66,6 +70,21 @@ FOR uiTwin := 1 TO 2 DO
 END_FOR;
 
 // В журнал передаются все активные ошибки и предупреждения каждого функционального блока.
+IF GVL_GEOMETRY_CONTROL.stCellWarning.udiSequence <> udiGeometryCellWarningSeen THEN
+	udiGeometryCellWarningSeen := GVL_GEOMETRY_CONTROL.stCellWarning.udiSequence;
+	GVL_CELL_MANAGER.Diag.stWarning.uiCode := GVL_GEOMETRY_CONTROL.stCellWarning.uiCode;
+	GVL_CELL_MANAGER.Diag.stWarning.udiSequence := GVL_CELL_MANAGER.Diag.stWarning.udiSequence + UDINT#1;
+END_IF;
+astAlarmSource[18].eSource := E_ALARM_SOURCE.GEOMETRY_1;
+astAlarmSource[19].eSource := E_ALARM_SOURCE.GEOMETRY_2;
+FOR uiGeometry := UINT#1 TO UINT#2 DO
+	IF GVL_GEOMETRY_CONTROL.xSupported THEN
+		astAlarmSource[17 + uiGeometry].dwAlarmActive := GVL_GEOMETRY_CONTROL.astActiveMemory[uiGeometry].dwAlarm;
+	ELSE astAlarmSource[17 + uiGeometry].dwAlarmActive := DWORD#0; END_IF;
+	astAlarmSource[17 + uiGeometry].xRobotStopRequired := GVL_GEOMETRY_CONTROL.astStatus[uiGeometry].xRobotStopRequired;
+	astAlarmSource[17 + uiGeometry].xGlobalError := GVL_CELL_CONTROL.xGlobalError;
+	astAlarmSource[17 + uiGeometry].stWarning := GVL_GEOMETRY_CONTROL.astWarning[uiGeometry];
+END_FOR;
 astAlarmSource[1].eSource := E_ALARM_SOURCE.CELL;
 astAlarmSource[1].dwAlarmActive := GVL_CELL_MANAGER.Error.dwAlarmActive;
 astAlarmSource[1].xRobotStopRequired := FALSE;

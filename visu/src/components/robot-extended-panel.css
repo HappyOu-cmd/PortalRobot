@@ -1,4 +1,4 @@
-.side-panel.robot-extended-panel.robot-redesign {
+.robot-redesign {
   --rx-accent: #1769e8;
   --rx-ink: #182333;
   --rx-muted: #6c798a;
@@ -7,6 +7,8 @@
   --rx-glass: rgb(255 255 255 / 46%);
   --rx-glass-border: rgb(255 255 255 / 78%);
   --rx-control-glass: rgb(255 255 255 / 36%);
+}
+.side-panel.robot-extended-panel.robot-redesign {
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
@@ -100,7 +102,7 @@
 .robot-redesign .rj-eyebrow { color: var(--rx-muted); font-size: 8px; letter-spacing: .13em; }
 .robot-redesign .rj-section-head h3 { margin: 5px 0 0; color: var(--rx-ink); font-size: 16px; line-height: 1.2; font-weight: 600; text-transform: none; letter-spacing: -.025em; }
 .robot-redesign .rj-status { display: inline-flex; align-items: center; gap: 7px; padding: 7px 9px; border-radius: 20px; background: #f0f4f8; color: var(--rx-muted); font-size: 10px; white-space: nowrap; }
-.robot-redesign .rj-status i, .robot-redesign .rj-axis-option i, .robot-redesign .rj-target-meta i { display: inline-block; width: 6px; height: 6px; flex-shrink: 0; border-radius: 50%; background: #a8b5c3; }
+.robot-redesign .rj-status i, .robot-redesign .rj-axis-option i { display: inline-block; width: 6px; height: 6px; flex-shrink: 0; border-radius: 50%; background: #a8b5c3; }
 .robot-redesign .rj-status[data-moving=true] { background: #eaf2ff; color: var(--rx-accent); }
 .robot-redesign .rj-status[data-moving=true] i { background: var(--rx-accent); animation: rj-beacon 1.4s ease-in-out infinite; }
 .robot-redesign .rj-status[data-error=true] { color: #b63e48; background: #fff0f1; }
@@ -121,9 +123,19 @@
 .robot-redesign .rj-axis-option b { font-size: 14px; line-height: 1; font-weight: 650; }
 .robot-redesign .rj-axis-option strong { font-size: clamp(16px, 1.4vw, 21px); font-weight: 500; letter-spacing: -.04em; white-space: nowrap; }
 .robot-redesign .rj-axis-option small { margin-left: 4px; font-size: 9px; font-weight: 400; opacity: .65; letter-spacing: 0; }
-.robot-redesign .rj-axis-option i[data-ready=true], .robot-redesign .rj-target-meta i[data-ready=true] { background: #30a674; }
+.robot-redesign .rj-axis-option i[data-ready=true] { background: #30a674; }
 .robot-redesign .rj-axis-selector .is-active i[data-ready=true] { background: #98efcc; }
 .robot-redesign .rj-axis-option i[data-busy=true] { animation: rj-beacon 1.4s ease-in-out infinite; }
+.robot-redesign .rj-home-button { position: relative; display: flex; align-items: center; justify-content: center; width: 100%; min-height: 50px; margin-top: 14px; padding: 8px 34px; border: 1px solid var(--rx-accent); border-radius: 25px; background: var(--rx-accent); color: #fff; font-family: inherit; font-size: 12px; font-weight: 650; line-height: 1.2; letter-spacing: .04em; cursor: pointer; transition: background 180ms, border-color 180ms, color 180ms, transform 140ms cubic-bezier(.16, 1, .3, 1); }
+.robot-redesign .rj-home-button > span { display: inline-flex; align-items: center; gap: 7px; }
+.robot-redesign .rj-home-button svg { width: 19px; height: 19px; flex-shrink: 0; }
+.robot-redesign .rj-home-button > i { position: absolute; right: 19px; width: 7px; height: 7px; border-radius: 50%; background: #a8b5c3; }
+.robot-redesign .rj-home-button > i:is([data-state=found], [data-state=searching]) { background: #8cf0bc; }
+.robot-redesign .rj-home-button > i[data-state=searching] { animation: rj-beacon 1.4s ease-in-out infinite; }
+.robot-redesign .rj-home-button:hover:not(:disabled):not(.command-unavailable) { background: #1259bf; border-color: #1259bf; }
+.robot-redesign .rj-home-button:active:not(:disabled) { transform: scale(.99); }
+.robot-redesign .rj-home-button:is(:disabled, .command-unavailable) { border-color: #d8e1eb; background: #e7edf4; color: #8a98aa; }
+.robot-redesign .rj-home-button:disabled { cursor: not-allowed; }
 .robot-redesign .rj-mode-selector.ui-segmented { margin-top: 14px; border-radius: 25px; background: #edf3f9; }
 .robot-redesign .rj-mode-selector :is(.ui-segmented__track, .ui-segmented__thumb, .ui-segmented__option) { border-radius: 22px; }
 .robot-redesign .rj-mode-selector .ui-segmented__option { display: flex; align-items: center; justify-content: center; gap: 6px; padding-inline: 8px; font-size: 11px; }
@@ -197,7 +209,6 @@
 .robot-redesign .rj-target-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; color: var(--rx-muted); font-size: 10px; }
 .robot-redesign .rj-target-meta > span { display: grid; gap: 4px; }
 .robot-redesign .rj-target-meta b { color: var(--rx-ink); font-size: 13px; font-weight: 500; }
-.robot-redesign .rj-target-meta .rj-button { padding-inline: 12px; border-color: transparent; background: #f0f4f8; font-size: 11px; }
 .robot-redesign .rj-reject { padding: 11px 13px; margin-top: 14px; border-radius: 12px; background: #fff5e6; color: #9b6e19; font-size: 11px; line-height: 1.5; }
 .robot-redesign .rj-speed .robot-speed-editor { padding: 0; gap: 14px; border: 0; border-radius: 0; background: transparent; }
 .robot-redesign .rj-speed .robot-speed-editor-head > div > span { color: var(--rx-ink); font-size: 14px; font-weight: 550; }
@@ -315,7 +326,7 @@
 @media (prefers-reduced-motion: reduce) {
   .robot-redesign .robot-extended-tab-content[data-state=active], .robot-redesign .rj-precision,
   .robot-redesign .rj-status[data-moving=true] i,
-  .robot-redesign .rj-axis-option i[data-busy=true], .robot-redesign .rj-key[data-pressed=true] .rj-key-wave { animation: none; }
+  .robot-redesign .rj-axis-option i[data-busy=true], .robot-redesign .rj-home-button > i[data-state=searching], .robot-redesign .rj-key[data-pressed=true] .rj-key-wave { animation: none; }
   .robot-redesign :is(.rj-button, .rj-dial *, .robot-extended-tabs > button, .robot-extended-command-deck > button),
   .robot-redesign .robot-extended-tabs::before { transition: none; }
   .rj-motion-help-overlay, .rj-motion-help-card { animation: none; }

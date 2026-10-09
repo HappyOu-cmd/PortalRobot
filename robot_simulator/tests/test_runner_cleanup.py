@@ -4,9 +4,12 @@ import asyncio
 import json
 from typing import Any
 
+import pytest
+
 from robot_simulator.constants import RobotMode
 from robot_simulator.test_runner import GatewayRunner
-from robot_simulator.test_scenarios import smoke_scenarios
+from robot_simulator.test_catalog import catalog
+from robot_simulator.test_scenarios import fixed_scenarios, smoke_scenarios
 
 
 class RecordingRunner(GatewayRunner):
@@ -55,6 +58,34 @@ def test_general_suite_is_available_to_the_runner() -> None:
     cases = GatewayRunner.suite({"suite": "general"})
     assert len(cases) == 8
     assert all(case["expectations"]["testKind"] == "general-four-batches" for case in cases)
+
+
+def test_fixed_catalog_and_runner_use_the_same_case_order() -> None:
+    entries = catalog()
+    assert {suite: len(cases) for suite, cases in entries.items()} == {
+        "smoke": 12, "regression": 75, "general": 8,
+    }
+    for suite, cases in entries.items():
+        source = fixed_scenarios(suite)
+        for entry in cases:
+            selected = GatewayRunner.suite({"suite": suite, "fixedCaseIndex": entry["index"]})
+            assert selected[0]["name"] == entry["name"]
+            assert selected[0]["name"] == source[entry["index"] - 1]["name"]
+    with pytest.raises(ValueError, match="нет теста"):
+        GatewayRunner.suite({"suite": "smoke", "fixedCaseIndex": 13})
+    with pytest.raises(ValueError, match="Generated"):
+        GatewayRunner.suite({"suite": "generated", "fixedCaseIndex": 1})
+
+
+def test_twin_mode_rejected_before_static_scenario_command() -> None:
+    runner = RecordingRunner()
+    runner.values["uiMagazineMode"] = 1
+    with pytest.raises(RuntimeError, match="PLC находится в двухпалетном режиме"):
+        asyncio.run(runner.apply_scenario(object(), smoke_scenarios()[0]))
+    assert runner.commands == []
+    with pytest.raises(RuntimeError, match="Не получен достоверный uiMagazineMode"):
+        GatewayRunner.require_static_magazine_mode({})
+    GatewayRunner.require_static_magazine_mode({"uiMagazineMode": 0})
 
 
 def test_general_batch_handover_allows_finished_flag_to_arrive_next_scan() -> None:
@@ -580,6 +611,7 @@ def test_scenario_apply_retries_busy_rejection_after_apply_pulse_falls() -> None
             super().__init__()
             self.apply_count = 0
             self.values.update({
+                "uiMagazineMode": 0,
                 "xTestScenarioApply": False,
                 "xTestScenarioApplyAllowed": True,
                 "stTestScenario.udiLoadSeq": 10,

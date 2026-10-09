@@ -22,7 +22,7 @@
                       <Single Type="System.Guid">d9b2b2cc-ea99-4c3b-aa42-1e5c49e65b84</Single>
                     </Key>
                     <Value>
-                      <Single Type="System.Guid">e96fd1f9-3d03-44f2-82df-1ea832ac24f7</Single>
+                      <Single Type="System.Guid">3fe5920a-4b84-4acf-a2c0-c04494c55ea0</Single>
                     </Value>
                   </Entry>
                 </Dictionary>
@@ -44,8 +44,20 @@ VAR_GLOBAL
 	Points : ARRAY [0..iPointNumber] OF ST_POINT; // Глобальная таблица именованных точек
 END_VAR
 
+VAR_GLOBAL PERSISTENT RETAIN
+	// Постоянное хранилище базовых точек в энергонезависимой памяти контроллера.
+	// Размер 15 сохранён ради совместимости со старой раскладкой: позиции 2, 6 и 10
+	// (legacy MACHINE_x_INSIDE) больше не публикуются и не участвуют в готовности.
+	astRetainPoints : ARRAY [1..iPersistentPointCapacity] OF ST_POINT;
+	udiPointStorageVersion : UDINT;
+END_VAR
+
 VAR_GLOBAL CONSTANT 
 	iPointNumber : INT := 100; // Максимальный индекс таблицы точек
+	iEditablePointCount : INT := 14; // 12 прежних точек и 2 базы ГК
+	iRequiredPointCount : INT := 12; // ГК проверяет свою настройку при включении станции
+	iPersistentPointCapacity : INT := 15;
+	udiExpectedPointStorageVersion : UDINT := UDINT#1;
 END_VAR
 </Single>
             <Single Name="LineInfoPersistence" Type="string">4b236f90-4faa-4bb7-98a2-91000a5c901d_Decl_LineIds</Single>
@@ -55,7 +67,7 @@ END_VAR
         <Single Name="ParameterList" Type="bool">False</Single>
         <Single Name="AddAttributeSubsequent" Type="bool">False</Single>
       </Single>
-      <Single Name="ParentSVNodeGuid" Type="System.Guid">e96fd1f9-3d03-44f2-82df-1ea832ac24f7</Single>
+      <Single Name="ParentSVNodeGuid" Type="System.Guid">3fe5920a-4b84-4acf-a2c0-c04494c55ea0</Single>
       <Array Name="Path" Type="string">
         <Single Type="string">Device</Single>
         <Single Type="string">PLC Logic</Single>

@@ -23,6 +23,7 @@ import { createStaticMagazine, type StaticMagazineRig, updateStaticMagazineRig }
 import { createTwoPalletMagazine, TWO_PALLET_DIMENSIONS, updateTwoPalletMagazine, type TwoPalletMagazineRig } from './twoPalletMagazine';
 import { TwoPalletPreviewController, type TwoPalletPose } from '../model/twoPalletPreview';
 import { twinSignalPattern } from '../model/twoPalletControl';
+import { GeometryBeltAnimation } from '../model/geometryControl';
 import { OperationalEffects, type SceneEffectAnchors } from './OperationalEffects';
 import { COLORS, disposeObject, logicalPosition, mm } from './primitives';
 import { inspectionKey, inspectionSlot, type EquipmentInspection, type InspectionTarget, type InspectionNode } from '../model/equipmentInspection';
@@ -76,6 +77,8 @@ export class CellScene {
   private mpgPendantRig?: MpgPendantRig;
   private staticMagazineRigs: StaticMagazineRig[] = [];
   private twoPalletRigs: TwoPalletMagazineRig[] = [];
+  private geometryRoots: THREE.Group[] = [];
+  private geometryAnimations = [new GeometryBeltAnimation(), new GeometryBeltAnimation()];
   private twoPalletControllers = [new TwoPalletPreviewController(), new TwoPalletPreviewController()];
   private twoPalletDisplayPoses: (TwoPalletPose | null)[] = [null, null];
   private easterEggController?: EasterEggController;
@@ -130,6 +133,7 @@ export class CellScene {
     private readonly onEquipmentInspect?: (target: InspectionTarget, node?: InspectionNode) => void,
     private readonly preview = false,
     initialVisualEffects: VisualEffectSettings = DEFAULT_VISUAL_EFFECT_SETTINGS,
+    private readonly onGeometrySelect?: (stationId: 1 | 2) => void,
   ) {
     this.layout = layout;
     this.state = state;
@@ -274,6 +278,7 @@ export class CellScene {
       this.mpgPendantRig = createMpgPendant(layout, buttonPost?.rig.root.position.y ?? 1.15);
       this.cellRoot.add(this.mpgPendantRig.root);
     }
+    this.geometryRoots = [];
     this.staticMagazineRigs = layout.staticMagazines.map((config, index) => {
       const rig = createStaticMagazine(
         config,
@@ -287,7 +292,17 @@ export class CellScene {
     if (!this.preview) {
       this.twoPalletRigs = [0, 1].map((index) => {
         const rig = createTwoPalletMagazine(layout, index);
+        // Конвейер ГК виден при обоих типах магазина и не зависит от его механики.
+        rig.root.attach(rig.conveyor);
+        const geometryRoot = new THREE.Group();
         const position = layout.twoPalletMagazines[index].position;
+        geometryRoot.position.copy(logicalPosition(position.x, position.y, position.z));
+        geometryRoot.rotation.y = Math.PI / 2;
+        geometryRoot.name = `GeometryControl_${index + 1}`;
+        geometryRoot.userData.geometryId = index + 1;
+        geometryRoot.add(rig.conveyor);
+        this.cellRoot.add(geometryRoot);
+        this.geometryRoots.push(geometryRoot);
         rig.root.position.copy(logicalPosition(position.x, position.y, position.z));
         rig.root.rotation.y = Math.PI / 2;
         rig.root.name = `TwoPalletMagazine_${index + 1}`;
@@ -673,12 +688,19 @@ export class CellScene {
     this.pointer.x = ((event.clientX - bounds.left) / bounds.width) * 2 - 1;
     this.pointer.y = -((event.clientY - bounds.top) / bounds.height) * 2 + 1;
     this.raycaster.setFromCamera(this.pointer, this.camera);
-    const roots = this.inspectionEnabled ? this.inspectionEntries.map((entry) => entry.root) : [
+    const roots = [...(this.inspectionEnabled ? this.inspectionEntries.map((entry) => entry.root) : [
       ...this.machineRigs.map((rig) => rig.root),
       ...this.staticMagazineRigs.map((rig) => rig.root),
       ...this.twoPalletRigs.map((rig) => rig.root),
-    ];
+    ]), ...this.geometryRoots];
     const hit = this.raycaster.intersectObjects(roots.filter(isObjectVisible), true).find((item) => isObjectVisible(item.object));
+    let geometryHit: THREE.Object3D | null = hit?.object ?? null;
+    while (geometryHit && !Number.isInteger(geometryHit.userData.geometryId)) geometryHit = geometryHit.parent;
+    if (geometryHit && this.onGeometrySelect) {
+      event.stopPropagation();
+      this.onGeometrySelect(geometryHit.userData.geometryId as 1 | 2);
+      return;
+    }
     if (this.inspectionEnabled && this.onEquipmentInspect) {
       let object: THREE.Object3D | null = hit?.object ?? null;
       let node: InspectionNode | undefined;
@@ -821,7 +843,11 @@ export class CellScene {
           displayPose[key] += (targetPose[key] - displayPose[key]) * blend;
         }
       }
-      updateTwoPalletMagazine(rig, controller, twin?.pallets, !twin?.live || twin.confirmed, displayPose);
+      const geometry = this.state.geometryControl ? this.geometryAnimations[index].update(
+        this.state.geometryControl.available ? this.state.geometryControl.stations[index] : undefined,
+        dt, this.visualEffects.geometryConveyorSpeed,
+      ) : undefined;
+      updateTwoPalletMagazine(rig, controller, twin?.pallets, !twin?.live || twin.confirmed, displayPose, geometry);
       if (twin?.live || twin?.manualLockOut !== undefined || twin?.manualStopOut !== undefined) {
         rig.lock.position.z = (twin.manualLockOut ?? twin.sensors.lockOut) ? 0.022 : 0;
         rig.stop.position.z = (twin.manualStopOut ?? twin.sensors.stopOut) ? 0.022 : 0;

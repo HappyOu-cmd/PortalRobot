@@ -5,6 +5,7 @@ STRUCT
 	xPowerAllowed        : BOOL; // Кнопка включения, отключения или отмены отключения доступна
 	xResetAllowed        : BOOL; // Кнопка сброса ошибки станка доступна
 	xManualControlAllowed       : BOOL; // Ручное управление разрешено режимом и состоянием станка
+	xManualSafetyDoorControlEnabled : BOOL; // Операторская дверь управляется только моделью
 	xManualSafetyDoorOpenAllowed : BOOL; // Разрешено открыть операторскую дверь
 	xManualSafetyDoorCloseAllowed: BOOL; // Разрешено закрыть операторскую дверь
 	xManualHatchOpenAllowed      : BOOL; // Разрешено открыть роботный люк

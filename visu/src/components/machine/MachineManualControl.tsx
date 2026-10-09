@@ -84,14 +84,15 @@ export function MachineManualControlMenu({
       <span><Indicator active={opened || closed} tone={opened ? 'amber' : closed ? 'green' : 'blue'} />Текущее состояние</span>
       <strong>{mechanismState(machine, mechanism)}</strong>
     </div>
-    <div className="machine-mechanism-actions">
+    {(mechanism !== 'door' || !usePlcData || machine.manualDoorControlEnabled) && <div className="machine-mechanism-actions">
       <button type="button" className={openAllowed ? '' : 'command-unavailable'} disabled={!openAllowed} aria-disabled={!openAllowed} onClick={() => onRequest('open')}>
         <OpenIcon /><span>{mechanism === 'chuck' ? 'Разжать' : 'Открыть'}</span>
       </button>
       <button type="button" className={closeAllowed ? 'primary' : 'primary command-unavailable'} disabled={!closeAllowed} aria-disabled={!closeAllowed} onClick={() => onRequest('close')}>
         <LockKeyhole /><span>{mechanism === 'chuck' ? 'Зажать' : 'Закрыть'}</span>
       </button>
-    </div>
+    </div>}
+    {mechanism === 'door' && usePlcData && !machine.manualDoorControlEnabled && <p>Ручная дверь: PLC получает только обратные статусы.</p>}
     {!machine.manualControlAllowed && !machine.manualHatchOpenAllowed && usePlcData && <p><ShieldAlert />Включите ручной режим, выключите станок и устраните блокирующие условия</p>}
   </aside>;
 }

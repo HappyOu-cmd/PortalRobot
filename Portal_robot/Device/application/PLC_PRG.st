@@ -1,5 +1,85 @@
 PROGRAM PLC_PRG
 VAR
+	GEOMETRY : ARRAY [1..2] OF FB_GEOMETRY_CONTROL;
+	GEOMETRY_SIM : ARRAY [1..2] OF FB_GEOMETRY_CONTROL_SIMULATION;
+	xGeometryInitialized : BOOL;
+	xGeometryEnvironmentChanged : BOOL;
+	eGeometryPreviousEnvironment : E_CELL_TEST_ENVIRONMENT;
+	uiGeometry : UINT;
+	uiGeometryMachine : UINT;
+	uiGeometryDi : UINT;
+	udiGeometryRequest : UDINT;
+	stGeometryRequest : ST_GEOMETRY_REQUEST;
+	stGeometryConfig : ST_GEOMETRY_CONFIG;
+	stGeometryCall : ST_GEOMETRY_CALL;
+	stGeometryEmptyCall : ST_GEOMETRY_CALL;
+	xGeometryConfigValid : BOOL;
+	xGeometryDriveAlarm : BOOL;
+	xGeometryDriveRunning : BOOL;
+	xGeometryPartAtEnd : BOOL;
+	stGeometrySignals : ST_GEOMETRY_SIGNALS;
+	xGeometryRequestFresh : BOOL;
+	xGeometryStopAttempt : BOOL;
+	udiGeometryCellWarningSeen : UDINT;
+	eGeometryPlace : E_POINT_NAME;
+	eGeometrySafe : E_POINT_NAME;
+	eGeometryChange : E_POINT_NAME;
+    // Диагностика физического I/O: один владелец подмен и FIFO на 100 событий.
+    axIoRawDi : ARRAY [1..84] OF BOOL;
+    axIoUsedDi : ARRAY [1..84] OF BOOL;
+    axIoForced : ARRAY [1..84] OF BOOL;
+    axIoForceValue : ARRAY [1..84] OF BOOL;
+    axIoDoForced : ARRAY [1..50] OF BOOL;
+    xIoSnapshotPublishing : BOOL;
+    axIoDoForceValue : ARRAY [1..50] OF BOOL;
+    axIoDoInhibited : ARRAY [1..50] OF BOOL;
+    axIoDoAllowed : ARRAY [1..50] OF BOOL;
+    axIoDoOnAllowed : ARRAY [1..50] OF BOOL;
+    axIoGripperBase : ARRAY [1..3] OF BOOL;
+    axIoAutoDo : ARRAY [1..50] OF BOOL;
+    axIoMagazineInvalidated : ARRAY [1..2] OF BOOL;
+    xIoRawSafetyOk : BOOL;
+    xIoManualActive : BOOL;
+    xIoManualEndedByOperator : BOOL;
+    xIoDoRejected : BOOL;
+    xIoEmergencyResetRejected : BOOL;
+    xIoEmergencyResetRequested : BOOL;
+    udiIoEmergencyRequestSeq : UDINT;
+    axIoOutput : ARRAY [1..50] OF BOOL;
+    axIoPreviousRaw : ARRAY [1..84] OF BOOL;
+    axIoPreviousUsed : ARRAY [1..84] OF BOOL;
+    axIoPreviousOutput : ARRAY [1..50] OF BOOL;
+    astIoEvent : ARRAY [1..100] OF ST_PHYSICAL_IO_EVENT;
+    xIoInitialized : BOOL;
+    xIoOverrideRejected : BOOL;
+    xIoBusy : BOOL;
+    uiIoIndex : UINT;
+    uiIoWord : UINT;
+    uiIoBit : UINT;
+    dwIoBit : DWORD;
+    udiIoNowMs : UDINT;
+    udiIoLastTickMs : UDINT;
+    uliIoClockMs : ULINT;
+    udiIoHeartbeatSeen : UDINT;
+    uliIoLeaseAgeMs : ULINT;
+    tonIoOverrideWatchdog : TON;
+    udiIoRequestSeq : UDINT;
+    uiIoRequestAction : UINT;
+    uiIoRequestIndex : UINT;
+    xIoRequestValue : BOOL;
+	xPhysicalNormal : BOOL;
+	xPhysicalWasNormal : BOOL;
+	xPhysicalInputEnable : BOOL;
+	xPhysicalOutputEnable : BOOL;
+	xPhysicalOutputWasEnabled : BOOL;
+	uiPhysicalInput : UINT;
+	tPhysicalRise : TIME;
+	tPhysicalFall : TIME;
+	axPhysicalRaw : ARRAY [1..84] OF BOOL;
+	axPhysicalFiltered : ARRAY [1..80] OF BOOL;
+	axPhysicalButtonArmed : ARRAY [1..80] OF BOOL;
+	afbPhysicalInputFilter : ARRAY [1..80] OF FB_DI_FILTER;
+	astMachineStatusRaw : ARRAY [1..3] OF ST_MACHINE_IO_STATUS;
 	AXIS_X         : FB_AXIS; // Управление осью X
 	AXIS_Y         : FB_AXIS; // Управление осью Y
 	AXIS_Z         : FB_AXIS; // Управление осью Z
@@ -18,6 +98,7 @@ VAR
 	TWIN_AXIS_1 : FB_AXIS;
 	TWIN_AXIS_2 : FB_AXIS;
 	TWIN : ARRAY [1..2] OF FB_TWO_PALLET;
+	axTwinMagazineExchangeInProgress : ARRAY [1..2] OF BOOL; // Защёлка фактической смены палет для адресной блокировки магазина
 	TWIN_SIM : ARRAY [1..2] OF FB_TWO_PALLET_SIMULATION;
 	astTwinCommand : ARRAY [1..2] OF ST_TWO_PALLET_COMMAND;
 	axTwinConfigurationChanged : ARRAY [1..2] OF BOOL;
@@ -27,6 +108,7 @@ VAR
 	astMagazineWarningMerged : ARRAY [1..2] OF ST_WARNING_EVENT;
 	uiTwin : UINT;
 	uiTwinPallet : UINT;
+	uiTwinRobotPalletBefore : UINT; // Смена роли после ручного восстановления снимает прежнюю готовность загрузки
 	uiTwinSlot : UINT;
 	udiTwinSnapshot : UDINT;
 	xTwinStartup : BOOL;
@@ -36,7 +118,7 @@ VAR
 	axButtonStationInput : ARRAY [1..4] OF BOOL; // Физическая кнопка или виртуальный вход SIMULATION
 	axButtonStationEmergencyStopInput : ARRAY [1..4] OF BOOL; // Физический грибок или виртуальный вход SIMULATION
 	axTwinRobotStopLatched : ARRAY [1..2] OF BOOL;
-	xTwinRobotClear : BOOL;
+	xTwinRobotSwapWindow : BOOL;
 	xTwinRobotOperation : BOOL; // Текущая, ожидающая отключения или уже выданная операция магазина
 	xTwinOtherLoaded : BOOL;
 	xTwinAutoSwapEnabled : BOOL;
@@ -52,6 +134,7 @@ VAR
 	CELL_SAFETY    : FB_CELL_SAFETY; // Дискретный контур безопасности, двери и внешние кнопки
 	CELL_MANAGER   : FB_CELL_MANAGER; // Универсальный автоматический цикл для одного-трёх типов
 	ALARM_MANAGER  : FB_ALARM_MANAGER; // Журнал аварий и предупреждений
+	fbAlarmHorn : FB_ALARM_HORN; // Импульс на каждую новую аварийную маску
 	tonSignalTowerBlink : TON; // Полупериод мигания колонны — 500 мс
 	usiSignalTowerMode : USINT; // 1 работа; 2 готова; 3 предупреждение; 4 авария; 5 не готова
 	usiSignalTowerPreviousMode : USINT;
@@ -151,8 +234,9 @@ VAR
 	astMagazineFaultRequest : ARRAY [1..2] OF ST_MAGAZINE_FAULT_REQUEST; // Диагностика двух магазинов
 	stCellFaultRequest     : ST_CELL_FAULT_REQUEST; // Запрос локальной ошибки менеджера ячейки
 	stSafetyFaultRequest   : ST_CELL_SAFETY_FAULT_REQUEST; // Независимые инъекции дискретной безопасности
-	astAlarmSource : ARRAY [1..17] OF ST_ALARM_SOURCE_DATA; // 15 активных источников + 2 legacy-слота журнала
-	uiPointEditorIndex : UINT; // Компактный индекс фиксированной точки редактора 1..12
+	astAlarmSource : ARRAY [1..19] OF ST_ALARM_SOURCE_DATA; // Старые коды сохранены; ГК 1/2 добавлены в конец
+	uiPointEditorIndex : UINT; // Компактный индекс фиксированной точки редактора 1..14
+	uiPointEditorGeometryStation : UINT; // 0 прежняя точка, 1/2 база ГК
 	uiPointStorageIndex : UINT; // Индекс в совместимом Persistent-массиве 1..15
 	ePointEditorName : E_POINT_NAME; // Фактический enum выбранной инженерной точки
 	xPointTableReady : BOOL; // Все 12 базовых точек подтверждены редактором
@@ -161,6 +245,7 @@ VAR
 	xPointEditorRequestValid : BOOL; // Индекс и код новой транзакции распознаны
 	xPointEditorDraftValid : BOOL; // XYZ и скорость черновика прошли проверку
 	xPointEditorMagazinePoint : BOOL; // Выбрана базовая точка магазина 1 или 2
+	xPointEditorGeometrySave : BOOL; // SAVE базы ГК не зависит от технологических блокировок
 	udiLastPointEditorCommandSeq : UDINT; // Последняя обработанная транзакция редактора
 	xPointCheckRequest : BOOL;
 	xPointCheckActive : BOOL;
@@ -175,6 +260,7 @@ VAR
 	ePointCheckName : E_POINT_NAME;
 	uiPointCheckLoop : UINT;
 	uiPointCheckMachine : UINT;
+	uiPointCheckGeometryStation : UINT;
 	uiPointCheckReason : UINT;
 	stPointCheckCandidate : ST_POINT;
 	rPointCheckLatchedSpeed : REAL;
@@ -199,7 +285,6 @@ VAR
 	xTestAbortActive : BOOL; // Тестовая отмена действует только в виртуальной среде
 	xTestStable : BOOL;
 	xTestScenarioValid : BOOL;
-	xSc500BenchKeyLost : BOOL;
 	uiTestIndex : UINT;
 	uiTestMagazine : UINT;
 	uiTestFaultOwnerCount : UINT;
@@ -214,11 +299,12 @@ VAR CONSTANT
 	WRN_POINT_EDIT_REJECTED : UINT := 15; // PLC отклонил Capture/Save инженерной точки
 	WRN_POINT_CHECK_REJECTED : UINT := 16; // Проверка точки отклонена
 	WRN_POINT_CHECK_INTERRUPTED : UINT := 17; // Проверка остановлена потерей связи/разрешений
-	aePointCheckNames : ARRAY [1..12] OF E_POINT_NAME := [
+	aePointCheckNames : ARRAY [1..14] OF E_POINT_NAME := [
 		E_POINT_NAME.MACHINE_1_ABOVE, E_POINT_NAME.MACHINE_1_CHUCK_APROACH, E_POINT_NAME.MACHINE_1_CHUCK_POSITION,
 		E_POINT_NAME.MACHINE_2_ABOVE, E_POINT_NAME.MACHINE_2_CHUCK_APROACH, E_POINT_NAME.MACHINE_2_CHUCK_POSITION,
 		E_POINT_NAME.MACHINE_3_ABOVE, E_POINT_NAME.MACHINE_3_CHUCK_APROACH, E_POINT_NAME.MACHINE_3_CHUCK_POSITION,
-		E_POINT_NAME.HOME_SAFETY, E_POINT_NAME.MAGAZINE_1_DETAIL, E_POINT_NAME.MAGAZINE_2_DETAIL];
+		E_POINT_NAME.HOME_SAFETY, E_POINT_NAME.MAGAZINE_1_DETAIL, E_POINT_NAME.MAGAZINE_2_DETAIL,
+		E_POINT_NAME.GEOMETRY_1_PLACE, E_POINT_NAME.GEOMETRY_2_PLACE];
 	alrRobotManualFallbackVelocity : ARRAY [1..3] OF LREAL := [1000.0, 1000.0, 1000.0]; // Резерв, если привод не публикует динамический предел
 	alrRobotManualAcceleration : ARRAY [1..3] OF LREAL := [1000.0, 1000.0, 1000.0]; // Резерв ускорения, если привод не публикует предел
 	alrRobotManualDeceleration : ARRAY [1..3] OF LREAL := [1000.0, 1000.0, 1000.0]; // Резерв замедления, если привод не публикует предел
@@ -230,11 +316,15 @@ END_VAR
 SetApplicationDefaults();
 ReadHmiCommands();
 ReadHmiInputs();
+ReadIoEmergencyStop();
+ReadPhysicalInputs();
 RunSafety();
+ResetIoEmergencyStop();
 RunMotion();
 RunRobotModbus();
 RunTestControl();
 RunTwoPallet();
+RunGeometryControl();
 RunCellControl();
 RunMachines();
 RunMagazine();
@@ -242,4 +332,7 @@ RunTwoPalletAxis();
 RunRobot();
 RunAlarms();
 RunSignalTower();
+WritePhysicalOutputs();
+RecordIoDiagnostics();
+PublishGeometryControl();
 PublishHmi();

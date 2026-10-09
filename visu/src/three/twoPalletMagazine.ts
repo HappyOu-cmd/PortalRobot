@@ -1,4 +1,5 @@
 import type { PalletInventory } from '../model/twoPalletControl';
+import type { GeometryBeltVisual } from '../model/geometryControl';
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { CellLayout, PartMaterialLayout } from '../model/types';
@@ -57,6 +58,7 @@ const slotPosition = (slot: number): [number, number] => {
 
 export interface TwoPalletMagazineRig {
   root: THREE.Group;
+  conveyor: THREE.Group;
   pallets: [THREE.Group, THREE.Group];
   carriage: THREE.Group;
   liftBase: THREE.Group;
@@ -496,13 +498,13 @@ export function createTwoPalletMagazine(layout: CellLayout, magazineIndex: numbe
   const sample = mesh(conveyor, 'Inspection_sample', partGeometry, m.chrome);
   sample.visible = false; sample.userData.animated = true;
   batchDetails(root);
-  return { root, pallets, carriage, liftBase, liftRods: [piston], lock, stop, chain,
+  return { root, conveyor, pallets, carriage, liftBase, liftRods: [piston], lock, stop, chain,
     beltMarks, driveTeeth, driveRollers, rollers, sample, sampleHeight: partHeight / 2,
     productMeshes, inventorySources: [undefined, undefined], inventorySignatures: ['', ''],
     lastDriveX: Number.NaN, lastP2X: Number.NaN, lastBeltPhase: Number.NaN };
 }
 
-export function updateTwoPalletMagazine(rig: TwoPalletMagazineRig, controller: TwoPalletPreviewController, inventory?: PalletInventory[], configurationKnown = true, pose?: TwoPalletPose): void {
+export function updateTwoPalletMagazine(rig: TwoPalletMagazineRig, controller: TwoPalletPreviewController, inventory?: PalletInventory[], configurationKnown = true, pose?: TwoPalletPose, geometry?: GeometryBeltVisual): void {
   const p = pose ?? controller.pose;
   const x = (t: number) => OPERATOR_X + (ROBOT_X - OPERATOR_X) * t;
   rig.pallets[0].position.set(x(p.p1), D.top, 0);
@@ -557,20 +559,22 @@ export function updateTwoPalletMagazine(rig: TwoPalletMagazineRig, controller: T
     rig.driveRollers.forEach((roller) => { roller.rotation.z = -driveOffset / 0.025; });
     rig.lastDriveX = driveOffset;
   }
-  if (controller.beltPhase !== rig.lastBeltPhase) {
+  const belt = geometry ?? controller;
+  if (belt.beltPhase !== rig.lastBeltPhase) {
     for (let i = 0; i < rig.beltMarks.count; i++) {
-      const phase = (i / rig.beltMarks.count + controller.beltPhase) % 1;
+      const phase = (i / rig.beltMarks.count + belt.beltPhase) % 1;
       matrix.makeScale(0.001, 0.0005, 0.09);
       matrix.setPosition(-BELT_HALF + phase * INSPECTION_BELT_SPAN, BELT_TOP + 0.0006, BELT_Z);
       rig.beltMarks.setMatrixAt(i, matrix);
     }
     rig.beltMarks.instanceMatrix.needsUpdate = true;
-    rig.rollers.forEach((roller) => { roller.rotation.z = -controller.beltTravel / (BELT_RADIUS - 0.003); });
-    rig.lastBeltPhase = controller.beltPhase;
+    rig.rollers.forEach((roller) => { roller.rotation.z = -belt.beltTravel / (BELT_RADIUS - 0.003); });
+    rig.lastBeltPhase = belt.beltPhase;
   }
-  rig.sample.visible = controller.sample !== null;
-  if (controller.sample !== null) rig.sample.position.set(
-    (controller.sample - 0.5) * INSPECTION_SAMPLE_SPAN, BELT_TOP + rig.sampleHeight, BELT_Z,
+  if (geometry) rig.sample.material = rig.productMeshes[0].detail[Math.max(0, Math.min(2, geometry.productType - 1))].material;
+  rig.sample.visible = belt.sample !== null;
+  if (belt.sample !== null) rig.sample.position.set(
+    (belt.sample - 0.5) * INSPECTION_SAMPLE_SPAN, BELT_TOP + rig.sampleHeight, BELT_Z,
   );
   rig.pallets.forEach((pallet) => { pallet.visible = configurationKnown; });
   rig.carriage.visible = configurationKnown;

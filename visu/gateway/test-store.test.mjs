@@ -7,9 +7,17 @@ const initialState = () => ({ typeCount: 1, machines: [], slots: Array.from({ le
 test('migrates legacy one-magazine scenarios to schema v2', () => {
   const state = normalizeScenarioState({ ...initialState(), magazineEnabled: true, faultMasks: { magazine: 3 } });
   assert.equal(state.magazines.length, 2);
+  assert.equal(state.magazineMode, 0);
   assert.equal(state.magazines[0].enabled, true);
   assert.equal(state.magazines[1].enabled, false);
   assert.deepEqual(state.faultMasks.magazines, [3, 0]);
+});
+
+test('schema v2 cannot hide twin pallet state or silently accept a later schema', () => {
+  assert.throws(() => normalizeScenarioState({ ...initialState(), magazineMode: 1 }), /только статичные/);
+  const store = new TestStore();
+  assert.throws(() => store.saveScenario({ name: 'Twin', schemaVersion: 3, initialState: initialState() }), /Неподдерживаемая версия/);
+  store.close();
 });
 
 test('keeps two magazines and rejects divergent shared slot types', () => {

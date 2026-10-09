@@ -226,6 +226,7 @@
 .twin-configuration-check > span { color: #637482; font-size: 11px; }
 .twin-configuration-check > strong { overflow: hidden; color: #263844; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .twin-configuration-check > small { grid-column: 2 / 4; color: #8997a2; font-size: 10px; }
+.twin-configuration-check > small > span { display: block; }
 .twin-configuration-check.missing > strong { color: #b27617; }
 .twin-configuration-plc-reason { margin: 8px 0; color: #a66b13; font-size: 10px; }
 .two-pallet-control .twin-configuration-option > button { width: 100%; margin-top: 10px; background: #fff; }
@@ -372,6 +373,157 @@
 .twin-popup-metrics b { color: #263844; font-size: 18px; font-weight: 600; }
 .twin-quick-popup .magazine-matrix { max-height: 330px; overflow: auto; padding-top: 4px; }
 .twin-quick-popup p { margin: 0; font-size: 11px; }
+
+/* Палетная карточка использует ту же иерархию, что ручное управление механизмами. */
+.two-pallet-control .twin-pallet-popup {
+  padding: 0; border-color: #d5e0e7; border-radius: 9px; background: #fff;
+  box-shadow: 0 20px 60px rgba(25,44,60,.2);
+}
+.two-pallet-control .twin-pallet-popup.wide {
+  height: min(650px, calc(100dvh - 390px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.two-pallet-control .twin-pallet-popup.wide > :is(header, .twin-pallet-popup-status) { flex: 0 0 auto; }
+.two-pallet-control .twin-pallet-popup.wide .twin-quick-popup-body {
+  min-height: 0;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+.two-pallet-control .twin-pallet-popup.wide .twin-quick-popup-body > :not(.magazine-matrix) { flex-shrink: 0; }
+.two-pallet-control .twin-pallet-popup > header {
+  min-height: 78px; display: grid; grid-template-columns: 48px minmax(0, 1fr) 38px;
+  align-items: center; justify-content: normal; gap: 12px; margin: 0; padding: 14px 16px;
+  border-bottom: 1px solid #e4eaee; flex-wrap: nowrap;
+}
+.twin-pallet-popup-icon {
+  width: 48px; height: 48px; display: grid; place-items: center;
+  border-radius: 8px; background: #edf6ff; color: #1473e6;
+}
+.twin-pallet-popup > header .twin-pallet-popup-icon svg { width: 28px; height: 28px; stroke-width: 1.6; }
+.twin-pallet-popup-heading { min-width: 0; }
+.twin-pallet-popup-heading small { display: block; color: #7d8d98; font-size: 9px; font-weight: 800; letter-spacing: .04em; }
+.twin-pallet-popup-heading h3 { margin: 4px 0 0; color: #223745; font-size: 18px; font-weight: 650; }
+.two-pallet-control .twin-pallet-popup > header > button {
+  width: 38px; min-width: 38px; height: 38px; min-height: 38px;
+  display: grid; place-items: center; padding: 0; border: 1px solid #dce4e9;
+  border-radius: 6px; background: #f9fbfc; color: #657986;
+}
+.twin-pallet-popup > header > button svg { width: 20px; height: 20px; }
+.twin-pallet-popup-status {
+  min-height: 54px; display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; padding: 10px 18px; background: #f7f9fa;
+}
+.twin-pallet-popup-status > span { display: inline-flex; align-items: center; gap: 9px; color: #748590; font-size: 11px; }
+.twin-pallet-popup-status > strong { color: #263b49; font-size: 13px; font-weight: 650; text-align: right; }
+.twin-pallet-popup-status[data-loaded=false] > strong { color: #a66b13; }
+.twin-pallet-popup-status[data-loaded=false] .indicator,
+.tx-pallet-loaded[data-loaded=false] .indicator {
+  background: #ed9220; box-shadow: 0 0 0 3px rgba(237,146,32,.14);
+  animation: twin-load-blink 1.2s steps(1, end) infinite;
+}
+@keyframes twin-load-blink { 50% { opacity: 0; } }
+.two-pallet-control .twin-pallet-popup .twin-quick-popup-body { gap: 12px; padding: 14px 16px 16px; }
+.twin-pallet-popup .twin-popup-pallet-tabs { gap: 8px; }
+.two-pallet-control .twin-pallet-popup .twin-popup-pallet-tabs button {
+  min-height: 48px; border-color: #dce4e9; background: #fff;
+  color: #435b6a; font-size: 14px; font-weight: 650;
+}
+.two-pallet-control .twin-pallet-popup .twin-popup-pallet-tabs button.active {
+  border-color: #1473e6; background: #f5faff; color: #1473e6;
+}
+.twin-pallet-popup .twin-popup-pallet-tabs small { color: #7b8c97; font-size: 10px; font-weight: 500; }
+.twin-pallet-popup .twin-popup-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; border: 1px solid #e2e8ec; border-radius: 6px; }
+.twin-pallet-popup .twin-popup-metrics span { padding: 9px; border: 0; border-right: 1px solid #e2e8ec; }
+.twin-pallet-popup .twin-popup-metrics span:last-child { border-right: 0; }
+.twin-pallet-popup .twin-quick-card-actions { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.twin-pallet-popup .twin-quick-card-actions.robot-pallet { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.two-pallet-control .twin-pallet-popup .twin-quick-card-actions button {
+  min-height: 54px; padding: 8px; border-color: #cbd8e1; background: #fff;
+  color: #496779; font-size: 12px; font-weight: 700; line-height: 1.25;
+}
+.two-pallet-control .twin-pallet-popup .twin-quick-card-actions button.confirm-load:not(:disabled):not(.command-unavailable) {
+  border-color: #1473e6; background: #1473e6; color: #fff;
+}
+.two-pallet-control .twin-pallet-popup .twin-quick-card-actions button.active { border-color: #1473e6; background: #f5faff; color: #1473e6; }
+.two-pallet-control .twin-pallet-popup .twin-quick-card-actions button:disabled {
+  opacity: 1; border-color: #dfe4e7; background: #f3f5f6; color: #a9b2b9; cursor: default;
+}
+.two-pallet-control .twin-pallet-popup .twin-quick-card-actions button.command-unavailable:not(:disabled) {
+  border-color: #dfe4e7; background: #f3f5f6; color: #a9b2b9;
+}
+/* Фиксированная высота строк не даёт кругам наезжать друг на друга. */
+.two-pallet-control .twin-pallet-popup .magazine-matrix,
+.twin-extended-panel .tx-tab-content .magazine-matrix {
+  width: 100%;
+  min-width: 0;
+  align-content: start;
+  grid-auto-rows: 40px;
+  gap: 12px 8px;
+}
+.two-pallet-control .twin-pallet-popup .magazine-matrix {
+  max-height: 330px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+.two-pallet-control .twin-pallet-popup.wide .magazine-matrix {
+  min-height: 120px;
+  max-height: none;
+  flex: 1 1 auto;
+}
+.twin-extended-panel .tx-tab-content .magazine-matrix {
+  max-height: none;
+  overflow: visible;
+}
+.two-pallet-control .twin-pallet-popup .magazine-matrix > .slot,
+.twin-extended-panel .tx-tab-content .magazine-matrix > .slot {
+  box-sizing: border-box;
+  width: min(40px, 100%);
+  min-width: 0;
+  height: auto;
+  min-height: 0;
+  aspect-ratio: 1;
+  padding: 0;
+  align-self: center;
+  justify-self: center;
+  border-radius: 50%;
+}
+.two-pallet-control .twin-pallet-popup .magazine-matrix > .slot:disabled,
+.twin-extended-panel .tx-tab-content .magazine-matrix > .slot:disabled {
+  opacity: 1;
+  cursor: default;
+}
+.two-pallet-control .twin-pallet-popup .magazine-matrix.numbered > .slot > span,
+.twin-extended-panel .tx-tab-content .magazine-matrix.numbered > .slot > span {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  color: #1473e6;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+}
+.two-pallet-control .twin-pallet-popup .magazine-matrix.numbered > .slot:not(.empty) > span,
+.twin-extended-panel .tx-tab-content .magazine-matrix.numbered > .slot:not(.empty) > span {
+  color: #fff;
+}
+@media (max-width: 720px) {
+  .twin-pallet-popup .twin-quick-card-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 420px) {
+  .twin-pallet-popup-status { align-items: flex-start; flex-direction: column; gap: 4px; padding: 10px 16px; }
+  .twin-pallet-popup-status > strong { text-align: left; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .twin-pallet-popup-status[data-loaded=false] .indicator,
+  .tx-pallet-loaded[data-loaded=false] .indicator { animation: none; }
+}
 
 @media (max-width: 600px) {
   .twin-configuration-quick-options { grid-template-columns: 1fr; }
@@ -664,7 +816,12 @@
   .twin-configuration-chevron { margin-left: 8px; }
 }
 
-/* Полноэкранное сравнение двух рабочих конфигураций магазина. */
+/* Предупреждение при выходе после правки операторской палеты. */
+.confirmation-overlay.operator-confirmation.twin-pallet-exit-confirmation {
+  position: fixed; z-index: 130; --confirmation-blue: #bd7414;
+}
+.twin-pallet-exit-confirmation .confirmation-context { background: #bd7414; }
+
 .twin-configuration-overlay {
   position: fixed; inset: 0; z-index: 120; display: grid; place-items: center;
   padding: 18px 24px; background: rgba(24, 38, 50, .16);
@@ -924,12 +1081,13 @@
 .twin-extended-panel .tx-pallet-metrics > div { display: grid; gap: 5px; }
 .twin-extended-panel .tx-pallet-metrics span { color: var(--tx-muted); font-size: 11px; }
 .twin-extended-panel .tx-pallet-metrics b { font-size: 19px; font-weight: 500; letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
-.twin-extended-panel .tx-pallet-loaded { color: var(--tx-muted); font-size: 11px; }
+.twin-extended-panel .tx-pallet-loaded { display: flex; align-items: center; gap: 8px; color: #a66b13; font-size: 11px; }
 .twin-extended-panel .tx-pallet-loaded[data-loaded=true] { color: #278052; }
 .twin-extended-panel .tx-inventory-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 14px; }
 .twin-extended-panel .tx-inventory-actions .magazine-matrix, .twin-extended-panel .tx-tab-content .magazine-matrix { margin: 0; }
 .twin-extended-panel :is(.tx-command-grid, .tx-inventory-actions, .tx-form-actions) { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
 .twin-extended-panel .tx-inventory-actions { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.twin-extended-panel .tx-inventory-actions.robot-pallet { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .twin-extended-panel :is(.tx-command-grid, .tx-inventory-actions, .tx-form-actions) > button {
   display: inline-flex; justify-content: center; align-items: center; gap: 7px; min-height: 44px; min-width: 0; padding: 10px;
   border: 1px solid transparent; border-radius: 16px; background: var(--tx-surface); color: #536277;

@@ -57,7 +57,7 @@ export interface TwinState {
   standstill: boolean; driveError: boolean; axisBound: boolean; ioMapped: boolean;
   manualLockOut?: boolean; manualStopOut?: boolean;
   sensors: { liftDown: boolean; liftUp: boolean; lockIn: boolean; lockOut: boolean; stopIn: boolean; stopOut: boolean; limitNegative: boolean; limitPositive: boolean; homeSensor: boolean };
-  allowed: Record<'confirm' | 'start' | 'enable' | 'swap' | 'power' | 'driveReset' | 'home' | 'lower' | 'raise' | 'select' | 'lock' | 'stop' | 'move' | 'jog' | 'teachOperator' | 'teachWork' | 'reset' | 'edit' | 'edit1' | 'edit2' | 'config', boolean>;
+  allowed: Record<'confirm' | 'start' | 'enable' | 'swap' | 'power' | 'driveReset' | 'home' | 'lower' | 'raise' | 'select' | 'lock' | 'stop' | 'move' | 'jog' | 'teachOperator' | 'teachWork' | 'reset' | 'edit' | 'edit1' | 'edit2' | 'load' | 'config', boolean>;
   config: TwinConfig; pallets: [PalletInventory, PalletInventory];
 }
 export const TWIN_REASONS = ['', 'Выбран статичный магазин', 'Настройте и подтвердите параметры механизма',
@@ -84,7 +84,7 @@ export function createTwinState(demo = false): TwinState {
     manualLockOut: undefined, manualStopOut: undefined,
     allowed: { confirm: demo, start: demo, enable: false, swap: false, power: demo, driveReset: demo, home: false,
       lower: demo, raise: demo, select: false, lock: demo, stop: demo, move: false, jog: false, teachOperator: false, teachWork: false,
-      reset: demo, edit: false, edit1: false, edit2: false, config: !demo },
+      reset: demo, edit: false, edit1: false, edit2: false, load: false, config: !demo },
     config: normalizeTwinConfig({ configured: demo, p1LockOut: demo, signalsConfigured: false, p1Signals: 0, p2Signals: 0,
       exchange: 0, workP1: demo ? 1020 : 0, workP2: demo ? 1020 : 0,
       home: 0, tolerance: demo ? 2 : 0, velocity: demo ? 200 : 0, acceleration: demo ? 400 : 0, deceleration: demo ? 400 : 0,
@@ -152,7 +152,7 @@ export function syncTwinPreview(twin: TwinState, controller: TwoPalletPreviewCon
     teachOperator: idle && lower && next.powered && next.homed && !next.homeRequired && !next.driveError,
     teachWork: idle && lower && next.powered && next.homed && !next.homeRequired && !next.driveError && !!next.selected,
     reset: idle && !!next.error && !next.driveError && !next.homeRequired,
-    edit1: false, edit2: false,
+    edit1: false, edit2: false, load: false,
     edit: true,
     config: idle && !next.enabled && !next.powered };
   if (!valid) {
@@ -162,6 +162,8 @@ export function syncTwinPreview(twin: TwinState, controller: TwoPalletPreviewCon
   }
   next.allowed.edit1 = next.allowed.edit && (next.robotPallet !== 1 || !next.enabled);
   next.allowed.edit2 = next.allowed.edit && (next.robotPallet !== 2 || !next.enabled);
+  next.allowed.load = next.confirmed && !next.busy && !next.pallets[2 - next.robotPallet].loaded
+    && (next.robotPallet === 1 ? next.allowed.edit2 : next.allowed.edit1);
   next.ready = next.powered && valid && next.enabled && next.confirmed && !next.busy && !next.error && !!next.candidate;
   next.reason = !valid ? 2 : next.driveError ? 6 : next.homeRequired ? 8 : !next.candidate ? upper ? 11 : 12 : !next.confirmed ? 13 : !next.pallets[2 - next.robotPallet].loaded ? 14 : 0;
   return next;
@@ -177,7 +179,7 @@ export function commandTwinPreview(twin: TwinState, controller: TwoPalletPreview
     case 'rejectStart': break;
     case 'enable': if (a.enable) next.enabled = true; break;
     case 'disable': next.enabled = false; break;
-    case 'swap': if (a.swap) { next.step = 20; controller.swap(twinSignalPattern(next.config, 3 - next.robotPallet).liftUp); } break;
+    case 'swap': if (a.swap) { next.step = 20; next.pallets.forEach((p) => { p.loaded = false; }); controller.swap(twinSignalPattern(next.config, 3 - next.robotPallet).liftUp); } break;
     case 'lower': if (a.lower) manual(100, () => controller.lift(false)); break;
     case 'raise': if (a.raise) manual(110, () => controller.lift(true)); break;
     case 'select1': case 'select2': if (a.select) manual(120, () => controller.select(action === 'select1' ? 1 : 2)); break;
@@ -209,6 +211,7 @@ export function commandTwinPreview(twin: TwinState, controller: TwoPalletPreview
     case 'loaded': case 'fill': case 'clear': case 'slot': {
       const pallet = data.pallet ?? 3 - next.robotPallet;
       if (!([1, 2].includes(pallet) && (pallet === 1 ? a.edit1 : a.edit2))) break;
+      if (action === 'loaded' && (!a.load || pallet === next.robotPallet)) break;
       const p = next.pallets[pallet - 1];
       p.loaded = action === 'loaded';
       if (action === 'fill' || action === 'clear') p.slots.fill(action === 'fill' ? 'blank' : 'empty');
@@ -219,6 +222,7 @@ export function commandTwinPreview(twin: TwinState, controller: TwoPalletPreview
       break;
     }
   }
+  if (next.robotPallet !== twin.robotPallet) next.pallets.forEach((p) => { p.loaded = false; });
   return syncTwinPreview(next, controller);
 }
 export function changeOfflineMagazineMode(state: CellState, mode: 0 | 1, bank: Map<number, CellState['magazines']>): CellState {

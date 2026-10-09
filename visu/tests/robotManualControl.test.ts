@@ -14,7 +14,7 @@ test('current point uses PLC enum, not the manual selector code', () => {
 });
 
 test('manual point list preserves the gateway contract without legacy inside-machine points', () => {
-  assert.deepEqual(MANUAL_POINT_OPTIONS.map((point) => point.value), [1, 3, 4, 5, 7, 8, 9, 11, 12, 13, 14, 15, 16]);
+  assert.deepEqual(MANUAL_POINT_OPTIONS.map((point) => point.value), [1, 3, 4, 5, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 19, 20, 22]);
 });
 
 test('machine and home moves do not carry stale magazine or slot fields', () => {

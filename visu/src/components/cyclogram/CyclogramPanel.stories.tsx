@@ -26,7 +26,7 @@ const meta = {
   tags: ['autodocs'],
   parameters: { layout: 'fullscreen' },
   decorators: [(Story) => <div style={{ minWidth: 1080, padding: 18, background: '#f5f8fa' }}><Story /></div>],
-  args: { onClose: () => {}, onExport: () => {}, onClear: () => {} },
+  args: { onClose: () => {}, onExport: () => {} },
 } satisfies Meta<typeof CyclogramPanel>;
 
 export default meta;

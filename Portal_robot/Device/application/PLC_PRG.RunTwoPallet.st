@@ -193,54 +193,50 @@ FOR uiTwin := 1 TO 2 DO
 		OR GVL_MAGAZINE.astAutoCommand[uiTwin].xExecute
 		OR GVL_MAGAZINE.astCommand[uiTwin].xExecute
 		OR ((GVL_ROBOT.Status.xBusy OR xMotionBusy)
-			AND (GVL_ROBOT.Status.uiMagazineContext = uiTwin));
-	xTwinRobotClear := NOT GVL_ROBOT.Status.xBusy AND NOT xMotionBusy
-		AND NOT xTwinRobotOperation
-		AND GVL_CELL_MANAGER.Status.xMagazineExchangeAllowed
-		AND NOT GVL_MACHINE.Status[1].xBusy AND NOT GVL_MACHINE.Status[2].xBusy AND NOT GVL_MACHINE.Status[3].xBusy
-		AND NOT GVL_ROBOT.Status.xError AND xRobotInterfaceReady
-		AND (GVL_ROBOT.Status.eCurrentPoint <> E_POINT_NAME.NONE)
-		AND (GVL_ROBOT.Status.uiMagazineContext <> uiTwin)
-		AND (GVL_ROBOT.Status.eCurrentPoint <> E_POINT_NAME.MAGAZINE_CHANGE)
-		AND (GVL_ROBOT.Status.eCurrentPoint <> E_POINT_NAME.MAGAZINE_IN_SLOT);
+			AND (GVL_ROBOT.Status.uiMagazineContext = uiTwin))
+		OR ((GVL_CELL_MANAGER.Status.uiActiveMagazine = uiTwin)
+			AND ((GVL_CELL_MANAGER.Diag.eState = E_CELL_STATE.MAGAZINE)
+				OR (GVL_CELL_MANAGER.Diag.eState = E_CELL_STATE.RELEASE_MAGAZINE)));
+	// Для обмена важна занятость только этого магазина. Точка и состояние
+	// интерфейса робота после инициализации могут быть неизвестны.
+	xTwinRobotSwapWindow := NOT xTwinRobotOperation;
 	xTwinOtherLoaded := FALSE;
 	IF (GVL_TWO_PALLET.astStatus[uiTwin].uiRobotPallet >= UINT#1)
 		AND (GVL_TWO_PALLET.astStatus[uiTwin].uiRobotPallet <= UINT#2) THEN
 		uiTwinPallet := UINT#3 - GVL_TWO_PALLET.astStatus[uiTwin].uiRobotPallet;
 		xTwinOtherLoaded := GVL_TWO_PALLET.astStore[uiTwin].axLoaded[uiTwinPallet];
 	END_IF;
-	// Запрос сохраняет цикл, пока робот и автоматы освобождают окно обмена.
-	// Готовность зоны проверяет FB_TWO_PALLET; она не должна терять сам запрос.
+	// Finished удерживает цикл в ожидании даже до подтверждения загрузки второй палеты.
+	// Подтверждение, разрешение автообмена и готовность зоны отдельно разрешают движение.
 	axTwinAutoSwapPending[uiTwin] := (GVL_TWO_PALLET.uiMode = UINT#1)
 		AND GVL_CELL_MANAGER.Status.xRunning
 		AND NOT GVL_CELL_MANAGER.Status.xStopPending
 		AND NOT GVL_CELL_CONTROL.xStop
 		AND NOT GVL_CELL_CONTROL.xManual
 		AND GVL_MAGAZINE.astPartStatus[uiTwin].xFinished
-		AND xTwinAutoSwapEnabled
-		AND xTwinOtherLoaded
 		AND NOT astTwinCommand[uiTwin].xDisable
 		AND NOT astTwinCommand[uiTwin].xStop;
+	uiTwinRobotPalletBefore := GVL_TWO_PALLET.astStatus[uiTwin].uiRobotPallet;
 	TWIN[uiTwin](
 		xSelected := GVL_TWO_PALLET.uiMode = 1,
 		xManual := GVL_CELL_CONTROL.xManual AND NOT GVL_CELL_MANAGER.Status.xRunning,
-		xSafe := CELL_SAFETY.Status.xReady AND NOT GVL_CELL_CONTROL.xGlobalError
+		xSafe := CELL_SAFETY.Status.xReady AND NOT GVL_CELL_CONTROL.xGlobalError AND NOT GVL_HMI.xIoEmergencyStopActive
 			AND CELL_SAFETY.astEnclosureDoorStatus[uiTwin * 2 - 1].xLocked
 			AND CELL_SAFETY.astEnclosureDoorStatus[uiTwin * 2].xLocked
 			AND NOT CELL_SAFETY.astEnclosureDoorStatus[uiTwin * 2 - 1].xUnlockOutput
 			AND NOT CELL_SAFETY.astEnclosureDoorStatus[uiTwin * 2].xUnlockOutput,
-		xRobotClear := xTwinRobotClear,
-		xRobotIdle := NOT GVL_ROBOT.Status.xBusy AND NOT xMotionBusy,
+		xRobotSwapWindow := xTwinRobotSwapWindow,
 		xRobotOperation := xTwinRobotOperation,
 		xRobotGeometryReady := NOT GVL_HMI.xModbusMode AND xPointTableReady,
 		xRobotMagazineReady := GVL_MAGAZINE.astPartStatus[uiTwin].xEnableCheckNoError
 			AND GVL_MAGAZINE.astPartStatus[uiTwin].xEnableCheckGeometry,
 		xConnection := xHmiConnectionAlive,
 		xStopRequest := GVL_CELL_CONTROL.xStop OR GVL_HMI.astMagazineCommand[uiTwin].xStop OR GVL_TWO_PALLET.xModeChanged,
-		xAutoSwap := axTwinAutoSwapPending[uiTwin],
+		xAutoSwap := axTwinAutoSwapPending[uiTwin] AND xTwinAutoSwapEnabled AND xTwinOtherLoaded,
 		xOtherLoaded := xTwinOtherLoaded,
 		xActivePalletEditAllowed := NOT xTwinRobotOperation,
 		xConfigurationChanged := axTwinConfigurationChanged[uiTwin],
+        xIoPneumaticOverride := axIoMagazineInvalidated[uiTwin],
 		xExternalCommandRejected := axTwinExternalCommandRejected[uiTwin],
 		Command := astTwinCommand[uiTwin],
 		Config := GVL_TWO_PALLET.astActiveConfig[uiTwin], Input := GVL_TWO_PALLET.astInput[uiTwin],
@@ -248,10 +244,14 @@ FOR uiTwin := 1 TO 2 DO
 		Diag => GVL_TWO_PALLET.astDiag[uiTwin],
 		Error => GVL_TWO_PALLET.astError[uiTwin],
 		Output => GVL_TWO_PALLET.astOutput[uiTwin]);
+    axIoMagazineInvalidated[uiTwin] := FALSE;
+	// Блокировка относится только к этому магазину и удерживается до полного
+	// окончания механического обмена, включая последний скан Completed.
+	axTwinMagazineExchangeInProgress[uiTwin] := GVL_TWO_PALLET.astStatus[uiTwin].xBusy
+		OR GVL_TWO_PALLET.astStatus[uiTwin].xCompleted;
 	GVL_TWO_PALLET.astStatus[uiTwin].xAutoSwapEnabled := xTwinAutoSwapEnabled;
-	// После Disable, Stop или аварии ожидание обмена не удерживает планировщик.
+	// После Stop/Disable или аварии ожидание обмена не удерживает планировщик.
 	axTwinAutoSwapPending[uiTwin] := axTwinAutoSwapPending[uiTwin]
-		AND GVL_TWO_PALLET.astStatus[uiTwin].xEnabled
 		AND NOT GVL_TWO_PALLET.astStatus[uiTwin].xError;
 	axTwinConfigurationChanged[uiTwin] := FALSE;
 	axTwinExternalCommandRejected[uiTwin] := FALSE;
@@ -291,6 +291,16 @@ FOR uiTwin := 1 TO 2 DO
 		GVL_TWO_PALLET.astStore[uiTwin].axLoaded[1] := FALSE;
 		GVL_TWO_PALLET.astStore[uiTwin].axLoaded[2] := FALSE;
 	END_IF;
+	// Ручное восстановление может сменить учётную роль без команды обмена.
+	IF uiTwinRobotPalletBefore <> GVL_TWO_PALLET.astStatus[uiTwin].uiRobotPallet THEN
+		GVL_TWO_PALLET.astStore[uiTwin].axLoaded[1] := FALSE;
+		GVL_TWO_PALLET.astStore[uiTwin].axLoaded[2] := FALSE;
+	END_IF;
+	// Ручная смена расходует прежнее подтверждение уже при принятии команды.
+	IF astTwinCommand[uiTwin].xSwap AND GVL_TWO_PALLET.astStatus[uiTwin].xCommandAccepted THEN
+		GVL_TWO_PALLET.astStore[uiTwin].axLoaded[1] := FALSE;
+		GVL_TWO_PALLET.astStore[uiTwin].axLoaded[2] := FALSE;
+	END_IF;
 	IF (uiTwinRequestResult = 2) AND (stTwinRequest.uiMagazine = uiTwin)
 		AND (((stTwinRequest.uiCommand >= 1) AND (stTwinRequest.uiCommand <= 19))
 			OR ((stTwinRequest.uiCommand >= 25) AND (stTwinRequest.uiCommand <= 32)))
@@ -317,7 +327,12 @@ IF xTwinInventoryCommand THEN
 	ELSIF ((uiTwinPallet = 1) AND GVL_TWO_PALLET.astStatus[uiTwin].xEdit1Allowed)
 		OR ((uiTwinPallet = 2) AND GVL_TWO_PALLET.astStatus[uiTwin].xEdit2Allowed) THEN
 		CASE stTwinRequest.uiCommand OF
-			20: GVL_TWO_PALLET.astStore[uiTwin].axLoaded[uiTwinPallet] := TRUE; uiTwinRequestResult := 1;
+			20:
+				IF GVL_TWO_PALLET.astStatus[uiTwin].xLoadAllowed
+					AND (uiTwinPallet <> GVL_TWO_PALLET.astStatus[uiTwin].uiRobotPallet) THEN
+					GVL_TWO_PALLET.astStore[uiTwin].axLoaded[uiTwinPallet] := TRUE;
+					uiTwinRequestResult := 1;
+				END_IF;
 			21, 22:
 				FOR uiTwinSlot := 1 TO 96 DO
 					GVL_TWO_PALLET.astStore[uiTwin].astPallet[uiTwinPallet].aSlots[uiTwinSlot].xInPosition := stTwinRequest.uiCommand = 22;

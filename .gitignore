@@ -1,0 +1,67 @@
+# Local agent state and tools
+.agents/
+.codex/
+.zcodeignore
+
+# Dependencies, caches and builds
+node_modules/
+.venv/
+venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.py[cod]
+*.egg-info/
+dist/
+storybook-static/
+artifacts/
+*.tsbuildinfo
+
+# Runtime data, credentials and local configuration
+visu/gateway/data/
+robot_simulator/config.json
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.log
+*.pem
+*.key
+*.pfx
+*.p12
+*.crt
+*.cer
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+
+# CODESYS generated files, editor state and backups
+*.precompilecache
+*.compileinfo
+*.bootinfo
+*.bootinfo_guids
+*.opt
+*.project.~*
+*.projectarchive
+/*.Device.Application*.xml
+*.bak
+*.tmp
+
+# Temporary work and superseded sources
+/archive/
+/logs/
+/temp/
+/tmp/
+/spreadsheet_work/
+/PlcLogic/
+/_cnc/
+
+# Keep only the delivered I/O tables referenced by the documentation
+/outputs/*
+!/outputs/physical-io-20261001/
+/outputs/physical-io-20261001/*
+!/outputs/physical-io-20261001/signals_for_excel.tsv
+!/outputs/physical-io-20261001/portal_robot_DO_DI_with_IO_calc.xlsx

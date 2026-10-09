@@ -1,4 +1,4 @@
-import { Download, Pause, Play, Trash2, ZoomIn, ZoomOut, X } from 'lucide-react';
+import { Download, Pause, Play, ZoomIn, ZoomOut, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import {
   CYCLOGRAM_CATEGORY_COLORS,
@@ -21,7 +21,6 @@ export interface CyclogramPanelProps {
   history: CyclogramHistory;
   onClose: () => void;
   onExport: (scope: 'all' | 'visible', fromMs?: number, toMs?: number) => void;
-  onClear: () => void;
   dragHandle?: ReactNode;
   initialPaused?: boolean;
   className?: string;
@@ -208,13 +207,12 @@ function CanvasTimeline({ intervals, fromMs, toMs, nowMs, paused, onHover, onPan
   </div>;
 }
 
-export function CyclogramPanel({ history, onClose, onExport, onClear, dragHandle, initialPaused = false, className }: CyclogramPanelProps) {
+export function CyclogramPanel({ history, onClose, onExport, dragHandle, initialPaused = false, className }: CyclogramPanelProps) {
   const [paused, setPaused] = useState(initialPaused);
   const [frozenNow, setFrozenNow] = useState<number | null>(initialPaused ? history.serverTime : null);
   const [windowMs, setWindowMs] = useState(DEFAULT_WINDOW_MS);
   const [clock, setClock] = useState(Date.now());
   const [exportOpen, setExportOpen] = useState(false);
-  const [clearOpen, setClearOpen] = useState(false);
   const [hovered, setHovered] = useState<HoveredInterval | null>(null);
   const serverOffset = useMemo(() => history.serverTime - Date.now(), [history.serverTime]);
   const liveNow = clock + serverOffset;
@@ -264,13 +262,6 @@ export function CyclogramPanel({ history, onClose, onExport, onClear, dragHandle
     setExportOpen(false);
     onExport(scope, scope === 'visible' ? visibleFrom : undefined, scope === 'visible' ? visibleTo : undefined);
   };
-  const clearTimeline = () => {
-    setClearOpen(false);
-    setFrozenNow(liveNow);
-    setPaused(true);
-    setHovered(null);
-    onClear();
-  };
   const panPausedTimeline = (deltaPixels: number, width: number) => {
     if (!paused || width <= 0) return;
     const minEnd = Math.max(0, liveNow - history.retentionMs + windowMs);
@@ -280,13 +271,12 @@ export function CyclogramPanel({ history, onClose, onExport, onClear, dragHandle
   return <section className={`cyclogram-panel ${className ?? ''}`.trim()} aria-label="Циклограмма">
     {dragHandle}
     <header className="cyclogram-heading">
-      <div><span>МОНИТОРИНГ ПРОЦЕССА</span><h2>Циклограмма</h2><p>{paused ? 'Просмотр остановлен — перетаскивайте временную шкалу или используйте ползунок.' : 'Живая временная шкала PLC. История сохраняется в шлюзе до 24 часов.'}</p></div>
+      <div><span>МОНИТОРИНГ ПРОЦЕССА</span><h2>Циклограмма</h2><p>{paused ? 'Просмотр остановлен — перетаскивайте временную шкалу или используйте ползунок.' : 'Живая временная шкала PLC. Срок хранения архива задаёт администратор.'}</p></div>
       <div className="cyclogram-actions">
         <button className={`cyclogram-action${paused ? ' is-active' : ''}`} type="button" onClick={togglePaused} title={paused ? 'Продолжить' : 'Приостановить'}>{paused ? <Play /> : <Pause />}<span>{paused ? 'Продолжить' : 'Пауза'}</span></button>
         <button className="cyclogram-action icon-only" type="button" onClick={() => adjustZoom(2)} disabled={windowMs >= Math.min(MAX_WINDOW_MS, history.retentionMs)} title="Уменьшить масштаб"><ZoomOut /></button>
         <button className="cyclogram-action icon-only" type="button" onClick={() => adjustZoom(.5)} disabled={windowMs <= MIN_WINDOW_MS} title="Увеличить масштаб"><ZoomIn /></button>
         <button className="cyclogram-action export" type="button" onClick={() => setExportOpen(true)} title="Сохранить в Excel"><Download /><span>Excel</span></button>
-        <button className="cyclogram-action clear" type="button" onClick={() => setClearOpen(true)} title="Очистить данные циклограммы"><Trash2 /><span>Очистить</span></button>
         <button className="panel-close-button" type="button" onClick={onClose} aria-label="Закрыть циклограмму" title="Закрыть"><X /></button>
       </div>
     </header>
@@ -302,11 +292,8 @@ export function CyclogramPanel({ history, onClose, onExport, onClear, dragHandle
       const progress = Number(event.target.value) / 1000;
       setFrozenNow(sliderMin + (sliderMax - sliderMin) * progress);
     }} /><time>{formatTime(visibleTo, true)}</time></div>
-    <Dialog open={exportOpen} onOpenChange={setExportOpen} title="Экспорт циклограммы" description="Excel содержит отдельную строку для каждого действия и цветовую диаграмму Ганта." footer={<><button className="dialog-secondary-action" type="button" onClick={() => setExportOpen(false)}>Отмена</button><button className="dialog-primary-action" type="button" onClick={() => exportRange('visible')}>Видимый диапазон</button><button className="dialog-primary-action" type="button" onClick={() => exportRange('all')}>Все 24 часа</button></>}>
+    <Dialog open={exportOpen} onOpenChange={setExportOpen} title="Экспорт циклограммы" description="Excel содержит отдельную строку для каждого действия и цветовую диаграмму Ганта." footer={<><button className="dialog-secondary-action" type="button" onClick={() => setExportOpen(false)}>Отмена</button><button className="dialog-primary-action" type="button" onClick={() => exportRange('visible')}>Видимый диапазон</button><button className="dialog-primary-action" type="button" onClick={() => exportRange('all')}>Весь архив</button></>}>
       <div className="cyclogram-export-note"><b>Видимый диапазон:</b><span>{formatRange(visibleFrom, visibleTo)}</span><p>Параллельные действия сохраняют общее время, поэтому их можно сравнить по горизонтальной шкале.</p></div>
-    </Dialog>
-    <Dialog open={clearOpen} onOpenChange={setClearOpen} title="Очистить циклограмму?" description="Циклограмма будет поставлена на паузу, а вся сохранённая история удалена без возможности восстановления." footer={<><button className="dialog-secondary-action" type="button" onClick={() => setClearOpen(false)}>Отмена</button><button className="dialog-danger-action" type="button" onClick={clearTimeline}>Пауза и сброс</button></>}>
-      <div className="cyclogram-clear-note"><Trash2 /><p><b>Будут удалены все интервалы за последние 24 часа.</b><span>Если связь с PLC установлена, запись начнётся заново с текущего состояния.</span></p></div>
     </Dialog>
   </section>;
 }

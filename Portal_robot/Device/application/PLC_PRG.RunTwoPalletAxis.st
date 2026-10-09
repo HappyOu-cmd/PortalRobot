@@ -2,7 +2,8 @@ METHOD PRIVATE RunTwoPalletAxis
 
 // --- BEGIN IMPLEMENTATION ---
 
-// Используем две существующие виртуальные SoftMotion-оси прежних магазинов.
+// Magazine_1/2 — точки привязки Motion: в NORMAL настроить реальные оси EtherCAT.
+// MC_Home запускает поиск дома в серводрайвере; FB_AXIS ждёт его Done.
 // Ссылки назначаются каждый скан до проверки __ISVALIDREF и вызова FB_AXIS.
 GVL_TWO_PALLET.Axis1 REF= Magazine_1;
 GVL_TWO_PALLET.Axis2 REF= Magazine_2;
@@ -16,7 +17,7 @@ FOR uiTwin := 1 TO 2 DO
 		AND CELL_SAFETY.Status.xReady AND GVL_TWO_PALLET.astInput[uiTwin].xIoMapped;
 	GVL_TWO_PALLET.astAxis[uiTwin].Command.xGlobalError := GVL_CELL_CONTROL.xGlobalError;
 	GVL_TWO_PALLET.astAxis[uiTwin].Command.xResetAllError := GVL_TWO_PALLET.astOutput[uiTwin].xDriveReset;
-	GVL_TWO_PALLET.astAxis[uiTwin].Command.xStop := GVL_TWO_PALLET.astOutput[uiTwin].xStop;
+	GVL_TWO_PALLET.astAxis[uiTwin].Command.xStop := GVL_TWO_PALLET.astOutput[uiTwin].xStop OR GVL_HMI.xIoEmergencyStopActive;
 	GVL_TWO_PALLET.astAxis[uiTwin].Command.xHome := GVL_TWO_PALLET.astOutput[uiTwin].xHome;
 	GVL_TWO_PALLET.astAxis[uiTwin].Command.xMoveAbsolute := GVL_TWO_PALLET.astOutput[uiTwin].xMove;
 	GVL_TWO_PALLET.astAxis[uiTwin].Command.xJogPositive := GVL_TWO_PALLET.astOutput[uiTwin].xJogPositive;
@@ -67,7 +68,8 @@ FOR uiTwin := 1 TO 2 DO
 				- GVL_TWO_PALLET.astActiveConfig[uiTwin].lrHome)
 				<= GVL_TWO_PALLET.astActiveConfig[uiTwin].lrTolerance);
 		axTwinSimIoOwned[uiTwin] := TRUE;
-	ELSIF axTwinSimIoOwned[uiTwin] THEN
+	ELSIF axTwinSimIoOwned[uiTwin]
+	AND (GVL_CELL_SETTINGS.eTestEnvironment <> E_CELL_TEST_ENVIRONMENT.NORMAL) THEN
 		// После выхода из виртуальной среды не оставляем её герконы как реальные.
 		GVL_TWO_PALLET.astInput[uiTwin].xIoMapped := FALSE;
 		GVL_TWO_PALLET.astInput[uiTwin].xLiftDown := FALSE;
@@ -76,6 +78,15 @@ FOR uiTwin := 1 TO 2 DO
 		GVL_TWO_PALLET.astInput[uiTwin].xLockOut := FALSE;
 		GVL_TWO_PALLET.astInput[uiTwin].xStopIn := FALSE;
 		GVL_TWO_PALLET.astInput[uiTwin].xStopOut := FALSE;
+		GVL_TWO_PALLET.astInput[uiTwin].xLimitNegative := FALSE;
+		GVL_TWO_PALLET.astInput[uiTwin].xLimitPositive := FALSE;
+		GVL_TWO_PALLET.astInput[uiTwin].xHomeSensor := FALSE;
+		axTwinSimIoOwned[uiTwin] := FALSE;
+	END_IF;
+	IF GVL_CELL_SETTINGS.eTestEnvironment = E_CELL_TEST_ENVIRONMENT.NORMAL THEN
+		// ReadPhysicalInputs уже заменил виртуальные герконы в начале скана.
+		// Концевики и датчик дома заведены в драйвер, не в DI ячейки. Эти legacy-
+		// поля не имитируют PDO; результат Home приходит выше через xHomed/xMotionDone.
 		GVL_TWO_PALLET.astInput[uiTwin].xLimitNegative := FALSE;
 		GVL_TWO_PALLET.astInput[uiTwin].xLimitPositive := FALSE;
 		GVL_TWO_PALLET.astInput[uiTwin].xHomeSensor := FALSE;

@@ -1,0 +1,206 @@
+<ExportFile>
+  <StructuredView Guid="{d9b2b2cc-ea99-4c3b-aa42-1e5c49e65b84}">
+<Single xml:space="preserve" Type="{3daac5e4-660e-42e4-9cea-3711b98bfb63}" Method="IArchivable">
+  <Null Name="Profile" />
+  <List2 Name="EntryList">
+    <Single Type="{6198ad31-4b98-445c-927f-3258a0e82fe3}" Method="IArchivable">
+      <Single Name="IsRoot" Type="bool">True</Single>
+      <Single Name="MetaObject" Type="{81297157-7ec9-45ce-845e-84cab2b88ade}" Method="IArchivable">
+        <Single Name="Guid" Type="System.Guid">4b276307-7f93-436c-954a-d20d03370353</Single>
+        <Single Name="ParentGuid" Type="System.Guid">5bef6f4a-9ee3-4870-95e1-3c0f42454292</Single>
+        <Single Name="Name" Type="string">GVL_PHYSICAL_IO</Single>
+        <Dictionary Type="{2c41fa04-1834-41c1-816e-303c7aa2c05b}" Name="Properties">
+          <Entry>
+            <Key>
+              <Single Type="System.Guid">829a18f2-c514-4f6e-9634-1df173429203</Single>
+            </Key>
+            <Value>
+              <Single Type="{829a18f2-c514-4f6e-9634-1df173429203}" Method="IArchivable">
+                <Dictionary Type="{fa2ee218-a39b-4b6d-b249-49dbddbd168a}" Name="ParentObjects">
+                  <Entry>
+                    <Key>
+                      <Single Type="System.Guid">d9b2b2cc-ea99-4c3b-aa42-1e5c49e65b84</Single>
+                    </Key>
+                    <Value>
+                      <Single Type="System.Guid">3fe5920a-4b84-4acf-a2c0-c04494c55ea0</Single>
+                    </Value>
+                  </Entry>
+                </Dictionary>
+              </Single>
+            </Value>
+          </Entry>
+        </Dictionary>
+        <Single Name="TypeGuid" Type="System.Guid">ffbfa93a-b94d-45fc-a329-229860183b1d</Single>
+        <Array Name="EmbeddedTypeGuids" Type="System.Guid">
+          <Single Type="System.Guid">a9ed5b7e-75c5-4651-af16-d2c27e98cb94</Single>
+        </Array>
+        <Single Name="Timestamp" Type="long">0</Single>
+      </Single>
+      <Single Name="Object" Type="{ffbfa93a-b94d-45fc-a329-229860183b1d}" Method="IArchivable">
+        <Single Name="Interface" Type="{a9ed5b7e-75c5-4651-af16-d2c27e98cb94}" Method="IArchivable">
+          <Single Name="TextDocument" Type="{f3878285-8e4f-490b-bb1b-9acbb7eb04db}" Method="IArchivable">
+            <Single Name="TextBlobForSerialisation" Type="string">{attribute 'qualified_only'}
+VAR_GLOBAL
+	// Привязать существующие BOOL через Device I/O Mapping. Адреса ниже —
+	// проект фиксированного процесса с базой байта 256, НЕ адреса по умолчанию MC522.
+	// Не добавлять AT поверх Device I/O Mapping: у выхода должен быть один писатель.
+	// MC522 16 DI/16 DO + 5×GL200-DI16 + 2×GL200-DQ16D; 84 BOOL DI, 2 HSC и 47 DO.
+	xMappingVerified : BOOL := FALSE; // Наладчик подтверждает после полной проверки клемм; не RETAIN
+	xNormalActive : BOOL; // NORMAL и подтверждённая карта были применены перед RunSafety
+	stGripperFeedback : ST_GRIPPER_STATUS;
+	stGripperCommand : ST_GRIPPER_COMMAND;
+	axMachineHatchClose : ARRAY [1..3] OF BOOL; // Удерживаемые уровни однокатушечных люков
+	axGkPartAtEnd : ARRAY [1..2] OF BOOL; // Фильтрованная фиксация ГК 1/2: NORMAL с проверенной картой либо разрешённой подменой DI
+	xDiMachine1Ready : BOOL; // %IX256.2; MC522: DI_CH2; Станок готов к работе с роботом. 1 — указанное состояние; 1→0 без задержки
+	xDiMachine1Alarm : BOOL; // %IX256.3; MC522: DI_CH3; Авария станка. 1 — авария; снимается физически человеком; 0→1 без задержки
+	xDiMachine1DoorOpen : BOOL; // %IX256.4; MC522: DI_CH4; Роботный люк открыт. 1 — указанное состояние; 1→0 без задержки
+	xDiMachine1DoorClosed : BOOL; // %IX256.5; MC522: DI_CH5; Роботный люк закрыт. 1 — указанное состояние; 1→0 без задержки
+	xDiMachine1HatchLocked : BOOL; // %IX256.6; MC522: DI_CH6; Замок роботного люка заперт. 1 — замок люка заперт; 0 — запирание не подтверждено; 1→0 без задержки
+	xDiMachine1SafetyDoorOpen : BOOL; // %IX256.7; MC522: DI_CH7; Операторская дверь открыта. 1 — указанное состояние; 1→0 без задержки
+	xDiMachine1SafetyDoorClosed : BOOL; // %IX257.0; MC522: DI_CH8; Операторская дверь закрыта. 1 — указанное состояние; 1→0 без задержки
+	xDiMachine1ChuckClamped : BOOL; // %IX257.1; MC522: DI_CH9; Патрон зажат. 1 — указанное состояние; 1→0 без задержки
+	xDiMachine1ChuckUnclamped : BOOL; // %IX257.2; MC522: DI_CH10; Патрон разжат. 1 — указанное состояние; 1→0 без задержки
+	xDiMachine1CycleActive : BOOL; // %IX257.3; MC522: DI_CH11; Цикл обработки активен. 1 — указанное состояние
+	xDiMachine1CycleDone : BOOL; // %IX257.4; MC522: DI_CH12; Цикл обработки завершён. 1 — указанное состояние
+	xDiMachine2Ready : BOOL; // %IX257.5; MC522: DI_CH13; Станок готов к работе с роботом. 1 — указанное состояние; 1→0 без задержки
+	xDiMachine2Alarm : BOOL; // %IX257.6; MC522: DI_CH14; Авария станка. 1 — авария; снимается физически человеком; 0→1 без задержки
+	xDiMachine2DoorOpen : BOOL; // %IX257.7; MC522: DI_CH15; Роботный люк открыт. 1 — указанное состояние; 1→0 без задержки
+	xDiMachine2DoorClosed : BOOL; // %IX258.0; GL200-DI16 #1: CH0; Роботный люк закрыт. 1 — указанное состояние; 1→0 без задержки
+	xDiMachine2HatchLocked : BOOL; // %IX258.1; GL200-DI16 #1: CH1; Замок роботного люка заперт. 1 — замок люка заперт; 0 — запирание не подтверждено; 1→0 без задержки
+	xDiMachine2SafetyDoorOpen : BOOL; // %IX258.2; GL200-DI16 #1: CH2; Операторская дверь открыта. 1 — указанное состояние; 1→0 без задержки
+	xDiMachine2SafetyDoorClosed : BOOL; // %IX258.3; GL200-DI16 #1: CH3; Операторская дверь закрыта. 1 — указанное состояние; 1→0 без задержки
+	xDiMachine2ChuckClamped : BOOL; // %IX258.4; GL200-DI16 #1: CH4; Патрон зажат. 1 — указанное состояние; 1→0 без задержки
+	xDiMachine2ChuckUnclamped : BOOL; // %IX258.5; GL200-DI16 #1: CH5; Патрон разжат. 1 — указанное состояние; 1→0 без задержки
+	xDiMachine2CycleActive : BOOL; // %IX258.6; GL200-DI16 #1: CH6; Цикл обработки активен. 1 — указанное состояние
+	xDiMachine2CycleDone : BOOL; // %IX258.7; GL200-DI16 #1: CH7; Цикл обработки завершён. 1 — указанное состояние
+	xDiMachine3Ready : BOOL; // %IX259.0; GL200-DI16 #1: CH8; Станок готов к работе с роботом. 1 — указанное состояние; 1→0 без задержки
+	xDiMachine3Alarm : BOOL; // %IX259.1; GL200-DI16 #1: CH9; Авария станка. 1 — авария; снимается физически человеком; 0→1 без задержки
+	xDiMachine3DoorOpen : BOOL; // %IX259.2; GL200-DI16 #1: CH10; Роботный люк открыт. 1 — указанное состояние; 1→0 без задержки
+	xDiMachine3DoorClosed : BOOL; // %IX259.3; GL200-DI16 #1: CH11; Роботный люк закрыт. 1 — указанное состояние; 1→0 без задержки
+	xDiMachine3HatchLocked : BOOL; // %IX259.4; GL200-DI16 #1: CH12; Замок роботного люка заперт. 1 — замок люка заперт; 0 — запирание не подтверждено; 1→0 без задержки
+	xDiMachine3SafetyDoorOpen : BOOL; // %IX259.5; GL200-DI16 #1: CH13; Операторская дверь открыта. 1 — указанное состояние; 1→0 без задержки
+	xDiMachine3SafetyDoorClosed : BOOL; // %IX259.6; GL200-DI16 #1: CH14; Операторская дверь закрыта. 1 — указанное состояние; 1→0 без задержки
+	xDiMachine3ChuckClamped : BOOL; // %IX259.7; GL200-DI16 #1: CH15; Патрон зажат. 1 — указанное состояние; 1→0 без задержки
+	xDiMachine3ChuckUnclamped : BOOL; // %IX260.0; GL200-DI16 #2: CH0; Патрон разжат. 1 — указанное состояние; 1→0 без задержки
+	xDiMachine3CycleActive : BOOL; // %IX260.1; GL200-DI16 #2: CH1; Цикл обработки активен. 1 — указанное состояние
+	xDiMachine3CycleDone : BOOL; // %IX260.2; GL200-DI16 #2: CH2; Цикл обработки завершён. 1 — указанное состояние
+	xDiGripper1Open : BOOL; // %IX260.3; GL200-DI16 #2: CH3; Захват 1 открыт. 1 — указанная позиция; в Modbus источником остаётся SC-500; 1→0 без задержки
+	xDiGripper1Closed : BOOL; // %IX260.4; GL200-DI16 #2: CH4; Захват 1 закрыт. 1 — указанная позиция; в Modbus источником остаётся SC-500; 1→0 без задержки
+	xDiGripper2Open : BOOL; // %IX260.5; GL200-DI16 #2: CH5; Захват 2 открыт. 1 — указанная позиция; в Modbus источником остаётся SC-500; 1→0 без задержки
+	xDiGripper2Closed : BOOL; // %IX260.6; GL200-DI16 #2: CH6; Захват 2 закрыт. 1 — указанная позиция; в Modbus источником остаётся SC-500; 1→0 без задержки
+	xDiRotatedToBlank : BOOL; // %IX260.7; GL200-DI16 #2: CH7; Поворот к заготовке. 1 — указанная позиция; в Modbus источником остаётся SC-500; 1→0 без задержки
+	xDiRotatedToDetail : BOOL; // %IX261.0; GL200-DI16 #2: CH8; Поворот к детали. 1 — указанная позиция; в Modbus источником остаётся SC-500; 1→0 без задержки
+	xDiCellStartButtonInput : BOOL; // %IX261.1; GL200-DI16 #2: CH9; Запустить ячейку в работу. 1 — кнопка пуска нажата
+	xDiCellStopButtonInput : BOOL; // %IX261.2; GL200-DI16 #2: CH10; Вывести ячейку из работы. 1 — кнопка останова нажата; 0→1 без задержки
+	xDiCellResetButtonInput : BOOL; // %IX261.3; GL200-DI16 #2: CH11; Сбросить ошибки ячейку. 1 — кнопка нажата; локальный сброс программных ошибок ячейки, без сброса физической аварии станка
+	xDiEmergencyStopStation1Ok : BOOL; // %IX261.4; GL200-DI16 #2: CH12; Аварийный грибок 1. Физический xDi: 1 — грибок отжат, 0 — нажат/обрыв; программный xEmergency: TRUE — нажат; потеря физической 1 проходит без задержки
+	xDiEmergencyStopStation2Ok : BOOL; // %IX261.5; GL200-DI16 #2: CH13; Аварийный грибок 2. Физический xDi: 1 — грибок отжат, 0 — нажат/обрыв; программный xEmergency: TRUE — нажат; потеря физической 1 проходит без задержки
+	xDiEmergencyStopStation3Ok : BOOL; // %IX261.6; GL200-DI16 #2: CH14; Аварийный грибок 3. Физический xDi: 1 — грибок отжат, 0 — нажат/обрыв; программный xEmergency: TRUE — нажат; потеря физической 1 проходит без задержки
+	xDiEmergencyStopStation4Ok : BOOL; // %IX261.7; GL200-DI16 #2: CH15; Аварийный грибок 4. Физический xDi: 1 — грибок отжат, 0 — нажат/обрыв; программный xEmergency: TRUE — нажат; потеря физической 1 проходит без задержки
+	xDiEmergencyStopCabinet1Ok : BOOL; // %IX262.0; GL200-DI16 #3: CH0; Аварийный грибок 5. Физический xDi: 1 — грибок отжат, 0 — нажат/обрыв; программный xEmergency: TRUE — нажат; потеря физической 1 проходит без задержки
+	xDiEmergencyStopCabinet2Ok : BOOL; // %IX262.1; GL200-DI16 #3: CH1; Аварийный грибок 6. Физический xDi: 1 — грибок отжат, 0 — нажат/обрыв; программный xEmergency: TRUE — нажат; потеря физической 1 проходит без задержки
+	xDiEmergencyStopMpgOk : BOOL; // %IX262.2; GL200-DI16 #3: CH2; Аварийный грибок 7. Физический xDi: 1 — грибок отжат, 0 — нажат/обрыв; программный xEmergency: TRUE — нажат; потеря физической 1 проходит без задержки
+	xDiDoor1LockClosed : BOOL; // %IX262.3; GL200-DI16 #3: CH3; Замок двери 1 закрыт. 1 — замок закрыт; 0 — закрытие не подтверждено; 1→0 без задержки
+	xDiDoor2LockClosed : BOOL; // %IX262.4; GL200-DI16 #3: CH4; Замок двери 2 закрыт. 1 — замок закрыт; 0 — закрытие не подтверждено; 1→0 без задержки
+	xDiDoor3LockClosed : BOOL; // %IX262.5; GL200-DI16 #3: CH5; Замок двери 3 закрыт. 1 — замок закрыт; 0 — закрытие не подтверждено; 1→0 без задержки
+	xDiDoor4LockClosed : BOOL; // %IX262.6; GL200-DI16 #3: CH6; Замок двери 4 закрыт. 1 — замок закрыт; 0 — закрытие не подтверждено; 1→0 без задержки
+	xDiSafetyRelayOkInput : BOOL; // %IX262.7; GL200-DI16 #3: CH7; Реле безопасности 1, взведено. 1 — норма; потеря нормы проходит без задержки; 1→0 без задержки
+	xDiPhaseRelayOkInput : BOOL; // %IX263.0; GL200-DI16 #3: CH8; Фазы совпадают. 1 — норма; потеря нормы проходит без задержки; 1→0 без задержки
+	xDiPressureRelayOkInput : BOOL; // %IX263.1; GL200-DI16 #3: CH9; Давление стабильно. 1 — норма; потеря нормы проходит без задержки; 1→0 без задержки
+	xDiMpgAxisXInput : BOOL; // %IX263.2; GL200-DI16 #3: CH10; Выбор оси X. 1 — выбрана ось X
+	xDiMpgAxisYInput : BOOL; // %IX263.3; GL200-DI16 #3: CH11; Выбор оси Y. 1 — выбрана ось Y
+	xDiMpgAxisZInput : BOOL; // %IX263.4; GL200-DI16 #3: CH12; Выбор оси Z. 1 — выбрана ось Z
+	xDiMpgMultiplier1Input : BOOL; // %IX263.5; GL200-DI16 #3: CH13; Множитель ×1. 1 — выбран множитель ×1
+	xDiMpgMultiplier10Input : BOOL; // %IX263.6; GL200-DI16 #3: CH14; Множитель ×10. 1 — выбран множитель ×10
+	xDiMpgMultiplier100Input : BOOL; // %IX263.7; GL200-DI16 #3: CH15; Множитель ×100. 1 — выбран множитель ×100
+	xDiMagazine1LockIn : BOOL; // %IX264.0; GL200-DI16 #4: CH0; Замок втянут. 1 — геркон сработал; 1→0 без задержки
+	xDiMagazine1LockOut : BOOL; // %IX264.1; GL200-DI16 #4: CH1; Замок выдвинут. 1 — геркон сработал; 1→0 без задержки
+	xDiMagazine1StopIn : BOOL; // %IX264.2; GL200-DI16 #4: CH2; Фиксатор выдвинут. 1 — геркон сработал; 1→0 без задержки
+	xDiMagazine1StopOut : BOOL; // %IX264.3; GL200-DI16 #4: CH3; Фиксатор втянут. 1 — геркон сработал; 1→0 без задержки
+	xDiMagazine1LiftUp : BOOL; // %IX264.4; GL200-DI16 #4: CH4; Подъёмник вверху. 1 — геркон сработал; 1→0 без задержки
+	xDiMagazine1LiftDown : BOOL; // %IX264.5; GL200-DI16 #4: CH5; Подъёмник внизу. 1 — геркон сработал; 1→0 без задержки
+	xDiDoor1UnlockButton : BOOL; // %IX265.4; GL200-DI16 #4: CH12; Кнопка запроса открытия двери 1. 1 — нажата
+	xDiDoor2UnlockButton : BOOL; // %IX265.5; GL200-DI16 #4: CH13; Кнопка запроса открытия двери 2. 1 — нажата
+	xDiDoor3UnlockButton : BOOL; // %IX265.6; GL200-DI16 #4: CH14; Кнопка запроса открытия двери 3. 1 — нажата
+	xDiDoor4UnlockButton : BOOL; // %IX265.7; GL200-DI16 #4: CH15; Кнопка запроса открытия двери 4. 1 — нажата
+	xDiGk1DriveAlarm : BOOL; // %IX264.6; GL200-DI16 #4: CH6; ГК привод — Авария. 1 — авария частотника конвейера ГК. В NORMAL используется FB_GEOMETRY_CONTROL без задержки.
+	xDiGk1DriveRunning : BOOL; // %IX264.7; GL200-DI16 #4: CH7; ГК привод — Работа. 1 — привод конвейера ГК в работе. В NORMAL используется FB_GEOMETRY_CONTROL без задержки.
+	xDiGk1PartAtEnd : BOOL; // %IX265.0; GL200-DI16 #4: CH8; Датчик фиксации детали на конце конвейера. 1 — деталь на конце конвейера ГК. Передний фронт фильтруется; потеря уровня сразу, изъятие подтверждается FB_GEOMETRY_CONTROL через 3 секунды.
+	xDiGk2DriveAlarm : BOOL; // %IX265.1; GL200-DI16 #4: CH9; ГК привод — Авария. 1 — авария частотника конвейера ГК. В NORMAL используется FB_GEOMETRY_CONTROL без задержки.
+	xDiGk2DriveRunning : BOOL; // %IX265.2; GL200-DI16 #4: CH10; ГК привод — Работа. 1 — привод конвейера ГК в работе. В NORMAL используется FB_GEOMETRY_CONTROL без задержки.
+	xDiGk2PartAtEnd : BOOL; // %IX265.3; GL200-DI16 #4: CH11; Датчик фиксации детали на конце конвейера. 1 — деталь на конце конвейера ГК. Передний фронт фильтруется; потеря уровня сразу, изъятие подтверждается FB_GEOMETRY_CONTROL через 3 секунды.
+	xDiMagazine2LockIn : BOOL; // %IX266.0; GL200-DI16 #5: CH0; Замок втянут. 1 — геркон сработал; 1→0 без задержки
+	xDiMagazine2LockOut : BOOL; // %IX266.1; GL200-DI16 #5: CH1; Замок выдвинут. 1 — геркон сработал; 1→0 без задержки
+	xDiMagazine2StopIn : BOOL; // %IX266.2; GL200-DI16 #5: CH2; Фиксатор выдвинут. 1 — геркон сработал; 1→0 без задержки
+	xDiMagazine2StopOut : BOOL; // %IX266.3; GL200-DI16 #5: CH3; Фиксатор втянут. 1 — геркон сработал; 1→0 без задержки
+	xDiMagazine2LiftUp : BOOL; // %IX266.4; GL200-DI16 #5: CH4; Подъёмник вверху. 1 — геркон сработал; 1→0 без задержки
+	xDiMagazine2LiftDown : BOOL; // %IX266.5; GL200-DI16 #5: CH5; Подъёмник внизу. 1 — геркон сработал; 1→0 без задержки
+	xDoMachine1HatchClosed : BOOL; // %QX256.0; MC522: DO_CH0; Открыть роботный люк/Закрыть роботный люк. 0 — открыть люк; 1 — закрыть. Уровень удерживается между командами.
+	xDoMachine1HatchUnLock : BOOL; // %QX256.1; MC522: DO_CH1; Открыть замок люка. 1 — команда активна
+	xDoMachine1ClampChuck : BOOL; // %QX256.2; MC522: DO_CH2; Зажать патрон. 1 — команда активна
+	xDoMachine1UnclampChuck : BOOL; // %QX256.3; MC522: DO_CH3; Разжать патрон. 1 — команда активна
+	xDoMachine1StartCycle : BOOL; // %QX256.4; MC522: DO_CH4; Запустить обработку. 1 — запуск обработки; штатно — команда FB станка; прямой ручной I/O удерживает выбранный уровень
+	xDoMachine2HatchClosed : BOOL; // %QX256.5; MC522: DO_CH5; Открыть роботный люк/Закрыть роботный люк. 0 — открыть люк; 1 — закрыть. Уровень удерживается между командами.
+	xDoMachine2HatchUnLock : BOOL; // %QX256.6; MC522: DO_CH6; Открыть замок люка. 1 — команда активна
+	xDoMachine2ClampChuck : BOOL; // %QX256.7; MC522: DO_CH7; Зажать патрон. 1 — команда активна
+	xDoMachine2UnclampChuck : BOOL; // %QX257.0; MC522: DO_CH8; Разжать патрон. 1 — команда активна
+	xDoMachine2StartCycle : BOOL; // %QX257.1; MC522: DO_CH9; Запустить обработку. 1 — запуск обработки; штатно — команда FB станка; прямой ручной I/O удерживает выбранный уровень
+	xDoMachine3HatchClosed : BOOL; // %QX257.2; MC522: DO_CH10; Открыть роботный люк/Закрыть роботный люк. 0 — открыть люк; 1 — закрыть. Уровень удерживается между командами.
+	xDoMachine3HatchUnLock : BOOL; // %QX257.3; MC522: DO_CH11; Открыть замок люка. 1 — команда активна
+	xDoMachine3ClampChuck : BOOL; // %QX257.4; MC522: DO_CH12; Зажать патрон. 1 — команда активна
+	xDoMachine3UnclampChuck : BOOL; // %QX257.5; MC522: DO_CH13; Разжать патрон. 1 — команда активна
+	xDoMachine3StartCycle : BOOL; // %QX257.6; MC522: DO_CH14; Запустить обработку. 1 — запуск обработки; штатно — команда FB станка; прямой ручной I/O удерживает выбранный уровень
+	xDoGripper1Open : BOOL; // %QX257.7; MC522: DO_CH15; Открыть захват 1 / Закрыть захват 1. 0 — закрыть; 1 — открыть. Штатное управление физическим DO — SoftMotion NORMAL; прямой ручной I/O задаёт уровень независимо от режима привода
+	xDoGripper2Open : BOOL; // %QX258.0; GL200-DQ16D #1: CH0; Открыть захват 2 / Закрыть захват 2. 0 — закрыть; 1 — открыть. Штатное управление физическим DO — SoftMotion NORMAL; прямой ручной I/O задаёт уровень независимо от режима привода
+	xDoRotateToDetail : BOOL; // %QX258.1; GL200-DQ16D #1: CH1; Повернуть к заготовке / Повернуть к детали. 0 — к заготовке; 1 — к детали. Штатное управление физическим DO — SoftMotion NORMAL; прямой ручной I/O задаёт уровень независимо от режима привода
+	xDoDoor1Unlock : BOOL; // %QX258.2; GL200-DQ16D #1: CH2; Открыть замок двери 1. 1 — разблокировать замок двери
+	xDoDoor2Unlock : BOOL; // %QX258.3; GL200-DQ16D #1: CH3; Открыть замок двери 2. 1 — разблокировать замок двери
+	xDoDoor3Unlock : BOOL; // %QX258.4; GL200-DQ16D #1: CH4; Открыть замок двери 3. 1 — разблокировать замок двери
+	xDoDoor4Unlock : BOOL; // %QX258.5; GL200-DQ16D #1: CH5; Открыть замок двери 4. 1 — разблокировать замок двери
+	xDoSafetyRelayReset : BOOL; // %QX258.6; GL200-DQ16D #1: CH6; Сигнал сброса на реле безопасности 1. Штатно — импульс сброса реле безопасности, без сброса физической аварии станка; прямой ручной I/O удерживает выбранный уровень
+	xDoSignalTowerGreenOutput : BOOL; // %QX258.7; GL200-DQ16D #1: CH7; Зеленый цвет. Уровень с миганием из PLC_PRG.RunSignalTower
+	xDoSignalTowerAmberOutput : BOOL; // %QX259.0; GL200-DQ16D #1: CH8; Желтый цвет. Уровень с миганием из PLC_PRG.RunSignalTower
+	xDoSignalTowerRedOutput : BOOL; // %QX259.1; GL200-DQ16D #1: CH9; Красный цвет. Уровень с миганием из PLC_PRG.RunSignalTower
+	xDoDoor1ButtonLamp : BOOL; // %QX259.3; GL200-DQ16D #1: CH11; Световая индикация кнопки 1. Готовый уровень индикации из FB_CELL_SAFETY
+	xDoDoor2ButtonLamp : BOOL; // %QX259.4; GL200-DQ16D #1: CH12; Световая индикация кнопки 2. Готовый уровень индикации из FB_CELL_SAFETY
+	xDoDoor3ButtonLamp : BOOL; // %QX259.5; GL200-DQ16D #1: CH13; Световая индикация кнопки 3. Готовый уровень индикации из FB_CELL_SAFETY
+	xDoDoor4ButtonLamp : BOOL; // %QX259.6; GL200-DQ16D #1: CH14; Световая индикация кнопки 4. Готовый уровень индикации из FB_CELL_SAFETY
+	xDoMagazine1LockIn : BOOL; // %QX259.7; GL200-DQ16D #1: CH15; Замок втянут (катушка). 1 — катушка включена; штатная логика исключает встречные катушки; в прямом ручном I/O этого ограничения нет
+	xDoMagazine1LockOut : BOOL; // %QX260.0; GL200-DQ16D #2: CH0; Замок выдвинут (катушка). 1 — катушка включена; штатная логика исключает встречные катушки; в прямом ручном I/O этого ограничения нет
+	xDoMagazine1StopIn : BOOL; // %QX260.1; GL200-DQ16D #2: CH1; Фиксатор выдвинут (катушка). 1 — катушка включена; штатная логика исключает встречные катушки; в прямом ручном I/O этого ограничения нет
+	xDoMagazine1StopOut : BOOL; // %QX260.2; GL200-DQ16D #2: CH2; Фиксатор втянут (катушка). 1 — катушка включена; штатная логика исключает встречные катушки; в прямом ручном I/O этого ограничения нет
+	xDoMagazine1LiftUp : BOOL; // %QX260.3; GL200-DQ16D #2: CH3; Подъёмник вверху (катушка). 1 — катушка включена; штатная логика исключает встречные катушки; в прямом ручном I/O этого ограничения нет
+	xDoMagazine1LiftDown : BOOL; // %QX260.4; GL200-DQ16D #2: CH4; Подъёмник внизу (катушка). 1 — катушка включена; штатная логика исключает встречные катушки; в прямом ручном I/O этого ограничения нет
+	xDoCellAlarmHorn : BOOL; // %QX259.2; GL200-DQ16D #1: CH10; Гудок. Штатно — звук при новой аварии: 0–60 с, по умолчанию 2 с; 0 отключает автоматический звук. Прямой ручной I/O удерживает выбранный уровень
+	xDoGk1DriveRun : BOOL; // %QX260.5; GL200-DQ16D #2: CH5; ГК привод — Пуск / Стоп. 1 — пуск, 0 — стоп. Штатный владелец FB_GEOMETRY_CONTROL; в прямом ручном I/O уровень задаётся вручную.
+	xDoGk1DriveReset : BOOL; // %QX260.6; GL200-DQ16D #2: CH6; ГК привод — Сброс аварии. Импульс сброса частотника от FB_GEOMETRY_CONTROL; длительность задаётся в таймаутах ячейки.
+	xDoMagazine2LockIn : BOOL; // %QX261.1; GL200-DQ16D #2: CH9; Замок втянут (катушка). 1 — катушка включена; штатная логика исключает встречные катушки; в прямом ручном I/O этого ограничения нет
+	xDoMagazine2LockOut : BOOL; // %QX261.2; GL200-DQ16D #2: CH10; Замок выдвинут (катушка). 1 — катушка включена; штатная логика исключает встречные катушки; в прямом ручном I/O этого ограничения нет
+	xDoMagazine2StopIn : BOOL; // %QX261.3; GL200-DQ16D #2: CH11; Фиксатор выдвинут (катушка). 1 — катушка включена; штатная логика исключает встречные катушки; в прямом ручном I/O этого ограничения нет
+	xDoMagazine2StopOut : BOOL; // %QX261.4; GL200-DQ16D #2: CH12; Фиксатор втянут (катушка). 1 — катушка включена; штатная логика исключает встречные катушки; в прямом ручном I/O этого ограничения нет
+	xDoMagazine2LiftUp : BOOL; // %QX261.5; GL200-DQ16D #2: CH13; Подъёмник вверху (катушка). 1 — катушка включена; штатная логика исключает встречные катушки; в прямом ручном I/O этого ограничения нет
+	xDoMagazine2LiftDown : BOOL; // %QX261.6; GL200-DQ16D #2: CH14; Подъёмник внизу (катушка). 1 — катушка включена; штатная логика исключает встречные катушки; в прямом ручном I/O этого ограничения нет
+	xDoGk2DriveRun : BOOL; // %QX260.7; GL200-DQ16D #2: CH7; ГК привод — Пуск / Стоп. 1 — пуск, 0 — стоп. Штатный владелец FB_GEOMETRY_CONTROL; в прямом ручном I/O уровень задаётся вручную.
+	xDoGk2DriveReset : BOOL; // %QX261.0; GL200-DQ16D #2: CH8; ГК привод — Сброс аварии. Импульс сброса частотника от FB_GEOMETRY_CONTROL; длительность задаётся в таймаутах ячейки.
+END_VAR
+</Single>
+            <Single Name="LineInfoPersistence" Type="string">4b276307-7f93-436c-954a-d20d03370353_Decl_LineIds</Single>
+          </Single>
+        </Single>
+        <Null Name="NetVarProperties" />
+        <Single Name="ParameterList" Type="bool">False</Single>
+        <Single Name="AddAttributeSubsequent" Type="bool">False</Single>
+      </Single>
+      <Single Name="ParentSVNodeGuid" Type="System.Guid">3fe5920a-4b84-4acf-a2c0-c04494c55ea0</Single>
+      <Array Name="Path" Type="string">
+        <Single Type="string">Device</Single>
+        <Single Type="string">PLC Logic</Single>
+        <Single Type="string">Application</Single>
+        <Single Type="string">GVL</Single>
+      </Array>
+      <Single Name="Index" Type="int">-1</Single>
+    </Single>
+  </List2>
+  <Null Name="ProfileName" />
+</Single>  </StructuredView>
+</ExportFile>

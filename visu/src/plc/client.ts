@@ -1,4 +1,7 @@
 import { mapTwinSnapshot } from './twoPalletMapping';
+import { PointEditorRequests, type PlcPointEditorCommand, type PlcPointEditorReply } from './pointEditorRequests';
+import { mapGeometrySnapshot } from '../model/geometryControl';
+import type { PhysicalIoState } from './physicalIo';
 import alarmCatalog from '../../alarm-catalog.json';
 import { BUTTON_STATIONS, DEFAULT_BUTTON_STATIONS } from '../model/buttonStations';
 import { DEFAULT_CONTROL_CABINETS } from '../model/controlCabinets';
@@ -9,7 +12,7 @@ import type { CyclogramHistory, CyclogramUpdate } from '../model/cyclogram';
 export type PlcConnectionStatus = 'connecting' | 'connected' | 'degraded' | 'disconnected';
 export type PlcAlarmSeverity = 'alarm' | 'warning';
 export type PlcAlarmEffect = 'global-stop' | 'robot-stop' | 'equipment-stop' | 'warning';
-export type PlcAlarmSource = 'cell' | 'robot' | 'machine-1' | 'machine-2' | 'machine-3' | 'magazine-1' | 'magazine-2' | 'magazine-axis-1' | 'magazine-axis-2' | 'axis-x' | 'axis-y' | 'axis-z' | 'axis-group' | 'motion-manager' | 'point-manager' | 'gripper' | 'cell-safety';
+export type PlcAlarmSource = 'cell' | 'robot' | 'machine-1' | 'machine-2' | 'machine-3' | 'magazine-1' | 'magazine-2' | 'magazine-axis-1' | 'magazine-axis-2' | 'axis-x' | 'axis-y' | 'axis-z' | 'axis-group' | 'motion-manager' | 'point-manager' | 'gripper' | 'cell-safety' | 'geometry-1' | 'geometry-2';
 
 export interface PlcAlarmEvent {
   id: number;
@@ -35,6 +38,27 @@ export interface PlcConnectionInfo {
   message: string;
   symbols: number;
   missing: string[];
+}
+
+export interface RuntimeDiagnostics {
+  endpoint: string;
+  transport: 'connecting' | 'online' | 'offline';
+  observedAt: number | null;
+  error: string | null;
+  server: {
+    stateCode: number;
+    startTime: string | null;
+    currentTime: string | null;
+    productName: string | null;
+    softwareVersion: string | null;
+    serviceLevel: number | null;
+  } | null;
+  application: {
+    mode: 'unknown' | 'verifying' | 'running' | 'stalled';
+    counter: number | null;
+    lastReadAt: number | null;
+    lastAdvancedAt: number | null;
+  };
 }
 
 export interface CellLogEvent {
@@ -223,6 +247,8 @@ export interface PlcRobotModbusInfo {
 }
 
 export interface PlcCellSettings {
+  alarmHornDurationSeconds: number;
+  inputFilters: { riseMs: number; fallMs: number; changeAllowed: boolean; physicalActive: boolean; mappingVerified: boolean };
   changeAllowed: boolean;
   pointCheckSpeedPercent: number;
   robotMotion: {
@@ -348,16 +374,19 @@ export interface PlcRuntimeInfo {
 }
 
 interface GatewayMessage {
-  type: 'connection' | 'snapshot' | 'ack' | 'cyclogram-history' | 'cyclogram-update' | 'cell-event-history' | 'cell-event';
+  type: 'connection' | 'runtime-diagnostics' | 'physical-io' | 'snapshot' | 'ack' | 'cyclogram-history' | 'cyclogram-update' | 'cell-event-history' | 'cell-event';
   status?: PlcConnectionStatus;
   endpoint?: string;
   message?: string;
   symbols?: number;
   missing?: string[];
+  diagnostics?: RuntimeDiagnostics;
+  physicalIo?: PhysicalIoState;
   values?: Record<string, unknown>;
   robotFrame?: RobotCoordinateFrame;
   full?: boolean;
   requestId?: string;
+  pointEditor?: PlcPointEditorReply;
   ok?: boolean;
   error?: string;
   serverTime?: number;
@@ -370,6 +399,7 @@ interface GatewayMessage {
 }
 
 export interface PlcCommand {
+  geometryConfig?: Record<string, number>;
   revision?: number;
   twinConfig?: Record<string, number | boolean>;
   command: string;
@@ -392,6 +422,7 @@ const CELL_STATES = [
   'Перемещается к станку', 'Снимает команду робота', 'Ожидает станок',
   'Обслуживает станок', 'Работает с магазином', 'Завершает работу с магазином',
   'Ожидает обслуживание магазина', 'Ошибка менеджера ячейки',
+  'Ждёт свободную станцию ГК', 'Передаёт деталь на ГК',
 ];
 const ROBOT_STATES = ['Готов', 'Перемещается', 'Работает захватом', 'Команда завершена', 'Ошибка робота', 'Команда Modbus'];
 const AXIS_MANUAL_STATES = [
@@ -434,14 +465,16 @@ const POINT_EDITOR_REJECT_REASONS = [
   'Координаты группы недостоверны',
   'Software limits осей недоступны',
   'Координаты выходят за software limits',
-  'Коэффициент скорости должен быть больше 0.1 и не больше 1.0',
+  'Недопустимый коэффициент скорости точки',
   'Точка не сохранена',
   'Приводы или координатная группа не готовы',
   'Люк станка не открыт',
   'Нет связи с мобильным редактором',
   'Другая команда претендует на робота',
   'Точка изменена после подтверждения',
-  'Смещения Safe Z или Change Z находятся вне диапазона от -10000 до 10000 мм',
+  'Смещения Z вне диапазона или SAFE_Z ГК не поднимает робот в пределах оси',
+  'Для проверки выключите и освободите ГК, остановите конвейер',
+  'Запись точки ГК запрещена: проверьте ручной режим, поддержку ГК, ручной I/O и сброс привода',
 ];
 const ROBOT_ACTIONS = ['Нет действия', 'Движение к точке', 'Открывает захват 1', 'Закрывает захват 1', 'Открывает захват 2', 'Закрывает захват 2', 'Поворот к заготовке', 'Поворот к детали'];
 const POINT_NAMES = [
@@ -451,6 +484,8 @@ const POINT_NAMES = [
   'MACHINE_3_ABOVE', 'MACHINE_3_INSIDE', 'MACHINE_3_CHUCK_APROACH', 'MACHINE_3_CHUCK_POSITION',
   'MAGAZINE_DETAIL', 'MAGAZINE_TAKE_DETAIL', 'MAGAZINE_PUT_DETAIL', 'MAGAZINE_CHANGE_DETAIL',
   'HOME_SAFETY', 'MAGAZINE_RETURN_BLANK', 'MAGAZINE_SAFE', 'MAGAZINE_IN_SLOT', 'MAGAZINE_CHANGE',
+  'MAGAZINE_1_DETAIL', 'MAGAZINE_2_DETAIL', 'GEOMETRY_1_PLACE', 'GEOMETRY_1_SAFE', 'GEOMETRY_1_CHANGE',
+  'GEOMETRY_2_PLACE', 'GEOMETRY_2_SAFE', 'GEOMETRY_2_CHANGE',
 ];
 const MACHINE_STATES = [
   'Станок выключен', 'Укажите тип детали в патроне',
@@ -469,7 +504,7 @@ const MAGAZINE_STATES = [
 const ALARM_SOURCES: PlcAlarmSource[] = [
   'cell', 'robot', 'machine-1', 'machine-2', 'machine-3', 'magazine-1', 'magazine-2',
   'magazine-axis-1', 'magazine-axis-2', 'axis-x', 'axis-y', 'axis-z', 'axis-group',
-  'motion-manager', 'point-manager', 'gripper', 'cell-safety',
+  'motion-manager', 'point-manager', 'gripper', 'cell-safety', 'geometry-1', 'geometry-2',
 ];
 const ALARM_EFFECTS: PlcAlarmEffect[] = ['global-stop', 'robot-stop', 'equipment-stop', 'warning'];
 export const ALARM_SOURCE_LABELS = alarmCatalog.sources as Record<PlcAlarmSource, string>;
@@ -614,6 +649,7 @@ export function mapPlcSnapshot(
       powerAllowed: booleanValue(values, `${status}.xPowerAllowed`, machine.powerAllowed),
       resetAllowed: booleanValue(values, `${status}.xResetAllowed`, machine.resetAllowed),
       manualControlAllowed: booleanValue(values, `${status}.xManualControlAllowed`, machine.manualControlAllowed),
+      manualDoorControlEnabled: booleanValue(values, `${status}.xManualSafetyDoorControlEnabled`, false),
       manualDoorOpenAllowed: booleanValue(values, `${status}.xManualSafetyDoorOpenAllowed`, machine.manualDoorOpenAllowed),
       manualDoorCloseAllowed: booleanValue(values, `${status}.xManualSafetyDoorCloseAllowed`, machine.manualDoorCloseAllowed),
       manualHatchOpenAllowed: booleanValue(values, `${status}.xManualHatchOpenAllowed`, machine.manualHatchOpenAllowed),
@@ -748,6 +784,7 @@ export function mapPlcSnapshot(
     },
     machines,
     magazines,
+    geometryControl: mapGeometrySnapshot(values, current.geometryControl),
     magazineMode: numberValue(values, 'uiMagazineMode', 1) === 1 ? 1 : 0,
     magazineModeAllowed: booleanValue(values, 'xMagazineModeAllowed', false),
     enclosureDoors,
@@ -830,7 +867,7 @@ export function mapRuntimeInfo(values: Record<string, unknown>, current: PlcRunt
       stepName: AXIS_MANUAL_STATES[stateCode] ?? `Неизвестное состояние оси (${stateCode})`,
     };
   }) as [PlcAxisManualStatus, PlcAxisManualStatus, PlcAxisManualStatus];
-  const pointEditorPoints = Array.from({ length: 12 }, (_, offset) => {
+  const pointEditorPoints = Array.from({ length: 14 }, (_, offset) => {
     const index = offset + 1;
     const root = `astPointEditorPoints[${index}]`;
     const previous = current.pointEditor.points[offset] ?? {
@@ -926,6 +963,14 @@ export function mapRuntimeInfo(values: Record<string, unknown>, current: PlcRunt
       )) as PlcCellSafetyInfo['doorsReady'],
     },
     cellSettings: {
+      alarmHornDurationSeconds: numberValue(values, 'tAlarmHornDuration', current.cellSettings.alarmHornDurationSeconds * 1000) / 1000,
+      inputFilters: {
+        riseMs: numberValue(values, 'tInputFilterRise', current.cellSettings.inputFilters.riseMs),
+        fallMs: numberValue(values, 'tInputFilterFall', current.cellSettings.inputFilters.fallMs),
+        changeAllowed: booleanValue(values, 'xIoFilterSettingsChangeAllowed', false),
+        physicalActive: booleanValue(values, 'xPhysicalIoActive', false),
+        mappingVerified: booleanValue(values, 'xPhysicalIoMappingVerified', false),
+      },
       changeAllowed: booleanValue(values, 'xCellSettingsChangeAllowed', current.cellSettings.changeAllowed),
       pointCheckSpeedPercent: numberValue(values, 'rPointCheckSpeedPercent', current.cellSettings.pointCheckSpeedPercent),
       robotMotion: {
@@ -1115,6 +1160,8 @@ export function mapRuntimeInfo(values: Record<string, unknown>, current: PlcRunt
 
 export function createPlcClient(callbacks: {
   onConnection: (info: PlcConnectionInfo) => void;
+  onRuntimeDiagnostics?: (diagnostics: RuntimeDiagnostics) => void;
+  onPhysicalIo?: (data: PhysicalIoState) => void;
   onSnapshot: (values: Record<string, unknown>, changed: Record<string, unknown>, full: boolean) => void;
   onRobotFrame?: (frame: RobotCoordinateFrame) => void;
   onCyclogramHistory?: (history: CyclogramHistory) => void;
@@ -1130,6 +1177,8 @@ export function createPlcClient(callbacks: {
   let heartbeatTimer = 0;
   let heartbeatValue = 0;
   let snapshotValues: Record<string, unknown> = {};
+  const backgroundRequests = new Set<string>();
+  const pointEditorRequests = new PointEditorRequests();
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const url = import.meta.env.VITE_GATEWAY_URL
     ?? (import.meta.env.DEV ? `${protocol}//${location.host}/ws` : `${protocol}//${location.hostname}:3001/ws`);
@@ -1158,6 +1207,10 @@ export function createPlcClient(callbacks: {
           status: message.status ?? 'disconnected', endpoint: message.endpoint ?? '',
           message: message.message ?? '', symbols: message.symbols ?? 0, missing: message.missing ?? [],
         });
+      } else if (message.type === 'runtime-diagnostics' && message.diagnostics) {
+        callbacks.onRuntimeDiagnostics?.(message.diagnostics);
+      } else if (message.type === 'physical-io' && message.physicalIo) {
+        callbacks.onPhysicalIo?.(message.physicalIo);
       } else if (message.type === 'snapshot' && message.values) {
         const full = message.full !== false;
         if (full) snapshotValues = { ...message.values };
@@ -1193,12 +1246,18 @@ export function createPlcClient(callbacks: {
         });
       } else if (message.type === 'cell-event' && message.event) {
         callbacks.onCellLogEvent?.(message.event);
+      } else if (message.type === 'ack' && pointEditorRequests.receive(message)) {
+        // The requesting editor applies the complete result through its promise.
       } else if (message.type === 'ack' && !message.ok) {
-        callbacks.onCommandError?.(message.error ?? 'PLC отклонил команду');
+        if (!backgroundRequests.delete(message.requestId ?? '')) callbacks.onCommandError?.(message.error ?? 'PLC отклонил команду');
+      } else if (message.type === 'ack') {
+        backgroundRequests.delete(message.requestId ?? '');
       }
     };
     socket.onclose = (event) => {
       window.clearInterval(heartbeatTimer);
+      backgroundRequests.clear();
+      pointEditorRequests.reset('Связь со шлюзом потеряна. Результат PLC неизвестен; черновик сохранён.');
       if (stopped) return;
       if (event.code === 4001) callbacks.onAuthenticationRequired?.();
       callbacks.onConnection({ status: 'disconnected', endpoint: '', message: 'Нет связи со шлюзом', symbols: 0, missing: [] });
@@ -1209,24 +1268,26 @@ export function createPlcClient(callbacks: {
 
   connect();
   return {
+    sendPointCommand(command: PlcPointEditorCommand) {
+      if (socket?.readyState !== WebSocket.OPEN) return Promise.reject(new Error('Нет связи со шлюзом'));
+      const requestId = crypto.randomUUID();
+      return pointEditorRequests.run(requestId, command, () => {
+        socket!.send(JSON.stringify({ type: 'command', requestId, ...command }));
+      });
+    },
     send(command: PlcCommand) {
       if (socket?.readyState !== WebSocket.OPEN) {
         callbacks.onCommandError?.('Нет связи со шлюзом');
         return false;
       }
-      socket.send(JSON.stringify({ type: 'command', requestId: crypto.randomUUID(), ...command }));
-      return true;
-    },
-    clearCyclogram() {
-      if (socket?.readyState !== WebSocket.OPEN) {
-        callbacks.onCommandError?.('Нет связи со шлюзом');
-        return false;
-      }
-      socket.send(JSON.stringify({ type: 'cyclogram-clear', requestId: crypto.randomUUID() }));
+      const requestId = crypto.randomUUID();
+      if (command.command === 'io.heartbeat') backgroundRequests.add(requestId);
+      socket.send(JSON.stringify({ type: 'command', requestId, ...command }));
       return true;
     },
     close() {
       stopped = true;
+      pointEditorRequests.reset('Редактор отключён от шлюза. Черновик сохранён.');
       window.clearTimeout(reconnectTimer);
       window.clearInterval(heartbeatTimer);
       socket?.close();

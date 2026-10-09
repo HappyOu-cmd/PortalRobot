@@ -21,10 +21,8 @@ from .control_api import (
 from .test_scenarios import (
     expected_error_owner,
     expected_first_decision,
-    general_scenarios,
+    fixed_scenarios,
     generated_scenarios,
-    regression_scenarios,
-    smoke_scenarios,
     validate_inventory,
 )
 
@@ -176,16 +174,43 @@ class GatewayRunner:
 
     @staticmethod
     def suite(config: dict[str, Any]) -> list[dict[str, Any]]:
-        suite = config.get("suite", "smoke")
+        suite = str(config.get("suite", "smoke")).lower()
+        if suite not in {"smoke", "regression", "general", "generated"}:
+            raise ValueError(f"Неизвестный набор тестов: {suite}")
+        fixed_case_index = config.get("fixedCaseIndex")
+        if fixed_case_index is not None and config.get("scenarios"):
+            raise ValueError("Нельзя одновременно выбрать штатный тест и сохранённые сценарии")
         if config.get("scenarios"):
+            for case in config["scenarios"]:
+                if int(case.get("schemaVersion", 2)) != 2 or int(
+                    case.get("initialState", {}).get("magazineMode", 0)
+                ) != 0:
+                    raise ValueError("Сохранённый сценарий не соответствует статичной схеме v2")
             return config["scenarios"]
-        if suite == "regression":
-            return regression_scenarios()
-        if suite == "general":
-            return general_scenarios()
         if suite == "generated":
+            if fixed_case_index is not None:
+                raise ValueError("Generated не содержит фиксированного теста")
             return generated_scenarios(int(config.get("seed", 1)), int(config.get("count", 100)))
-        return smoke_scenarios()
+        cases = fixed_scenarios(suite)
+        if fixed_case_index is None:
+            return cases
+        if isinstance(fixed_case_index, bool) or not isinstance(fixed_case_index, int):
+            raise ValueError("Номер штатного теста должен быть целым числом")
+        if not 1 <= fixed_case_index <= len(cases):
+            raise ValueError(f"В наборе {suite} нет теста #{fixed_case_index}")
+        return [cases[fixed_case_index - 1]]
+
+    @staticmethod
+    def require_static_magazine_mode(values: dict[str, Any]) -> None:
+        mode = values.get("uiMagazineMode")
+        if mode == 0:
+            return
+        if mode == 1:
+            raise RuntimeError(
+                "Текущие тестовые сценарии требуют статичные магазины; "
+                "PLC находится в двухпалетном режиме"
+            )
+        raise RuntimeError("Не получен достоверный uiMagazineMode от PLC")
 
     async def attach_python_simulator(self, fast: bool) -> None:
         health = await asyncio.to_thread(self.simulator_control.health)
@@ -1227,6 +1252,7 @@ class GatewayRunner:
             )
 
     async def apply_scenario(self, socket: Any, case: dict[str, Any]) -> bool:
+        self.require_static_magazine_mode(self.values)
         expected_rejection = bool(case.get("expectations", {}).get("applyRejected"))
         validation_errors = validate_inventory(case["initialState"])
         if validation_errors and not expected_rejection:
@@ -1695,6 +1721,7 @@ class GatewayRunner:
                 socket, lambda message, _values: message.get("type") == "snapshot",
                 10.0, "initial PLC snapshot",
             )
+            self.require_static_magazine_mode(self.values)
             config = hello["config"]
             cases = self.suite(config)
             fail_fast = str(config.get("suite", "smoke")).lower() == "general"

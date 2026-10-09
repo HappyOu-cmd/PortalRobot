@@ -9,6 +9,7 @@ import { gatewayApiUrl } from '../api/gateway';
 const SOURCES = [
   [1, 'Станок 1'], [2, 'Станок 2'], [3, 'Станок 3'], [4, 'Магазин'],
   [5, 'Робот'], [6, 'Оператор'], [7, 'Аварии'], [8, 'Система и связь'],
+  [9, 'Геометрический контроль'],
 ] as const;
 
 const STATUS_LABELS: Record<string, string> = {
@@ -23,10 +24,11 @@ const CATEGORY_TYPES: Record<string, string[]> = {
   cycle: ['cell-cycle'],
   equipment: ['power', 'state', 'door', 'chuck', 'processing'],
   robot: ['command', 'action', 'target-point', 'current-point', 'gripper', 'orientation', 'modbus-command'],
-  product: ['part', 'operation', 'slot-content'],
+  product: ['part', 'operation', 'slot-content', 'geometry-control', 'production'],
   connection: ['connection', 'modbus-connection'],
   operator: ['operator-command', 'plc-rejection'],
   alarm: ['alarm', 'warning'],
+  io: ['physical-io', 'physical-io-gap'],
 };
 
 const STATE_STATUSES: Record<string, string[]> = {
@@ -43,6 +45,7 @@ const LEVEL_LABELS: Record<string, string> = {
 const CATEGORY_LABELS: Record<string, string> = {
   cycle: 'Цикл ячейки', equipment: 'Механизмы станков', robot: 'Робот',
   product: 'Изделия и магазин', connection: 'Связь', operator: 'Действия оператора', alarm: 'Аварии',
+  io: 'Входы и выходы',
 };
 
 const STATE_FILTER_LABELS: Record<string, string> = {

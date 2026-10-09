@@ -1,5 +1,9 @@
 FUNCTION_BLOCK FB_GRIPPER_SIMULATION
 VAR_INPUT
+	xUsePhysicalFeedback : BOOL; // NORMAL SoftMotion: подтверждать реальные датчики
+	xPhysicalIoReady : BOOL;
+	PhysicalFeedback : ST_GRIPPER_STATUS;
+	tPhysicalActionTimeout : TIME := T#10S;
 	xTestInitialize : BOOL;
 	auiTestContent : ARRAY [1..2] OF UINT;
 	uiTestOrientation : UINT;
@@ -32,6 +36,11 @@ VAR
 	xActionValid   : BOOL; // Получено допустимое действие захвата
     xActionRequired: BOOL; // Для действия требуется физическое переключение
     tActionTime    : TIME; // Нормативное время текущего действия
+	xActionConfirmed : BOOL;
+	xPhysicalGlobalFault : BOOL;
+	xPhysicalGripper1Fault : BOOL;
+	xPhysicalGripper2Fault : BOOL;
+	xPhysicalRotationFault : BOOL;
     xInitialized   : BOOL; // Начальные состояния установлены
 	rtReset         : R_TRIG; // Фронт команды сброса захвата
 END_VAR
@@ -83,6 +92,39 @@ IF xTestInitialize THEN
 	Error.dwErrorActive := DWORD#0;
 END_IF;
 
+// Не создаём подтверждение позиции по прошедшему времени в NORMAL.
+IF xUsePhysicalFeedback THEN
+	Status.xGripper1Open := PhysicalFeedback.xGripper1Open;
+	Status.xGripper1Closed := PhysicalFeedback.xGripper1Closed;
+	Status.xGripper2Open := PhysicalFeedback.xGripper2Open;
+	Status.xGripper2Closed := PhysicalFeedback.xGripper2Closed;
+	Status.xRotatedToBlank := PhysicalFeedback.xRotatedToBlank;
+	Status.xRotatedToDetail := PhysicalFeedback.xRotatedToDetail;
+END_IF;
+xPhysicalGlobalFault := xUsePhysicalFeedback AND NOT xPhysicalIoReady;
+xPhysicalGripper1Fault := xUsePhysicalFeedback AND Status.xGripper1Open AND Status.xGripper1Closed;
+xPhysicalGripper2Fault := xUsePhysicalFeedback AND Status.xGripper2Open AND Status.xGripper2Closed;
+xPhysicalRotationFault := xUsePhysicalFeedback AND Status.xRotatedToBlank AND Status.xRotatedToDetail;
+
+// Ошибочная обратная связь блокирует владельца и до начала действия.
+// Используем существующие биты GRIPPER и принятый эффект ROBOT_STOP.
+IF xPhysicalGlobalFault THEN
+	Error.dwErrorActive := Error.dwErrorActive OR ERR_GRIP_GLOBAL;
+	eState := E_GRIPPER_STATE.ERROR;
+END_IF;
+IF xPhysicalGripper1Fault THEN
+	Error.dwErrorActive := Error.dwErrorActive OR ERR_GRIPPER_1;
+	eState := E_GRIPPER_STATE.ERROR;
+END_IF;
+IF xPhysicalGripper2Fault THEN
+	Error.dwErrorActive := Error.dwErrorActive OR ERR_GRIPPER_2;
+	eState := E_GRIPPER_STATE.ERROR;
+END_IF;
+IF xPhysicalRotationFault THEN
+	Error.dwErrorActive := Error.dwErrorActive OR ERR_GRIP_ROTATE;
+	eState := E_GRIPPER_STATE.ERROR;
+END_IF;
+
 rtReset(CLK := Command.xReset);
 
 fbFaultInjector(
@@ -95,13 +137,13 @@ IF rtReset.Q
 AND (eState = E_GRIPPER_STATE.ERROR) THEN
 	IF Command.xExecute THEN
 		Diag.stWarning.uiCode := WRN_RESET_EXECUTE_ACTIVE;
-	ELSIF fbFaultInjector.xGlobalFault THEN
+	ELSIF fbFaultInjector.xGlobalFault OR xPhysicalGlobalFault THEN
 		Diag.stWarning.uiCode := WRN_RESET_GLOBAL_FAULT;
-	ELSIF fbFaultInjector.xGripper1Fault THEN
+	ELSIF fbFaultInjector.xGripper1Fault OR xPhysicalGripper1Fault THEN
 		Diag.stWarning.uiCode := WRN_RESET_GRIPPER_1_FAULT;
-	ELSIF fbFaultInjector.xGripper2Fault THEN
+	ELSIF fbFaultInjector.xGripper2Fault OR xPhysicalGripper2Fault THEN
 		Diag.stWarning.uiCode := WRN_RESET_GRIPPER_2_FAULT;
-	ELSIF fbFaultInjector.xRotationFault THEN
+	ELSIF fbFaultInjector.xRotationFault OR xPhysicalRotationFault THEN
 		Diag.stWarning.uiCode := WRN_RESET_ROTATION_FAULT;
 	ELSE
 		Diag.stWarning.uiCode := UINT#0;
@@ -117,6 +159,27 @@ END_IF;
 
 
 xActionFault := fbFaultInjector.xActionFault;
+xActionConfirmed := FALSE;
+CASE eActiveAction OF
+	E_ROBOT_ACTION.UNCLAMP_1:
+		xActionConfirmed := Status.xGripper1Open AND NOT Status.xGripper1Closed;
+		xActionFault := xActionFault OR xPhysicalGripper1Fault;
+	E_ROBOT_ACTION.CLAMP_1:
+		xActionConfirmed := Status.xGripper1Closed AND NOT Status.xGripper1Open;
+		xActionFault := xActionFault OR xPhysicalGripper1Fault;
+	E_ROBOT_ACTION.UNCLAMP_2:
+		xActionConfirmed := Status.xGripper2Open AND NOT Status.xGripper2Closed;
+		xActionFault := xActionFault OR xPhysicalGripper2Fault;
+	E_ROBOT_ACTION.CLAMP_2:
+		xActionConfirmed := Status.xGripper2Closed AND NOT Status.xGripper2Open;
+		xActionFault := xActionFault OR xPhysicalGripper2Fault;
+	E_ROBOT_ACTION.ROTATE_TO_BLANK:
+		xActionConfirmed := Status.xRotatedToBlank AND NOT Status.xRotatedToDetail;
+		xActionFault := xActionFault OR xPhysicalRotationFault;
+	E_ROBOT_ACTION.ROTATE_TO_DETAIL:
+		xActionConfirmed := Status.xRotatedToDetail AND NOT Status.xRotatedToBlank;
+		xActionFault := xActionFault OR xPhysicalRotationFault;
+END_CASE;
 tActionTime := T#0S;
 
 CASE eActiveAction OF
@@ -141,10 +204,14 @@ END_CASE;
 	tActionTime := UDINT_TO_TIME(udiActionTime);
 
 
+IF xUsePhysicalFeedback THEN
+	tActionTime := tPhysicalActionTimeout;
+END_IF;
+
 tonAction(
     IN := (eState = E_GRIPPER_STATE.EXECUTE)
           AND NOT xActionFault
-          AND NOT fbFaultInjector.xGlobalFault,
+          AND NOT fbFaultInjector.xGlobalFault AND NOT xPhysicalGlobalFault,
     PT := tActionTime
 );
 
@@ -165,22 +232,22 @@ CASE eState OF
             CASE Command.eAction OF
 
 				E_ROBOT_ACTION.UNCLAMP_1:
-					xActionRequired := NOT Status.xGripper1Open;
+					xActionRequired := NOT (Status.xGripper1Open AND NOT Status.xGripper1Closed);
 
 				E_ROBOT_ACTION.CLAMP_1:
-					xActionRequired := NOT Status.xGripper1Closed;
+					xActionRequired := NOT (Status.xGripper1Closed AND NOT Status.xGripper1Open);
 
 				E_ROBOT_ACTION.UNCLAMP_2:
-					xActionRequired := NOT Status.xGripper2Open;
+					xActionRequired := NOT (Status.xGripper2Open AND NOT Status.xGripper2Closed);
 
 				E_ROBOT_ACTION.CLAMP_2:
-					xActionRequired := NOT Status.xGripper2Closed;
+					xActionRequired := NOT (Status.xGripper2Closed AND NOT Status.xGripper2Open);
 
 				E_ROBOT_ACTION.ROTATE_TO_BLANK:
-					xActionRequired := NOT Status.xRotatedToBlank;
+					xActionRequired := NOT (Status.xRotatedToBlank AND NOT Status.xRotatedToDetail);
 
 				E_ROBOT_ACTION.ROTATE_TO_DETAIL:
-					xActionRequired := NOT Status.xRotatedToDetail;
+					xActionRequired := NOT (Status.xRotatedToDetail AND NOT Status.xRotatedToBlank);
 
             ELSE
 				xActionValid := FALSE;
@@ -210,7 +277,7 @@ CASE eState OF
 			eActiveAction := E_ROBOT_ACTION.NONE;
 			eState := E_GRIPPER_STATE.IDLE;
 
-		ELSIF fbFaultInjector.xGlobalFault THEN
+		ELSIF fbFaultInjector.xGlobalFault OR xPhysicalGlobalFault THEN
             Error.dwErrorActive := Error.dwErrorActive OR ERR_GRIP_GLOBAL;
             eState := E_GRIPPER_STATE.ERROR;
 
@@ -233,6 +300,21 @@ CASE eState OF
             END_CASE;
 
             eState := E_GRIPPER_STATE.ERROR;
+
+        ELSIF xUsePhysicalFeedback THEN
+			IF xActionConfirmed THEN
+				eState := E_GRIPPER_STATE.DONE;
+			ELSIF tonAction.Q THEN
+				CASE eActiveAction OF
+					E_ROBOT_ACTION.UNCLAMP_1, E_ROBOT_ACTION.CLAMP_1:
+						Error.dwErrorActive := Error.dwErrorActive OR ERR_GRIPPER_1;
+					E_ROBOT_ACTION.UNCLAMP_2, E_ROBOT_ACTION.CLAMP_2:
+						Error.dwErrorActive := Error.dwErrorActive OR ERR_GRIPPER_2;
+					E_ROBOT_ACTION.ROTATE_TO_BLANK, E_ROBOT_ACTION.ROTATE_TO_DETAIL:
+						Error.dwErrorActive := Error.dwErrorActive OR ERR_GRIP_ROTATE;
+				END_CASE;
+				eState := E_GRIPPER_STATE.ERROR;
+			END_IF;
 
         ELSIF tonAction.Q THEN
 
@@ -291,7 +373,11 @@ CASE eState OF
         AND NOT fbFaultInjector.xGlobalFault
         AND NOT fbFaultInjector.xGripper1Fault
 		AND NOT fbFaultInjector.xGripper2Fault
-		AND NOT fbFaultInjector.xRotationFault THEN
+		AND NOT fbFaultInjector.xRotationFault
+		AND NOT xPhysicalGlobalFault
+		AND NOT xPhysicalGripper1Fault
+		AND NOT xPhysicalGripper2Fault
+		AND NOT xPhysicalRotationFault THEN
 
 			Error.dwErrorLast := Error.dwErrorActive;
             Error.dwErrorActive := DWORD#0;
@@ -313,4 +399,8 @@ Error.stErrorActive := UpdateErrorView(dwError := Error.dwErrorActive);
 Error.stErrorLast := UpdateErrorView(dwError := Error.dwErrorLast);
 Error.dwAlarmActive := Error.dwErrorActive;
 FaultStatus.xResetAllowed := (Error.dwErrorActive <> DWORD#0)
-	AND NOT FaultStatus.xActive;
+	AND NOT FaultStatus.xActive
+	AND NOT xPhysicalGlobalFault
+	AND NOT xPhysicalGripper1Fault
+	AND NOT xPhysicalGripper2Fault
+	AND NOT xPhysicalRotationFault;

@@ -60,6 +60,7 @@ def state(**overrides):
         "GVL_HMI.udiCellModeAckSeq": 0,
         "GVL_HMI.uiCellModeResult": 0,
         "GVL_CELL_CONTROL.xGlobalError": False,
+        "GVL_HMI.xIoEmergencyStopActive": False,
         "GVL_CELL_CONTROL.xManual": False,
         "GVL_CELL_MANAGER.Status.xRunning": False,
         **overrides,
@@ -98,13 +99,14 @@ def test_rejected_manual_request_is_consumed_and_never_applied_after_stop():
     assert values["GVL_CELL_CONTROL.xManual"] is True
 
 
-def test_safety_rejects_automatic_and_keeps_manual_after_recovery():
-    values = state(**{"GVL_HMI.xCellManualRequest": False, "GVL_CELL_CONTROL.xGlobalError": True})
+@pytest.mark.parametrize("safety_source", ["GVL_CELL_CONTROL.xGlobalError", "GVL_HMI.xIoEmergencyStopActive"])
+def test_safety_rejects_automatic_and_keeps_manual_after_recovery(safety_source):
+    values = state(**{"GVL_HMI.xCellManualRequest": False, safety_source: True})
     execute_st_statements(MODE_SOURCE, values)
     execute_st_statements(PUBLISH_MODE, values)
     assert values["GVL_HMI.uiCellModeResult"] == 3
     assert values["GVL_HMI.xCellManual"] is True
-    values["GVL_CELL_CONTROL.xGlobalError"] = False
+    values[safety_source] = False
     execute_st_statements(MODE_SOURCE, values)
     assert values["GVL_CELL_CONTROL.xManual"] is True
 

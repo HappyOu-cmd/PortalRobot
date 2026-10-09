@@ -25,7 +25,13 @@ TYPE E_POINT_NAME :
 	MAGAZINE_IN_SLOT, // Рабочая точка внутри активного слота
 	MAGAZINE_CHANGE, // Безопасная точка переворота над активным слотом
 	MAGAZINE_1_DETAIL, // Базовая точка рабочей зоны первого магазина
-	MAGAZINE_2_DETAIL // Базовая точка рабочей зоны второго магазина
+	MAGAZINE_2_DETAIL, // Базовая точка рабочей зоны второго магазина
+	GEOMETRY_1_PLACE,
+	GEOMETRY_1_SAFE,
+	GEOMETRY_1_CHANGE,
+	GEOMETRY_2_PLACE,
+	GEOMETRY_2_SAFE,
+	GEOMETRY_2_CHANGE
 
 );
 END_TYPE

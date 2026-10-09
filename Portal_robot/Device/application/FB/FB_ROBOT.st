@@ -1,11 +1,15 @@
 FUNCTION_BLOCK FB_ROBOT
 VAR_INPUT
-	xMagazineMotionInhibit : BOOL; // Обмен палет удерживает неподвижный робот до завершения
+	xUsePhysicalGripperFeedback : BOOL;
+	xPhysicalGripperIoReady : BOOL;
+	stPhysicalGripperFeedback : ST_GRIPPER_STATUS;
+	tPhysicalGripperActionTimeout : TIME := T#10S;
+	axMagazineExchangeInProgress : ARRAY [1..2] OF BOOL; // Блокировка адресуется только к меняемому магазину
 	xTestInitialize : BOOL;
 	auiTestGripperContent : ARRAY [1..2] OF UINT;
 	auiTestGripperType : ARRAY [1..2] OF UINT;
 	uiTestOrientation : UINT;
-	xExternalCommandInhibit : BOOL; // Запрет приёма следующей команды стендом после снятия физического ключа
+	xExternalCommandInhibit : BOOL; // Программный экстренный останов запрещает следующую внешнюю команду
 	xSimulationAccelerationEnable : BOOL; // Разрешить ускорение виртуальных таймеров только в симуляции
 	uiSimulationTimeFactor : UINT := 1; // Коэффициент виртуального времени 1..100
 
@@ -62,6 +66,7 @@ VAR_INPUT
 
 END_VAR
 VAR_OUTPUT
+	GripperCommand : ST_GRIPPER_COMMAND; // Команда для страницы физических выходов
 	Command       : ST_ROBOT_COMMAND; // Выбранная команда текущего цикла
 	ModbusCommand : ST_ROBOT_COMMAND; // Команда внешнему роботу по Modbus
 	Status        : ST_ROBOT_STATUS; // Рабочие статусы робота
@@ -91,6 +96,7 @@ VAR
 	eManualGripperAction : E_ROBOT_ACTION; // Действие прямого ручного импульса
 	xActiveManualGripper : BOOL; // Текущее действие захвата запущено вручную
 	xMagazineCommandActive : BOOL; // Активная команда получена от FB_MAGAZINE
+	xMagazineTargetInhibit : BOOL; // Команда входит в магазин, который меняет палеты
 	rtReset               : R_TRIG; // Фронт команды сброса робота
 	rtHmiDrivesEnable     : R_TRIG; // Фронт запроса включения приводов с HMI
 	rtHmiDrivesDisable    : R_TRIG; // Фронт запроса отключения приводов с HMI
@@ -180,6 +186,7 @@ xGripperExecute := FALSE;
 xManualGripperRequest := FALSE;
 xManualGripperOverrideExecute := FALSE;
 xMagazineCommandActive := FALSE;
+xMagazineTargetInhibit := FALSE;
 
 Command.xExecute := FALSE;
 Command.xStop := FALSE;
@@ -220,6 +227,18 @@ ELSE
 	END_IF;
 END_IF;
 
+// Смена палет блокирует только вход робота в конкретный магазин. Движение к
+// станкам и к другому магазину остаётся доступным.
+IF (Command.uiMagazineId >= UINT#1) AND (Command.uiMagazineId <= UINT#2) THEN
+	IF axMagazineExchangeInProgress[Command.uiMagazineId] THEN
+		IF (Command.eSetPoint = E_POINT_NAME.MAGAZINE_SAFE)
+		OR (Command.eSetPoint = E_POINT_NAME.MAGAZINE_CHANGE)
+		OR (Command.eSetPoint = E_POINT_NAME.MAGAZINE_IN_SLOT) THEN
+			xMagazineTargetInhibit := TRUE;
+		END_IF;
+	END_IF;
+END_IF;
+
 // Abort теста имеет приоритет над любым владельцем, включая ручную подготовку
 // сценария, когда команда ячейки обычно не участвует в выборе.
 IF xTestAbort THEN
@@ -235,7 +254,7 @@ AND (eState = E_ROBOT_STATE.IDLE) THEN
 	Command.xExecute := FALSE;
 END_IF;
 
-IF xMagazineMotionInhibit AND (eState = E_ROBOT_STATE.IDLE) THEN
+IF xMagazineTargetInhibit AND (eState = E_ROBOT_STATE.IDLE) THEN
 	Command.xExecute := FALSE;
 END_IF;
 
@@ -739,7 +758,12 @@ CASE stGripperCommand.eAction OF
 	E_ROBOT_ACTION.ROTATE_TO_DETAIL: stGripperCommand.xRotateToDetail := TRUE;
 END_CASE;
 
+GripperCommand := stGripperCommand;
 fbGripper(
+	xUsePhysicalFeedback := xUsePhysicalGripperFeedback AND NOT xMode,
+	xPhysicalIoReady := xPhysicalGripperIoReady,
+	PhysicalFeedback := stPhysicalGripperFeedback,
+	tPhysicalActionTimeout := tPhysicalGripperActionTimeout,
 	// Положение и захваты робота не подменяются записью сценария: runner
 	// приводит их в нужное состояние штатными командами.
 	xTestInitialize := FALSE,

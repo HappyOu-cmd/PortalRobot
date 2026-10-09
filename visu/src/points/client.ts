@@ -14,7 +14,7 @@ export interface PointBackupItem {
 
 export interface PointBackupDocument {
   format: 'portal-robot-points';
-  version: 1;
+  version: 2;
   exportedAt: string;
   exportedBy?: { id: number | null; username: string; displayName: string };
   points: Array<PlcPointEditorPoint & { label: string }>;

@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { AuthStoreError } from './auth-store.mjs';
+import { POINT_EDITOR_COUNT } from './point-backup-store.mjs';
 
 export const MOBILE_COOKIE = 'portal_mobile_points';
 export const isPhoneAgent = (agent = '') => /Android|iPhone|iPad|iPod|Mobile/i.test(agent);
@@ -296,7 +297,7 @@ export class MobilePointsService {
     }
     if (this.busy || this.owner) fail('Предыдущая операция ещё не завершена', 409);
     const index = Number(body.index);
-    if (!Number.isInteger(index) || index < 1 || index > 12) fail('Неверный индекс точки', 400);
+    if (!Number.isInteger(index) || index < 1 || index > POINT_EDITOR_COUNT) fail('Неверный индекс точки', 400);
     const hold = body.action === 'check' ? session.checkHold : null;
     if (body.action === 'check') {
       if (!hold || hold.id !== body.holdId || hold.cancelled || hold.used || this.now() - hold.lastHeld > 1500) {

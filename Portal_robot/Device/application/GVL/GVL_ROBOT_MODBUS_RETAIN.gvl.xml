@@ -22,7 +22,7 @@
                       <Single Type="System.Guid">d9b2b2cc-ea99-4c3b-aa42-1e5c49e65b84</Single>
                     </Key>
                     <Value>
-                      <Single Type="System.Guid">e96fd1f9-3d03-44f2-82df-1ea832ac24f7</Single>
+                      <Single Type="System.Guid">3fe5920a-4b84-4acf-a2c0-c04494c55ea0</Single>
                     </Value>
                   </Entry>
                 </Dictionary>
@@ -48,6 +48,8 @@ VAR_GLOBAL RETAIN
 	tResponseTimeout  : TIME := T#500MS;
 	tPollInterval     : TIME := T#50MS;
 	tHeartbeatTimeout : TIME := T#2S;
+	tCommandStartTimeout : TIME := T#30S;
+	tCommandTimeout   : TIME := T#600S;
 END_VAR
 </Single>
             <Single Name="LineInfoPersistence" Type="string">445d514e-8ada-4bb4-a882-cc5458b1bb0b_Decl_LineIds</Single>
@@ -57,7 +59,7 @@ END_VAR
         <Single Name="ParameterList" Type="bool">False</Single>
         <Single Name="AddAttributeSubsequent" Type="bool">False</Single>
       </Single>
-      <Single Name="ParentSVNodeGuid" Type="System.Guid">e96fd1f9-3d03-44f2-82df-1ea832ac24f7</Single>
+      <Single Name="ParentSVNodeGuid" Type="System.Guid">3fe5920a-4b84-4acf-a2c0-c04494c55ea0</Single>
       <Array Name="Path" Type="string">
         <Single Type="string">Device</Single>
         <Single Type="string">PLC Logic</Single>

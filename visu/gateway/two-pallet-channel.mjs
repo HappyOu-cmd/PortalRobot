@@ -9,7 +9,7 @@ const statusFields = ['uiStep', 'uiFaultStep', 'uiCandidate', 'uiRobotPallet', '
   'xPowerAllowed', 'xDriveResetAllowed', 'xHomeAllowed', 'xLowerAllowed', 'xRaiseAllowed', 'xSelectAllowed',
   'xLockAllowed', 'xStopAllowed',
   'xMoveAllowed', 'xJogAllowed', 'xTeachOperatorAllowed', 'xTeachWorkAllowed', 'xResetAllowed', 'xEditAllowed',
-  'xEdit1Allowed', 'xEdit2Allowed', 'xConfigAllowed', 'uiReason', 'dwError', 'rP1', 'rP2', 'rLift'];
+  'xEdit1Allowed', 'xEdit2Allowed', 'xLoadAllowed', 'xConfigAllowed', 'uiReason', 'dwError', 'rP1', 'rP2', 'rLift'];
 const inputFields = ['xIoMapped', 'xLiftDown', 'xLiftUp', 'xLockIn', 'xLockOut', 'xStopIn', 'xStopOut',
   'xLimitNegative', 'xLimitPositive', 'xHomeSensor', 'xAxisBound', 'xPowered', 'xHomed', 'xStandstill', 'xDriveError', 'xMotionDone', 'lrPosition'];
 export const twinSymbols = ['uiMagazineMode', 'xMagazineModeAllowed', 'udiTwinCommandSeq', 'udiTwinAckSeq', 'uiTwinResult',

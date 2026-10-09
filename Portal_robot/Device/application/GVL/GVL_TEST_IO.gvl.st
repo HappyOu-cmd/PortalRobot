@@ -1,5 +1,4 @@
 {attribute 'qualified_only'}
 VAR_GLOBAL
-	// Логический вход. Физический адрес назначается отдельно в Device I/O Mapping CODESYS.
-	xSc500BenchKeyInput : BOOL := FALSE;
+	// Физический ключ стенда исключён из схемы. GVL оставлена для совместимости дерева проекта.
 END_VAR

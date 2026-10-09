@@ -1,0 +1,2 @@
+# Preserve the native CODESYS project as an exact binary snapshot.
+*.project binary

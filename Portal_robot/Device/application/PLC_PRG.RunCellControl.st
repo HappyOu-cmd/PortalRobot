@@ -24,6 +24,7 @@ TYPE_CONFIG(
 
 CELL_MANAGER(
 	axMagazineAutoSwapPending := axTwinAutoSwapPending,
+	axMagazineExchangeInProgress := axTwinMagazineExchangeInProgress,
 	xMagazineExchangeActive := (GVL_TWO_PALLET.uiMode = 1) AND (
 		GVL_TWO_PALLET.astStatus[1].xBusy OR GVL_TWO_PALLET.astStatus[2].xBusy
 		OR GVL_TWO_PALLET.astStatus[1].xCompleted OR GVL_TWO_PALLET.astStatus[2].xCompleted),
@@ -38,6 +39,10 @@ CELL_MANAGER(
 	xManual := GVL_CELL_CONTROL.xManual,
 	uiModeRejectReason := uiCellModeRejectReason,
 	xSettingsRejected := xCellSettingRejected,
+	xIoOverrideRejected := xIoOverrideRejected,
+    xIoDoRejected := xIoDoRejected,
+    xIoEmergencyResetRejected := xIoEmergencyResetRejected,
+    xIoEmergencyStopActive := GVL_HMI.xIoEmergencyStopActive,
 	xGlobalError := GVL_CELL_CONTROL.xGlobalError,
 	xSafetyReady := CELL_SAFETY.Status.xReady,
 	xDrivesReady := xDrivesReady,

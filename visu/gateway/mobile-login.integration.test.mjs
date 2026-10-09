@@ -29,15 +29,21 @@ test('real gateway + Vite: mobile login survives HMI account switches with anoth
     const gatewayPort = reservation.address().port;
     await new Promise((resolve) => reservation.close(resolve));
     const target = `http://127.0.0.1:${gatewayPort}`;
+    // A service is not a child test runner. Inherited child-v8 context redirects
+    // its startup banner into the test protocol instead of ordinary stdout.
+    const serviceEnvironment = { ...process.env };
+    delete serviceEnvironment.NODE_TEST_CONTEXT;
     gateway = spawn(process.execPath, ['gateway/server.mjs'], {
       cwd: root, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
       env: {
-        ...process.env, GATEWAY_HOST: '127.0.0.1', GATEWAY_PORT: String(gatewayPort),
+        ...serviceEnvironment, GATEWAY_HOST: '127.0.0.1', GATEWAY_PORT: String(gatewayPort),
         // No connection to the live PLC; every database belongs to this test.
         OPCUA_ENDPOINT: 'opc.tcp://127.0.0.1:1',
         AUTH_DB_PATH: authPath, CELL_EVENTS_DB_PATH: join(temporary, 'events.sqlite'),
+        GEOMETRY_DB_PATH: join(temporary, 'geometry.sqlite'),
         CYCLOGRAM_DB_PATH: join(temporary, 'cyclogram.sqlite'),
         STATISTICS_DB_PATH: join(temporary, 'statistics.sqlite'), TEST_DB_PATH: join(temporary, 'tests.sqlite'),
+        ARCHIVE_POLICY_DB_PATH: join(temporary, 'archive-policy.sqlite'),
         POINT_BACKUP_DIR: join(temporary, 'backups'),
       },
     });

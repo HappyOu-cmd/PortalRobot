@@ -104,6 +104,7 @@ export interface MachineState {
   powerAllowed: boolean;
   resetAllowed: boolean;
   manualControlAllowed: boolean;
+  manualDoorControlEnabled: boolean;
   manualDoorOpenAllowed: boolean;
   manualDoorCloseAllowed: boolean;
   manualHatchOpenAllowed: boolean;
@@ -215,6 +216,7 @@ export interface EnclosureDoorState {
 export type EnclosureDoorStates = Record<EnclosureDoorId, EnclosureDoorState>;
 
 export interface CellState {
+  geometryControl?: import('./geometryControl').GeometrySnapshot;
   magazineMode?: 0 | 1;
   magazineModeAllowed?: boolean;
 	robot: RobotState;

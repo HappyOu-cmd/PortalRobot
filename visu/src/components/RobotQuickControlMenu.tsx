@@ -137,7 +137,7 @@ export function RobotQuickControlMenu({
   const maxSlot = Math.max(1, Math.min(120, magazines[magazine - 1].state.rows * magazines[magazine - 1].state.columns));
   const slotNumber = Number(slot);
   const slotValid = Number.isInteger(slotNumber) && slotNumber >= 1 && slotNumber <= maxSlot;
-  const magazinePoint = point >= 14;
+  const magazinePoint = point >= 14 && point <= 16;
   const Icon = control === 'position' ? Activity : control === 'rotation' ? RotateCcw : Box;
   const state = !online ? 'Нет данных' : control === 'position' ? currentRobotPointLabel(robot.currentPoint)
     : control === 'rotation' ? robot.rotatedToBlank ? 'К заготовке' : robot.rotatedToDetail ? 'К детали' : 'Не определена'

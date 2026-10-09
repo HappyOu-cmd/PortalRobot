@@ -130,6 +130,7 @@ const complementSegments = (segments, fromMs, toMs) => {
 export class StatisticsStore {
   constructor({ databasePath = ':memory:', now = () => Date.now(), timeZone = 'Asia/Yekaterinburg' } = {}) {
     if (databasePath !== ':memory:') mkdirSync(dirname(databasePath), { recursive: true });
+    this.databasePath = databasePath;
     this.db = new DatabaseSync(databasePath);
     this.now = now;
     this.timeZone = timeZone;
@@ -183,6 +184,11 @@ export class StatisticsStore {
       CREATE INDEX IF NOT EXISTS idx_statistics_fact_operator ON statistics_fact (operator_user_id, timestamp_ms);
       CREATE TABLE IF NOT EXISTS production_counter (
         magazine_id INTEGER PRIMARY KEY CHECK (magazine_id BETWEEN 1 AND 2),
+        last_value INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS geometry_production_counter (
+        counter_id INTEGER PRIMARY KEY CHECK (counter_id BETWEEN 3 AND 6),
         last_value INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       ) STRICT;
@@ -311,20 +317,23 @@ export class StatisticsStore {
     return true;
   }
 
-  consumeProductionCounter(magazineId, rawValue, timestamp = this.now()) {
-    const id = Math.round(Number(magazineId));
+  consumeProductionCounter(counterId, rawValue, timestamp = this.now()) {
+    const id = Math.round(Number(counterId));
     const value = Math.round(Number(rawValue));
-    if (![1, 2].includes(id) || !Number.isInteger(value) || value < 0 || value > 0xffff_ffff) return 0;
+    // 1/2 — магазины, 3/4 — ГК 1/2 NORMAL, 5/6 — ГК 1/2 SIMULATION.
+    if (![1, 2, 3, 4, 5, 6].includes(id) || !Number.isInteger(value) || value < 0 || value > 0xffff_ffff) return 0;
+    const table = id <= 2 ? 'production_counter' : 'geometry_production_counter';
+    const column = id <= 2 ? 'magazine_id' : 'counter_id';
     const at = clampTimestamp(timestamp, this.now());
-    const previous = this.db.prepare('SELECT last_value FROM production_counter WHERE magazine_id = ?').get(id);
+    const previous = this.db.prepare(`SELECT last_value FROM ${table} WHERE ${column} = ?`).get(id);
     if (!previous) {
-      this.db.prepare('INSERT INTO production_counter (magazine_id, last_value, updated_at) VALUES (?, ?, ?)').run(id, value, at);
+      this.db.prepare(`INSERT INTO ${table} (${column}, last_value, updated_at) VALUES (?, ?, ?)`).run(id, value, at);
       return 0;
     }
     const last = Number(previous.last_value);
     let delta = value >= last ? value - last : value;
     if (value < last && last >= 0xf000_0000 && value <= 0x0fff_ffff) delta = 0x1_0000_0000 - last + value;
-    this.db.prepare('UPDATE production_counter SET last_value = ?, updated_at = ? WHERE magazine_id = ?').run(value, at, id);
+    this.db.prepare(`UPDATE ${table} SET last_value = ?, updated_at = ? WHERE ${column} = ?`).run(value, at, id);
     return Math.max(0, delta);
   }
 
@@ -565,6 +574,40 @@ export class StatisticsStore {
       }
       return result;
     });
+  }
+
+  archiveStatus() {
+    const equipment = this.db.prepare('SELECT COUNT(*) AS count FROM equipment_minute').get().count;
+    const facts = this.db.prepare('SELECT COUNT(*) AS count FROM statistics_fact').get().count;
+    const intervals = this.db.prepare('SELECT COUNT(*) AS count FROM operator_interval').get().count;
+    return { equipment: Number(equipment), facts: Number(facts), intervals: Number(intervals) };
+  }
+
+  clearArchive(timestamp = this.now(), { compact = true } = {}) {
+    const at = clampTimestamp(timestamp, this.now());
+    const result = this.#transaction(() => {
+      const result = {
+        equipment: this.db.prepare('DELETE FROM equipment_minute').run().changes,
+        facts: this.db.prepare('DELETE FROM statistics_fact').run().changes,
+        intervals: this.db.prepare('DELETE FROM operator_interval WHERE end_ms IS NOT NULL').run().changes,
+      };
+      // Открытая авторизация остаётся действительной, но новый архив начинается сейчас.
+      this.db.prepare('UPDATE operator_interval SET start_ms = ? WHERE end_ms IS NULL').run(at);
+      this.db.prepare(`INSERT INTO statistics_meta (key, value) VALUES ('collection_started_at', ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(String(at));
+      this.lastEquipmentTimestamp = null;
+      this.lastEquipmentStates = null;
+      return result;
+    });
+    if (compact && this.databasePath !== ':memory:') {
+      try {
+        this.db.exec('VACUUM');
+        this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+      } catch (error) {
+        console.warn(`[Statistics] Database compaction failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    return result;
   }
 
   #selectionSegments(fromMs, toMs, userId) {

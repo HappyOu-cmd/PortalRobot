@@ -3,7 +3,6 @@ import calendarMonthOutlineIcon from '@iconify-icons/material-symbols/calendar-m
 import cancelOutlineIcon from '@iconify-icons/material-symbols/cancel-outline';
 import checkCircleOutlineIcon from '@iconify-icons/material-symbols/check-circle-outline';
 import closeIcon from '@iconify-icons/material-symbols/close';
-import databaseOutlineIcon from '@iconify-icons/material-symbols/database-outline';
 import deleteOutlineIcon from '@iconify-icons/material-symbols/delete-outline';
 import editOutlineIcon from '@iconify-icons/material-symbols/edit-outline';
 import factoryOutlineIcon from '@iconify-icons/material-symbols/factory-outline';
@@ -279,7 +278,7 @@ function ShiftScheduleEditor() {
   </div>;
 }
 
-function StatisticsEditor() {
+export function StatisticsEditor() {
   const [users, setUsers] = useState<AppUser[]>([]);
   const [userId, setUserId] = useState('');
   const [from, setFrom] = useState(toLocalInput(Date.now() - 7 * 86_400_000));
@@ -304,7 +303,7 @@ function StatisticsEditor() {
       <div className="statistics-interval-head"><span>Оператор</span><span>Начало</span><span>Окончание</span><span>Действия</span></div>
       {intervals.map((item) => <article key={item.id}><select value={item.userId} onChange={(event) => setIntervals((current) => current.map((value) => value.id === item.id ? { ...value, userId: Number(event.target.value) } : value))}>{users.map((user) => <option key={user.id} value={user.id}>{user.displayName}</option>)}</select><input type="datetime-local" value={toLocalInput(item.startMs)} onChange={(event) => setIntervals((current) => current.map((value) => value.id === item.id ? { ...value, startMs: new Date(event.target.value).getTime() } : value))} /><input type="datetime-local" value={item.endMs ? toLocalInput(item.endMs) : ''} disabled={item.endMs === null} onChange={(event) => setIntervals((current) => current.map((value) => value.id === item.id ? { ...value, endMs: new Date(event.target.value).getTime() } : value))} /><span><button onClick={() => void saveInterval(item)} disabled={item.endMs === null}><Icon icon={saveOutlineIcon} aria-hidden="true" /></button><button className="danger" onClick={async () => { if (!window.confirm('Жёстко удалить этот операторский интервал?')) return; await statisticsApi.deleteInterval(item.id); await load(); }}><Icon icon={deleteOutlineIcon} aria-hidden="true" /></button></span></article>)}
     </section>
-    <section className="statistics-danger-zone"><header><Icon icon={deleteOutlineIcon} aria-hidden="true" /><div><span>НЕОБРАТИМОЕ УДАЛЕНИЕ</span><h3>Удалить статистику диапазона</h3><p>Данные физически удаляются из SQLite. Восстановления и аудита удаления нет.</p></div></header>
+    <section className="statistics-danger-zone"><header><Icon icon={deleteOutlineIcon} aria-hidden="true" /><div><span>НЕОБРАТИМОЕ УДАЛЕНИЕ</span><h3>Удалить статистику диапазона</h3><p>Данные удаляются из SQLite без восстановления. Действие записывается в журнал администрирования.</p></div></header>
       <div className="statistics-delete-options"><label><input type="checkbox" checked={deletion.equipment} onChange={(event) => setDeletion({ ...deletion, equipment: event.target.checked })} />Телеметрия оборудования</label><label><input type="checkbox" checked={deletion.facts} onChange={(event) => setDeletion({ ...deletion, facts: event.target.checked })} />Аварии, предупреждения и команды</label><label><input type="checkbox" checked={deletion.intervals} onChange={(event) => setDeletion({ ...deletion, intervals: event.target.checked })} />Интервалы операторов</label></div>
       <button className="statistics-hard-delete" onClick={async () => { if (!window.confirm(`Безвозвратно удалить выбранную статистику с ${formatDateTime(range.from)} по ${formatDateTime(range.to)}?`)) return; const result = await statisticsApi.hardDelete({ fromMs: range.from, toMs: range.to, userId: range.userId, ...deletion }); setMessage(`Удалено: телеметрия ${result.equipment}, события ${result.facts}, интервалы ${result.intervals}`); await load(); }}><Icon icon={deleteOutlineIcon} aria-hidden="true" />Удалить выбранные данные</button>
     </section>
@@ -312,10 +311,8 @@ function StatisticsEditor() {
 }
 
 export function StatisticsSettingsPanel({ onClose }: { onClose: () => void }) {
-  const [tab, setTab] = useState<'schedule' | 'editor'>('schedule');
   return <section className="statistics-settings-panel">
-    <header className="statistics-heading"><div><span>НАСТРОЙКА ЯЧЕЙКИ · СТАТИСТИКА</span><h2>Управление статистикой</h2><p>Расписание смен и серверные исторические данные</p></div><button type="button" onClick={onClose}><Icon icon={closeIcon} aria-hidden="true" /></button></header>
-    <nav className="statistics-settings-tabs"><button className={tab === 'schedule' ? 'active' : ''} onClick={() => setTab('schedule')}><Icon icon={calendarMonthOutlineIcon} aria-hidden="true" />Расписание смен</button><button className={tab === 'editor' ? 'active' : ''} onClick={() => setTab('editor')}><Icon icon={databaseOutlineIcon} aria-hidden="true" />Редактор статистики</button></nav>
-    <div className="statistics-settings-content">{tab === 'schedule' ? <ShiftScheduleEditor /> : <StatisticsEditor />}</div>
+    <header className="statistics-heading"><div><span>НАСТРОЙКА ЯЧЕЙКИ · СМЕНЫ</span><h2>Расписание смен</h2><p>Настройка календаря производственных смен</p></div><button type="button" onClick={onClose}><Icon icon={closeIcon} aria-hidden="true" /></button></header>
+    <div className="statistics-settings-content"><ShiftScheduleEditor /></div>
   </section>;
 }

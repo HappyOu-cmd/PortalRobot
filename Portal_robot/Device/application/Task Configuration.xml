@@ -37,7 +37,7 @@
         <List2 Name="alTaskGroups">
           <Single Type="{609a42d4-f974-4041-8548-f80e229ca5ed}" Method="IArchivable">
             <Single Name="Groupname" Type="string">IEC-Tasks</Single>
-            <Single Name="Core" Type="int">-2</Single>
+            <Single Name="Core" Type="int">0</Single>
             <Single Name="DefaultGroup" Type="bool">True</Single>
             <Single Name="Editable" Type="bool">False</Single>
           </Single>
@@ -94,7 +94,7 @@
         <Single Name="Event" Type="string"></Single>
         <Single Name="ExternalEvent" Type="string"></Single>
         <Single Name="TaskGuid" Type="System.Guid">b18394ce-cc47-4efa-a0bc-f292c3668cd5</Single>
-        <Single Name="EventPOUGuid" Type="System.Guid">19ba34c2-2b74-42e2-9951-8a74b8454054</Single>
+        <Single Name="EventPOUGuid" Type="System.Guid">d3f65f30-97aa-4519-8bca-76d42e3d6b4e</Single>
         <List Name="PouList" Type="{33f568bb-4a2c-48cb-a762-34cca3066d03}" />
         <Single Name="Implicit" Type="bool">False</Single>
         <Single Name="WithinSPSTimeSlicing" Type="bool">True</Single>
@@ -147,7 +147,7 @@
         <Single Name="Event" Type="string"></Single>
         <Single Name="ExternalEvent" Type="string"></Single>
         <Single Name="TaskGuid" Type="System.Guid">52d1668d-500a-4fe3-a208-c83a68301de1</Single>
-        <Single Name="EventPOUGuid" Type="System.Guid">0fb773d2-d3c9-46a3-851c-d2e82f4673c1</Single>
+        <Single Name="EventPOUGuid" Type="System.Guid">f22a0da3-8dee-4f68-a155-881f176f07be</Single>
         <List Name="PouList" Type="{33f568bb-4a2c-48cb-a762-34cca3066d03}">
           <Single Type="{f194d1ef-7376-42ce-a729-4a5485a97a46}" Method="IArchivable">
             <Single Name="Name" Type="string">PLC_PRG</Single>
@@ -205,7 +205,7 @@
         <Single Name="Event" Type="string"></Single>
         <Single Name="ExternalEvent" Type="string"></Single>
         <Single Name="TaskGuid" Type="System.Guid">aabe0e79-4662-4c6e-8921-25eb694fa588</Single>
-        <Single Name="EventPOUGuid" Type="System.Guid">717b2e05-16fc-4bc0-aa9d-ce2135b4f5a1</Single>
+        <Single Name="EventPOUGuid" Type="System.Guid">e0c96637-7f37-440a-9e25-2aef4b597f74</Single>
         <List Name="PouList" Type="{33f568bb-4a2c-48cb-a762-34cca3066d03}">
           <Single Type="{f194d1ef-7376-42ce-a729-4a5485a97a46}" Method="IArchivable">
             <Single Name="Name" Type="string">STATISTIC</Single>

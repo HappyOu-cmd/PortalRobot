@@ -16,6 +16,8 @@ TYPE E_ALARM_SOURCE :
 	MOTION_MANAGER, // Менеджер движения
 	POINT_MANAGER, // Менеджер точек
 	GRIPPER, // Захват робота
-	CELL_SAFETY // Дискретный контур безопасности; добавлен в конец без сдвига старых кодов
+	CELL_SAFETY, // Дискретный контур безопасности; прежние числовые коды сохранены
+	GEOMETRY_1,
+	GEOMETRY_2
 );
 END_TYPE

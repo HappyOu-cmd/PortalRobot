@@ -26,6 +26,19 @@ function plcPermission(name, values, source = fb) {
   return stBoolean(expression, values);
 }
 
+test('v2 test buffer is static-only and mode changes invalidate magazine bases', () => {
+  const buffer = read('ST/ST_TEST/ST_TEST_SCENARIO_BUFFER.st');
+  const control = read('PLC_PRG.RunTestControl.st');
+  const mode = read('PLC_PRG.RunTwoPallet.st');
+  const globals = read('GVL/GVL_TWO_PALLET.gvl.st');
+  assert.match(buffer, /aauiSlotContent : ARRAY \[1\.\.2, 1\.\.120\] OF UINT/);
+  assert.match(globals, /uiMode : UINT := UINT#1/);
+  assert.match(control, /xTestScenarioApplyAllowed := xTestStable\s+AND \(GVL_TWO_PALLET\.uiMode = 0\)\s*\/\/[^\r\n]*\s+AND GVL_HMI\.xTestSessionActive/);
+  assert.match(mode, /xModeChangeAllowed :=[\s\S]*?NOT GVL_HMI\.xTestSessionActive/);
+  assert.match(mode, /GVL_TWO_PALLET\.uiMode := stTwinRequest\.uiValue;[\s\S]*?GVL_POINT\.astRetainPoints\[13 \+ uiTwin\]\.xConfigured := FALSE/);
+  assert.match(mode, /xPointTableReady := FALSE/);
+});
+
 test('both magazine modes enumerate slots along robot X before advancing Y', () => {
   const robot = read('PLC_PRG.RunRobot.st');
   const slotPoint = robot.slice(robot.indexOf('uiRobotManualMagazineIndex := SINT_TO_UINT'), robot.indexOf('// Signed-смещение добавляется к базе'));
@@ -107,7 +120,9 @@ test('PLC owns per-pallet edit permissions and does not write into FB outputs fr
   const released = { 'GVL_MAGAZINE.astPartStatus[uiTwin].xBusy': false,
     'GVL_MAGAZINE.astPartStatus[uiTwin].xDisablePending': false,
     'GVL_MAGAZINE.astAutoCommand[uiTwin].xExecute': false, 'GVL_MAGAZINE.astCommand[uiTwin].xExecute': false,
-    'GVL_ROBOT.Status.xBusy': false, xMotionBusy: false, 'GVL_ROBOT.Status.uiMagazineContext': 0, uiTwin: 1 };
+    'GVL_ROBOT.Status.xBusy': false, xMotionBusy: false, 'GVL_ROBOT.Status.uiMagazineContext': 0, uiTwin: 1,
+    'GVL_CELL_MANAGER.Status.uiActiveMagazine': 0, 'GVL_CELL_MANAGER.Diag.eState': 0,
+    'E_CELL_STATE.MAGAZINE': 7, 'E_CELL_STATE.RELEASE_MAGAZINE': 8 };
   assert.equal(plcPermission('xTwinRobotOperation', released, run), false);
   for (const key of ['GVL_MAGAZINE.astPartStatus[uiTwin].xBusy', 'GVL_MAGAZINE.astPartStatus[uiTwin].xDisablePending',
     'GVL_MAGAZINE.astAutoCommand[uiTwin].xExecute', 'GVL_MAGAZINE.astCommand[uiTwin].xExecute']) {
@@ -119,22 +134,29 @@ test('PLC owns per-pallet edit permissions and does not write into FB outputs fr
   }
 });
 
-test('operator exchange is independent of the running cycle and reserves the automatic scheduler window', () => {
+test('operator exchange uses the target-magazine lock in both cell modes', () => {
   const operator = fb.slice(fb.indexOf('Status.xSwapAllowed :='), fb.indexOf('xAutoSwapAllowed :='));
-  assert.match(operator, /\(\(xManual AND xRobotIdle\) OR \(NOT xManual AND xRobotClear\)\)/);
+  assert.match(operator, /AND xRobotSwapWindow/);
+  assert.doesNotMatch(operator, /xRobotIdle|xRobotClear/);
   assert.doesNotMatch(operator, /xConfirmAllowed|xRecovery|xRobotGeometryReady|xRobotMagazineReady|xEnableAllowed/);
   const command = fb.slice(fb.indexOf('ELSIF Command.xSwap THEN'), fb.indexOf('ELSIF Command.xPowerOn THEN'));
   assert.match(command, /xExchangeStartedManual := xManual;\s+Diag.eState := E_TWO_PALLET_STATE.AUTO_LOWER/);
-  assert.match(fb, /xAutomaticState AND \(\(xExchangeStartedManual AND \(NOT xManual OR NOT xRobotIdle\)\)\s+OR \(NOT xExchangeStartedManual AND NOT xRobotClear\)\)/);
+  assert.match(fb, /xAutomaticState AND \(\(xExchangeStartedManual AND NOT xManual\)\s+OR NOT xRobotSwapWindow\)/);
   assert.match(fb, /IF xAutoSwap[\s\S]*?THEN\s+xExchangeStartedManual := FALSE/);
   assert.match(fb, /IF Diag.eState = E_TWO_PALLET_STATE.IDLE THEN xExchangeStartedManual := FALSE/);
-  assert.match(fb, /xAutoSwapAllowed := Status\.xEnableAllowed\s+AND xRobotClear\s+AND Status\.xEnabled\s+AND xOtherLoaded/);
+  assert.match(fb, /xAutoSwapAllowed := xEnableBaseAllowed\s+AND xRobotSwapWindow\s+AND Status\.xEnabled\s+AND xOtherLoaded/);
   assert.match(fb, /IF xAutoSwap\s+AND xAutoSwapAllowed/);
-  assert.match(fb, /Status\.xEnableAllowed := xBase\s+AND xConnection[\s\S]*?AND xRobotMagazineReady/);
+  assert.match(fb, /xEnableBaseAllowed := xBase[\s\S]*?AND xRobotMagazineReady[\s\S]*?Status\.xEnableAllowed := xEnableBaseAllowed AND xConnection/);
+  assert.doesNotMatch(fb.slice(fb.indexOf('xAutoSwapAllowed :='), fb.indexOf('Status.xPowerAllowed :=')), /xConnection/);
+  assert.doesNotMatch(operator, /xOtherLoaded/);
   assert.match(fb, /Status\.xStartAllowed := Status\.xConfirmAllowed\s+AND xRobotMagazineReady/);
   assert.doesNotMatch(fb, /xRobotEnableReady/);
   const run = read('PLC_PRG.RunTwoPallet.st');
-  assert.match(run, /xRobotIdle := NOT GVL_ROBOT.Status.xBusy AND NOT xMotionBusy/);
+  assert.match(run, /xTwinRobotSwapWindow := NOT xTwinRobotOperation;/);
+  const swapWindow = run.slice(run.indexOf('xTwinRobotSwapWindow :='), run.indexOf('xTwinOtherLoaded :='));
+  assert.doesNotMatch(swapWindow, /eCurrentPoint|xRobotInterfaceReady|Status\.xError|uiMagazineContext|Status\.xBusy|xMotionBusy|xMagazineExchangeAllowed/);
+  assert.equal(plcPermission('xTwinRobotSwapWindow', { xTwinRobotOperation: false }, run), true);
+  assert.equal(plcPermission('xTwinRobotSwapWindow', { xTwinRobotOperation: true }, run), false);
   assert.match(run, /xRobotGeometryReady := NOT GVL_HMI\.xModbusMode AND xPointTableReady/);
   assert.match(run, /xRobotMagazineReady := GVL_MAGAZINE\.astPartStatus\[uiTwin\]\.xEnableCheckNoError[\s\S]*?xEnableCheckGeometry/);
   const magazine = read('FB/FB_MAGAZINE.st');
@@ -145,22 +167,38 @@ test('operator exchange is independent of the running cycle and reserves the aut
   assert.doesNotMatch(magazine, /WRN_ENABLE_ROBOT_NOT_READY/);
 });
 
-test('PLC operator exchange truth table permits automatic production only with the magazine disabled and released', () => {
+test('PLC exchange truth table permits robot motion elsewhere but still requires the target magazine released', () => {
   const ready = { xBase: true, xConnection: true, xIdle: true, 'Input.xStandstill': true,
     'Input.xPowered': true, 'Error.dwErrorActive': 0, 'Status.xConfirmed': true,
     uiCandidate: 1, 'Status.uiRobotPallet': 1, 'Status.xEnabled': false, xStopRequest: false,
-    xManual: false, xRobotIdle: true, xRobotClear: true };
+    xManual: false, xRobotSwapWindow: true };
   assert.equal(plcPermission('Status.xSwapAllowed', ready), true);
   for (const blocked of [{ xBase: false }, { xConnection: false }, { xIdle: false },
     { 'Input.xStandstill': false }, { 'Input.xPowered': false }, { 'Error.dwErrorActive': 0x100 },
     { 'Status.xConfirmed': false }, { uiCandidate: 0 }, { uiCandidate: 2 },
-    { 'Status.xEnabled': true }, { xStopRequest: true }, { xRobotClear: false }]) {
+    { 'Status.xEnabled': true }, { xStopRequest: true }, { xRobotSwapWindow: false }]) {
     assert.equal(plcPermission('Status.xSwapAllowed', { ...ready, ...blocked }), false, JSON.stringify(blocked));
   }
-  assert.equal(plcPermission('Status.xSwapAllowed', { ...ready, xManual: true, xRobotClear: false }), true);
-  assert.equal(plcPermission('Status.xSwapAllowed', { ...ready, xManual: true, xRobotClear: false, xRobotIdle: false }), false);
+  assert.equal(plcPermission('Status.xSwapAllowed', { ...ready, xManual: true }), true);
+  assert.equal(plcPermission('Status.xSwapAllowed', { ...ready, xRobotSwapWindow: false }), false);
   assert.equal(plcPermission('xBase', { xSelected: true, xConfigValid: true,
     'Input.xIoMapped': true, 'Input.xAxisBound': true, xSafe: true, xRobotOperation: true }), false);
+});
+
+test('pallet exchange locks only its magazine until Completed and leaves other routes available', () => {
+  const run = read('PLC_PRG.RunTwoPallet.st');
+  const cell = read('FB/FB_CELL_MANAGER/FB_CELL_MANAGER.st');
+  const robot = read('FB/FB_ROBOT.st');
+  const robotRun = read('PLC_PRG.RunRobot.st');
+  assert.match(run, /axTwinMagazineExchangeInProgress\[uiTwin\] := GVL_TWO_PALLET\.astStatus\[uiTwin\]\.xBusy\s+OR GVL_TWO_PALLET\.astStatus\[uiTwin\]\.xCompleted/);
+  assert.match(cell, /axMagazineExchangeInProgress : ARRAY/);
+  assert.match(cell, /AND NOT axMagazineExchangeInProgress\[1\][\s\S]*?AND NOT astMagazineStatus\[1\]\.xBusy/);
+  assert.match(cell, /AND NOT axMagazineExchangeInProgress\[2\][\s\S]*?AND NOT astMagazineStatus\[2\]\.xBusy/);
+  assert.match(cell, /xMagazineReady :=[\s\S]*?AND NOT xActiveMagazineExchangeInProgress/);
+  assert.doesNotMatch(cell, /IF xMagazineExchangeActive AND/);
+  assert.match(robot, /axMagazineExchangeInProgress\[Command\.uiMagazineId\][\s\S]*?E_POINT_NAME\.MAGAZINE_SAFE[\s\S]*?E_POINT_NAME\.MAGAZINE_CHANGE[\s\S]*?E_POINT_NAME\.MAGAZINE_IN_SLOT/);
+  assert.doesNotMatch(robotRun, /xHmiRobotActionBaseAllowed := xRobotHmiPermit\s+AND NOT GVL_TWO_PALLET\.astStatus\[1\]\.xBusy/);
+  assert.match(robotRun, /AND NOT axTwinMagazineExchangeInProgress\[stRobotHmiCommand\.uiMagazineId\]/);
 });
 
 test('PLC inventory truth table keeps the operator pallet editable independently of mechanism and mode', () => {
@@ -237,7 +275,32 @@ test('manual pneumatic recovery is independent and confirmed identity survives a
   assert.match(run, /xStopOut := GVL_TWO_PALLET\.auiCommand\[uiTwin\] = UINT#32/);
   const disable = fb.slice(fb.indexOf('ELSIF Command.xDisable THEN'), fb.indexOf('ELSIF Command.xSwap THEN'));
   assert.doesNotMatch(disable, /xConfirmed := FALSE/);
-  assert.match(fb, /IF NOT xConnection THEN Status\.xEnabled := FALSE; END_IF/);
+  assert.doesNotMatch(fb, /IF NOT xConnection THEN Status\.xEnabled := FALSE; END_IF/);
+  assert.match(fb, /OR \(\(NOT xConnection\) AND xManualState AND NOT xManualPneumaticState\)/);
+  assert.doesNotMatch(fb.slice(fb.indexOf('Status.xReady :='), fb.indexOf('IF NOT xSelected THEN', fb.indexOf('Status.xReady :='))), /xConnection/);
+});
+
+test('only the stationary operator pallet can confirm loading and accepted manual swap clears both flags', () => {
+  const run = read('PLC_PRG.RunTwoPallet.st');
+  const loaded = run.slice(run.indexOf('20:', run.indexOf('IF xTwinInventoryCommand THEN')), run.indexOf('21, 22:', run.indexOf('IF xTwinInventoryCommand THEN')));
+  assert.match(loaded, /astStatus\[uiTwin\]\.xLoadAllowed/);
+  assert.match(loaded, /uiTwinPallet <> GVL_TWO_PALLET\.astStatus\[uiTwin\]\.uiRobotPallet/);
+  assert.match(read('ST/ST_MAGAZINE/ST_TWO_PALLET_STATUS.st'), /xLoadAllowed\s*:\s*BOOL/);
+  const permission = { 'Status.xConfirmed': true, 'Status.xBusy': false, xOtherLoaded: false,
+    'Status.uiRobotPallet': 1, 'Status.xEdit1Allowed': false, 'Status.xEdit2Allowed': true };
+  assert.equal(plcPermission('Status.xLoadAllowed', permission), true);
+  for (const blocked of [{ 'Status.xConfirmed': false }, { 'Status.xBusy': true }, { xOtherLoaded: true },
+    { 'Status.xEdit2Allowed': false }]) {
+    assert.equal(plcPermission('Status.xLoadAllowed', { ...permission, ...blocked }), false);
+  }
+  assert.equal(plcPermission('Status.xLoadAllowed', { ...permission, 'Status.uiRobotPallet': 2,
+    'Status.xEdit1Allowed': true, 'Status.xEdit2Allowed': false }), true);
+  const manualSwap = run.slice(run.indexOf('// Ручная смена расходует'), run.indexOf('IF (uiTwinRequestResult = 2)', run.indexOf('// Ручная смена расходует')));
+  assert.match(manualSwap, /astTwinCommand\[uiTwin\]\.xSwap AND GVL_TWO_PALLET\.astStatus\[uiTwin\]\.xCommandAccepted/);
+  assert.match(manualSwap, /axLoaded\[1\] := FALSE;[\s\S]*?axLoaded\[2\] := FALSE/);
+  assert.match(read('PLC_PRG.st'), /uiTwinRobotPalletBefore\s*:\s*UINT/);
+  assert.match(run, /uiTwinRobotPalletBefore := GVL_TWO_PALLET\.astStatus\[uiTwin\]\.uiRobotPallet;[\s\S]*?TWIN\[uiTwin\]\(/);
+  assert.match(run, /IF uiTwinRobotPalletBefore <> GVL_TWO_PALLET\.astStatus\[uiTwin\]\.uiRobotPallet THEN\s+GVL_TWO_PALLET\.astStore\[uiTwin\]\.axLoaded\[1\] := FALSE;\s+GVL_TWO_PALLET\.astStore\[uiTwin\]\.axLoaded\[2\] := FALSE;/);
 });
 
 test('operator start is atomic and a negative answer raises a dedicated warning', () => {
@@ -298,13 +361,16 @@ test('two-pallet FB uses project command, state and diagnostic structures', () =
   assert.match(read('PLC_PRG.RunTwoPallet.st'), /Status => GVL_TWO_PALLET\.astStatus\[uiTwin\][\s\S]*?Diag => GVL_TWO_PALLET\.astDiag\[uiTwin\][\s\S]*?Error => GVL_TWO_PALLET\.astError\[uiTwin\]/);
 });
 
-test('scheduler reserves exchange windows and does not launch a robot route while pallets exchange', () => {
+test('a pallet exchange blocks only its target magazine and does not reserve the whole scheduler', () => {
   const manager = read('FB/FB_CELL_MANAGER/FB_CELL_MANAGER.st');
-  assert.match(manager, /IF xMagazineExchangeActive AND[\s\S]*?ELSE\s+CASE eState OF/);
+  assert.doesNotMatch(manager, /IF xMagazineExchangeActive AND/);
+  assert.match(manager, /OR axMagazineExchangeInProgress\[uiActiveMagazine\]/);
+  assert.match(manager, /AND NOT xActiveMagazineExchangeInProgress/);
   assert.match(manager, /Status.xMagazineExchangeAllowed := NOT xStopRequested/);
   const run = read('PLC_PRG.RunTwoPallet.st');
-  assert.match(run, /AND GVL_CELL_MANAGER.Status.xMagazineExchangeAllowed/);
-  assert.match(run, /AND NOT GVL_MACHINE.Status\[1\].xBusy AND NOT GVL_MACHINE.Status\[2\].xBusy AND NOT GVL_MACHINE.Status\[3\].xBusy/);
+  assert.match(run, /axTwinMagazineExchangeInProgress\[uiTwin\] := GVL_TWO_PALLET\.astStatus\[uiTwin\]\.xBusy\s+OR GVL_TWO_PALLET\.astStatus\[uiTwin\]\.xCompleted/);
+  assert.doesNotMatch(run, /GVL_CELL_MANAGER.Status.xMagazineExchangeAllowed|NOT GVL_MACHINE.Status\[1\]\.xBusy/);
+  assert.match(read('PLC_PRG.RunCellControl.st'), /axMagazineExchangeInProgress := axTwinMagazineExchangeInProgress/);
   assert.match(run, /GVL_MAGAZINE.astStatus\[uiTwin\].xReady := GVL_MAGAZINE.astPartStatus\[uiTwin\].xReady\s+AND GVL_TWO_PALLET.astStatus\[uiTwin\].xReady/);
 });
 

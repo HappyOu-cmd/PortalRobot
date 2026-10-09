@@ -29,7 +29,7 @@ export class CellModeChannel {
         if (result.udiCellModeAckSeq === sequence) {
           if (result.uiCellModeResult === 1) return;
           if (result.uiCellModeResult === 2) throw new Error('Переключение в ручной режим отклонено: сначала остановите автоматический цикл');
-          if (result.uiCellModeResult === 3) throw new Error('Переключение в автоматический режим отклонено: общая авария активна');
+          if (result.uiCellModeResult === 3) throw new Error('Переключение в автоматический режим отклонено: активна общая авария или экстренный останов');
           throw new Error(`PLC вернул неизвестный результат переключения режима: ${result.uiCellModeResult}`);
         }
         await this.pause(40);

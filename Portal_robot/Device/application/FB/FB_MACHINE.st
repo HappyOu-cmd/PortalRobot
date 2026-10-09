@@ -10,6 +10,7 @@ VAR_INPUT
 	xManualMode       : BOOL; // Ручной режим: открытая операторская дверь не формирует аварию обслуживания
 	xAutomaticUseEnabled : BOOL; // Станок выбран для автоматической обработки
 	xRobotMotionBusy   : BOOL; // Группа/ось робота ещё движется или тормозит
+	xSafetyDoorControlEnabled : BOOL := TRUE; // Модель двери; FALSE для ручной двери в NORMAL
 	xHmiOpenSafetyDoor  : BOOL; // Импульс ручного открытия операторской двери
 	xHmiCloseSafetyDoor : BOOL; // Импульс ручного закрытия операторской двери
 	xHmiOpenHatch       : BOOL; // Импульс ручного открытия роботного люка
@@ -266,10 +267,10 @@ xManualHatchRecoveryOpenAllowed := xManualMode
 	AND NOT xGlobalError
 	AND NOT xRobotMotionBusy
 	AND NOT stRobotStatus.xBusy;
-xManualSafetyDoorOpenAllowed := xManualControlAllowed
+xManualSafetyDoorOpenAllowed := xManualControlAllowed AND xSafetyDoorControlEnabled
 	AND stMachineStatus.xSafetyDoorClosed
 	AND NOT stMachineStatus.xSafetyDoorOpen;
-xManualSafetyDoorCloseAllowed := xManualControlAllowed
+xManualSafetyDoorCloseAllowed := xManualControlAllowed AND xSafetyDoorControlEnabled
 	AND stMachineStatus.xSafetyDoorOpen
 	AND NOT stMachineStatus.xSafetyDoorClosed;
 xManualHatchOpenAllowed := (xManualControlAllowed OR xManualHatchRecoveryOpenAllowed)
@@ -1211,6 +1212,7 @@ Status.xResetAllowed := (eState = E_MACHINE_STATE.ERROR)
 		OR xDoorRobotRecoveryReady)
 	AND xRobotResetDependencyReady;
 Status.xManualControlAllowed := xManualControlAllowed;
+Status.xManualSafetyDoorControlEnabled := xSafetyDoorControlEnabled;
 Status.xManualSafetyDoorOpenAllowed := xManualSafetyDoorOpenAllowed;
 Status.xManualSafetyDoorCloseAllowed := xManualSafetyDoorCloseAllowed;
 Status.xManualHatchOpenAllowed := xManualHatchOpenAllowed;

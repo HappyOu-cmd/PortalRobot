@@ -15,7 +15,8 @@ const backup = () => ({
 
 test('validates and normalizes a point backup', () => {
   const value = validatePointBackup(backup());
-  assert.equal(value.points.length, 2);
+  assert.equal(value.points.length, 4);
+  assert.equal(value.version, 2);
   assert.equal(value.points[0].configured, true);
   assert.equal(value.points[0].magazineSafeZ, 0);
   assert.equal(value.points[0].magazineChangeZ, 0);
@@ -60,6 +61,36 @@ test('writes atomically, lists metadata and reads parsed points', async (t) => {
   assert.equal(saved.configuredCount, 1);
   assert.deepEqual((await store.list()).map((item) => item.id), [saved.id]);
   assert.equal((await store.read(saved.id)).points[0].x, 10);
+});
+
+test('migrates all twelve legacy points without changing their values or configuring GK', () => {
+  const legacy = { ...backup(), points: [1, 3, 4, 5, 7, 8, 9, 11, 12, 17, 22, 23].map((pointId, offset) => ({
+    index: offset + 1, pointId, label: `Point ${offset + 1}`, x: offset + 100, y: -offset, z: 500,
+    magazineSafeZ: offset >= 10 ? -300 : 0, magazineChangeZ: offset >= 10 ? -100 : 0, speedFactor: .5, configured: true,
+  })) };
+  const original = structuredClone(legacy);
+  const migrated = validatePointBackup(legacy);
+  assert.deepEqual(legacy, original);
+  assert.equal(migrated.version, 2);
+  assert.equal(migrated.points.length, 14);
+  assert.deepEqual(migrated.points.slice(0, 12), legacy.points);
+  assert.deepEqual(migrated.points.slice(12).map(p => [p.index, p.pointId, p.configured]), [[13, 24, false], [14, 27, false]]);
+});
+
+test('version two roundtrips configured GK bases including SAFE_Z and minimum speed', () => {
+  const document = validatePointBackup(backup());
+  for (const point of document.points.filter(p => p.index >= 13)) Object.assign(point, { x: 100, y: 200, z: 500, magazineSafeZ: -300, speedFactor: .1, configured: true });
+  assert.deepEqual(validatePointBackup(document), document);
+});
+
+test('rejects mismatched GK identity and unsafe SAFE_Z in version two', () => {
+  const document = validatePointBackup(backup());
+  const point = document.points.find(p => p.index === 13);
+  point.pointId = 25;
+  assert.throws(() => validatePointBackup(document), /PointId/);
+  point.pointId = 24;
+  Object.assign(point, { speedFactor: .2, configured: true, magazineSafeZ: 0 });
+  assert.throws(() => validatePointBackup(document), /SAFE_Z/);
 });
 
 test('does not accept traversal, oversized files or symbolic links', async (t) => {

@@ -12,3 +12,13 @@ test('exclusive test session leaves safety, reset and queued simulation factor a
   }
   assert.equal(isHmiCommandAllowedDuringTest('cell.start', false), true);
 });
+
+test('exclusive tests delegate direct manual I/O permission to PLC while keeping emergency reset excluded', () => {
+  for (const command of ['io.heartbeat', 'io.manual.begin', 'io.manual.end', 'io.override', 'io.output', 'io.release', 'io.releaseAll', 'io.output.release', 'io.outputs.releaseAll', 'io.releaseEverything', 'io.emergencyStop']) {
+    assert.equal(isHmiCommandAllowedDuringTest(command, true), true);
+  }
+  for (const command of ['io.emergencyReset']) {
+    assert.equal(isHmiCommandAllowedDuringTest(command, true), false);
+    assert.equal(isHmiCommandAllowedDuringTest(command, false), true);
+  }
+});

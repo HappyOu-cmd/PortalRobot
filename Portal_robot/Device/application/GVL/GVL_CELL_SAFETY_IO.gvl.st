@@ -29,6 +29,7 @@ VAR_GLOBAL
 	axDoorButtonLampOutput : ARRAY [1..4] OF BOOL;
 	xSafetyRelayResetOutput : BOOL;
 	// Светосигнальная колонна: готовые уровни с миганием из PLC_PRG.RunSignalTower.
+	xAlarmHornOutput : BOOL; // Короткий звук при новой аварии
 	xSignalTowerRedOutput   : BOOL;
 	xSignalTowerAmberOutput : BOOL;
 	xSignalTowerGreenOutput : BOOL;

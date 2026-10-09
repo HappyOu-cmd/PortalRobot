@@ -20,6 +20,9 @@ FRESH = (APP / 'PLC_PRG.IsHmiCommandFresh.st').read_text(encoding='utf-8-sig').s
 
 def execute(source, state):
     """Only IF, CASE, assignments and the named numeric conversions are supported."""
+    # TIME values in these source tests are milliseconds, like CODESYS TIME.
+    conversions = {'LREAL_TO_REAL': float, 'LREAL_TO_UDINT': round,
+                   'UDINT_TO_TIME': int, 'UDINT_TO_ULINT': int, 'TIME_TO_UDINT': int}
     source = re.sub(r'//[^\n]*', '', source).strip()
     source = re.sub(r'IsHmiCommandFresh\(udiIssuedAtMs := ([\w.\[\]]+)\)', r'fresh(\1)', source)
     case = re.search(r'CASE (.*?) OF(.*?)END_CASE;', source, re.S)
@@ -30,12 +33,12 @@ def execute(source, state):
     token = re.compile(r'(?:(IF|ELSIF)\s+(.*?)\s+THEN\b|(ELSE)\b|(END_IF);|([\w.\[\]]+)\s*:=\s*(.*?);)', re.S)
 
     def expression(text):
-        text = re.sub(r'(?:U?D?INT|ULINT)#(\d+)', r'\1', text)
+        text = re.sub(r'(?:U?D?INT|ULINT|DWORD)#(\d+)', r'\1', text)
         names = {'TRUE': 'True', 'FALSE': 'False', 'NOT': 'not', 'AND': 'and', 'OR': 'or'}
         text = re.sub(r'\b(?:TRUE|FALSE|NOT|AND|OR)\b', lambda m: names[m[0]], text)
         text = text.replace('<>', '!=')
         text = re.sub(r'(?<![!<>=])=(?!=)', '==', text)
-        text = re.sub(r'\b[A-Za-z_]\w*(?:\.\w+)*(?:\[\d+\])?', lambda m: m[0] if m[0] in {'True', 'False', 'not', 'and', 'or', 'fresh', 'LREAL_TO_REAL', 'LREAL_TO_UDINT', 'UDINT_TO_TIME', 'UDINT_TO_ULINT'} else f'state[{m[0]!r}]', text)
+        text = re.sub(r'\b[A-Za-z_]\w*(?:\.\w+)*(?:\[\d+\])?', lambda m: m[0] if m[0] in {'True', 'False', 'not', 'and', 'or', 'fresh', *conversions} else f'state[{m[0]!r}]', text)
         return ' '.join(text.split())
 
     lines, depth = [], 0
@@ -56,15 +59,16 @@ def execute(source, state):
         source = source[match.end():].strip()
     assert depth == 0
     def fresh(issued):
-        local = {'udiHmiCommandNowMs': state['now'], 'udiIssuedAtMs': issued}
+        local = {'udiHmiCommandNowMs': state['now'], 'udiIssuedAtMs': issued,
+                 'GVL_CELL_SETTINGS.tHmiCommandFreshnessTimeout': state['GVL_CELL_SETTINGS.tHmiCommandFreshnessTimeout']}
         execute(FRESH, local)
         return local['IsHmiCommandFresh']
-    exec('\n'.join(lines), {'__builtins__': {}, 'state': state, 'fresh': fresh,
-         'LREAL_TO_REAL': float, 'LREAL_TO_UDINT': round, 'UDINT_TO_TIME': int, 'UDINT_TO_ULINT': int})
+    exec('\n'.join(lines), {'__builtins__': {}, 'state': state, 'fresh': fresh, **conversions})
 
 
 def command_state():
     return {'now': 100, 'axHmiCommandWasHigh[1]': False, 'axHmiInternalPulse[1]': False,
+            'GVL_CELL_SETTINGS.tHmiCommandFreshnessTimeout': 3000,
             'GVL_HMI.audiHmiCommandSeq[1]': 0, 'GVL_HMI.audiHmiCommandAckSeq[1]': 0,
             'GVL_HMI.audiHmiCommandIssuedAtMs[1]': 100}
 
@@ -100,10 +104,16 @@ def test_back_to_back_commands_have_a_low_scan_and_two_rising_edges():
     assert state['GVL_HMI.audiHmiCommandAckSeq[1]'] == 2
 
 
-@pytest.mark.parametrize('issued,now,accepted', [(100, 3100, True), (100, 3101, False), (0xfffffff0, 20, True), (0xfffffff0, 4000, False)])
-def test_expired_commands_are_acknowledged_without_an_output_pulse(issued, now, accepted):
+@pytest.mark.parametrize('issued,now,timeout,accepted', [
+    (100, 3100, 3000, True), (100, 3101, 3000, False),
+    (0xfffffff0, 20, 3000, True), (0xfffffff0, 4000, 3000, False),
+    (100, 1100, 1000, True), (100, 1101, 1000, False),
+    (0xfffffff0, 20, 20, False),
+])
+def test_expired_commands_are_acknowledged_without_an_output_pulse(issued, now, timeout, accepted):
     state = command_state()
-    state.update({'now': now, 'GVL_HMI.audiHmiCommandIssuedAtMs[1]': issued, 'GVL_HMI.audiHmiCommandSeq[1]': 1})
+    state.update({'now': now, 'GVL_HMI.audiHmiCommandIssuedAtMs[1]': issued, 'GVL_HMI.audiHmiCommandSeq[1]': 1,
+                  'GVL_CELL_SETTINGS.tHmiCommandFreshnessTimeout': timeout})
     execute(SLOT, state); execute(ACK, state)
     assert state['axHmiCommandPulse[1]'] == accepted
     assert state['GVL_HMI.auiHmiCommandResult[1]'] == (1 if accepted else 2)
@@ -128,6 +138,7 @@ FIELDS = ['lrSafetyHomeToleranceX', 'lrSafetyHomeToleranceY', 'lrSafetyHomeToler
 
 def setting_state(index=1, value=25):
     return {'now': 100, 'GVL_HMI.udiCellSettingCommandSeq': 1, 'GVL_HMI.udiCellSettingAckSeq': 0,
+            'GVL_CELL_SETTINGS.tHmiCommandFreshnessTimeout': 3000,
             'GVL_HMI.udiCellSettingIssuedAtMs': 100, 'GVL_HMI.uiCellSettingIndex': index,
             'GVL_HMI.lrCellSettingRequest': value, 'GVL_CELL_SETTINGS.xCellSettingsChangeAllowed': True,
             'xPointCheckActive': False, **{f'GVL_CELL_SETTINGS.{field}': 5 for field in FIELDS}}

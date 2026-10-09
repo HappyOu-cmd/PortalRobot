@@ -45,7 +45,9 @@ END_IF;
 // E_POINT_NAME и прежнего индекса Persistent-массива. Три legacy-точки INSIDE
 // пропущены; рецепты станков их не используют.
 xPointTableReady := TRUE;
-FOR uiPointEditorIndex := UINT#1 TO INT_TO_UINT(GVL_POINT.iEditablePointCount) DO
+// Базы ГК хранятся у владельца GVL_GEOMETRY_CONTROL, отдельно от прежних 15
+// Persistent-позиций. Их добавление не сбрасывает уже сохранённые точки.
+FOR uiPointEditorIndex := UINT#1 TO INT_TO_UINT(GVL_POINT.iRequiredPointCount) DO
 	uiPointStorageIndex := UINT#0;
 	CASE uiPointEditorIndex OF
 		UINT#1: ePointEditorName := E_POINT_NAME.MACHINE_1_ABOVE; uiPointStorageIndex := UINT#1;

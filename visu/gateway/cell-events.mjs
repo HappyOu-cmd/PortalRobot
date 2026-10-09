@@ -12,6 +12,7 @@ export const CELL_EVENT_SOURCES = Object.freeze({
   6: 'Оператор',
   7: 'Авария',
   8: 'Система и связь',
+  9: 'Геометрический контроль',
 });
 
 // Existing I/O feedback, recorded separately from the PLC alarm catalogue.
@@ -71,6 +72,9 @@ const POINTS = [
   'Магазин — legacy detail', 'Магазин — legacy take', 'Магазин — legacy put',
   'Магазин — legacy change', 'HOME_SAFETY', 'Магазин — legacy return',
   'Магазин — безопасно над слотом', 'Магазин — внутри слота', 'Магазин — смена захвата над слотом',
+  'Магазин 1 — база', 'Магазин 2 — база',
+  'ГК 1 — укладка', 'ГК 1 — безопасный подход', 'ГК 1 — смена захвата',
+  'ГК 2 — укладка', 'ГК 2 — безопасный подход', 'ГК 2 — смена захвата',
 ];
 const MODBUS_COMMANDS = {
   0: 'Нет команды', 2: 'Открыть захват 1', 3: 'Закрыть захват 1', 4: 'Открыть захват 2',
@@ -144,16 +148,36 @@ const rowToEvent = (row) => ({
   },
 });
 
+// SQLite не меняет CHECK через ALTER COLUMN. При следующем штатном запуске
+// gateway переносим таблицу одной транзакцией, сохраняя ID, поля и индексы.
+export function ensureGeometryEventSource(db) {
+  const schema = db.prepare("SELECT sql FROM sqlite_schema WHERE type='table' AND name='cell_event'").get()?.sql;
+  if (!schema || !/source_id\s+INTEGER\s+NOT NULL\s+CHECK\s*\(source_id BETWEEN 1 AND 8\)/i.test(schema)) return;
+  const objects = db.prepare("SELECT sql FROM sqlite_schema WHERE tbl_name='cell_event' AND type IN ('index','trigger') AND sql IS NOT NULL").all();
+  const updated = schema.replace(/CREATE TABLE\s+(?:IF NOT EXISTS\s+)?["`\[]?cell_event["`\]]?/i, 'CREATE TABLE cell_event_geometry_migration')
+    .replace(/source_id BETWEEN 1 AND 8/i, 'source_id BETWEEN 1 AND 9');
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.exec(updated);
+    db.exec('INSERT INTO cell_event_geometry_migration SELECT * FROM cell_event');
+    db.exec('DROP TABLE cell_event; ALTER TABLE cell_event_geometry_migration RENAME TO cell_event');
+    for (const object of objects) db.exec(object.sql);
+    db.exec('COMMIT');
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+
 export class CellEventStore {
-  constructor({ databasePath = ':memory:', retentionDays = 90 } = {}) {
+  constructor({ databasePath = ':memory:', retentionDays = 90, autoPrune = true } = {}) {
     if (databasePath !== ':memory:') mkdirSync(dirname(databasePath), { recursive: true });
+    this.databasePath = databasePath;
     this.retentionMs = Math.max(1, Number(retentionDays) || 90) * 86_400_000;
+    this.autoPrune = autoPrune;
     this.db = new DatabaseSync(databasePath);
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS cell_event (
         id INTEGER PRIMARY KEY,
         timestamp_ms INTEGER NOT NULL,
-        source_id INTEGER NOT NULL CHECK (source_id BETWEEN 1 AND 8),
+        source_id INTEGER NOT NULL CHECK (source_id BETWEEN 1 AND 9),
         event_type TEXT NOT NULL,
         status TEXT NOT NULL,
         message TEXT NOT NULL,
@@ -172,9 +196,18 @@ export class CellEventStore {
       CREATE INDEX IF NOT EXISTS idx_cell_event_source ON cell_event (source_id, timestamp_ms DESC);
       CREATE INDEX IF NOT EXISTS idx_cell_event_status ON cell_event (status, timestamp_ms DESC, id DESC);
       CREATE INDEX IF NOT EXISTS idx_cell_event_type ON cell_event (event_type, timestamp_ms DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_cell_event_code ON cell_event (code) WHERE code IS NOT NULL;
       CREATE INDEX IF NOT EXISTS idx_cell_event_operation ON cell_event (operation_id) WHERE operation_id IS NOT NULL;
       CREATE INDEX IF NOT EXISTS idx_cell_event_command_seq ON cell_event (command_seq) WHERE command_seq IS NOT NULL;
+      CREATE TABLE IF NOT EXISTS cell_event_meta (
+        key TEXT PRIMARY KEY,
+        value INTEGER NOT NULL
+      ) STRICT;
     `);
+    this.db.prepare(`INSERT OR IGNORE INTO cell_event_meta (key, value)
+      SELECT 'next_event_id', COALESCE(MAX(id), 0) + 1 FROM cell_event`).run();
+    this.db.prepare(`UPDATE cell_event_meta SET value = MAX(value,
+      (SELECT COALESCE(MAX(id), 0) + 1 FROM cell_event)) WHERE key = 'next_event_id'`).run();
     const columns = new Set(this.db.prepare('PRAGMA table_info(cell_event)').all().map((column) => column.name));
     let actorColumnsAdded = false;
     for (const [name, type] of [['actor_user_id', 'INTEGER'], ['actor_username', 'TEXT'], ['actor_display_name', 'TEXT']]) {
@@ -201,14 +234,37 @@ export class CellEventStore {
     } catch {
       // Старые SQLite без JSON1 всё равно могут работать с новыми событиями.
     }
+    ensureGeometryEventSource(this.db);
+    this.nextIdStatement = this.db.prepare("SELECT value FROM cell_event_meta WHERE key = 'next_event_id'");
+    this.advanceIdStatement = this.db.prepare("UPDATE cell_event_meta SET value = value + 1 WHERE key = 'next_event_id'");
     this.insertStatement = this.db.prepare(`INSERT INTO cell_event
-      (timestamp_ms, source_id, event_type, status, message, code, operation_id, command_seq,
+      (id, timestamp_ms, source_id, event_type, status, message, code, operation_id, command_seq,
        request_id, old_value_json, new_value_json, details_json, actor_user_id, actor_username, actor_display_name)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     this.recentStatement = this.db.prepare('SELECT * FROM cell_event ORDER BY timestamp_ms DESC, id DESC LIMIT ?');
     this.deleteExpired = this.db.prepare('DELETE FROM cell_event WHERE timestamp_ms < ?');
     this.countStatement = this.db.prepare('SELECT COUNT(*) AS count, MIN(timestamp_ms) AS oldest, MAX(timestamp_ms) AS newest FROM cell_event');
     this.lastPruneMs = 0;
+  }
+
+  hasEventCode(code) {
+    return Boolean(this.db.prepare('SELECT 1 FROM cell_event WHERE code = ? LIMIT 1').get(code));
+  }
+
+  ioCursor() {
+    const values = Object.fromEntries(this.db.prepare("SELECT key, value FROM cell_event_meta WHERE key IN ('io_epoch','io_origin','io_sequence')")
+      .all().map((row) => [row.key, Number(row.value)]));
+    return ['io_epoch', 'io_origin', 'io_sequence'].every((key) => Number.isFinite(values[key]))
+      ? { epoch: values.io_epoch, bootTimeMs: values.io_origin, sequence: values.io_sequence } : null;
+  }
+
+  saveIoCursor({ epoch, bootTimeMs, sequence }) {
+    const statement = this.db.prepare('INSERT INTO cell_event_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value');
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      for (const [key, value] of [['io_epoch', epoch], ['io_origin', bootTimeMs], ['io_sequence', sequence]]) statement.run(key, value);
+      this.db.exec('COMMIT');
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
 
   record(event) {
@@ -216,14 +272,24 @@ export class CellEventStore {
     const sourceId = Math.round(event.sourceId);
     if (!CELL_EVENT_SOURCES[sourceId]) throw new Error(`Недопустимый sourceId события: ${sourceId}`);
     const actor = normalizeActor(event.actor ?? event.details?.actor);
-    const result = this.insertStatement.run(
-      timestampMs, sourceId, String(event.eventType ?? 'state'), String(event.status ?? 'changed'),
-      String(event.message ?? ''), event.code === undefined ? null : String(event.code),
-      event.operationId ?? null, event.commandSeq ?? null, event.requestId ?? null,
-      json(event.oldValue), json(event.newValue), json(event.details),
-      actor?.id ?? null, actor?.username ?? null, actor?.displayName ?? null,
-    );
-    if (timestampMs - this.lastPruneMs >= 3_600_000) this.prune(timestampMs);
+    this.db.exec('BEGIN IMMEDIATE');
+    let result;
+    try {
+      const id = this.nextIdStatement.get().value;
+      result = this.insertStatement.run(
+        id, timestampMs, sourceId, String(event.eventType ?? 'state'), String(event.status ?? 'changed'),
+        String(event.message ?? ''), event.code === undefined ? null : String(event.code),
+        event.operationId ?? null, event.commandSeq ?? null, event.requestId ?? null,
+        json(event.oldValue), json(event.newValue), json(event.details),
+        actor?.id ?? null, actor?.username ?? null, actor?.displayName ?? null,
+      );
+      this.advanceIdStatement.run();
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+    if (this.autoPrune && timestampMs - this.lastPruneMs >= 3_600_000) this.prune(timestampMs);
     return rowToEvent({
       id: result.lastInsertRowid, timestamp_ms: timestampMs, source_id: sourceId,
       event_type: event.eventType ?? 'state', status: event.status ?? 'changed', message: event.message ?? '',
@@ -269,7 +335,7 @@ export class CellEventStore {
     };
     if (Number.isFinite(fromMs)) { clauses.push('timestamp_ms >= ?'); parameters.push(Math.round(fromMs)); }
     if (Number.isFinite(toMs)) { clauses.push('timestamp_ms <= ?'); parameters.push(Math.round(toMs)); }
-    addList('source_id', sourceIds.map(Number).filter((value) => Number.isInteger(value) && value >= 1 && value <= 8));
+    addList('source_id', sourceIds.map(Number).filter((value) => Number.isInteger(value) && value >= 1 && value <= 9));
     addList('status', statuses.map(String));
     addList('event_type', eventTypes.map(String));
     const prefixes = [...new Set(codePrefixes.map(String))].filter((prefix) => /^[a-zA-Z0-9:_-]+:$/.test(prefix)).slice(0, 16);
@@ -339,6 +405,15 @@ export class CellEventStore {
   prune(timestamp = Date.now()) {
     this.deleteExpired.run(Math.round(timestamp) - this.retentionMs);
     this.lastPruneMs = Math.round(timestamp);
+  }
+
+  clearArchive({ compact = true } = {}) {
+    const deleted = this.db.prepare('DELETE FROM cell_event').run().changes;
+    if (compact && this.databasePath !== ':memory:') {
+      try { this.db.exec('VACUUM'); }
+      catch (error) { console.warn(`[Cell events] Database compaction failed: ${error instanceof Error ? error.message : String(error)}`); }
+    }
+    return deleted;
   }
 
   status() {
@@ -629,7 +704,20 @@ const COMMAND_LABELS = {
 export function describeOperatorCommand(message) {
   const command = String(message.command ?? 'unknown');
   const twinActions = ['', 'включить', 'подтвердить расстановку', 'выключить', 'обмен', 'питание оси', 'отключить ось', 'сброс привода', 'Home', 'опустить П2', 'поднять П2', 'зацепить П1', 'зацепить П2', 'к оператору', 'к роботу', 'стоп', 'сброс магазина', 'JOG +', 'JOG −', 'отпустить JOG', 'загрузка завершена', 'очистить палету', 'заполнить палету', 'изменить слот', 'параметры', 'запомнить операторскую координату', 'запомнить рабочую координату', 'подтвердить и включить', 'отказаться от включения', 'втянуть замок', 'выдвинуть замок', 'втянуть фиксатор', 'выдвинуть фиксатор', 'автоматическая смена палет'];
-  const label = (command === 'twin.mode' ? `Тип магазинов: ${message.value === 1 ? 'двухпалетные' : 'статичные'}`
+  const geometryActions = ['', 'включить', 'выключить', 'подтвердить освобождение', 'отказаться от включения', 'ручной пуск', 'стоп', 'изъять деталь в симуляции', 'вызвать деталь', 'автоматический вызов', 'период вызова', 'точка укладки', 'отменить вызов', 'прочитать XYZ', 'включить аварию в симуляции', 'снять аварию в симуляции', 'параметры ячейки'];
+  const label = (command === 'geometry.command' ? `ГК${message.magazine ? ` ${message.magazine}` : ''}: ${geometryActions[message.action] ?? message.action}${message.machine && [8, 10, 12].includes(message.action) ? ` · станок ${message.machine}` : ''}`
+    : command === 'twin.mode' ? `Тип магазинов: ${message.value === 1 ? 'двухпалетные' : 'статичные'}`
+    : command === 'io.override' ? `Ручная подмена DI ${message.index}: ${Number(message.value)}`
+    : command === 'io.output' ? `Ручная команда DO ${message.index}: ${Number(message.value)}`
+    : command === 'io.output.release' ? `Снять ручную команду DO ${message.index}`
+    : command === 'io.outputs.releaseAll' ? 'Снять все ручные команды DO'
+    : command === 'io.releaseEverything' ? 'Снять все ручные DI и DO'
+    : command === 'io.manual.begin' ? 'Включить прямое ручное управление сигналами'
+    : command === 'io.manual.end' ? 'Вернуть управление сигналами программе'
+    : command === 'io.emergencyStop' ? 'Экстренный программный останов ячейки'
+    : command === 'io.emergencyReset' ? 'Снять экстренный программный останов без запуска'
+      : command === 'io.release' ? `Снять подмену DI ${message.index}`
+        : command === 'io.releaseAll' ? 'Снять все ручные подмены входов'
     : command === 'twin.command' ? `Магазин ${message.magazine}: ${message.action === 33
       ? `автоматическая смена ${message.value === 1 ? 'включена' : 'выключена'}` : twinActions[message.action] ?? message.action}` : undefined) ?? COMMAND_LABELS[command]
     ?? (command.startsWith('machine.') ? `Команда станку ${message.machine}: ${command.slice(8)}`

@@ -1,22 +1,24 @@
 import { twinSymbols, executeTwinCommand } from './two-pallet-channel.mjs';
-import { createReadStream, existsSync, statSync } from 'node:fs';
+import { geometrySymbols, geometryEventSymbolSet, executeGeometryCommand, readGeometryEvents, GeometryControlStore } from './geometry-control.mjs';
+import { createReadStream, existsSync, statfsSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { extname, join, normalize } from 'node:path';
+import { hostname } from 'node:os';
+import { dirname, extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   AttributeIds,
-  BrowseDirection,
   ClientMonitoredItemGroup,
   ClientSubscription,
   DataType,
   MessageSecurityMode,
   NodeClass,
-  NodeClassMask,
   OPCUAClient,
+  OPCUACertificateManager,
   SecurityPolicy,
   TimestampsToReturn,
+  VariableIds,
   Variant,
 } from 'node-opcua';
 import { WebSocketServer } from 'ws';
@@ -35,20 +37,31 @@ import {
 import { CellEventClassifier, CellEventStore, describeOperatorCommand } from './cell-events.mjs';
 import { AuthStore, AuthStoreError } from './auth-store.mjs';
 import { StatisticsStore, StatisticsStoreError } from './statistics-store.mjs';
+import { ArchivePolicyStore, ArchivePolicyError } from './archive-policy.mjs';
 import { TestStore, normalizeScenarioState } from './test-store.mjs';
+import { requireStaticMagazineMode, resolveStaticTestSelection } from './test-contract.mjs';
 import { isHmiCommandAllowedDuringTest } from './test-session.mjs';
-import { PointBackupStore, PointBackupStoreError } from './point-backup-store.mjs';
+import { PointBackupStore, PointBackupStoreError, POINT_BACKUP_VERSION, POINT_EDITOR_COUNT } from './point-backup-store.mjs';
 import { MobilePointsService, MOBILE_COOKIE, isPhoneAgent } from './mobile-points.mjs';
 import { PointEditorChannel } from './point-editor-channel.mjs';
 import { PrimaryHmiSession } from './primary-hmi-session.mjs';
+import { RuntimeHeartbeat } from './runtime-diagnostics.mjs';
+import { ioSymbols, ioSymbolSet, readStableIo, IoJournalIngestor } from './physical-io.mjs';
+import { IoOverrideChannel } from './io-override-channel.mjs';
+import { monitoringIntervals, monitoringBatches, initializeMonitoring, monitoringSummary } from './opcua-monitoring.mjs';
+import { browseSymbolChildren, collectSymbolLayout } from './opcua-symbols.mjs';
+import { prepareAggregateMonitoring } from './opcua-aggregate.mjs';
+import { opcuaUserIdentity } from './opcua-user-identity.mjs';
 
 const endpointUrl = process.env.OPCUA_ENDPOINT ?? 'opc.tcp://127.0.0.1:4840';
+const plcUserIdentity = opcuaUserIdentity();
 const gatewayPort = Number(process.env.GATEWAY_PORT ?? 3001);
 const gatewayHost = process.env.GATEWAY_HOST ?? '127.0.0.1';
 const reconnectDelayMs = Number(process.env.OPCUA_RECONNECT_MS ?? 3000);
 const publishingIntervalMs = Math.max(10, Number(process.env.OPCUA_PUBLISHING_MS ?? 50));
-const samplingIntervalMs = Math.max(10, Number(process.env.OPCUA_SAMPLING_MS ?? 50));
+const samplingIntervals = monitoringIntervals();
 const uiRefreshIntervalMs = Math.max(20, Number(process.env.OPCUA_UI_REFRESH_MS ?? 50));
+const runtimeDiagnosticPollMs = 1_000;
 const cyclogramSettleMs = Math.max(40, Number(process.env.CYCLOGRAM_SETTLE_MS ?? 80));
 const nonVisualSnapshotSymbols = new Set(['udiHmiHeartbeat', 'udiPlcHeartbeat']);
 const plcRootName = process.env.OPCUA_GVL ?? 'GVL_HMI';
@@ -60,14 +73,31 @@ const cellEventsRetentionDays = Number(process.env.CELL_EVENTS_RETENTION_DAYS ??
 const testDbPath = process.env.TEST_DB_PATH ?? 'gateway/data/tests.sqlite';
 const authDbPath = process.env.AUTH_DB_PATH ?? 'gateway/data/auth.sqlite';
 const statisticsDbPath = process.env.STATISTICS_DB_PATH ?? 'gateway/data/statistics.sqlite';
+const archivePolicyDbPath = process.env.ARCHIVE_POLICY_DB_PATH ?? 'gateway/data/archive-policy.sqlite';
 const authSessionHours = Math.max(1, Number(process.env.AUTH_SESSION_HOURS ?? 12));
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
+const opcuaClientHostname = hostname();
+// Both sessions use one gateway identity and a PKI separate from other NodeOPCUA clients.
+const opcuaClientOptions = {
+  applicationName: 'Portal Robot HMI Gateway',
+  applicationUri: `urn:${opcuaClientHostname}:PortalRobotHmiGateway`,
+  clientCertificateManager: new OPCUACertificateManager({
+    rootFolder: join(__dirname, 'data', 'opcua-pki', opcuaClientHostname),
+    automaticallyAcceptUnknownCertificate: true,
+  }),
+  endpointMustExist: false,
+  securityMode: MessageSecurityMode.None,
+  securityPolicy: SecurityPolicy.None,
+};
+// Finish shared private-key creation before either session initializes its certificate.
+await opcuaClientOptions.clientCertificateManager.initialize();
 const pointBackupDir = process.env.POINT_BACKUP_DIR ?? join(__dirname, 'data', 'point-backups');
 const distDir = normalize(join(__dirname, '..', 'dist'));
 const bundledTestPython = normalize(join(
   __dirname, '..', '..', 'robot_simulator', '.venv',
   process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python',
 ));
+const robotSimulatorDir = normalize(join(__dirname, '..', '..', 'robot_simulator'));
 const testRunnerPython = process.env.TEST_RUNNER_PYTHON
   ?? (existsSync(bundledTestPython) ? bundledTestPython : 'python');
 const robotSimulatorControlUrl = process.env.ROBOT_SIM_CONTROL_URL ?? 'http://127.0.0.1:8765';
@@ -80,6 +110,7 @@ const pointBackupLabels = [
   'HOME_SAFETY — безопасный повторный запуск',
   'Магазин 1 — базовая точка детали',
   'Магазин 2 — базовая точка детали',
+  'ГК 1 — базовая точка', 'ГК 2 — базовая точка',
 ];
 
 const faultStatusLeaves = ['xAllowed', 'xActive', 'xBusy', 'xResetAllowed', 'xRejected', 'udiRejectSequence'];
@@ -92,6 +123,8 @@ const faultRequiredSymbols = [
   'xSimulationAccelerationBusy', 'xSimulationAccelerationError',
   'udiSimulationAccelerationErrorId',
   'xCellSettingsChangeAllowed',
+  'tInputFilterRise', 'tInputFilterFall', 'tAlarmHornDuration', 'xIoFilterSettingsChangeAllowed',
+  'xPhysicalIoActive', 'xPhysicalIoMappingVerified',
   'lrSafetyHomeX', 'lrSafetyHomeY', 'lrSafetyHomeZ', 'lrSafetyHomeSpeedFactor',
   'lrSafetyHomeToleranceX', 'lrSafetyHomeToleranceY', 'lrSafetyHomeToleranceZ',
   'rRobotAccelerationPercent', 'rRobotDecelerationPercent', 'rRobotJerkPercent',
@@ -142,8 +175,10 @@ const faultRequiredSymbols = [
 ];
 
 const requiredSymbols = [...new Set([
+  ...ioSymbols,
   ...cellModeSymbols,
   ...twinSymbols,
+  ...geometrySymbols,
   ...commandSymbols,
   'udiPlcHeartbeat',
   'xGlobalError',
@@ -344,7 +379,7 @@ const requiredSymbols = [...new Set([
   'stPointEditorResultPoint.SpeedFactor',
   'stPointEditorResultPoint.xConfigured',
   ...[1, 2, 3].map((index) => `alrPointEditorDraftXYZ[${index}]`),
-  ...Array.from({ length: 12 }, (_, offset) => offset + 1).flatMap((index) => [
+  ...Array.from({ length: POINT_EDITOR_COUNT }, (_, offset) => offset + 1).flatMap((index) => [
     `auiPointEditorPointId[${index}]`,
     `astPointEditorPoints[${index}].X`,
     `astPointEditorPoints[${index}].Y`,
@@ -401,7 +436,7 @@ const requiredSymbols = [...new Set([
     `astMachineIoStatus[${index}].xSafetyDoorOpen`, `astMachineIoStatus[${index}].xSafetyDoorClosed`,
     `astMachineIoStatus[${index}].xChuckUnclamped`, `astMachineIoStatus[${index}].xChuckClamped`,
     `astMachineStatus[${index}].xManualControlAllowed`,
-    `astMachineStatus[${index}].xManualSafetyDoorOpenAllowed`, `astMachineStatus[${index}].xManualSafetyDoorCloseAllowed`,
+    `astMachineStatus[${index}].xManualSafetyDoorControlEnabled`, `astMachineStatus[${index}].xManualSafetyDoorOpenAllowed`, `astMachineStatus[${index}].xManualSafetyDoorCloseAllowed`,
     `astMachineStatus[${index}].xManualHatchOpenAllowed`, `astMachineStatus[${index}].xManualHatchCloseAllowed`,
     `astMachineStatus[${index}].xManualHatchUnlockAllowed`, `astMachineStatus[${index}].xManualHatchLockAllowed`,
     `astMachineStatus[${index}].xManualChuckOpenAllowed`, `astMachineStatus[${index}].xManualChuckCloseAllowed`,
@@ -521,6 +556,9 @@ const commandMap = {
   'robot.modbus.commandStartTimeout': { path: 'udiModbusCommandStartTimeoutMs', dataType: DataType.UInt32, transform: (v) => Math.max(1000, Math.min(600000, Math.round(Number(v) * 1000))) },
   'robot.modbus.commandTimeout': { path: 'udiModbusCommandTimeoutMs', dataType: DataType.UInt32, transform: (v) => Math.max(1000, Math.min(3600000, Math.round(Number(v) * 1000))) },
   'robot.modbus.apply': { path: 'xModbusSettingsApply', dataType: DataType.Boolean, pulse: true },
+  'cell.settings.alarmHornDuration': { path: 'tAlarmHornDuration', dataType: DataType.Int64, transform: (v) => Math.max(0, Math.min(60000, Math.round(Number(v) * 1000))) },
+  'cell.settings.inputFilterRise': { path: 'tInputFilterRise', dataType: DataType.Int64, transform: (v) => Math.max(0, Math.min(5000, Math.round(Number(v)))) },
+  'cell.settings.inputFilterFall': { path: 'tInputFilterFall', dataType: DataType.Int64, transform: (v) => Math.max(0, Math.min(5000, Math.round(Number(v)))) },
   'cell.settings.safetyHomeToleranceX': { path: 'lrSafetyHomeToleranceX', dataType: DataType.Double, transform: (v) => Math.max(0.1, Math.min(1000, Number(v))) },
   'cell.settings.safetyHomeToleranceY': { path: 'lrSafetyHomeToleranceY', dataType: DataType.Double, transform: (v) => Math.max(0.1, Math.min(1000, Number(v))) },
   'cell.settings.safetyHomeToleranceZ': { path: 'lrSafetyHomeToleranceZ', dataType: DataType.Double, transform: (v) => Math.max(0.1, Math.min(1000, Number(v))) },
@@ -667,6 +705,7 @@ try {
   cyclogramStore = new CyclogramStore({
     databasePath: cyclogramDbPath,
     retentionHours: cyclogramRetentionHours,
+    autoPrune: false,
   });
 } catch (error) {
   cyclogramError = error instanceof Error ? error.message : String(error);
@@ -675,6 +714,10 @@ try {
 
 let cellEventStore = null;
 let cellEventError = '';
+let geometryStore = null;
+let geometryError = '';
+try { geometryStore = new GeometryControlStore({ databasePath: process.env.GEOMETRY_DB_PATH ?? 'gateway/data/geometry-control.sqlite' }); }
+catch (error) { geometryError = error instanceof Error ? error.message : String(error); console.error(`[Geometry control] ${geometryError}`); }
 let authStore = null;
 let authStoreError = '';
 let statisticsStore = null;
@@ -683,11 +726,23 @@ let testStore = null;
 let testStoreError = '';
 let activeTestRun = null;
 const cellEventClassifier = new CellEventClassifier();
+let physicalIo = { available: false, observedAt: null, error: 'Нет данных PLC', history: [],
+  epoch: 0, sequence: 0, clockMs: 0, allowed: false, blockReason: 4, mappingVerified: false,
+  rawDi: [], usedDi: [], forcedDi: [], outputs: [], doAllowed: false, doBlockReason: 4,
+  manualActive: false, manualStartAllowed: false,
+  allowedDo: [], allowedDoOn: [], forcedDo: [], inhibitedDo: [], emergencyActive: false, emergencyResetAllowed: false };
+let ioHeartbeat = 0;
+const ioJournalIngestor = new IoJournalIngestor({
+  readCursor: () => cellEventStore?.ioCursor() ?? null,
+  writeCursor: (cursor) => cellEventStore?.saveIoCursor(cursor),
+  record: (event) => Boolean(cellEventStore && (cellEventStore.hasEventCode(event.code) || recordCellEvent(event))),
+});
 let lastSystemEventKey = '';
 try {
   cellEventStore = new CellEventStore({
     databasePath: cellEventsDbPath,
     retentionDays: cellEventsRetentionDays,
+    autoPrune: false,
   });
 } catch (error) {
   cellEventError = error instanceof Error ? error.message : String(error);
@@ -713,6 +768,26 @@ try {
   console.error(`[Statistics] Storage unavailable: ${statisticsStoreError}`);
 }
 
+let archivePolicyStore = null;
+let archivePolicyError = '';
+try {
+  archivePolicyStore = new ArchivePolicyStore({
+    databasePath: archivePolicyDbPath,
+    defaults: {
+      statistics: 90,
+      events: cellEventsRetentionDays,
+      cyclogram: Math.ceil(cyclogramRetentionHours / 24),
+    },
+  });
+  if (cellEventStore) cellEventStore.retentionMs = archivePolicyStore.policy('events').retentionDays * 86_400_000;
+  if (cyclogramStore) cyclogramStore.retentionMs = archivePolicyStore.policy('cyclogram').retentionDays * 86_400_000;
+} catch (error) {
+  archivePolicyError = error instanceof Error ? error.message : String(error);
+  console.error(`[Archives] Storage unavailable: ${archivePolicyError}`);
+  if (cellEventStore) cellEventStore.autoPrune = true;
+  if (cyclogramStore) cyclogramStore.autoPrune = true;
+}
+
 try {
   testStore = new TestStore(testDbPath);
   const recoveredTestRuns = testStore.recoverInterruptedRuns();
@@ -724,6 +799,33 @@ try {
 
 function testHealth() {
   return { available: Boolean(testStore), activeRunId: activeTestRun?.id ?? null, error: testStoreError || null };
+}
+
+let fixedTestCatalogPromise;
+function fixedTestCatalog() {
+  if (!fixedTestCatalogPromise) {
+    fixedTestCatalogPromise = new Promise((resolve, reject) => {
+      const processHandle = spawn(testRunnerPython, ['-m', 'robot_simulator.test_catalog'], {
+        cwd: robotSimulatorDir, windowsHide: true,
+      });
+      let output = '';
+      let errors = '';
+      const timeout = setTimeout(() => processHandle.kill(), 10_000);
+      processHandle.stdout.on('data', (chunk) => { output += chunk.toString(); });
+      processHandle.stderr.on('data', (chunk) => { errors += chunk.toString(); });
+      processHandle.on('error', reject);
+      processHandle.on('close', (code) => {
+        clearTimeout(timeout);
+        if (code !== 0) {
+          reject(new Error(`Каталог штатных тестов недоступен: ${errors.trim() || `Python завершился с кодом ${code}`}`));
+          return;
+        }
+        try { resolve(JSON.parse(output)); }
+        catch (error) { reject(new Error(`Некорректный каталог штатных тестов: ${error.message}`)); }
+      });
+    }).catch((error) => { fixedTestCatalogPromise = null; throw error; });
+  }
+  return fixedTestCatalogPromise;
 }
 
 async function simulatorControlHealth() {
@@ -773,6 +875,16 @@ let connectionState = {
   status: 'connecting', endpoint: endpointUrl, message: 'Подключение к OPC UA', symbols: 0, missing: requiredSymbols,
   cyclogram: cyclogramHealth(), cellEvents: cellEventHealth(),
 };
+const runtimeHeartbeat = new RuntimeHeartbeat();
+let runtimeStallLogged = false;
+let runtimeDiagnostics = {
+  endpoint: endpointUrl,
+  transport: 'connecting',
+  observedAt: null,
+  error: null,
+  server: null,
+  application: runtimeHeartbeat.snapshot(),
+};
 let pointEditorSequence = 0;
 const pendingPointEditorAudits = new Map();
 let pointEditorAuditTimer = null;
@@ -784,31 +896,36 @@ const pointEditorRejectReasons = [
   'software limits недоступны', 'координаты вне software limits', 'недопустимый коэффициент скорости',
   'точка не сохранена', 'приводы или группа не готовы', 'люк станка не открыт',
   'нет связи с мобильным редактором', 'другая команда претендует на робота', 'точка изменена после подтверждения',
-  'смещения Safe Z или Change Z находятся вне диапазона от -10000 до 10000 мм',
+  'смещения Z вне допустимого диапазона или SAFE_Z ГК не поднимает робот в пределах оси',
+  'для проверки выключите и освободите ГК, остановите конвейер',
+  'запись точки ГК запрещена: проверьте ручной режим, поддержку ГК, ручной I/O и сброс привода',
 ];
 
 const pointEditorChannel = new PointEditorChannel({
   ack: () => Number(latestValues.udiPointEditorAckSeq ?? 0) >>> 0,
   readResult: async () => {
-    await new Promise((resolve) => setTimeout(resolve, cyclogramSettleMs));
-    await readSymbolValues([
-      'udiPointEditorAckSeq', 'uiPointEditorResult', 'uiPointEditorRejectReason',
+    // После Ack буфер принадлежит этой транзакции до завершения чтения канала.
+    // Используем ответ Read, а не изменяемый уведомлениями latestValues.
+    const values = await readSymbolValues([
+      'udiPointEditorAckSeq', 'uiPointEditorIndex', 'uiPointEditorResult', 'uiPointEditorRejectReason',
       'stPointEditorResultPoint.X', 'stPointEditorResultPoint.Y', 'stPointEditorResultPoint.Z',
       'stPointEditorResultPoint.MagazineSafeZ', 'stPointEditorResultPoint.MagazineChangeZ',
       'stPointEditorResultPoint.SpeedFactor', 'stPointEditorResultPoint.xConfigured',
     ]);
-    const rejectCode = Number(latestValues.uiPointEditorRejectReason ?? 0);
+    const rejectCode = Number(values.uiPointEditorRejectReason ?? 0);
     return {
-      result: Number(latestValues.uiPointEditorResult ?? 0),
+      sequence: Number(values.udiPointEditorAckSeq) >>> 0,
+      index: Number(values.uiPointEditorIndex),
+      result: Number(values.uiPointEditorResult ?? 0),
       reason: pointEditorRejectReasons[rejectCode] ?? `PLC отклонил команду (код ${rejectCode})`,
       point: {
-        x: Number(latestValues['stPointEditorResultPoint.X'] ?? 0),
-        y: Number(latestValues['stPointEditorResultPoint.Y'] ?? 0),
-        z: Number(latestValues['stPointEditorResultPoint.Z'] ?? 0),
-        magazineSafeZ: Number(latestValues['stPointEditorResultPoint.MagazineSafeZ'] ?? 0),
-        magazineChangeZ: Number(latestValues['stPointEditorResultPoint.MagazineChangeZ'] ?? 0),
-        speedFactor: Number(latestValues['stPointEditorResultPoint.SpeedFactor'] ?? 0),
-        configured: Boolean(latestValues['stPointEditorResultPoint.xConfigured']),
+        x: Number(values['stPointEditorResultPoint.X']),
+        y: Number(values['stPointEditorResultPoint.Y']),
+        z: Number(values['stPointEditorResultPoint.Z']),
+        magazineSafeZ: Number(values['stPointEditorResultPoint.MagazineSafeZ']),
+        magazineChangeZ: Number(values['stPointEditorResultPoint.MagazineChangeZ']),
+        speedFactor: Number(values['stPointEditorResultPoint.SpeedFactor']),
+        configured: Boolean(values['stPointEditorResultPoint.xConfigured']),
       },
     };
   },
@@ -841,6 +958,8 @@ function send(socket, message) {
 function broadcast(message) {
   const payload = JSON.stringify(message);
   const guestVisible = message.type === 'connection' || message.type === 'snapshot'
+    || message.type === 'physical-io'
+    || message.type === 'runtime-diagnostics'
     || message.type === 'cyclogram-history' || message.type === 'cyclogram-update';
   for (const socket of webSocketServer.clients) {
     if (socket.isGuest && !guestVisible) continue;
@@ -850,6 +969,22 @@ function broadcast(message) {
 
 function publishConnection() {
   broadcast({ type: 'connection', ...connectionState });
+}
+
+function publishRuntimeDiagnostics(patch) {
+  runtimeDiagnostics = { ...runtimeDiagnostics, ...patch };
+  const nextMode = runtimeDiagnostics.application.mode;
+  if (nextMode === 'stalled' && !runtimeStallLogged) {
+    runtimeStallLogged = true;
+    recordSystemEvent('warning', 'Циклы PLC не выполняются: возможен STOP приложения', {
+      endpoint: endpointUrl, heartbeat: runtimeDiagnostics.application.counter,
+      evidence: 'OPC UA отвечает, но udiPlcHeartbeat не меняется 4 секунды',
+    });
+  } else if (nextMode === 'running' && runtimeStallLogged) {
+    runtimeStallLogged = false;
+    recordSystemEvent('restored', 'Выполнение циклов PLC возобновилось', { endpoint: endpointUrl });
+  }
+  broadcast({ type: 'runtime-diagnostics', diagnostics: runtimeDiagnostics });
 }
 
 function publishSnapshot(values = latestValues, full = true) {
@@ -911,6 +1046,18 @@ function recordProductionSnapshot(timestamp = Date.now()) {
     };
     if (!recordCellEvent(event)) statisticsStore.recordFact(event);
   }
+  for (const [environment, root] of [[0, 'audiGeometryProducedNormal'], [1, 'audiGeometryProducedSimulation']]) {
+    for (let station = 1; station <= 2; station += 1) {
+      const path = `${root}[${station}]`;
+      if (!Object.hasOwn(latestValues, path)) continue;
+      const quantity = statisticsStore.consumeProductionCounter(station + (environment === 0 ? 2 : 4), latestValues[path], timestamp);
+      if (!quantity) continue;
+      const event = { timestampMs: timestamp, sourceId: 9, eventType: 'production', status: 'completed',
+        message: `ГК ${station}: подтверждена укладка готовых деталей — ${quantity}`, code: `geometry-production:${environment}:${station}`,
+        details: { station, environment, quantity } };
+      if (!recordCellEvent(event)) statisticsStore.recordFact(event);
+    }
+  }
 }
 
 function recordSystemEvent(status, message, details) {
@@ -962,19 +1109,20 @@ function stopCyclogram(timestamp = Date.now()) {
 
 function publishCyclogramHistory(socket = null, timestamp = Date.now()) {
   if (!cyclogramStore) return;
+  const oldestMs = cyclogramStore.status(timestamp).oldestMs;
   const message = {
     type: 'cyclogram-history',
     serverTime: timestamp,
-    retentionMs: cyclogramStore.retentionMs,
-    intervals: cyclogramStore.intervals({ nowMs: timestamp }),
+    retentionMs: Math.max(cyclogramStore.retentionMs, oldestMs === null ? 0 : timestamp - oldestMs),
+    intervals: cyclogramStore.intervals({ fromMs: 0, nowMs: timestamp }),
   };
   if (socket) send(socket, message);
   else broadcast(message);
 }
 
-function clearCyclogram(timestamp = Date.now()) {
+function clearCyclogram(timestamp = Date.now(), { compact = true } = {}) {
   if (!cyclogramStore) throw new Error(cyclogramError || 'Хранилище циклограммы недоступно');
-  cyclogramStore.clear();
+  const deleted = cyclogramStore.clear({ compact });
   stableCyclogramStates = null;
   transientRobotSince = null;
   if (cyclogramConnected && hasCyclogramData()) {
@@ -982,14 +1130,69 @@ function clearCyclogram(timestamp = Date.now()) {
     cyclogramStore.record(stableCyclogramStates, timestamp, { forceCheckpoint: true });
   }
   publishCyclogramHistory(null, timestamp);
+  return { intervals: deleted };
+}
+
+function clearArchiveByKey(key, at = Date.now(), { compact = true } = {}) {
+  if (key === 'statistics') {
+    if (!statisticsStore) throw new ArchivePolicyError(statisticsStoreError || 'Хранилище статистики недоступно', 503);
+    return statisticsStore.clearArchive(at, { compact });
+  }
+  if (key === 'events') {
+    if (!cellEventStore) throw new ArchivePolicyError(cellEventError || 'Хранилище журнала недоступно', 503);
+    return { events: cellEventStore.clearArchive({ compact }) };
+  }
+  if (key === 'cyclogram') {
+    if (!cyclogramStore) throw new ArchivePolicyError(cyclogramError || 'Хранилище циклограммы недоступно', 503);
+    return clearCyclogram(at, { compact });
+  }
+  throw new ArchivePolicyError('Неизвестный архив', 404, 'ARCHIVE_NOT_FOUND');
+}
+
+function archiveFileBytes(path) {
+  if (path === ':memory:') return 0;
+  return [path, `${path}-wal`, `${path}-shm`].reduce((sum, file) => {
+    try { return sum + statSync(file).size; } catch { return sum; }
+  }, 0);
+}
+
+function archiveSnapshot() {
+  if (!archivePolicyStore) throw new ArchivePolicyError(archivePolicyError || 'Настройки архивов недоступны', 503);
+  let disk = { available: false, freeBytes: null, totalBytes: null };
+  try {
+    const info = statfsSync(dirname(archivePolicyDbPath), { bigint: true });
+    disk = { available: true, freeBytes: Number(info.bavail * info.bsize), totalBytes: Number(info.blocks * info.bsize) };
+  } catch { /* Данные хранилищ остаются доступны без сведений о диске. */ }
+  const policies = archivePolicyStore.all();
+  return {
+    disk,
+    archives: {
+      statistics: { ...policies.statistics, available: Boolean(statisticsStore), sizeBytes: archiveFileBytes(statisticsDbPath),
+        counts: statisticsStore?.archiveStatus() ?? null, error: statisticsStoreError || null },
+      events: { ...policies.events, available: Boolean(cellEventStore), sizeBytes: archiveFileBytes(cellEventsDbPath),
+        counts: cellEventStore ? { events: cellEventStore.status().events } : null, error: cellEventError || null },
+      cyclogram: { ...policies.cyclogram, available: Boolean(cyclogramStore), sizeBytes: archiveFileBytes(cyclogramDbPath),
+        counts: cyclogramStore ? { intervals: cyclogramStore.status().intervals } : null, error: cyclogramError || null },
+    },
+    actions: archivePolicyStore.recentActions(),
+  };
+}
+
+function expireArchives() {
+  if (!archivePolicyStore) return;
+  for (const key of archivePolicyStore.expired()) {
+    try {
+      const at = Date.now();
+      const deleted = clearArchiveByKey(key, at, { compact: false });
+      archivePolicyStore.renew(key, 'expired-clear', null, deleted, at);
+    } catch (error) {
+      console.error(`[Archives] Automatic cleanup failed for ${key}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 }
 
 async function browseChildren(session, nodeId) {
-  const result = await session.browse({
-    nodeId, browseDirection: BrowseDirection.Forward, referenceTypeId: 'HierarchicalReferences',
-    includeSubtypes: true, nodeClassMask: NodeClassMask.Object | NodeClassMask.Variable, resultMask: 63,
-  });
-  return result.references ?? [];
+  return (await browseSymbolChildren(session, [nodeId]))[0];
 }
 
 async function findGvlNode(session) {
@@ -1008,46 +1211,98 @@ async function findGvlNode(session) {
   throw new Error(`В OPC UA не найден ${plcRootName}`);
 }
 
-async function collectLeafVariables(session, rootNodeId) {
-  const leaves = new Map();
-  const ignored = new Set(['Dimensions', 'IndexMin', 'IndexMax']);
-  async function visit(nodeId, path, depth) {
-    if (depth > 8) return;
-    const children = (await browseChildren(session, nodeId)).filter(
-      (child) => child.nodeClass === NodeClass.Variable && !ignored.has(child.browseName.name),
-    );
-    if (children.length === 0) {
-      if (path) leaves.set(path, nodeId);
-      return;
-    }
-    for (const child of children) {
-      const childName = child.browseName.name;
-      const pathParts = path.split('.');
-      const parentName = pathParts.at(-1) ?? '';
-      const childPath = path && childName.startsWith(`${parentName}[`)
-        ? [...pathParts.slice(0, -1), childName].join('.')
-        : path ? `${path}.${childName}` : childName;
-      await visit(child.nodeId, childPath, depth + 1);
-    }
-  }
-  await visit(rootNodeId, '', 0);
-  return leaves;
+const runtimeStatusFields = [
+  'Server_ServerStatus_State',
+  'Server_ServerStatus_StartTime',
+  'Server_ServerStatus_CurrentTime',
+  'Server_ServerStatus_BuildInfo_ProductName',
+  'Server_ServerStatus_BuildInfo_SoftwareVersion',
+  'Server_ServiceLevel',
+];
+
+function diagnosticValue(dataValue) {
+  return dataValue?.statusCode?.isGood() ? dataValue.value?.value ?? null : null;
 }
 
-async function readInitialValues(session, entries) {
-  for (let offset = 0; offset < entries.length; offset += 50) {
-    const chunk = entries.slice(offset, offset + 50);
-    const requests = chunk.map(([, nodeId]) => ({ nodeId, attributeId: AttributeIds.Value }));
-    const values = await session.read(requests);
-    chunk.forEach(([path], index) => {
-      const dataValue = values[index];
-      if (!dataValue?.statusCode?.isGood()) return;
-      latestValues[path] = jsonValue(dataValue.value.value);
-      if (robotCoordinatePathSet.has(path)) {
-        const timestampMs = dataValueTimestampMs(dataValue);
-        if (timestampMs !== null) robotCoordinateSourceTimestamps.set(path, timestampMs);
-      }
+async function findRuntimeHeartbeatNode(session) {
+  const gvlNodeId = await findGvlNode(session);
+  const heartbeat = (await browseChildren(session, gvlNodeId))
+    .find((child) => child.browseName.name === 'udiPlcHeartbeat');
+  if (!heartbeat) throw new Error(`${plcRootName}.udiPlcHeartbeat не опубликован`);
+  return heartbeat.nodeId;
+}
+
+// A separate, read-only OPC UA session keeps diagnostics alive even when the
+// application symbols disappear and the main snapshot connection reconnects.
+async function runtimeDiagnosticsLoop() {
+  while (true) {
+    const client = OPCUAClient.create({
+      ...opcuaClientOptions,
+      connectionStrategy: { initialDelay: 500, maxRetry: 0 },
     });
+    let session = null;
+    try {
+      publishRuntimeDiagnostics({ transport: 'connecting', error: null });
+      await client.connect(endpointUrl);
+      session = await client.createSession(plcUserIdentity);
+      runtimeHeartbeat.reset();
+      let heartbeatNodeId = null;
+      let lastHeartbeatSearchAt = 0;
+      let heartbeatError = null;
+      while (true) {
+        const now = Date.now();
+        if (!heartbeatNodeId && now - lastHeartbeatSearchAt >= 10_000) {
+          lastHeartbeatSearchAt = now;
+          try {
+            heartbeatNodeId = await findRuntimeHeartbeatNode(session);
+            heartbeatError = null;
+          }
+          catch (error) { heartbeatError = error instanceof Error ? error.message : String(error); }
+        }
+        const requests = runtimeStatusFields.map((name) => ({
+          nodeId: `ns=0;i=${VariableIds[name]}`, attributeId: AttributeIds.Value,
+        }));
+        if (heartbeatNodeId) requests.push({ nodeId: heartbeatNodeId, attributeId: AttributeIds.Value });
+        const values = await session.read(requests);
+        const stateCode = diagnosticValue(values[0]);
+        if (stateCode === null) throw new Error(`OPC UA ServerStatus.State: ${values[0]?.statusCode}`);
+        const counter = heartbeatNodeId ? diagnosticValue(values[runtimeStatusFields.length]) : null;
+        if (heartbeatNodeId && counter === null) {
+          heartbeatNodeId = null;
+          heartbeatError = 'Счётчик udiPlcHeartbeat недоступен для чтения';
+        }
+        if (counter === null) runtimeHeartbeat.reset();
+        const application = counter === null
+          ? runtimeHeartbeat.snapshot(now)
+          : runtimeHeartbeat.observe(Number(counter), now);
+        const date = (value) => value instanceof Date ? value.toISOString() : null;
+        publishRuntimeDiagnostics({
+          transport: 'online', observedAt: now, error: heartbeatError,
+          server: {
+            stateCode: Number(stateCode),
+            startTime: date(diagnosticValue(values[1])),
+            currentTime: date(diagnosticValue(values[2])),
+            productName: diagnosticValue(values[3]),
+            softwareVersion: diagnosticValue(values[4]),
+            serviceLevel: diagnosticValue(values[5]),
+          },
+          application,
+        });
+        await new Promise((resolve) => setTimeout(resolve, runtimeDiagnosticPollMs));
+      }
+    } catch (error) {
+      runtimeHeartbeat.reset();
+      publishRuntimeDiagnostics({
+        transport: 'offline',
+        error: error instanceof Error ? error.message : String(error),
+        server: null,
+        application: runtimeHeartbeat.snapshot(),
+      });
+    } finally {
+      if (session) try { await session.close(); } catch { /* disconnected */ }
+      try { await client.disconnect(); } catch { /* reconnect below */ }
+    }
+    await new Promise((resolve) => setTimeout(resolve, reconnectDelayMs));
   }
 }
 
@@ -1076,11 +1331,47 @@ async function readSymbolValues(paths) {
   const entries = paths.map((path) => [path, symbolNodes.get(path)]).filter(([, nodeId]) => Boolean(nodeId));
   if (entries.length !== paths.length) throw new Error('PLC не опубликовал результат команды редактора');
   const values = await opcua.session.read(entries.map(([, nodeId]) => ({ nodeId, attributeId: AttributeIds.Value })));
+  const result = {};
   entries.forEach(([path], index) => {
     const dataValue = values[index];
     if (!dataValue?.statusCode?.isGood()) throw new Error(`Не удалось прочитать ${plcRootName}.${path}`);
-    latestValues[path] = jsonValue(dataValue.value.value);
+    result[path] = jsonValue(dataValue.value.value);
   });
+  Object.assign(latestValues, result);
+  return result;
+}
+
+async function readIoValues(paths) {
+  const session = opcua?.session;
+  if (!session) throw new Error('OPC UA не подключён');
+  const result = {};
+  for (let offset = 0; offset < paths.length; offset += 50) {
+    const chunk = paths.slice(offset, offset + 50);
+    if (!chunk.every((path) => symbolNodes.has(path))) throw new Error('PLC не публикует диагностику I/O: обновите исходники и символы GVL_HMI');
+    const values = await session.read(chunk.map((path) => ({ nodeId: symbolNodes.get(path), attributeId: AttributeIds.Value })));
+    chunk.forEach((path, i) => {
+      if (!values[i]?.statusCode?.isGood()) throw new Error(`Нет данных PLC: ${path}`);
+      result[path] = jsonValue(values[i].value.value);
+    });
+  }
+  return result;
+}
+
+const ioOverrideChannel = new IoOverrideChannel({
+  read: () => readIoValues(['udiIoOverrideCommandSeq', 'udiIoOverrideAckSeq', 'uiIoOverrideResult', 'udiHmiCommandClockMs']),
+  write: (path, value) => writeValue(path, path === 'xIoOverrideValue' ? DataType.Boolean
+    : path.startsWith('ui') ? DataType.UInt16 : DataType.UInt32, value),
+});
+
+const ioEmergencyChannel = new IoOverrideChannel({
+  emergency: true,
+  read: () => readIoValues(['udiIoEmergencyCommandSeq', 'udiIoEmergencyAckSeq', 'uiIoEmergencyResult', 'udiHmiCommandClockMs']),
+  write: (path, value) => writeValue(path, path.startsWith('ui') ? DataType.UInt16 : DataType.UInt32, value),
+});
+
+function publishPhysicalIo(state) {
+  physicalIo = state;
+  broadcast({ type: 'physical-io', physicalIo });
 }
 
 function nextPointEditorSequence() {
@@ -1140,6 +1431,9 @@ const commandChannel = new AcknowledgedCommand({
 });
 
 async function executeCommandDirect(message) {
+  if (!['hmi.heartbeat', 'io.heartbeat'].includes(message.command) && runtimeDiagnostics.application.mode === 'stalled') {
+    throw new Error('PLC не выполняет циклы; команда запрещена до возобновления работы приложения');
+  }
   const payload = payloadProtocols(message);
   const result = payload
     ? await commandChannel.exclusive(payload.key, payload.protocols, () => executeCommandPrepared(message))
@@ -1150,6 +1444,30 @@ async function executeCommandDirect(message) {
 
 async function executeCommandPrepared(message) {
   const requestId = String(message.requestId ?? Date.now());
+  if (message.command === 'io.heartbeat') {
+    const fields = await readIoValues(['udiHmiCommandClockMs']);
+    await writeValue('udiIoOverrideHeartbeatAtMs', DataType.UInt32, fields.udiHmiCommandClockMs);
+    ioHeartbeat = ((ioHeartbeat + 1) >>> 0) || 1;
+    await writeValue('udiIoOverrideHeartbeat', DataType.UInt32, ioHeartbeat);
+    return requestId;
+  }
+  if (['io.emergencyStop', 'io.emergencyReset'].includes(message.command)) {
+    message._plcReceipt = await ioEmergencyChannel.run({ action: message.command === 'io.emergencyStop' ? 1 : 2 });
+    message._plcApplied = true;
+    return requestId;
+  }
+  const ioActions = { 'io.override': 1, 'io.release': 2, 'io.releaseAll': 3,
+    'io.output': 4, 'io.output.release': 5, 'io.outputs.releaseAll': 6, 'io.releaseEverything': 7,
+    'io.manual.begin': 8, 'io.manual.end': 9 };
+  if (Object.hasOwn(ioActions, message.command)) {
+    if (['io.override', 'io.output', 'io.manual.begin'].includes(message.command) && runtimeDiagnostics.application.mode !== 'running') throw new Error('Нет свежего подтверждения выполнения программы PLC');
+    message._plcReceipt = await ioOverrideChannel.run({
+      action: ioActions[message.command],
+      index: message.index ?? 0, value: ['io.override', 'io.output'].includes(message.command) ? message.value : false,
+    });
+    message._plcApplied = true;
+    return requestId;
+  }
   // Stop has an independent acknowledged channel; it cannot wait behind configuration/JOG payload.
   if (message.command === 'twin.command' && message.action === 15) {
     if (![1, 2].includes(message.magazine)) throw new Error('Неверный номер магазина');
@@ -1159,6 +1477,11 @@ async function executeCommandPrepared(message) {
   }
   if (message.command === 'twin.command' || message.command === 'twin.mode') {
     message._plcReceipt = await executeTwinCommand(message, { channel: commandChannel, write: writeValue, types: DataType });
+    return requestId;
+  }
+  if (message.command === 'geometry.command') {
+    message._plcReceipt = await executeGeometryCommand(message, { channel: commandChannel, write: writeValue, types: DataType });
+    message._plcApplied = true;
     return requestId;
   }
   if (message.command === 'cell.manual') {
@@ -1201,6 +1524,7 @@ async function executeCommandPrepared(message) {
     return requestId;
   }
   if (message.command === 'test.scenario.apply') {
+    requireStaticMagazineMode(latestValues.uiMagazineMode);
     const scenario = normalizeScenarioState(message.scenario);
     const machines = Array.isArray(scenario.machines) ? scenario.machines : [];
     const grippers = Array.isArray(scenario.grippers) ? scenario.grippers : [];
@@ -1244,7 +1568,7 @@ async function executeCommandPrepared(message) {
     const point = message.draft ?? {};
     const magazineSafeZ = index >= 11 ? Number(point.magazineSafeZ ?? 0) : 0;
     const magazineChangeZ = index >= 11 ? Number(point.magazineChangeZ ?? 0) : 0;
-    if (!Number.isInteger(index) || index < 1 || index > 12) throw new Error('Неверный индекс инженерной точки');
+    if (!Number.isInteger(index) || index < 1 || index > POINT_EDITOR_COUNT) throw new Error('Неверный индекс инженерной точки');
     if (!Number.isFinite(speedFactor)) throw new Error('Неверный коэффициент скорости точки');
     if (![magazineSafeZ, magazineChangeZ].every(Number.isFinite)) throw new Error('Смещения точки магазина должны быть конечными числами');
     const sequence = nextPointEditorSequence();
@@ -1265,10 +1589,10 @@ async function executeCommandPrepared(message) {
     const speedFactor = Number(point.speedFactor);
     const magazineSafeZ = index >= 11 ? Number(point.magazineSafeZ ?? 0) : 0;
     const magazineChangeZ = index >= 11 ? Number(point.magazineChangeZ ?? 0) : 0;
-    if (!Number.isInteger(index) || index < 1 || index > 12) throw new Error('Неверный индекс инженерной точки');
+    if (!Number.isInteger(index) || index < 1 || index > POINT_EDITOR_COUNT) throw new Error('Неверный индекс инженерной точки');
     if (!coordinates.every(Number.isFinite)) throw new Error('Координаты точки должны быть конечными числами');
-    if (!Number.isFinite(speedFactor) || speedFactor <= 0.1 || speedFactor > 1) {
-      throw new Error('Коэффициент скорости точки должен быть больше 0.1 и не больше 1.0');
+    if (!Number.isFinite(speedFactor) || speedFactor < 0.1 || (index < 13 && speedFactor === 0.1) || speedFactor > 1) {
+      throw new Error('Недопустимый коэффициент скорости точки');
     }
     if (![magazineSafeZ, magazineChangeZ].every(Number.isFinite)
       || Math.abs(magazineSafeZ) > 10000 || Math.abs(magazineChangeZ) > 10000) {
@@ -1296,7 +1620,7 @@ async function executeCommandPrepared(message) {
     const speedFactor = Number(point.speedFactor);
     const magazineSafeZ = index >= 11 ? Number(point.magazineSafeZ ?? 0) : 0;
     const magazineChangeZ = index >= 11 ? Number(point.magazineChangeZ ?? 0) : 0;
-    if (!Number.isInteger(index) || index < 1 || index > 12) throw new Error('Неверный индекс инженерной точки');
+    if (!Number.isInteger(index) || index < 1 || index > POINT_EDITOR_COUNT) throw new Error('Неверный индекс инженерной точки');
     if (!coordinates.every(Number.isFinite) || !Number.isFinite(speedFactor)
       || ![magazineSafeZ, magazineChangeZ].every(Number.isFinite)) throw new Error('Неверный снимок сохранённой точки');
     const sequence = nextPointEditorSequence();
@@ -1353,11 +1677,11 @@ async function executeCommandPrepared(message) {
     const point = Math.round(Number(message.point ?? 0));
     const slot = Math.round(Number(message.slot ?? 0));
     if (!Number.isInteger(action) || action < 1 || action > 7) throw new Error('Неверное ручное действие робота');
-    const allowedManualPoints = new Set([1, 3, 4, 5, 7, 8, 9, 11, 12, 13, 14, 15, 16]);
+    const allowedManualPoints = new Set([1, 3, 4, 5, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]);
     if (action === 1 && (!Number.isInteger(point) || !allowedManualPoints.has(point))) throw new Error('Для перехода укажите существующую точку робота');
     const magazine = Math.round(Number(message.magazine ?? 1));
-    if (action === 1 && point >= 14 && (!Number.isInteger(slot) || slot < 1 || slot > 120)) throw new Error('Для магазинной точки укажите слот');
-    if (action === 1 && point >= 14 && ![1, 2].includes(magazine)) throw new Error('Для магазинной точки укажите магазин');
+    if (action === 1 && point >= 14 && point <= 16 && (!Number.isInteger(slot) || slot < 1 || slot > 120)) throw new Error('Для магазинной точки укажите слот');
+    if (action === 1 && point >= 14 && point <= 16 && ![1, 2].includes(magazine)) throw new Error('Для магазинной точки укажите магазин');
     await writeValue('uiRobotManualAction', DataType.UInt16, action);
     await writeValue('uiRobotManualPoint', DataType.UInt16, point);
     await writeValue('uiRobotManualSlot', DataType.UInt16, slot);
@@ -1553,65 +1877,92 @@ async function connectOpcUa() {
   connectionState = { ...connectionState, status: 'connecting', message: 'Подключение к OPC UA', cyclogram: cyclogramHealth(), cellEvents: cellEventHealth() };
   publishConnection();
   const client = OPCUAClient.create({
-    applicationName: 'Portal Robot HMI Gateway', endpointMustExist: false, keepSessionAlive: true,
-    securityMode: MessageSecurityMode.None, securityPolicy: SecurityPolicy.None,
+    ...opcuaClientOptions,
+    keepSessionAlive: true,
     connectionStrategy: { initialDelay: 500, maxDelay: 2000, maxRetry: 2 },
   });
   let cyclogramCheckpoint = null;
   let cyclogramChangeTimer = null;
   let publishTimer = null;
   let cellEventTimer = null;
+  let ioPollTimer = null;
+  let ioPolling = false;
+  let geometryPollTimer = null;
+  let geometryPolling = false;
   try {
     await client.connect(endpointUrl);
-    const session = await client.createSession();
+    const session = await client.createSession(plcUserIdentity);
     const gvlNodeId = await findGvlNode(session);
-    symbolNodes = await collectLeafVariables(session, gvlNodeId);
-    const entries = [...symbolNodes.entries()];
+    const layout = await collectSymbolLayout(session, gvlNodeId);
+    symbolNodes = layout.leaves;
+    // FIFO is read incrementally with per-record validation, outside the ordinary snapshot.
+    const entries = [...symbolNodes.entries()].filter(([path]) => !ioSymbolSet.has(path) && !geometryEventSymbolSet.has(path));
     latestValues = {};
     robotCoordinateSourceTimestamps.clear();
     robotSourceClockOffsetMs = null;
     lastRobotSourceTimestampMs = null;
     latestRobotCoordinateFrame = null;
-    await readInitialValues(session, entries);
+    const prepared = await prepareAggregateMonitoring(layout, entries, nodeIds =>
+      session.read(nodeIds.map(nodeId => ({ nodeId, attributeId: AttributeIds.Value }))));
+    for (const [path, value] of Object.entries(prepared.initial)) latestValues[path] = jsonValue(value);
+    for (const path of robotCoordinatePaths) {
+      if (Number.isFinite(prepared.timestamps[path])) robotCoordinateSourceTimestamps.set(path, prepared.timestamps[path]);
+    }
+    const channels = new Map(prepared.channels.map(channel => [channel.path, channel]));
     const subscription = ClientSubscription.create(session, {
       requestedPublishingInterval: publishingIntervalMs, requestedLifetimeCount: 100,
       requestedMaxKeepAliveCount: 20, maxNotificationsPerPublish: 1000,
       publishingEnabled: true, priority: 1,
     });
     let changedValues = {};
+    let monitoringError = null;
     cyclogramCheckpoint = setInterval(() => {
       // Related PLC tags arrive as separate notifications. Recording while the
       // debounce is active would persist a half-updated state as a micro idle.
       if (cyclogramChangeTimer === null) recordCyclogram(Date.now());
     }, 100);
-    const monitored = [];
-    for (let offset = 0; offset < entries.length; offset += 50) {
-      const chunk = entries.slice(offset, offset + 50);
-      const group = ClientMonitoredItemGroup.create(
+    const monitoringPlan = monitoringBatches(prepared.channels.map(channel => [channel.path, channel.nodeId]),
+      samplingIntervals, 50, path => channels.get(path).tier);
+    const monitored = await initializeMonitoring(monitoringPlan, (batch) =>
+      ClientMonitoredItemGroup.create(
         subscription,
-        chunk.map(([, nodeId]) => ({ nodeId, attributeId: AttributeIds.Value })),
-        { samplingInterval: samplingIntervalMs, discardOldest: true, queueSize: 1 },
+        batch.entries.map(([, nodeId]) => ({ nodeId, attributeId: AttributeIds.Value })),
+        { samplingInterval: batch.samplingIntervalMs, discardOldest: true, queueSize: 1 },
         TimestampsToReturn.Both,
-      );
-      group.on('changed', (_item, dataValue, index) => {
-        const path = chunk[index]?.[0];
-        if (!path || !dataValue.statusCode.isGood()) return;
-        const value = jsonValue(dataValue.value.value);
-        latestValues[path] = value;
-        changedValues[path] = value;
-        if (path === 'udiPointEditorAckSeq' || path === 'uiPointEditorResult' || path === 'uiPointEditorRejectReason') {
-          schedulePointEditorAudit();
+      ), (channelPath, dataValue) => {
+        if (!channelPath || !dataValue.statusCode.isGood()) return;
+        let expanded;
+        try { expanded = channels.get(channelPath).expand(dataValue.value.value); }
+        catch (error) {
+          if (monitoringError === null) {
+            monitoringError = new Error(`OPC UA decode ${channelPath}: ${error instanceof Error ? error.message : String(error)}`);
+            void subscription.terminate().catch(() => {});
+          }
+          return;
         }
-        if (robotCoordinatePathSet.has(path)) {
-          const timestampMs = dataValueTimestampMs(dataValue);
-          if (timestampMs !== null) robotCoordinateSourceTimestamps.set(path, timestampMs);
+        let anyChanged = false, cyclogramChanged = false;
+        for (const [path, raw] of expanded) {
+          const value = jsonValue(raw);
+          if (Object.is(latestValues[path], value)) continue;
+          anyChanged = true;
+          latestValues[path] = value;
+          changedValues[path] = value;
+          if (path === 'udiPointEditorAckSeq' || path === 'uiPointEditorResult' || path === 'uiPointEditorRejectReason') {
+            schedulePointEditorAudit();
+          }
+          if (robotCoordinatePathSet.has(path)) {
+            const timestampMs = dataValueTimestampMs(dataValue);
+            if (timestampMs !== null) robotCoordinateSourceTimestamps.set(path, timestampMs);
+          }
+          if (cyclogramSymbolSet.has(path)) cyclogramChanged = true;
         }
+        if (!anyChanged) return;
         if (cellEventTimer !== null) clearTimeout(cellEventTimer);
         cellEventTimer = setTimeout(() => {
           cellEventTimer = null;
           recordCellSnapshot(Date.now());
         }, cyclogramSettleMs);
-        if (cyclogramSymbolSet.has(path)) {
+        if (cyclogramChanged) {
           if (cyclogramChangeTimer !== null) clearTimeout(cyclogramChangeTimer);
           cyclogramChangeTimer = setTimeout(() => {
             cyclogramChangeTimer = null;
@@ -1627,16 +1978,58 @@ async function connectOpcUa() {
           }, uiRefreshIntervalMs);
         }
       });
-      monitored.push(group);
-    }
+    if (monitoringError !== null) throw monitoringError;
+    const monitoring = monitoringSummary(monitoringPlan, monitored, subscription.publishingInterval);
+    monitoring.logicalItems = entries.length;
+    monitoring.aggregateItems = prepared.channels.filter(channel => channel.members.length > 1).length;
+    monitoring.fallbackRoots = prepared.fallbackRoots;
+    console.log(`[OPC UA] monitoring ${monitoring.items} items / ${monitoring.logicalItems} fields: ${Object.entries(monitoring.tiers)
+      .map(([tier, data]) => `${tier}=${data.items}@${data.requestedSamplingIntervalMs}ms`).join(', ')}`);
 
     const missing = requiredSymbols.filter((path) => !symbolNodes.has(path));
     connectionState = {
       status: missing.length ? 'degraded' : 'connected', endpoint: endpointUrl,
       message: missing.length ? 'PLC подключён, но опубликован старый состав GVL_HMI' : 'PLC подключён',
-      symbols: symbolNodes.size, missing, cyclogram: cyclogramHealth(), cellEvents: cellEventHealth(),
+      symbols: symbolNodes.size, missing, monitoring, cyclogram: cyclogramHealth(), cellEvents: cellEventHealth(),
     };
     opcua = { client, session, subscription, monitored };
+    let previousIoSnapshot = null;
+    const pollIo = async () => {
+      if (ioPolling || opcua?.session !== session) return;
+      ioPolling = true;
+      try {
+        const state = await readStableIo(readIoValues, { previous: previousIoSnapshot });
+        previousIoSnapshot = state;
+        if (opcua?.session !== session) return;
+        if (runtimeDiagnostics.application.mode === 'running') {
+          try { ioJournalIngestor.consume(state); }
+          catch (error) { cellEventError = error instanceof Error ? error.message : String(error); }
+        }
+        if (ioJournalIngestor.cursor?.epoch === state.epoch) {
+          state.history = state.history.map((edge) => ({ ...edge, timestampMs: ioJournalIngestor.cursor.bootTimeMs + edge.timeMs }));
+        }
+        if (cellEventError || !cellEventStore) state.archiveError = cellEventError || 'Общий журнал событий недоступен';
+        publishPhysicalIo(runtimeDiagnostics.application.mode === 'stalled'
+          ? { ...state, available: false, error: 'Циклы PLC не выполняются' } : state);
+      } catch (error) {
+        if (opcua?.session === session) publishPhysicalIo({ ...physicalIo, available: false, observedAt: Date.now(), error: error instanceof Error ? error.message : String(error) });
+      } finally { ioPolling = false; }
+    };
+    ioPollTimer = setInterval(pollIo, 200);
+    void pollIo();
+    const pollGeometry = async () => {
+      if (geometryPolling || !geometryStore || opcua?.session !== session || runtimeDiagnostics.application.mode !== 'running') return;
+      geometryPolling = true;
+      try {
+        const snapshot = await readGeometryEvents(readIoValues, geometryStore.cursor());
+        if (opcua?.session !== session) return;
+        for (const event of geometryStore.ingest(snapshot)) recordCellEvent(event);
+        if (Object.hasOwn(snapshot, 'missing')) geometryError = snapshot.missing ? `В FIFO ГК недоступно записей: ${snapshot.missing}` : '';
+      } catch (error) { geometryError = error instanceof Error ? error.message : String(error); }
+      finally { geometryPolling = false; }
+    };
+    geometryPollTimer = setInterval(pollGeometry, 500);
+    void pollGeometry();
     cyclogramConnected = true;
     recordCyclogram(Date.now());
     recordCellSnapshot(Date.now());
@@ -1649,7 +2042,10 @@ async function connectOpcUa() {
       subscription.once('terminated', resolve);
       client.once('connection_lost', resolve);
     });
+    if (monitoringError !== null) throw monitoringError;
   } finally {
+    if (ioPollTimer !== null) clearInterval(ioPollTimer);
+    if (geometryPollTimer !== null) clearInterval(geometryPollTimer);
     if (cyclogramCheckpoint !== null) clearInterval(cyclogramCheckpoint);
     if (cyclogramChangeTimer !== null) clearTimeout(cyclogramChangeTimer);
     if (publishTimer !== null) clearTimeout(publishTimer);
@@ -1661,6 +2057,7 @@ async function connectOpcUa() {
     stopCyclogram(Date.now());
     if (opcua !== null) recordSystemEvent('lost', 'Связь gateway с PLC по OPC UA потеряна', { endpoint: endpointUrl });
     opcua = null;
+    publishPhysicalIo({ ...physicalIo, available: false, error: 'Связь с PLC потеряна' });
     symbolNodes = new Map();
     try { await client.disconnect(); } catch { /* reconnect below */ }
   }
@@ -1791,7 +2188,7 @@ const mobilePointsSnapshot = () => ({
     rejectReason: pointEditorRejectReasons[Number(latestValues[`astAxisHmiStatus[${index}].eRejectReason`] ?? 0)]
       ?? `Неизвестная причина запрета (${Number(latestValues[`astAxisHmiStatus[${index}].eRejectReason`] ?? 0)})`,
   })),
-  points: Array.from({ length: 12 }, (_, offset) => {
+  points: Array.from({ length: POINT_EDITOR_COUNT }, (_, offset) => {
     const index = offset + 1;
     return {
       index,
@@ -1804,6 +2201,9 @@ const mobilePointsSnapshot = () => ({
       configured: Boolean(latestValues[`astPointEditorPoints[${index}].xConfigured`]),
       checkAllowed: Boolean(latestValues[`axPointCheckAllowed[${index}]`]),
       checkRejectCode: Number(latestValues[`auiPointCheckRejectReason[${index}]`] ?? 0),
+      saveAllowed: index >= 13
+        ? Boolean(latestValues[`astGeometryStatus[${index - 12}].xPointWriteAllowed`])
+        : Boolean(latestValues.xPointEditorSaveAllowed),
     };
   }),
   captureAllowed: Boolean(latestValues.xPointEditorCaptureAllowed),
@@ -1952,14 +2352,14 @@ function currentPointBackup(user) {
   }
   return {
     format: 'portal-robot-points',
-    version: 1,
+    version: POINT_BACKUP_VERSION,
     exportedAt: new Date().toISOString(),
     exportedBy: {
       id: user.id,
       username: user.username,
       displayName: user.displayName,
     },
-    points: Array.from({ length: 12 }, (_, offset) => {
+    points: Array.from({ length: POINT_EDITOR_COUNT }, (_, offset) => {
       const index = offset + 1;
       return {
         index,
@@ -2006,14 +2406,22 @@ async function fallbackTestCleanup({ aborted = false } = {}) {
   }
 }
 
-function launchTestRun(config) {
+async function launchTestRun(config) {
   if (!testStore) throw new Error(testStoreError || 'Хранилище тестов недоступно');
   if (activeTestRun) throw new Error(`Уже выполняется прогон ${activeTestRun.id}`);
+  if (connectionState.status !== 'connected') throw new Error('Нет полной связи gateway с PLC');
+  requireStaticMagazineMode(latestValues.uiMagazineMode);
+  const { suite, fixedCaseIndex, scenarios: selectedScenarios } = resolveStaticTestSelection(config, (id) => testStore.getScenario(id));
+  if (fixedCaseIndex !== null) {
+    const catalog = await fixedTestCatalog();
+    if (!catalog[suite]?.some((item) => item.index === fixedCaseIndex)) {
+      throw new Error(`В наборе ${suite} нет теста #${fixedCaseIndex}`);
+    }
+  }
   const environment = String(config.environment ?? 'simulation').toLowerCase();
   const robotInterface = String(config.robotInterface ?? 'softmotion').toLowerCase();
   const speedProfile = String(config.speedProfile ?? 'realtime').toLowerCase();
   const requestedFactor = Number(config.simulationTimeFactor ?? 25);
-  const suite = String(config.suite ?? 'smoke').toLowerCase();
   if (!Number.isFinite(requestedFactor)) throw new Error('Недопустимый коэффициент SoftMotion-симуляции');
   const simulationTimeFactor = Math.max(1, Math.min(100, Math.round(requestedFactor)));
   if (environment === 'sc500_bench' && robotInterface !== 'sc500-modbus') {
@@ -2028,16 +2436,11 @@ function launchTestRun(config) {
   if (suite === 'general' && environment !== 'simulation') {
     throw new Error('Генеральные тесты с автоматической перезагрузкой магазинов разрешены только в симуляции');
   }
-  const selectedScenarios = Array.isArray(config.scenarioIds)
-    ? config.scenarioIds.map((id) => testStore.getScenario(id)).filter(Boolean)
-      .map((item) => ({ name: item.name, description: item.description, schemaVersion: item.schemaVersion, initialState: item.initialState, expectations: item.expectations }))
-    : [];
-  const runConfig = { ...config, simulationTimeFactor, scenarios: selectedScenarios };
+  const runConfig = { ...config, suite, fixedCaseIndex, environment, robotInterface, speedProfile, simulationTimeFactor, scenarios: selectedScenarios };
   const run = testStore.createRun(runConfig);
   const token = randomUUID();
-  const robotDir = normalize(join(__dirname, '..', '..', 'robot_simulator'));
   const processHandle = spawn(testRunnerPython, ['-m', 'robot_simulator.test_runner'], {
-    cwd: robotDir,
+    cwd: robotSimulatorDir,
     windowsHide: true,
     env: {
       ...process.env,
@@ -2046,7 +2449,7 @@ function launchTestRun(config) {
       PORTAL_ROBOT_SIM_CONTROL_URL: robotSimulatorControlUrl,
     },
   });
-  activeTestRun = { id: run.id, token, config: runConfig, process: processHandle, socket: null, stderr: '' };
+  activeTestRun = { id: run.id, token, config: runConfig, process: processHandle, socket: null, stderr: '', controlStarted: false };
   processHandle.stderr.on('data', (chunk) => {
     const text = chunk.toString();
     if (activeTestRun?.id === run.id) activeTestRun.stderr = `${activeTestRun.stderr}${text}`.slice(-4000);
@@ -2056,7 +2459,7 @@ function launchTestRun(config) {
     if (activeTestRun?.id !== run.id) return;
     const stored = testStore.getRun(run.id);
     if (!stored?.finishedAt) {
-      await fallbackTestCleanup({ aborted: Boolean(stored?.abortRequested) });
+      if (activeTestRun.controlStarted) await fallbackTestCleanup({ aborted: Boolean(stored?.abortRequested) });
       if (stored?.abortRequested) testStore.finishRun(run.id, 'ABORTED', 'Прогон остановлен оператором');
       else {
         const runnerError = activeTestRun.stderr.trim().split(/\r?\n/).filter(Boolean).at(-1);
@@ -2075,11 +2478,31 @@ function launchTestRun(config) {
 
 const httpServer = createServer(async (request, response) => {
   const requestUrl = new URL(request.url ?? '/', 'http://gateway.local');
+  if (requestUrl.pathname === '/api/geometry-control' && request.method === 'GET') {
+    try {
+      requireSession(request);
+      if (!geometryStore) throw new Error(geometryError || 'Журнал ГК недоступен');
+      jsonResponse(response, 200, { calls: geometryStore.query({ station: Number(requestUrl.searchParams.get('station') ?? 0), history: requestUrl.searchParams.get('history') === '1' }), error: geometryError || null });
+    } catch (error) { if (error instanceof AuthStoreError) authErrorResponse(response, error); else jsonResponse(response, 503, { error: error instanceof Error ? error.message : String(error) }); }
+    return;
+  }
+  if (requestUrl.pathname === '/api/geometry-control/result' && request.method === 'POST') {
+    try {
+      const actor = requireSession(request).user;
+      if (!geometryStore) throw new Error(geometryError || 'Журнал ГК недоступен');
+      const body = await requestJson(request);
+      const result = geometryStore.setResult(body.key, body.result, body.revision, actor);
+      recordAuthEvent('geometry-result', 'completed', `ГК: результат контроля — ${body.result === 'good' ? 'годная' : body.result === 'defect' ? 'брак' : 'не проверена'}`, actor, { callKey: body.key, result: body.result, revision: result.revision });
+      jsonResponse(response, 200, result);
+    } catch (error) { if (error instanceof AuthStoreError) authErrorResponse(response, error); else jsonResponse(response, 409, { error: error instanceof Error ? error.message : String(error) }); }
+    return;
+  }
   const scenarioMatch = requestUrl.pathname.match(/^\/api\/test-scenarios\/(\d+)$/);
   const runMatch = requestUrl.pathname.match(/^\/api\/test-runs\/(\d+)(\/abort)?$/);
   const userMatch = requestUrl.pathname.match(/^\/api\/users\/(\d+)$/);
   const shiftTemplateMatch = requestUrl.pathname.match(/^\/api\/statistics\/shift-templates\/(\d+)$/);
   const statisticsIntervalMatch = requestUrl.pathname.match(/^\/api\/statistics\/operator-intervals\/(\d+)$/);
+  const archiveMatch = requestUrl.pathname.match(/^\/api\/admin\/archives\/(statistics|events|cyclogram)(?:\/(retention|reset))?$/);
   if (requestUrl.pathname === '/api/mobile-points/session' && request.method === 'GET') {
     const session = mobilePoints.getSession(mobileSessionToken(request));
     jsonResponse(response, 200, mobilePoints.sessionView(session));
@@ -2202,11 +2625,47 @@ const httpServer = createServer(async (request, response) => {
     } catch (error) { authErrorResponse(response, error); }
     return;
   }
-  if (requestUrl.pathname.startsWith('/api/') && requestUrl.pathname !== '/api/health') {
+  if (requestUrl.pathname.startsWith('/api/')
+      && requestUrl.pathname !== '/api/health'
+      && requestUrl.pathname !== '/api/runtime-diagnostics') {
     try { requireSession(request); }
     catch (error) { authErrorResponse(response, error); return; }
   }
   try {
+    if (requestUrl.pathname === '/api/admin/archives' && request.method === 'GET') {
+      requireAdmin(request);
+      expireArchives();
+      jsonResponse(response, 200, archiveSnapshot());
+      return;
+    }
+    if (archiveMatch) {
+      const actor = requireAdmin(request).user;
+      if (!archivePolicyStore) throw new ArchivePolicyError(archivePolicyError || 'Настройки архивов недоступны', 503);
+      const [, key, operation] = archiveMatch;
+      if (operation === 'retention' && request.method === 'PUT') {
+        const body = await requestJson(request);
+        const policy = archivePolicyStore.setRetentionDays(key, body.days, actor);
+        if (key === 'events' && cellEventStore) cellEventStore.retentionMs = policy.retentionDays * 86_400_000;
+        if (key === 'cyclogram' && cyclogramStore) {
+          cyclogramStore.retentionMs = policy.retentionDays * 86_400_000;
+          publishCyclogramHistory();
+        }
+        jsonResponse(response, 200, archiveSnapshot());
+        return;
+      }
+      if (operation === 'reset' && request.method === 'POST') {
+        archivePolicyStore.renew(key, 'clock-reset', actor);
+        jsonResponse(response, 200, archiveSnapshot());
+        return;
+      }
+      if (!operation && request.method === 'DELETE') {
+        const at = Date.now();
+        const deleted = clearArchiveByKey(key, at);
+        archivePolicyStore.renew(key, 'manual-clear', actor, deleted, at);
+        jsonResponse(response, 200, { deleted, ...archiveSnapshot() });
+        return;
+      }
+    }
     if (requestUrl.pathname === '/api/point-backups' && request.method === 'GET') {
       jsonResponse(response, 200, { backups: await pointBackupStore.list() });
       return;
@@ -2310,13 +2769,16 @@ const httpServer = createServer(async (request, response) => {
       return;
     }
     if (requestUrl.pathname === '/api/statistics/range' && request.method === 'DELETE') {
-      requireAdmin(request);
+      const actor = requireAdmin(request).user;
+      if (!archivePolicyStore) throw new ArchivePolicyError(archivePolicyError || 'Журнал администрирования недоступен', 503);
       const body = await requestJson(request);
-      jsonResponse(response, 200, statisticsStore.hardDeleteRange({
+      const deleted = statisticsStore.hardDeleteRange({
         fromMs: body.fromMs, toMs: body.toMs,
         userId: body.userId === null || body.userId === undefined || body.userId === '' ? null : Number(body.userId),
         equipment: body.equipment !== false, facts: body.facts !== false, intervals: body.intervals !== false,
-      }));
+      });
+      archivePolicyStore.log('statistics', 'range-clear', actor, { fromMs: body.fromMs, toMs: body.toMs, userId: body.userId ?? null, deleted });
+      jsonResponse(response, 200, deleted);
       return;
     }
     if (requestUrl.pathname === '/api/cell-event-actors' && request.method === 'GET') {
@@ -2374,6 +2836,8 @@ const httpServer = createServer(async (request, response) => {
       jsonResponse(response, 200, { ...testHealth(), simulatorControl: await simulatorControlHealth(), plc: {
         connected: connectionState.status === 'connected', requestedEnvironment: Number(latestValues.uiTestEnvironmentRequest ?? 0),
         appliedEnvironment: Number(latestValues.uiTestEnvironmentApplied ?? 0), speedProfile: Number(latestValues.uiTestSpeedProfileApplied ?? 0),
+        magazineMode: latestValues.uiMagazineMode === 0 || latestValues.uiMagazineMode === 1 ? latestValues.uiMagazineMode : null,
+        magazineModeChangeAllowed: Boolean(latestValues.xMagazineModeAllowed),
         environmentChangeAllowed: Boolean(latestValues.xTestEnvironmentChangeAllowed), scenarioApplyAllowed: Boolean(latestValues.xTestScenarioApplyAllowed),
         robotReady: Boolean(latestValues['stCellStatus.xRobotReady']),
         simulatorActive: Boolean(latestValues['stRobotModbusStatus.xSimulatorActive']), benchKey: Boolean(latestValues.xSc500BenchKeyActive),
@@ -2381,9 +2845,14 @@ const httpServer = createServer(async (request, response) => {
       } });
       return;
     }
+    if (requestUrl.pathname === '/api/test-catalog' && request.method === 'GET') {
+      jsonResponse(response, 200, await fixedTestCatalog());
+      return;
+    }
     if (requestUrl.pathname === '/api/test-scenarios' && request.method === 'GET') { jsonResponse(response, 200, testStore?.listScenarios() ?? []); return; }
     if (requestUrl.pathname === '/api/test-scenarios' && request.method === 'POST') { jsonResponse(response, 201, testStore.saveScenario(await requestJson(request))); return; }
     if (requestUrl.pathname === '/api/test-scenarios/capture-current' && request.method === 'POST') {
+      requireStaticMagazineMode(latestValues.uiMagazineMode);
       const body = await requestJson(request);
       jsonResponse(response, 201, testStore.saveScenario({ name: body.name ?? `Снимок ${new Date().toLocaleString('ru-RU')}`, description: body.description ?? 'Создано из текущего состояния PLC', schemaVersion: 2, initialState: currentScenario(), expectations: {} }));
       return;
@@ -2391,7 +2860,7 @@ const httpServer = createServer(async (request, response) => {
     if (scenarioMatch && request.method === 'PUT') { jsonResponse(response, 200, testStore.saveScenario(await requestJson(request), scenarioMatch[1])); return; }
     if (scenarioMatch && request.method === 'DELETE') { jsonResponse(response, testStore.deleteScenario(scenarioMatch[1]) ? 200 : 404, { ok: true }); return; }
     if (requestUrl.pathname === '/api/test-runs' && request.method === 'GET') { jsonResponse(response, 200, testStore?.listRuns(Number(requestUrl.searchParams.get('limit') ?? 50)) ?? []); return; }
-    if (requestUrl.pathname === '/api/test-runs' && request.method === 'POST') { jsonResponse(response, 202, launchTestRun(await requestJson(request))); return; }
+    if (requestUrl.pathname === '/api/test-runs' && request.method === 'POST') { jsonResponse(response, 202, await launchTestRun(await requestJson(request))); return; }
     if (runMatch && !runMatch[2] && request.method === 'GET') { const run = testStore?.getRun(runMatch[1]); jsonResponse(response, run ? 200 : 404, run ?? { error: 'Прогон не найден' }); return; }
     if (runMatch?.[2] && request.method === 'POST') {
       const run = testStore?.requestAbort(runMatch[1]);
@@ -2412,16 +2881,22 @@ const httpServer = createServer(async (request, response) => {
       jsonResponse(response, run ? 202 : 404, run ?? { error: 'Прогон не найден' }); return;
     }
   } catch (error) {
-    const status = error instanceof PointBackupStoreError ? error.status : 400;
+    const knownError = error instanceof PointBackupStoreError || error instanceof ArchivePolicyError
+      || error instanceof AuthStoreError || error instanceof StatisticsStoreError;
+    const status = knownError ? error.status : 400;
     jsonResponse(response, status, {
       error: error instanceof Error ? error.message : String(error),
-      ...(error instanceof PointBackupStoreError ? { code: error.code } : {}),
+      ...(knownError ? { code: error.code } : {}),
     });
     return;
   }
   if (requestUrl.pathname === '/api/health') {
     response.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     response.end(JSON.stringify({ ...connectionState, cyclogram: cyclogramHealth(), cellEvents: cellEventHealth() }));
+    return;
+  }
+  if (requestUrl.pathname === '/api/runtime-diagnostics') {
+    jsonResponse(response, 200, runtimeDiagnostics);
     return;
   }
   if (requestUrl.pathname === '/api/cyclogram/export') {
@@ -2434,7 +2909,7 @@ const httpServer = createServer(async (request, response) => {
     const scope = requestUrl.searchParams.get('scope') ?? 'all';
     const requestedFrom = Number(requestUrl.searchParams.get('from'));
     const requestedTo = Number(requestUrl.searchParams.get('to'));
-    const rangeFrom = scope === 'all' ? now - cyclogramStore.retentionMs : requestedFrom;
+    const rangeFrom = scope === 'all' ? (cyclogramStore.status(now).oldestMs ?? now - 1) : requestedFrom;
     const rangeTo = scope === 'all' ? now : requestedTo;
     if (!Number.isFinite(rangeFrom) || !Number.isFinite(rangeTo) || rangeFrom >= rangeTo) {
       response.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -2442,7 +2917,7 @@ const httpServer = createServer(async (request, response) => {
       return;
     }
     try {
-      const from = Math.max(now - cyclogramStore.retentionMs, Math.round(rangeFrom));
+      const from = Math.max(0, Math.round(rangeFrom));
       const to = Math.min(now, Math.round(rangeTo));
       if (from >= to) {
         response.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -2504,6 +2979,7 @@ webSocketServer.on('connection', (socket, request) => {
         if (message.type === 'test-heartbeat') {
           await executeCommand({ command: 'hmi.heartbeat', value: message.value });
         } else if (message.type === 'test-command') {
+          if (message.command === 'test.session' && message.value === true) activeTestRun.controlStarted = true;
           const requestId = await executeCommand(message);
           send(socket, { type: 'ack', requestId, ok: true });
         } else if (message.type === 'test-progress') {
@@ -2537,6 +3013,8 @@ webSocketServer.on('connection', (socket, request) => {
   socket.authUserRole = connectedSession?.user.role ?? null;
   socket.authToken = connectedSession ? authToken : '';
   send(socket, { type: 'connection', ...connectionState, readOnly: guestConnection });
+  send(socket, { type: 'runtime-diagnostics', diagnostics: runtimeDiagnostics });
+  send(socket, { type: 'physical-io', physicalIo });
   const timestamp = Date.now();
   const robotFrame = latestRobotCoordinateFrame ?? captureRobotCoordinateFrame(timestamp);
   send(socket, {
@@ -2557,7 +3035,7 @@ webSocketServer.on('connection', (socket, request) => {
       message = JSON.parse(payload.toString());
       if (message.type === 'cyclogram-clear') {
         if (!liveSession) throw new AuthStoreError('Авторизуйтесь в аккаунт. Управление запрещено', 401, 'AUTH_REQUIRED');
-        throw new AuthStoreError('История циклограммы защищена статистикой и не удаляется через HMI', 403, 'STATISTICS_HISTORY_PROTECTED');
+        throw new AuthStoreError('Очистка циклограммы доступна только через администрирование', 403, 'ARCHIVE_ADMIN_ROUTE_REQUIRED');
       }
       if (message.type !== 'command') return;
       if (!liveSession && message.command !== 'hmi.heartbeat') {
@@ -2576,21 +3054,23 @@ webSocketServer.on('connection', (socket, request) => {
           requestId, label: description.label, actor: liveSession?.user ?? null, details: actorDetails,
         };
       }
-      if (message.command !== 'hmi.heartbeat') recordCellEvent({
+      if (!['hmi.heartbeat', 'io.heartbeat'].includes(message.command)) recordCellEvent({
         timestampMs: Date.now(), sourceId: 6, eventType: 'operator-command', status: 'requested',
         message: description.label, requestId, actor: liveSession?.user ?? null, details: actorDetails,
       });
       const acceptedRequestId = await executeCommand(message);
       if (message._plcReceipt) actorDetails.plcReceipt = message._plcReceipt;
-      if (message.command !== 'hmi.heartbeat') recordCellEvent({
+      if (!['hmi.heartbeat', 'io.heartbeat'].includes(message.command)) recordCellEvent({
         timestampMs: Date.now(), sourceId: 6, eventType: 'operator-command', status: message.command === 'cell.manual' || message._plcApplied ? 'completed' : 'accepted',
         message: `${description.label}: ${message.command === 'cell.manual' || message._plcApplied ? 'PLC подтвердил применение' : message._plcReceipt ? 'PLC обработал запрос; завершение операции определяется состоянием оборудования' : 'передано в PLC'}`, requestId, actor: liveSession?.user ?? null, details: actorDetails,
       });
-      send(socket, { type: 'ack', requestId: acceptedRequestId, ok: true });
+      send(socket, { type: 'ack', requestId: acceptedRequestId, ok: true,
+        ...(message._pointEditorReply ? { pointEditor: message._pointEditorReply } : {}),
+      });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       if (message?._pointEditorSequence) pendingPointEditorAudits.delete(message._pointEditorSequence);
-      if (message?.type === 'command' && message.command !== 'hmi.heartbeat') {
+      if (message?.type === 'command' && !['hmi.heartbeat', 'io.heartbeat'].includes(message.command)) {
         const description = describeOperatorCommand(message);
         const actor = authStore?.getSession(authToken)?.user ?? null;
         recordCellEvent({
@@ -2607,20 +3087,29 @@ webSocketServer.on('connection', (socket, request) => {
   });
 });
 
+expireArchives();
+const archiveExpiryTimer = setInterval(expireArchives, 60_000);
+archiveExpiryTimer.unref();
+
 httpServer.listen(gatewayPort, gatewayHost, () => {
   console.log(`[Gateway] http://${gatewayHost}:${gatewayPort}`);
   console.log(`[OPC UA] ${endpointUrl}`);
+  console.log(`[OPC UA] Authentication: ${plcUserIdentity.userName ? 'UserName' : 'Anonymous'}`);
   recordSystemEvent('started', 'Gateway визуализации запущен', { gateway: `http://${gatewayHost}:${gatewayPort}`, opcUa: endpointUrl });
 });
 
 opcUaLoop().catch(console.error);
+runtimeDiagnosticsLoop().catch(console.error);
 
 const closeStores = () => {
+  clearInterval(archiveExpiryTimer);
   recordSystemEvent('stopped', 'Gateway визуализации остановлен');
   cyclogramStore?.closeDatabase();
   cellEventStore?.close();
+  geometryStore?.close();
   authStore?.close();
   statisticsStore?.close();
+  archivePolicyStore?.close();
   testStore?.close();
 };
 const shutdown = () => {

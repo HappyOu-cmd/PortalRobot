@@ -63,6 +63,7 @@ function EffectsPreview({ alarm = false }: { alarm?: boolean }) {
       cameraPreset="front"
       onMachineSelect={() => {}}
       visualEffects={{
+        geometryConveyorSpeed: 0.24,
         workshopEnabled: true,
         cameraFocus: false,
         alarmBeacons: true,

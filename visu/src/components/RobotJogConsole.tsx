@@ -14,6 +14,7 @@ import { RobotMotionSettings } from './RobotMotionSettings';
 
 const AXES = ['X', 'Y', 'Z'] as const;
 const STEPS = [0.1, 1, 10, 100];
+const AXIS_HOMING_STATE = 6; // E_AXIS_STATE.HOMING
 type Direction = 'negative' | 'positive';
 const commandClass = cva('rj-button', {
   variants: { unavailable: { true: 'command-unavailable', false: '' }, primary: { true: 'rj-primary', false: '' } },
@@ -149,6 +150,8 @@ export function RobotJogConsole({ runtime, online, selectedAxis, continuous, tar
   }, [axis.actualPosition, axis.maxVelocity, selectedAxis, online]);
   const direction = online && motion?.axis === selectedAxis ? motion.direction : null;
   const moving = direction !== null;
+  const homeSearching = online && axis.stateCode === AXIS_HOMING_STATE;
+  const homeIndicator = homeSearching ? 'searching' : online && axis.homed ? 'found' : 'idle';
   const progress = Math.max(0, Math.min(100, (axis.actualPosition - axis.minPosition) / Math.max(1, axis.maxPosition - axis.minPosition) * 100));
   const validTarget = target.trim() !== '' && Number.isFinite(Number(target.replace(',', '.')));
 
@@ -160,6 +163,10 @@ export function RobotJogConsole({ runtime, online, selectedAxis, continuous, tar
         value: String(index + 1),
         label: <span className="rj-axis-option"><span><b>{axisName}</b><i data-ready={runtime.axisManual[index].driveReady} data-busy={online && runtime.axisManual[index].busy} /></span><strong>{runtime.axisManual[index].actualPosition.toFixed(1)}<small>мм</small></strong></span>,
       }))} />
+
+      <button type="button" className={cn('rj-home-button', !axis.homeAllowed && 'command-unavailable')} disabled={!online || homeSearching} aria-disabled={!online || !axis.homeAllowed || homeSearching} aria-label={`HOME оси ${name}${!online ? ': нет связи' : homeSearching ? ': выполняется' : axis.homed ? ': найден' : ': не найден'}`} onClick={() => onSend({ command: 'robot.axis.home', machine: selectedAxis })}>
+        <span><Icon icon={homeIcon} aria-hidden="true" />HOME</span><i aria-hidden="true" data-state={homeIndicator} />
+      </button>
 
       <SegmentedControl className="rj-mode-selector" value={continuous ? 'continuous' : 'precise'} onChange={(value) => onModeChange(value === 'continuous')} ariaLabel="Режим перемещения" options={[
         { value: 'continuous', label: <><Icon icon={touchIcon} />Непрерывно</> },
@@ -182,7 +189,7 @@ export function RobotJogConsole({ runtime, online, selectedAxis, continuous, tar
           <label className="rj-target"><span>Целевая координата {name}</span><span><input value={target} inputMode="decimal" disabled={!online} aria-label={`Целевая координата ${name}`} aria-invalid={!validTarget} onFocus={onTargetFocus} onChange={(event) => onTargetChange(event.target.value)} onBlur={onTargetBlur} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }} /><small>мм</small></span></label>
           <button type="button" className={commandClass({ primary: true, unavailable: !axis.moveAbsoluteAllowed })} disabled={!online || !validTarget} aria-disabled={!axis.moveAbsoluteAllowed || !online || !validTarget} onClick={() => onSend({ command: 'robot.axis.moveAbsolute', machine: selectedAxis, value: numericTarget() })}><Icon icon={arrowIcon} />Переместить</button>
         </div>
-        <div className="rj-target-meta"><span>Отклонение от цели <b>{axis.deviation.toFixed(1)} мм</b></span><button type="button" className={commandClass({ unavailable: !axis.homeAllowed })} disabled={!online} aria-disabled={!axis.homeAllowed || !online} onClick={() => onSend({ command: 'robot.axis.home', machine: selectedAxis })}><Icon icon={homeIcon} />Home<i data-ready={axis.homed} /></button></div>
+        <div className="rj-target-meta"><span>Отклонение от цели <b>{axis.deviation.toFixed(1)} мм</b></span></div>
       </div>}
       {axis.rejectReason && <div className="rj-reject" role="status">{axis.rejectReason}</div>}
     </section>

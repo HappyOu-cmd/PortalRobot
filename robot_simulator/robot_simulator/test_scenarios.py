@@ -516,3 +516,16 @@ def regression_scenarios() -> list[dict[str, Any]]:
         + generated_scenarios(50_100, 53)
         + payload_recovery_scenarios()
     )
+
+
+def fixed_scenarios(suite: str) -> list[dict[str, Any]]:
+    """Single source for the runner and the HMI catalog's fixed case order."""
+    factories = {
+        "smoke": smoke_scenarios,
+        "regression": regression_scenarios,
+        "general": general_scenarios,
+    }
+    try:
+        return factories[suite]()
+    except KeyError as error:
+        raise ValueError(f"Неизвестный фиксированный набор тестов: {suite}") from error

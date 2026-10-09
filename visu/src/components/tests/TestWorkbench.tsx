@@ -50,6 +50,7 @@ type Status = {
   };
   plc?: {
     connected: boolean;
+    magazineMode: number | null;
     requestedEnvironment: number;
     appliedEnvironment: number;
     environmentChangeAllowed: boolean;
@@ -124,7 +125,7 @@ const rejectReasons = [
   '',
   'оборудование или цикл ещё заняты',
   'неизвестная тестовая среда',
-  'для стенда нужны Modbus и физический ключ',
+  'для стенда нужен Modbus',
   'PLC не видит признак Python-симулятора',
   'профиль скорости разрешён только в симуляции',
 ];
@@ -302,14 +303,16 @@ export function TestWorkbench({
       ? 'Нет связи gateway с PLC'
       : status.activeRunId
         ? 'Другой прогон уже выполняется'
+        : status.plc?.magazineMode !== 0
+          ? status.plc?.magazineMode === 1
+            ? 'Эти сценарии рассчитаны на статичные кассеты. Выбран двухпалетный тип; переключите его до тестовой сессии.'
+            : 'Не удалось определить тип магазинов PLC'
         : robotInterface === 'python-modbus' && !status.simulatorControl?.available
           ? 'Запустите или перезапустите Python-симулятор: управляющий API недоступен'
           : robotInterface === 'python-modbus' && !status.simulatorControl?.modbusRunning
             ? 'В Python-симуляторе не запущен Modbus Server'
         : suite === 'general' && environment !== 'simulation'
           ? 'Генеральные тесты с автоматической перезагрузкой доступны только в симуляции'
-          : environment === 'sc500_bench' && !status.plc?.benchKey
-            ? 'Для стенда включите физический ключ'
           : '';
 
   return <aside className={`test-workbench ${className}`}>
@@ -344,8 +347,7 @@ export function TestWorkbench({
         <StateBadge ok={Boolean(status.plc?.robotReady)} label={status.plc?.robotReady ? 'Робот готов' : 'Робот не готов'} />
         <StateBadge ok={Boolean(status.plc?.simulatorActive)} warning label={status.plc?.simulatorActive ? 'Python опознан' : 'Python не активен'} />
         <StateBadge ok={Boolean(status.simulatorControl?.available && status.simulatorControl?.modbusRunning)} warning label={status.simulatorControl?.available ? status.simulatorControl.modbusRunning ? 'Test API готов' : 'Modbus остановлен' : 'Test API недоступен'} />
-        <StateBadge ok={Boolean(status.plc?.benchKey)} warning label={status.plc?.benchKey ? 'Ключ стенда включён' : status.plc?.benchKeyLost ? 'Ключ стенда потерян' : 'Ключ стенда выключен'} />
-        <span className="test-environment-summary">Запрошено: <b>{environments[status.plc?.requestedEnvironment ?? 0]}</b> · применено: <b>{environments[status.plc?.appliedEnvironment ?? 0]}</b>{status.plc?.rejectReason ? ` · Запрещено: ${rejectReasons[status.plc.rejectReason] ?? `код ${status.plc.rejectReason}`}` : ''}</span>
+        <span className="test-environment-summary">Магазины: <b>{status.plc?.magazineMode === 0 ? 'статичные · 2 × 120' : status.plc?.magazineMode === 1 ? 'двухпалетные · 4 × 96' : 'тип неизвестен'}</b> · запрошено: <b>{environments[status.plc?.requestedEnvironment ?? 0]}</b> · применено: <b>{environments[status.plc?.appliedEnvironment ?? 0]}</b>{status.plc?.rejectReason ? ` · Запрещено: ${rejectReasons[status.plc.rejectReason] ?? `код ${status.plc.rejectReason}`}` : ''}</span>
       </div>
     </section>
 
@@ -357,7 +359,7 @@ export function TestWorkbench({
         </header>
         <div className="test-toolbar">
           <button type="button" onClick={() => setEditor(fresh())}><Plus />Создать</button>
-          <button type="button" onClick={capture}><Copy />Снять с PLC</button>
+          <button type="button" onClick={capture} disabled={status.plc?.magazineMode !== 0} title={status.plc?.magazineMode !== 0 ? 'Снимок v2 доступен только для статичных магазинов' : 'Снять состояние PLC'}><Copy />Снять с PLC</button>
         </div>
         <div className="test-scenario-scroll">
           {scenarios.length === 0 && <div className="test-empty-state"><Database /><b>Сценариев пока нет</b><small>Создайте новый или снимите текущее состояние PLC</small></div>}

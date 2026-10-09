@@ -13,6 +13,10 @@ const emptySlots = (types = []) => Array.from({ length: 120 }, (_, index) => ({
 export function normalizeScenarioState(input) {
   if (!input || typeof input !== 'object') throw new Error('Сценарий не содержит initialState');
   const state = structuredClone(input);
+  if (state.magazineMode !== undefined && state.magazineMode !== 0) {
+    throw new Error('Схема v2 описывает только статичные магазины (magazineMode=0)');
+  }
+  state.magazineMode = 0;
   if (!Array.isArray(state.magazines)) {
     if (!Array.isArray(state.slots) || state.slots.length !== 120) {
       throw new Error('Сценарий должен содержать два магазина по 120 слотов');
@@ -105,6 +109,9 @@ export class TestStore {
     const now = Date.now();
     const name = String(input.name ?? '').trim();
     if (!name) throw new Error('Укажите имя сценария');
+    if (input.schemaVersion !== undefined && ![1, 2].includes(input.schemaVersion)) {
+      throw new Error('Неподдерживаемая версия схемы сценария');
+    }
     const initialState = normalizeScenarioState(input.initialState);
     if (id === null) {
       const result = this.db.prepare(`INSERT INTO test_scenario

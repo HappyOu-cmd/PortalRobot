@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import {
   AlertCircle, ArrowDown, ArrowUp, ArrowUpDown, Boxes, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, CircleStop, Gauge,
@@ -66,8 +66,8 @@ function TwinQuickCard({ icon: CardIcon, title, status, detail, tone = 'gray', i
     : <article className={className}>{content}</article>;
 }
 
-function TwinQuickCommands({ children }: { children: ReactNode }) {
-  return <div className="twin-quick-card-actions">{children}</div>;
+function TwinQuickCommands({ children, className = '' }: { children: ReactNode; className?: string }) {
+  return <div className={`twin-quick-card-actions ${className}`.trim()}>{children}</div>;
 }
 
 function TwinQuickPopup({ title, subtitle, wide, configuration, headerAction, onClose, children }: {
@@ -79,6 +79,24 @@ function TwinQuickPopup({ title, subtitle, wide, configuration, headerAction, on
       <div className="twin-quick-popup-heading"><strong>{title}</strong><span>{subtitle}</span></div>
       <div className="twin-quick-popup-header-actions">{headerAction}<button type="button" onClick={onClose} aria-label="Закрыть карточку"><X /></button></div>
     </header>
+    <div className="twin-quick-popup-body">{children}</div>
+  </aside>;
+}
+
+function TwinPalletPopup({ magazine, pallet, loaded, operatorPallet, wide, onClose, children }: {
+  magazine: number; pallet: number; loaded: boolean; operatorPallet: boolean; wide: boolean; onClose: () => void; children: ReactNode;
+}) {
+  return <aside className={`twin-quick-popup twin-pallet-popup${wide ? ' wide' : ''}`} role="dialog"
+    aria-label={`Палета П${pallet} магазина ${magazine}`} onPointerDown={(event) => event.stopPropagation()}>
+    <header>
+      <div className="twin-pallet-popup-icon"><Boxes aria-hidden="true" /></div>
+      <div className="twin-pallet-popup-heading"><small>МАГАЗИН {magazine} · ПАЛЕТЫ</small><h3>Палета П{pallet}</h3></div>
+      <button type="button" onClick={onClose} aria-label="Закрыть карточку"><X aria-hidden="true" /></button>
+    </header>
+    {operatorPallet && <div className="twin-pallet-popup-status" data-loaded={loaded}>
+      <span><Indicator active tone={loaded ? 'green' : 'amber'} />Палета у оператора</span>
+      <strong>{loaded ? 'Загрузка подтверждена' : 'Загрузка не подтверждена'}</strong>
+    </div>}
     <div className="twin-quick-popup-body">{children}</div>
   </aside>;
 }
@@ -110,19 +128,19 @@ function TwinMechanismPopup({ magazine, icon: Icon, title, state, stateKnown, st
 function TwinConfigurationCheck({ label, actual, expected, action, ok }: ConfigurationCondition) {
   return <div className={`twin-configuration-check ${ok ? 'ok' : 'missing'}`}>
     <i aria-hidden="true" /><span>{label}</span><strong>{actual}</strong>
-    <small>{ok ? `Требуется: ${expected}` : `Действие: ${action ?? expected}`}</small>
+    <small><span>Требуется: {expected}</span>{!ok && action && <span>Действие: {action}</span>}</small>
   </div>;
 }
 
-function TwinConfigurationGroup({ id, title, ready, expanded, onToggle, children }: {
-  id: string; title: string; ready: boolean; expanded: boolean; onToggle: () => void; children: ReactNode;
+function TwinConfigurationGroup({ id, title, ready, statusText, expanded, onToggle, children }: {
+  id: string; title: string; ready: boolean; statusText?: string; expanded: boolean; onToggle: () => void; children: ReactNode;
 }) {
   return <section className={`twin-configuration-group${expanded ? ' expanded' : ''}${ready ? ' ready' : ' blocked'}`}>
     <button type="button" className="twin-configuration-group-trigger" aria-expanded={expanded} aria-controls={id} onClick={onToggle}>
       <ChevronRight aria-hidden="true" />
       <i aria-hidden="true" />
       <strong>{title}</strong>
-      <span>{ready ? 'Готово' : 'Есть блокировки'}</span>
+      <span>{statusText ?? (ready ? 'Готово' : 'Есть блокировки')}</span>
     </button>
     {expanded && <div className="twin-configuration-group-content" id={id}>{children}</div>}
   </section>;
@@ -143,6 +161,8 @@ export function TwoPalletControl({ state, selected, onSelect, onCommand, onClose
   const doorsLocked = doorIds.every((id) => state.enclosureDoors[id].locked);
   const hasError = !!twin.error || magazine.state.error;
   const ready = twin.ready && magazine.state.ready;
+  const operatorPallet = twin.confirmed ? 3 - twin.robotPallet : 0;
+  const a = twin.allowed;
   const [pallet, setPallet] = useState(2);
   const [matrixOpen, setMatrixOpen] = useState(false);
   const [activeCard, setActiveCard] = useState<'readiness' | 'configuration' | 'drive' | 'pallets' | 'lift' | 'lock' | 'stop' | null>(null);
@@ -152,13 +172,26 @@ export function TwoPalletControl({ state, selected, onSelect, onCommand, onClose
   const [configurationDialogOpen, setConfigurationDialogOpen] = useState(false);
   const [driveView, setDriveView] = useState<'points' | 'jog'>('points');
   const [startPrompt, setStartPrompt] = useState<{ revision: number; pallet: number } | null>(null);
+  const [palletLoadChanges, setPalletLoadChanges] = useState<Record<string, { changed: boolean; confirmationRequested: boolean }>>({});
+  const [palletExitPrompt, setPalletExitPrompt] = useState<{ magazine: number; pallet: number } | null>(null);
+  const [confirmingPalletExit, setConfirmingPalletExit] = useState(false);
+  const pendingPalletExit = useRef<(() => void) | null>(null);
   const [draft, setDraft] = useState(twin.config);
   const [fullTab, setFullTab] = useState<TwinFullTab>('overview');
+  const fullScrollRef = useRef<HTMLDivElement>(null);
   const [readinessOpen, setReadinessOpen] = useState(false);
   const jogTimer = useRef<ReturnType<typeof setInterval>>();
   const releaseRef = useRef(() => onCommand('jogRelease'));
   const stopJog = () => { if (jogTimer.current) { clearInterval(jogTimer.current); jogTimer.current = undefined; releaseRef.current(); } };
-  useEffect(() => { stopJog(); setPallet(3 - twin.robotPallet); setStartPrompt(null); setActiveCard(null); setConfigurationDialogOpen(false); setMatrixOpen(false); setDriveView('points'); setDraft(twin.config); setFullTab('overview'); setReadinessOpen(false); }, [selected, twin.robotPallet]);
+  useEffect(() => { stopJog(); setPallet(3 - twin.robotPallet); setStartPrompt(null); setActiveCard(null); setConfigurationDialogOpen(false); setMatrixOpen(false); setDriveView('points'); setDraft(twin.config); setFullTab('overview'); setReadinessOpen(false); setPalletLoadChanges({}); setPalletExitPrompt(null); setConfirmingPalletExit(false); pendingPalletExit.current = null; }, [selected, twin.robotPallet]);
+  useLayoutEffect(() => {
+    if (!full || fullTab !== 'pallets' || !fullScrollRef.current) return;
+    const scroll = fullScrollRef.current;
+    const scrollToBottom = () => { scroll.scrollTop = scroll.scrollHeight; };
+    scrollToBottom();
+    const frame = window.requestAnimationFrame(scrollToBottom);
+    return () => window.cancelAnimationFrame(frame);
+  }, [full, fullTab, pallet, selected]);
   useEffect(() => {
     if (!configurationDialogOpen) return;
     const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setConfigurationDialogOpen(false); };
@@ -168,10 +201,71 @@ export function TwoPalletControl({ state, selected, onSelect, onCommand, onClose
   useEffect(() => { if (startPrompt && (startPrompt.revision !== twin.revision || !connected)) setStartPrompt(null); }, [startPrompt, twin.revision, connected]);
   useEffect(() => { const stop = () => stopJog(); window.addEventListener('blur', stop); document.addEventListener('visibilitychange', stop); return () => { stop(); window.removeEventListener('blur', stop); document.removeEventListener('visibilitychange', stop); }; }, []);
   useEffect(() => { if (!connected) stopJog(); }, [connected]);
-  const run = (action: TwinAction, data?: TwinCommandData) => { if (connected) onCommand(action, data); };
-  const button = (label: string, action: TwinAction, allowed: boolean, data?: TwinCommandData) => <button type="button" disabled={!connected || ((action === 'driveReset' || action === 'reset') && !allowed)}
-    className={allowed ? '' : 'command-unavailable'} aria-disabled={!allowed} onClick={() => run(action, data)}>{label}</button>;
-  const a = twin.allowed;
+  useEffect(() => {
+    for (const [key, change] of Object.entries(palletLoadChanges)) {
+      const [magazineIndex, palletId] = key.split(':').map(Number);
+      if (magazineIndex === selected && change.confirmationRequested && twin.pallets[palletId - 1]?.loaded) {
+        setPalletLoadChanges((current) => {
+          const next = { ...current };
+          delete next[key];
+          return next;
+        });
+        if (palletExitPrompt?.magazine === selected && palletExitPrompt.pallet === palletId) {
+          const leave = pendingPalletExit.current;
+          pendingPalletExit.current = null;
+          setPalletExitPrompt(null);
+          setConfirmingPalletExit(false);
+          leave?.();
+        }
+      }
+    }
+  }, [palletLoadChanges, palletExitPrompt, selected, twin.pallets]);
+  useEffect(() => {
+    if (!confirmingPalletExit) return;
+    const timer = window.setTimeout(() => setConfirmingPalletExit(false), 5000);
+    return () => window.clearTimeout(timer);
+  }, [confirmingPalletExit]);
+  const run = (action: TwinAction, data?: TwinCommandData) => {
+    if (!connected) return;
+    const id = data?.pallet ?? pallet;
+    if (id === operatorPallet && (action === 'fill' || action === 'clear' || action === 'slot' || action === 'loaded')) {
+      const key = `${selected}:${id}`;
+      setPalletLoadChanges((current) => ({ ...current, [key]: {
+        changed: action === 'loaded' ? !!current[key]?.changed : true,
+        confirmationRequested: action === 'loaded' && a.load,
+      } }));
+    }
+    onCommand(action, data);
+  };
+  const requestPalletExit = (leave: () => void) => {
+    const editingPallets = full ? fullTab === 'pallets' : activeCard === 'pallets';
+    if (editingPallets && operatorPallet && palletLoadChanges[`${selected}:${operatorPallet}`]?.changed) {
+      pendingPalletExit.current = leave;
+      setPalletExitPrompt({ magazine: selected, pallet: operatorPallet });
+      return;
+    }
+    leave();
+  };
+  const leavePalletWithoutConfirmation = () => {
+    if (!palletExitPrompt) return;
+    const key = `${palletExitPrompt.magazine}:${palletExitPrompt.pallet}`;
+    setPalletLoadChanges((current) => {
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+    const leave = pendingPalletExit.current;
+    pendingPalletExit.current = null;
+    setPalletExitPrompt(null);
+    setConfirmingPalletExit(false);
+    leave?.();
+  };
+  const button = (label: string, action: TwinAction, allowed: boolean, data?: TwinCommandData, extraClass = '') => {
+    const unavailable = !allowed;
+    return <button type="button" disabled={!connected || ((action === 'driveReset' || action === 'reset') && !allowed)}
+      className={`${unavailable ? 'command-unavailable' : ''} ${extraClass}`.trim()} aria-disabled={!connected || unavailable}
+      onClick={() => run(action, data)}>{label}</button>;
+  };
   const startAllowed = twin.confirmed ? a.enable : a.start;
   const startBlocker = !connected ? 'Нет связи с PLC'
     : twin.error ? 'Активна авария механизма магазина'
@@ -208,6 +302,8 @@ export function TwoPalletControl({ state, selected, onSelect, onCommand, onClose
     <span><strong>{title}</strong><small>{ok ? 'Готово' : hint}</small></span>
   </div>)}</div>;
   const p = twin.pallets[pallet - 1];
+  const operatorLoadConfirmed = !!operatorPallet && !!twin.pallets[operatorPallet - 1]?.loaded
+    && !palletLoadChanges[`${selected}:${operatorPallet}`]?.changed;
   const edit = pallet === 1 ? a.edit1 : a.edit2;
   const palletBlanks = p.slots.filter((slot) => slot === 'blank').length;
   const palletDetails = p.slots.filter((slot) => slot === 'detail').length;
@@ -258,6 +354,35 @@ export function TwoPalletControl({ state, selected, onSelect, onCommand, onClose
     </div>
   </OperatorConfirmationLayout>;
   const startDialogPortal = startDialog && typeof document !== 'undefined' ? createPortal(startDialog, document.body) : startDialog;
+  const palletExitDialog = palletExitPrompt && <OperatorConfirmationLayout
+    title={`Палета П${palletExitPrompt.pallet} · магазин ${palletExitPrompt.magazine + 1}`}
+    context="ЗАГРУЗКА НЕ ПОДТВЕРЖДЕНА"
+    description="После изменения матрицы операторская палета ожидает проверки перед автоматической сменой."
+    icon={<AlertCircle aria-hidden="true" />}
+    steps={['Проверить физическую загрузку палеты']}
+    step={1}
+    cancelLabel="Позже — выйти без подтверждения"
+    status={confirmingPalletExit ? local ? 'Подтверждение в локальной модели…' : 'Ожидание подтверждения от PLC…'
+      : !connected ? 'Нет связи с PLC; подтвердить загрузку сейчас нельзя.'
+        : !a.load ? local ? 'Локальная модель пока не разрешает подтверждение.' : 'PLC пока не разрешает подтверждение; автоматическая смена ждёт.'
+          : 'Автоматическая смена будет ждать подтверждения загрузки.'}
+    onCancel={leavePalletWithoutConfirmation}
+    className="twin-pallet-exit-confirmation"
+  >
+    <div className="question-heading">
+      <h3>Палета изменена, загрузка не подтверждена</h3>
+      <p>{local ? 'Изменения записаны в локальную модель.' : 'Команды изменения отправлены в PLC.'} Сверьте содержимое П{palletExitPrompt.pallet} с матрицей и подтвердите загрузку либо выйдите и сделайте это позже.</p>
+    </div>
+    <div className="confirmation-actions">
+      <button className={`primary${a.load ? '' : ' command-unavailable'}`} type="button"
+        disabled={!connected || confirmingPalletExit} aria-disabled={!a.load}
+        onClick={() => { if (a.load) setConfirmingPalletExit(true); run('loaded', { pallet: palletExitPrompt.pallet }); }}>
+        Подтвердить загрузку и выйти
+      </button>
+      <button type="button" onClick={leavePalletWithoutConfirmation}>Позже — выйти без подтверждения</button>
+    </div>
+  </OperatorConfirmationLayout>;
+  const palletExitDialogPortal = palletExitDialog && typeof document !== 'undefined' ? createPortal(palletExitDialog, document.body) : palletExitDialog;
 
   if (!full) {
     const driveReady = twin.powered && twin.homed && !twin.homeRequired && !twin.driveError;
@@ -305,7 +430,7 @@ export function TwoPalletControl({ state, selected, onSelect, onCommand, onClose
       const allowed = a.confirm && twin.candidate === id;
       const confirmed = twin.confirmed && twin.robotPallet === id;
       const robotChecks: ConfigurationCondition[] = [
-        { label: 'Позиция каретки', actual: `${twin.position.toFixed(1)} мм`, expected: `${target.toFixed(1)} ± ${twin.config.tolerance.toFixed(1)} мм`, action: `Установите каретку в рабочую позицию П${id}.`, ok: coordinateOk },
+        { label: 'Текущая координата', actual: `${twin.position.toFixed(2)} мм`, expected: `${target.toFixed(2)} ± ${twin.config.tolerance.toFixed(2)} мм для П${id}`, action: `Установите каретку в рабочую позицию П${id}.`, ok: coordinateOk },
       ];
       const magazineChecks: ConfigurationCondition[] = [
         { label: 'Подъём П2', actual: cylinderPosition(twin.sensors.liftDown, twin.sensors.liftUp), expected: expected.liftUp ? 'Верх' : 'Низ',
@@ -314,13 +439,16 @@ export function TwoPalletControl({ state, selected, onSelect, onCommand, onClose
         { label: 'Фиксатор', actual: cylinderPosition(twin.sensors.stopIn, twin.sensors.stopOut), expected: expectedStopOut ? 'Выдвинут' : 'Втянут', action: `Проверьте фиксатор: датчик должен подтвердить положение «${expectedStopOut ? 'выдвинут' : 'втянут'}».`, ok: stopOk },
       ];
       const plcChecks: ConfigurationCondition[] = [
-        { label: 'Выбранная палета', actual: twin.candidate ? `П${twin.candidate}` : 'Не определена', expected: `П${id}`, action: `Установите механизм в рабочее положение П${id}.`, ok: twin.candidate === id },
+        { label: 'Распознана PLC', actual: twin.candidate ? `П${twin.candidate} у робота` : 'Не определена', expected: `П${id} у робота`,
+          action: twin.candidate
+            ? `Сейчас у робота П${twin.candidate}. Для варианта П${id} сначала переместите П${id} к роботу; если работаете с П${twin.candidate}, проверьте его конфигурацию.`
+            : 'PLC не распознал рабочее положение: проверьте координату и герконы.', ok: twin.candidate === id },
       ];
       const localBlockers = [...robotChecks, ...magazineChecks, ...plcChecks].filter((check) => !check.ok);
       const groups = [
         { key: 'robot', title: 'Позиция каретки', checks: robotChecks },
         { key: 'magazine', title: 'Герконы механизмов', checks: magazineChecks },
-        { key: 'plc', title: 'Положение палеты', checks: plcChecks },
+        { key: 'plc', title: 'Палета у робота', checks: plcChecks },
       ];
       const optionReady = confirmed || allowed;
       const blockerText = optionReady || globalConfigurationBlocker ? '' : localBlockers[0]?.action ?? `PLC не разрешает подтверждение: ${plcReason || 'условия не выполнены'}.`;
@@ -342,7 +470,9 @@ export function TwoPalletControl({ state, selected, onSelect, onCommand, onClose
           {groups.map((group) => {
             const expanded = configurationExpandedSection === `${id}-${group.key}`;
             return <TwinConfigurationGroup key={group.key} id={`twin-configuration-${selected + 1}-${id}-${group.key}`} title={group.title}
-              ready={group.checks.every((check) => check.ok)} expanded={expanded}
+              ready={group.checks.every((check) => check.ok)}
+              statusText={group.key === 'plc' && twin.candidate !== id ? (twin.candidate ? `Сейчас П${twin.candidate}` : 'Не определена') : undefined}
+              expanded={expanded}
               onToggle={() => setConfigurationExpandedSection(expanded ? '' : `${id}-${group.key}`)}>
               <div className="twin-configuration-checks">{group.checks.map((check) => <TwinConfigurationCheck key={check.label} {...check} />)}</div>
             </TwinConfigurationGroup>;
@@ -366,7 +496,12 @@ export function TwoPalletControl({ state, selected, onSelect, onCommand, onClose
         <em>{status}</em>
       </button>;
     };
+    const closePalletPopup = () => requestPalletExit(() => { setActiveCard(null); setMatrixOpen(false); });
     const chooseCard = (card: Exclude<typeof activeCard, null>) => {
+      if (activeCard === 'pallets') {
+        requestPalletExit(() => { setActiveCard(card === 'pallets' ? null : card); setMatrixOpen(false); });
+        return;
+      }
       setActiveCard((current) => current === card ? null : card);
       if (card !== 'pallets') setMatrixOpen(false);
     };
@@ -402,7 +537,7 @@ export function TwoPalletControl({ state, selected, onSelect, onCommand, onClose
       onLostPointerCapture={stopJog}
     >{positive ? <ChevronRight aria-hidden="true" /> : <ChevronLeft aria-hidden="true" />}<span>JOG {positive ? '+' : '−'}</span></button>;
 
-    const popupActions = (children: ReactNode) => <TwinQuickCommands>{children}</TwinQuickCommands>;
+    const popupActions = (children: ReactNode, className?: string) => <TwinQuickCommands className={className}>{children}</TwinQuickCommands>;
     const mechanismButton = (label: string, action: TwinAction, allowed: boolean, Icon: LucideIcon, primary = false) => <button
       type="button"
       disabled={!connected || ((action === 'driveReset' || action === 'reset') && !allowed)}
@@ -424,11 +559,11 @@ export function TwoPalletControl({ state, selected, onSelect, onCommand, onClose
           {twin.busy ? <CircleStop aria-hidden="true" /> : <MoveHorizontal aria-hidden="true" />}<span>{twin.busy ? 'Остановить смену' : 'Поменять палеты'}</span>
         </button>
         <nav className="machine-quick-tabs magazine-quick-tabs twin-quick-magazine-tabs" aria-label="Выбор магазина">
-          {[0, 1].map((index) => <button key={index} className={selected === index ? 'active' : ''} type="button" onClick={() => onSelect(index)}>Магазин {index + 1}</button>)}
+          {[0, 1].map((index) => <button key={index} className={selected === index ? 'active' : ''} type="button" onClick={() => { if (index !== selected) requestPalletExit(() => onSelect(index)); }}>Магазин {index + 1}</button>)}
         </nav>
         <div className="twin-quick-header-actions">
-          <button className="twin-quick-extended" type="button" onClick={onExtended} title="Расширенное управление" aria-label="Расширенное управление"><Settings /></button>
-          <button className="twin-quick-close" type="button" onClick={onClose} title="Закрыть меню" aria-label="Закрыть меню"><X /></button>
+          <button className="twin-quick-extended" type="button" onClick={() => requestPalletExit(() => onExtended?.())} title="Расширенное управление" aria-label="Расширенное управление"><Settings /></button>
+          <button className="twin-quick-close" type="button" onClick={() => requestPalletExit(onClose)} title="Закрыть меню" aria-label="Закрыть меню"><X /></button>
         </div>
       </header>
 
@@ -437,7 +572,9 @@ export function TwoPalletControl({ state, selected, onSelect, onCommand, onClose
           <MagazineActionIcon aria-hidden="true" /><span>{magazineActionText}</span>
         </button>
         <TwinQuickCard icon={Gauge} title="Привод" status={driveText} detail={`${twin.position.toFixed(1)} мм`} tone={twin.driveError ? 'red' : driveReady ? 'green' : twin.powered ? 'amber' : 'gray'} interactive active={activeCard === 'drive'} onClick={() => chooseCard('drive')} />
-        <TwinQuickCard icon={Boxes} title="Палеты" status={arrangement} detail="2 × 96" tone={twin.confirmed ? 'blue' : 'amber'} interactive active={activeCard === 'pallets'} onClick={() => chooseCard('pallets')} />
+        <TwinQuickCard icon={Boxes} title="Палеты" status={twin.confirmed ? operatorLoadConfirmed ? 'Загрузка подтверждена' : 'Загрузка не подтверждена' : 'Положение неизвестно'}
+          detail={twin.confirmed ? `П${operatorPallet} у оператора` : '2 × 96'} tone={twin.confirmed && operatorLoadConfirmed ? 'green' : 'amber'}
+          interactive active={activeCard === 'pallets'} onClick={() => chooseCard('pallets')} />
         <TwinQuickCard icon={ArrowUpDown} title="Подъём П2" status={liftText} tone={twin.sensors.liftUp || twin.sensors.liftDown ? 'blue' : 'amber'} interactive active={activeCard === 'lift'} onClick={() => chooseCard('lift')} />
         <TwinQuickCard icon={Link2} title="Замок" status={couplingText} tone={twin.confirmed ? 'blue' : 'amber'} interactive active={activeCard === 'lock'} onClick={() => chooseCard('lock')} />
         <TwinQuickCard icon={LockKeyhole} title="Фиксатор" status={stopText} tone={twin.confirmed ? 'blue' : 'amber'} interactive active={activeCard === 'stop'} onClick={() => chooseCard('stop')} />
@@ -534,13 +671,13 @@ export function TwoPalletControl({ state, selected, onSelect, onCommand, onClose
         {(twin.driveError || !driveReady) && <p><ShieldAlert aria-hidden="true" /><span>{twin.driveError ? 'Обнаружена ошибка привода' : !twin.powered ? 'Привод выключен' : !twin.homed || twin.homeRequired ? 'Требуется поиск HOME' : 'Проверьте привязку оси и входов/выходов'}</span></p>}
       </aside>}
 
-      {activeCard === 'pallets' && <TwinQuickPopup title={`Палеты магазина ${selected + 1}`} subtitle={arrangement} wide={matrixOpen} onClose={() => { setActiveCard(null); setMatrixOpen(false); }}>
-        <nav className="twin-popup-pallet-tabs">{[1, 2].map((id) => <button key={id} type="button" className={pallet === id ? 'active' : ''} onClick={() => { setPallet(id); setMatrixOpen(false); }}>П{id}<small>{selectedRole(id)}</small></button>)}</nav>
-        <div className="twin-popup-metrics"><span><b>{palletBlanks}</b>Заготовок</span><span><b>{palletDetails}</b>Деталей</span><span><b>{palletEmpty}</b>Свободно</span><span><b>{p.loaded ? 'Да' : 'Нет'}</b>Загрузка подтверждена</span></div>
-        {popupActions(<>{button('Заполнить палету', 'fill', edit, { pallet })}{button('Очистить палету', 'clear', edit, { pallet })}{button('Загрузка завершена', 'loaded', edit, { pallet })}<button type="button" className={matrixOpen ? 'active' : ''} onClick={() => setMatrixOpen((open) => !open)}>Матрица · 12 рядов × 8 мест</button></>)}
-        {matrixOpen && <MagazineMatrix slots={p.slots} productTypes={p.productTypes} columns={8} activeCount={96}
+      {activeCard === 'pallets' && <TwinPalletPopup magazine={selected + 1} pallet={pallet} loaded={operatorLoadConfirmed} operatorPallet={pallet === operatorPallet} wide={matrixOpen} onClose={closePalletPopup}>
+        <nav className="twin-popup-pallet-tabs">{[1, 2].map((id) => <button key={id} type="button" className={pallet === id ? 'active' : ''} onClick={() => { if (id !== pallet) requestPalletExit(() => { setPallet(id); setMatrixOpen(false); }); }}>П{id}<small>{selectedRole(id)}</small></button>)}</nav>
+        <div className="twin-popup-metrics"><span><b>{palletBlanks}</b>Заготовок</span><span><b>{palletDetails}</b>Деталей</span><span><b>{palletEmpty}</b>Свободно</span></div>
+        {popupActions(<>{button('Заполнить палету', 'fill', edit, { pallet })}{button('Очистить палету', 'clear', edit, { pallet })}{pallet === operatorPallet && button('Подтвердить загрузку', 'loaded', a.load, { pallet }, 'confirm-load')}<button type="button" className={matrixOpen ? 'active' : ''} aria-expanded={matrixOpen} onClick={() => setMatrixOpen((open) => !open)}>Матрица · 12 рядов × 8 мест</button></>, pallet === operatorPallet ? '' : 'robot-pallet')}
+        {matrixOpen && <MagazineMatrix key={pallet} slots={p.slots} productTypes={p.productTypes} columns={8} activeCount={96} bottomUp showNumbers
           onSlotClick={edit && connected ? (index) => run('slot', { pallet, slot: index + 1, content: p.slots[index] === 'empty' ? 1 : p.slots[index] === 'blank' ? 2 : 0, productType: p.productTypes[index] }) : undefined} />}
-      </TwinQuickPopup>}
+      </TwinPalletPopup>}
 
       {activeCard === 'lift' && <TwinMechanismPopup magazine={selected + 1} icon={ArrowUpDown} title="Подъём палеты П2" state={liftText}
         stateKnown={twin.sensors.liftDown !== twin.sensors.liftUp}
@@ -563,6 +700,7 @@ export function TwoPalletControl({ state, selected, onSelect, onCommand, onClose
         {mechanismButton('Выдвинуть', 'stopOut', a.stop, LockKeyhole, true)}
       </TwinMechanismPopup>}
       {startDialogPortal}
+      {palletExitDialogPortal}
     </section>;
   }
 
@@ -610,7 +748,7 @@ export function TwoPalletControl({ state, selected, onSelect, onCommand, onClose
         <span className="tx-magazine-icon"><Boxes aria-hidden="true" /></span>
         <div><p>{local ? 'Локальная модель · без OPC UA' : 'Расширенное управление'}</p><h2>Магазин {String(selected + 1).padStart(2, '0')}</h2></div>
       </div>
-      <button className="tx-close" type="button" onClick={onClose} aria-label="Закрыть управление магазином"><X aria-hidden="true" /></button>
+      <button className="tx-close" type="button" onClick={() => requestPalletExit(onClose)} aria-label="Закрыть управление магазином"><X aria-hidden="true" /></button>
     </header>
 
     <SegmentedControl className="tx-magazine-switch" value={String(selected)} ariaLabel="Выбор магазина" thumbFullHeight
@@ -618,7 +756,7 @@ export function TwoPalletControl({ state, selected, onSelect, onCommand, onClose
         <span className="tx-magazine-label">Магазин <b>{String(index + 1).padStart(2, '0')}</b></span>
         <i className={magazineDot(index)} aria-hidden="true" />
       </> }))}
-      onChange={(value) => onSelect(Number(value))} />
+      onChange={(value) => requestPalletExit(() => onSelect(Number(value)))} />
 
     <div className="tx-status" data-tone={fullStatusTone}><div><i aria-hidden="true" /><strong>{fullStatusText}</strong></div>
       <small>{fullStatusReason}</small></div>
@@ -627,8 +765,11 @@ export function TwoPalletControl({ state, selected, onSelect, onCommand, onClose
         <p>{magazine.state.activeErrors.join(' · ') || 'Сначала устраните ошибку робота, затем сбросьте магазин.'}</p></div></div>}
 
     <Tabs value={fullTab} onValueChange={(tab) => {
-      if (tab === 'setup' && fullTab !== 'setup') setDraft({ ...twin.config });
-      setFullTab(tab as TwinFullTab);
+      if (tab === fullTab) return;
+      requestPalletExit(() => {
+        if (tab === 'setup' && fullTab !== 'setup') setDraft({ ...twin.config });
+        setFullTab(tab as TwinFullTab);
+      });
     }} className="tx-tabs">
       <TabsList className="tx-tabs-list" data-active-tab={fullTab} aria-label="Разделы управления магазином">
         <TabsTrigger value="overview"><Gauge aria-hidden="true" />Обзор</TabsTrigger>
@@ -637,7 +778,7 @@ export function TwoPalletControl({ state, selected, onSelect, onCommand, onClose
         <TabsTrigger value="diagnostics"><Info aria-hidden="true" />Диагностика{hasError && <i className="tx-tab-alert" aria-hidden="true" />}</TabsTrigger>
         <TabsTrigger value="setup"><Settings aria-hidden="true" />Наладка</TabsTrigger>
       </TabsList>
-      <div className="tx-scroll" key={`${selected}-${fullTab}`}>
+      <div className="tx-scroll" key={`${selected}-${fullTab}`} ref={fullScrollRef}>
 
         <TabsContent value="overview" className="tx-tab-content">
           <section>
@@ -667,7 +808,10 @@ export function TwoPalletControl({ state, selected, onSelect, onCommand, onClose
             <div className="tx-section-heading"><h3><Boxes aria-hidden="true" />Палеты магазина</h3><span className="tx-tag">2 × 96 мест</span></div>
             <div className="tx-pallets">{twin.pallets.map((item, index) => {
               const id = index + 1;
-              return <button key={id} type="button" className={`tx-pallet${pallet === id ? ' selected' : ''}`} onClick={() => { setPallet(id); setMatrixOpen(true); }}>
+              return <button key={id} type="button" className={`tx-pallet${pallet === id ? ' selected' : ''}`} onClick={() => {
+                if (pallet === id) { setMatrixOpen(true); return; }
+                requestPalletExit(() => { setPallet(id); setMatrixOpen(true); });
+              }}>
                 <div className="tx-pallet-heading"><strong>П{id}</strong>
                   <span>{twin.confirmed ? twin.robotPallet === id ? 'у робота' : 'у оператора' : twin.busy ? 'обмен' : 'не подтверждена'}</span>
                   <small>{String(id).padStart(2, '0')}</small></div>
@@ -676,18 +820,20 @@ export function TwoPalletControl({ state, selected, onSelect, onCommand, onClose
                   <div><span>Детали</span><b>{item.slots.filter((slot) => slot === 'detail').length}</b></div>
                   <div><span>Свободно</span><b>{item.slots.filter((slot) => slot === 'empty').length}</b></div>
                 </div>
-                <div className="tx-pallet-loaded" data-loaded={item.loaded}>{item.loaded ? 'Загрузка подтверждена' : 'Загрузка не подтверждена'}</div>
+                {id === operatorPallet && <div className="tx-pallet-loaded" data-loaded={operatorLoadConfirmed}>
+                  <Indicator active tone={operatorLoadConfirmed ? 'green' : 'amber'} />{operatorLoadConfirmed ? 'Загрузка подтверждена' : 'Загрузка не подтверждена'}
+                </div>}
               </button>;
             })}</div>
           </section>
           <section>
             <div className="tx-section-heading"><h3>Содержимое П{pallet}</h3><span className="tx-tag">12 рядов × 8 мест</span></div>
-            <div className="tx-inventory-actions">
+            <div className={`tx-inventory-actions${pallet === operatorPallet ? '' : ' robot-pallet'}`}>
               {button('Заполнить палету', 'fill', edit, { pallet })}
               {button('Очистить палету', 'clear', edit, { pallet })}
-              {button('Загрузка завершена', 'loaded', edit, { pallet })}
+              {pallet === operatorPallet && button('Подтвердить загрузку', 'loaded', a.load, { pallet })}
             </div>
-            <MagazineMatrix slots={p.slots} productTypes={p.productTypes} columns={8} activeCount={96}
+            <MagazineMatrix key={pallet} slots={p.slots} productTypes={p.productTypes} columns={8} activeCount={96} bottomUp showNumbers
               onSlotClick={edit && connected ? (index) => run('slot', { pallet, slot: index + 1, content: p.slots[index] === 'empty' ? 1 : p.slots[index] === 'blank' ? 2 : 0, productType: p.productTypes[index] }) : undefined} />
           </section>
         </TabsContent>
@@ -823,5 +969,6 @@ export function TwoPalletControl({ state, selected, onSelect, onCommand, onClose
       </div>
     </footer>
     {startDialogPortal}
+    {palletExitDialogPortal}
   </aside>;
 }

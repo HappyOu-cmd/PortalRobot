@@ -1,7 +1,8 @@
 FUNCTION_BLOCK FB_CELL_MANAGER
 VAR_INPUT
 	axMagazineAutoSwapPending : ARRAY [1..GVL_CELL_SETTINGS.MagazineCount] OF BOOL; // Палета ждёт окна обмена
-	xMagazineExchangeActive : BOOL; // До окончания обмена не выдавать новый маршрут роботу
+	axMagazineExchangeInProgress : ARRAY [1..GVL_CELL_SETTINGS.MagazineCount] OF BOOL; // Во время смены палет запрещены операции только с этим магазином
+	xMagazineExchangeActive : BOOL; // Есть активный обмен палет; подавляет временные предупреждения о запасах
 	xStart            : BOOL; // Импульс запуска цикла или отмены остановки
 	xStop             : BOOL; // Импульс контролируемой остановки
 	xTestAbort        : BOOL; // Немедленная отмена только тестового прогона
@@ -11,6 +12,10 @@ VAR_INPUT
 	xOperatorCancel   : BOOL; // Импульс отмены предпускового опроса
 	uiOperatorChoice  : UINT; // Выбранное содержимое, тип продукции или станок
 	xManual           : BOOL; // Ручной режим ячейки
+	xIoDoRejected : BOOL;
+    xIoEmergencyResetRejected : BOOL;
+    xIoEmergencyStopActive : BOOL;
+	xIoOverrideRejected : BOOL; // Отклонённая транзакция диагностики, эффект WARNING
 	xSettingsRejected : BOOL; // Rejected or expired setting transaction
 	uiModeRejectReason : UINT; // Одноцикловый отказ транзакции режима: 2 цикл, 3 Safety
 	xGlobalError      : BOOL; // Глобальная ошибка ячейки
@@ -44,6 +49,19 @@ VAR_OUTPUT
 	FaultStatus        : ST_FAULT_INJECTION_STATUS; // Инъекция логической ошибки ячейки
 END_VAR
 VAR
+	xGeometryHeld : BOOL;
+	xGeometryDetailCounted : BOOL;
+	uiGeometryMachine : UINT;
+	uiGeometryStation : UINT;
+	uiGeometryParkStation : UINT;
+	uiGeometryStep : UINT;
+	uiGeometryBypassReason : UINT;
+	uiGeometryIndex : UINT;
+	udiGeometryMagazineCounter : UDINT;
+	eGeometryReturnState : E_CELL_MANAGER_STATE;
+	eGeometrySafePoint : E_POINT_NAME;
+	eGeometryChangePoint : E_POINT_NAME;
+	eGeometryPlacePoint : E_POINT_NAME;
 	xActiveMagazineAutoSwapPending : BOOL; // Удержать владельца и цикл до обмена его палеты
 	eState               : E_CELL_MANAGER_STATE := E_CELL_MANAGER_STATE.IDLE; // Состояние универсального автомата
 	eMagazineOperation   : E_MAGAZINE_OPERATION; // Выполняемая операция магазина
@@ -53,6 +71,7 @@ VAR
 	xReadyToStart        : BOOL; // Условия запуска выполнены
 	xRobotReady          : BOOL; // Робот готов принять маршрут
 	xMagazineReady       : BOOL; // Магазин готов к операции
+	xActiveMagazineExchangeInProgress : BOOL; // Выбранный магазин сейчас меняет палеты
 	stMagazineStatus     : ST_MAGAZINE_STATUS; // Снимок выбранного магазина для существующего автомата
 	uiActiveMagazine     : UINT; // Защёлкнутый магазин текущего цикла
 	xMagazine1Available  : BOOL;
@@ -147,10 +166,28 @@ VAR CONSTANT
 	WRN_OPERATOR_CANCEL_REJECTED: UINT := UINT#22;
 	WRN_NO_DETAIL_DESTINATION  : UINT := UINT#29;
 	WRN_NO_BLANK_STOCK         : UINT := UINT#30;
+	WRN_IO_OVERRIDE_REJECTED   : UINT := UINT#31;
+    WRN_IO_DO_REJECTED : UINT := UINT#32;
+    WRN_IO_EMERGENCY_RESET_REJECTED : UINT := UINT#33;
 END_VAR
 
 // --- BEGIN IMPLEMENTATION ---
 
+IF xIoDoRejected THEN
+    Diag.stWarning.uiCode := WRN_IO_DO_REJECTED; // WARNING: вход/команда прямого ручного I/O не применены
+    Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
+    IF Diag.stWarning.udiSequence = UDINT#0 THEN Diag.stWarning.udiSequence := UDINT#1; END_IF;
+END_IF;
+IF xIoEmergencyResetRejected THEN
+    Diag.stWarning.uiCode := WRN_IO_EMERGENCY_RESET_REJECTED; // WARNING: останов остаётся
+    Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
+    IF Diag.stWarning.udiSequence = UDINT#0 THEN Diag.stWarning.udiSequence := UDINT#1; END_IF;
+END_IF;
+IF xIoOverrideRejected THEN
+    Diag.stWarning.uiCode := WRN_IO_OVERRIDE_REJECTED; // WARNING: входы не изменены
+    Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
+    IF Diag.stWarning.udiSequence = UDINT#0 THEN Diag.stWarning.udiSequence := UDINT#1; END_IF;
+END_IF;
 IF xSettingsRejected THEN
 	Diag.stWarning.uiCode := WRN_CELL_SETTING_REJECTED; // WARNING: settings unchanged
 	Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
@@ -169,12 +206,14 @@ rtOperatorCancel(CLK := xOperatorCancel);
 // по двум владельцам и не переключается посреди TAKE/CHANGE.
 xMagazine1Available := astMagazineStatus[1].xEnabled
 	AND astMagazineStatus[1].xReady
+	AND NOT axMagazineExchangeInProgress[1]
 	AND NOT astMagazineStatus[1].xBusy
 	AND NOT astMagazineStatus[1].xError
 	AND NOT astMagazineStatus[1].xDisablePending
 	AND NOT astMagazineStatus[1].xFinished;
 xMagazine2Available := astMagazineStatus[2].xEnabled
 	AND astMagazineStatus[2].xReady
+	AND NOT axMagazineExchangeInProgress[2]
 	AND NOT astMagazineStatus[2].xBusy
 	AND NOT astMagazineStatus[2].xError
 	AND NOT astMagazineStatus[2].xDisablePending
@@ -219,6 +258,9 @@ AND (uiDetailPayloadType <= Config.uiTypeCount) THEN
 	END_IF;
 END_IF;
 IF xRunning
+AND (eState <> E_CELL_MANAGER_STATE.GEOMETRY_WAIT_FREE)
+AND (eState <> E_CELL_MANAGER_STATE.GEOMETRY_DELIVER)
+AND (eState <> E_CELL_MANAGER_STATE.GEOMETRY_RELEASE_COMMAND)
 AND (uiActiveMagazine >= UINT#1)
 AND (uiActiveMagazine <= UINT#2) THEN
 	// Операторское отключение активного магазина передаёт владение второму
@@ -226,8 +268,9 @@ AND (uiActiveMagazine <= UINT#2) THEN
 	// источником истины и будет уложен уже в выбранный магазин. Проверяем также
 	// итоговый xEnabled: FB_MAGAZINE может завершить отключение и снять
 	// xDisablePending раньше, чем робот достигнет границы перепланирования.
-	// xFinished в DONE ещё не означает конец цикла: механизм палет получает
-	// окно только после RELEASE_MAGAZINE. До обмена сохраняем старого владельца.
+	// xFinished в DONE ещё не означает конец цикла: до завершения RELEASE_MAGAZINE
+	// не меняем владельца. Когда началась сама смена палет, адресная блокировка
+	// снимает старого владельца на границе операций и разрешает выбрать второй магазин.
 	IF (((astMagazineStatus[uiActiveMagazine].xFinished
 			AND NOT axMagazineAutoSwapPending[uiActiveMagazine])
 		OR ((astMagazineStatus[uiActiveMagazine].xDisablePending
@@ -236,8 +279,10 @@ AND (uiActiveMagazine <= UINT#2) THEN
 				OR (eState = E_CELL_MANAGER_STATE.WAIT_TARGET)
 				OR (eState = E_CELL_MANAGER_STATE.SELECT_FALLBACK)
 				OR (eState = E_CELL_MANAGER_STATE.WAIT_MAGAZINE))))
+		OR axMagazineExchangeInProgress[uiActiveMagazine]
 		OR xUseAlternateMagazineForDetail)
-	AND NOT astMagazineStatus[uiActiveMagazine].xBusy
+	AND (NOT astMagazineStatus[uiActiveMagazine].xBusy
+		OR axMagazineExchangeInProgress[uiActiveMagazine])
 	AND NOT stRobotStatus.xBusy THEN
 		IF xAlternateMagazineAvailable THEN
 			IF uiActiveMagazine = UINT#1 THEN
@@ -294,9 +339,11 @@ END_IF;
 IF (uiActiveMagazine >= UINT#1) AND (uiActiveMagazine <= UINT#2) THEN
 	stMagazineStatus := astMagazineStatus[uiActiveMagazine];
 	xActiveMagazineAutoSwapPending := axMagazineAutoSwapPending[uiActiveMagazine];
+	xActiveMagazineExchangeInProgress := axMagazineExchangeInProgress[uiActiveMagazine];
 ELSE
 	stMagazineStatus := astMagazineStatus[1];
 	xActiveMagazineAutoSwapPending := FALSE;
+	xActiveMagazineExchangeInProgress := axMagazineExchangeInProgress[1];
 END_IF;
 
 // HOME_SAFETY — это диапазон вокруг именованной точки, а не требование
@@ -354,6 +401,53 @@ FOR uiMachine := FIRST_MACHINE TO LAST_MACHINE DO
 END_FOR;
 
 Command.stRobot.xExecute := FALSE;
+FOR uiGeometryIndex := UINT#1 TO UINT#2 DO
+	GVL_GEOMETRY_CONTROL.astSignals[uiGeometryIndex].xReleased := FALSE;
+END_FOR;
+// После аварии контекст снимается лишь при подтверждённом выходе в HOME_SAFETY.
+IF (uiGeometryStation >= UINT#1) AND (uiGeometryStation <= UINT#2)
+AND (stRobotStatus.eCurrentPoint = E_POINT_NAME.HOME_SAFETY)
+AND NOT stRobotStatus.xBusy AND NOT xMotionBusy
+AND (eState <> E_CELL_MANAGER_STATE.GEOMETRY_DELIVER)
+AND (eState <> E_CELL_MANAGER_STATE.GEOMETRY_RELEASE_COMMAND) THEN
+	GVL_GEOMETRY_CONTROL.astSignals[uiGeometryStation].xReserve := FALSE;
+	GVL_GEOMETRY_CONTROL.astSignals[uiGeometryStation].xDeposited := FALSE;
+	GVL_GEOMETRY_CONTROL.astSignals[uiGeometryStation].xRobotInteraction := FALSE;
+	GVL_GEOMETRY_CONTROL.astSignals[uiGeometryStation].xReleased := TRUE;
+	IF xGeometryHeld AND (uiGeometryMachine >= UINT#1) AND (uiGeometryMachine <= UINT#3)
+	AND stRobotStatus.xDetailAvailable THEN
+		GVL_GEOMETRY_CONTROL.astCalls[uiGeometryMachine].uiStation := UINT#0;
+		GVL_GEOMETRY_CONTROL.astCalls[uiGeometryMachine].uiState := UINT#2;
+		GVL_GEOMETRY_CONTROL.astCalls[uiGeometryMachine].uiReason := UINT#4;
+		F_GEOMETRY_EVENT(Call := GVL_GEOMETRY_CONTROL.astCalls[uiGeometryMachine]);
+	END_IF;
+	IF NOT stRobotStatus.xDetailAvailable THEN
+		IF xGeometryHeld AND (uiGeometryMachine >= UINT#1) AND (uiGeometryMachine <= UINT#3) THEN
+			IF (GVL_GEOMETRY_CONTROL.astCalls[uiGeometryMachine].uiState = UINT#2)
+			OR (GVL_GEOMETRY_CONTROL.astCalls[uiGeometryMachine].uiState = UINT#3) THEN
+				GVL_GEOMETRY_CONTROL.astCalls[uiGeometryMachine].uiState := UINT#7;
+				GVL_GEOMETRY_CONTROL.astCalls[uiGeometryMachine].uiReason := UINT#5;
+				F_GEOMETRY_EVENT(Call := GVL_GEOMETRY_CONTROL.astCalls[uiGeometryMachine]);
+			END_IF;
+		END_IF;
+		xGeometryHeld := FALSE; uiGeometryMachine := UINT#0;
+	END_IF;
+	uiGeometryStation := UINT#0;
+END_IF;
+// Ручное изъятие из захвата после остановки завершает старый вызов. Подтверждённую
+// укладку на ГК (state 4) этот путь не заменяет прерыванием и повторно не считает.
+IF xGeometryHeld AND NOT stRobotStatus.xDetailAvailable AND NOT xRunning
+AND NOT stRobotStatus.xBusy AND NOT xMotionBusy
+AND (eState = E_CELL_MANAGER_STATE.IDLE)
+AND (uiGeometryMachine >= UINT#1) AND (uiGeometryMachine <= UINT#3) THEN
+	IF (GVL_GEOMETRY_CONTROL.astCalls[uiGeometryMachine].uiState = UINT#2)
+	OR (GVL_GEOMETRY_CONTROL.astCalls[uiGeometryMachine].uiState = UINT#3) THEN
+		GVL_GEOMETRY_CONTROL.astCalls[uiGeometryMachine].uiState := UINT#7;
+		GVL_GEOMETRY_CONTROL.astCalls[uiGeometryMachine].uiReason := UINT#5;
+		F_GEOMETRY_EVENT(Call := GVL_GEOMETRY_CONTROL.astCalls[uiGeometryMachine]);
+	END_IF;
+	xGeometryHeld := FALSE; uiGeometryMachine := UINT#0;
+END_IF;
 Command.stRobot.xStop := FALSE;
 Command.stRobot.xReset := xReset;
 Command.stRobot.eAction := E_ROBOT_ACTION.NONE;
@@ -401,6 +495,7 @@ xRobotReady := NOT stRobotStatus.xBusy
 	AND NOT stRobotStatus.xError;
 xMagazineReady := (uiActiveMagazine >= UINT#1)
 	AND (uiActiveMagazine <= UINT#2)
+	AND NOT xActiveMagazineExchangeInProgress
 	AND stMagazineStatus.xEnabled
 	AND stMagazineStatus.xReady
 	AND NOT stMagazineStatus.xBusy
@@ -421,6 +516,7 @@ AND (uiDetailPayloadType <= Config.uiTypeCount) THEN
 	FOR uiMagazineIndex := UINT#1 TO GVL_CELL_SETTINGS.MagazineCount DO
 		IF astMagazineStatus[uiMagazineIndex].xEnabled
 		AND astMagazineStatus[uiMagazineIndex].xReady
+		AND NOT axMagazineExchangeInProgress[uiMagazineIndex]
 		AND NOT astMagazineStatus[uiMagazineIndex].xBusy
 		AND NOT astMagazineStatus[uiMagazineIndex].xError
 		AND NOT astMagazineStatus[uiMagazineIndex].xDisablePending THEN
@@ -433,7 +529,11 @@ END_IF;
 
 // WARNING: место требуется только для готовой детали, уже находящейся у робота.
 // Деталь в станке и полная палета заготовок при пустом роботе не создают W29.
+// Штатный Stop снимает потребность в новом маршруте. Фронт проверяем отдельно:
+// защёлка xStopRequested обновляется ниже, после регистрации предупреждений.
 xNoDetailDestinationCondition := (xRunning OR rtStart.Q)
+	AND NOT rtStop.Q
+	AND NOT xStopRequested
 	AND NOT xManual
 	AND NOT xMagazineExchangeActive
 	AND stRobotStatus.xDetailAvailable
@@ -751,12 +851,14 @@ IF xTestAbort THEN
 	eState := E_CELL_MANAGER_STATE.TEST_ABORT_STOP;
 END_IF;
 
-// Магазин получает окно только на границе операций; активный обмен удерживает
-// планировщик, а не просто блокирует уже выданную команду до её тайм-аута.
-IF xMagazineExchangeActive AND ((eState = E_CELL_MANAGER_STATE.PLAN_TARGET)
-	OR (eState = E_CELL_MANAGER_STATE.WAIT_TARGET) OR (eState = E_CELL_MANAGER_STATE.WAIT_MAGAZINE)) THEN
-	IF xStopRequested THEN xRunning := FALSE; eState := E_CELL_MANAGER_STATE.IDLE; END_IF;
-ELSE
+// ГК не зависит от готовности палет. Если магазин потерян после выгрузки,
+// сначала доставляем вызванную деталь на свободный ГК либо паркуемся у занятого.
+IF xRunning AND xGeometryHeld AND stRobotStatus.xDetailAvailable
+AND (eState = E_CELL_MANAGER_STATE.WAIT_MAGAZINE)
+AND NOT stRobotStatus.xBusy AND NOT xMotionBusy THEN
+	PlanGeometry();
+END_IF;
+
 CASE eState OF
 	E_CELL_MANAGER_STATE.IDLE:
 		xRunning := FALSE;
@@ -961,6 +1063,8 @@ CASE eState OF
 			xRunning := FALSE;
 			eState := E_CELL_MANAGER_STATE.IDLE;
 
+		ELSIF PlanGeometry() THEN
+			// Метод зафиксировал резерв или безопасное ожидание свободного ГК.
 		ELSIF stRobotStatus.xBlankAvailable
 		AND stRobotStatus.xDetailAvailable THEN
 			// Два груза после аварийного восстановления — штатная ситуация. Сначала
@@ -1120,9 +1224,8 @@ CASE eState OF
 						eState := E_CELL_MANAGER_STATE.WAIT_MAGAZINE;
 					END_IF;
 				ELSE
-					IF stMagazineStatus.xFinished AND NOT xActiveMagazineAutoSwapPending THEN
-						xRunning := FALSE;
-						eState := E_CELL_MANAGER_STATE.IDLE;
+					IF stMagazineStatus.xFinished THEN
+						eState := E_CELL_MANAGER_STATE.WAIT_MAGAZINE;
 					ELSE
 						eState := E_CELL_MANAGER_STATE.WAIT_TARGET;
 					END_IF;
@@ -1131,6 +1234,21 @@ CASE eState OF
 		END_IF;
 
 	E_CELL_MANAGER_STATE.MAGAZINE_EXECUTE:
+		IF xGeometryHeld AND (uiGeometryMachine >= UINT#1) AND (uiGeometryMachine <= UINT#3)
+		AND (stMagazineStatus.udiProducedPartsTotal <> udiGeometryMagazineCounter)
+		AND NOT stRobotStatus.xDetailAvailable AND stRobotStatus.xGripper2Open THEN
+			GVL_GEOMETRY_CONTROL.astCalls[uiGeometryMachine].uiState := UINT#5;
+			GVL_GEOMETRY_CONTROL.astCalls[uiGeometryMachine].uiReason := uiGeometryBypassReason;
+			GVL_GEOMETRY_CONTROL.astCalls[uiGeometryMachine].uiMagazine := uiActiveMagazine;
+			GVL_GEOMETRY_CONTROL.astCalls[uiGeometryMachine].uiSlot := SINT_TO_UINT(iPutSlot);
+			IF GVL_TWO_PALLET.uiMode = UINT#1 THEN
+				GVL_GEOMETRY_CONTROL.astCalls[uiGeometryMachine].uiPallet := GVL_TWO_PALLET.astStatus[uiActiveMagazine].uiRobotPallet;
+			END_IF;
+			F_GEOMETRY_EVENT(Call := GVL_GEOMETRY_CONTROL.astCalls[uiGeometryMachine]);
+			GVL_GEOMETRY_CONTROL.stCellWarning.uiCode := UINT#50;
+			GVL_GEOMETRY_CONTROL.stCellWarning.udiSequence := GVL_GEOMETRY_CONTROL.stCellWarning.udiSequence + UDINT#1;
+			xGeometryHeld := FALSE; uiGeometryMachine := UINT#0;
+		END_IF;
 		Command.stMagazine.xExecute := TRUE;
 		IF (eMagazineOperation = E_MAGAZINE_OPERATION.NONE) THEN
 			Error.dwErrorActive := Error.dwErrorActive OR ERR_MAGAZINE;
@@ -1261,9 +1379,8 @@ CASE eState OF
 				uiSelectedMachine := UINT#0;
 				uiSelectedType := UINT#0;
 				eMachineOperation := E_MACHINE_OPERATION.NONE;
-				IF stMagazineStatus.xFinished AND NOT xActiveMagazineAutoSwapPending THEN
-					xRunning := FALSE;
-					eState := E_CELL_MANAGER_STATE.IDLE;
+				IF stMagazineStatus.xFinished THEN
+					eState := E_CELL_MANAGER_STATE.WAIT_MAGAZINE;
 				ELSE
 					eState := E_CELL_MANAGER_STATE.PLAN_TARGET;
 				END_IF;
@@ -1344,9 +1461,8 @@ CASE eState OF
 					ELSE
 						eState := E_CELL_MANAGER_STATE.WAIT_MAGAZINE;
 					END_IF;
-				ELSIF stMagazineStatus.xFinished AND NOT xActiveMagazineAutoSwapPending THEN
-					xRunning := FALSE;
-					eState := E_CELL_MANAGER_STATE.IDLE;
+				ELSIF stMagazineStatus.xFinished THEN
+					eState := E_CELL_MANAGER_STATE.WAIT_MAGAZINE;
 				END_IF;
 			END_IF;
 		END_IF;
@@ -1368,6 +1484,13 @@ CASE eState OF
 			);
 			eState := E_CELL_MANAGER_STATE.SELECT_FALLBACK;
 		ELSE
+			IF NOT xMachineServiceStarted AND NOT stRobotStatus.xDetailAvailable THEN xGeometryDetailCounted := FALSE; END_IF;
+			IF stRobotStatus.xDetailAvailable AND NOT xGeometryDetailCounted
+			AND ((eMachineOperation = E_MACHINE_OPERATION.CHANGE) OR (eMachineOperation = E_MACHINE_OPERATION.UNLOAD)) THEN
+				xGeometryHeld := F_GEOMETRY_TAKE_DETAIL(uiMachine := uiSelectedMachine, uiProductType := Config.auiMachineType[uiSelectedMachine]);
+				IF xGeometryHeld THEN uiGeometryMachine := uiSelectedMachine; uiGeometryBypassReason := UINT#0; END_IF;
+				xGeometryDetailCounted := TRUE;
+			END_IF;
 			// Тип детали передаётся в FB_ROBOT сразу после фактического закрытия
 			// второго захвата, а не после полного выхода робота из станка.
 			IF stRobotStatus.xDetailAvailable
@@ -1540,11 +1663,13 @@ CASE eState OF
 				ELSE
 					eState := E_CELL_MANAGER_STATE.WAIT_MAGAZINE;
 				END_IF;
-			ELSIF stMagazineStatus.xFinished AND NOT xActiveMagazineAutoSwapPending THEN
-				xRunning := FALSE;
-				eState := E_CELL_MANAGER_STATE.IDLE;
 			END_IF;
 		END_IF;
+
+	E_CELL_MANAGER_STATE.GEOMETRY_WAIT_FREE,
+	E_CELL_MANAGER_STATE.GEOMETRY_DELIVER,
+	E_CELL_MANAGER_STATE.GEOMETRY_RELEASE_COMMAND:
+		RunGeometryRoute();
 
 	E_CELL_MANAGER_STATE.ERROR:
 		xRunning := FALSE;
@@ -1592,7 +1717,6 @@ CASE eState OF
 			eState := E_CELL_MANAGER_STATE.IDLE;
 		END_IF;
 END_CASE;
-END_IF;
 
 // Фиксируем позу только после завершённой штатной остановки или нормального
 // окончания цикла. Аварийный переход оставляет xSafetyHomeRequired активным.
@@ -1635,7 +1759,7 @@ Status.xResetAllowed := xResetAllowed;
 // xManual уже отфильтрован до вызова FB, но это же условие публикуется HMI.
 Status.xManualAllowed := NOT xRunning OR xGlobalError;
 // В общей аварии оператору оставляем только ручное восстановление.
-Status.xAutomaticAllowed := NOT xGlobalError;
+Status.xAutomaticAllowed := NOT xGlobalError AND NOT xIoEmergencyStopActive;
 Status.xDrivesReady := xDrivesReady;
 Status.xRobotReady := xRobotReady;
 Status.xMagazineReady := xMagazineReady;
@@ -1715,6 +1839,8 @@ CASE eState OF
 	E_CELL_MANAGER_STATE.SERVICE_TARGET: Diag.eState := E_CELL_STATE.SERVICE_MACHINE;
 	E_CELL_MANAGER_STATE.MACHINE_FAULT_STOP: Diag.eState := E_CELL_STATE.SERVICE_MACHINE;
 	E_CELL_MANAGER_STATE.WAIT_MAGAZINE: Diag.eState := E_CELL_STATE.WAIT_MAGAZINE;
+	E_CELL_MANAGER_STATE.GEOMETRY_WAIT_FREE: Diag.eState := E_CELL_STATE.GEOMETRY_WAIT;
+	E_CELL_MANAGER_STATE.GEOMETRY_DELIVER, E_CELL_MANAGER_STATE.GEOMETRY_RELEASE_COMMAND: Diag.eState := E_CELL_STATE.GEOMETRY_TRANSFER;
 	E_CELL_MANAGER_STATE.TEST_ABORT_STOP: Diag.eState := E_CELL_STATE.IDLE;
 	E_CELL_MANAGER_STATE.ERROR: Diag.eState := E_CELL_STATE.ERROR;
 END_CASE;
