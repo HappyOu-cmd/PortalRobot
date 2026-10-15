@@ -19,6 +19,7 @@ export function RobotAxisHomeButton({ axis, status, online, onSend, className }:
   return <button
     type="button"
     className={cn('rj-home-button', !status.homeAllowed && 'command-unavailable', className)}
+    data-state={indicator}
     disabled={!online || searching}
     aria-disabled={!online || !status.homeAllowed || searching}
     aria-label={`HOME оси ${AXES[axis - 1]}${!online ? ': нет связи' : searching ? ': выполняется' : status.homed ? ': найден' : ': не найден'}`}
