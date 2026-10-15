@@ -26,6 +26,7 @@
 | [20-smoke-and-integration-test-catalog.md](20-smoke-and-integration-test-catalog.md) | Человеческое описание входов и ожидаемых результатов Smoke, Regression и генеральных сценариев ячейки |
 | [21-two-pallet-magazine-control.md](21-two-pallet-magazine-control.md) | Реализованное управление двухпалетным магазином и восстановление; раздел 14 — актуальная интеграция PLC/HMI, разделы 1–13 — исходные требования и история прототипа. Физические I/O требуют проверки на оборудовании |
 | [24-geometry-control.md](24-geometry-control.md) | Два ГК: вызовы по количеству деталей, маршруты, конвейеры, восстановление, журналы, выпуск и интеграция HMI/3D |
+| [26-magazine-routing-and-early-exchange.md](26-magazine-routing-and-early-exchange.md) | Правка ST от 15.10.2026: магазин парного цикла, доработка выбранной паллеты, ранний отменяемый обмен и ожидание оператора; CODESYS проверяется отдельно |
 
 ## Карта правил
 

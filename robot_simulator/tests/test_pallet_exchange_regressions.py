@@ -96,6 +96,7 @@ def owner_decision(magazine):
 def scheduler_state(magazine=1, phase="MAGAZINE_EXECUTE"):
     return {
         "xRunning": True, "uiActiveMagazine": magazine,
+        "uiReturnMagazine": 0, "uiSupplyMagazine": 0,
         f"astMagazineStatus[{magazine}].xFinished": True,
         f"astMagazineStatus[{magazine}].xEnabled": True,
         f"astMagazineStatus[{magazine}].xDisablePending": False,
@@ -132,6 +133,8 @@ def exchange_request(magazine, overrides=None):
         f"astTwinCommand[{magazine}].xDisable": False,
         f"astTwinCommand[{magazine}].xStop": False,
         "xTwinAutoSwapEnabled": True, "xTwinOtherLoaded": True,
+        "xTwinRobotHasBlank": False, "xTwinOtherHasBlank": True,
+        "xTwinInventoryEditPending": False, "xTwinRobotSwapWindow": True,
     }
     values.update(overrides or {})
     source = RUN.replace("[uiTwin]", f"[{magazine}]")
@@ -437,13 +440,21 @@ def test_finished_cell_hold_cancels_only_on_stop_disable_error_or_mode_change(ov
     assert (values["uiActiveMagazine"] == 1) is expected_pending
 
 
-def start_exchange(robot_swap_window, magazine=1, other_loaded=True):
-    overrides = {"xTwinOtherLoaded": other_loaded}
+def start_exchange(robot_swap_window, magazine=1, other_loaded=True, *,
+                   other_has_blank=True, robot_has_blank=False, finished=True,
+                   edit_pending=False):
+    overrides = {"xTwinOtherLoaded": other_loaded,
+                 "xTwinOtherHasBlank": other_has_blank,
+                 "xTwinRobotHasBlank": robot_has_blank,
+                 "xTwinInventoryEditPending": edit_pending,
+                 "xTwinRobotSwapWindow": robot_swap_window,
+                 f"GVL_MAGAZINE.astPartStatus[{magazine}].xFinished": finished}
     pending = exchange_request(magazine, overrides)
     request_values = {
         f"axTwinAutoSwapPending[{magazine}]": pending,
         "xTwinAutoSwapEnabled": True,
         "xTwinOtherLoaded": other_loaded,
+        "xTwinOtherHasBlank": other_has_blank, "xTwinInventoryEditPending": edit_pending,
     }
     source = RUN.replace("[uiTwin]", f"[{magazine}]")
     auto_swap_expression = re.search(r"\bxAutoSwap := (.*?),\n", source, re.S).group(1)
@@ -481,6 +492,7 @@ def test_exchange_can_start_while_robot_moves_elsewhere_but_not_inside_target_ma
         "GVL_ROBOT.Status.eCurrentPoint": "E_POINT_NAME.MAGAZINE_CHANGE",
         "xRobotInterfaceReady": True,
         "uiTwin": 1,
+        "CELL_MANAGER.uiReturnMagazine": 0,
     }
     source = RUN.replace("[uiTwin]", "[1]")
     run(assignment(source, "xTwinRobotOperation"), values)
@@ -669,6 +681,7 @@ def test_finished_pallet_with_free_slots_is_not_a_detail_destination(magazine):
         "stMagazineStatus.xEnabled": True, "stMagazineStatus.xReady": True,
         "stMagazineStatus.xFinished": True, "stMagazineStatus.xDisablePending": False,
         "xActiveMagazineExchangeInProgress": False,
+        "xActiveMagazineAutoSwapPending": False,
     })
     start = MANAGER.index("xAnyMagazineDetailSlotAvailable := FALSE;")
     end = MANAGER.index("// WARNING: место требуется", start)
@@ -695,7 +708,7 @@ def test_finished_pallet_with_free_slots_is_not_a_detail_destination(magazine):
 
 
 @pytest.mark.parametrize("phase", ["PLAN_TARGET", "WAIT_TARGET", "SELECT_FALLBACK", "WAIT_MAGAZINE"])
-def test_first_magazine_priority_returns_at_planning_boundaries(phase):
+def test_initial_magazine_priority_at_planning_boundaries(phase):
     values = magazine_selection_state(phase=phase)
     magazine_selection(values)
     assert values["uiActiveMagazine"] == 1
@@ -835,8 +848,9 @@ def test_magazine_selection_waits_if_neither_magazine_can_continue():
         assert values["xRunning"]
 
 
-def test_magazine_selection_rechecks_first_after_reenable_and_pallet_exchange():
+def test_selected_second_pallet_survives_first_reenable_and_exchange():
     values = magazine_selection_state(phase="MAGAZINE_EXECUTE")
+    values["uiSupplyMagazine"] = 2
     values["astMagazineStatus[1].xEnabled"] = False
     magazine_selection(values)
     values["astMagazineStatus[1].xEnabled"] = True
@@ -847,6 +861,9 @@ def test_magazine_selection_rechecks_first_after_reenable_and_pallet_exchange():
     magazine_selection(values)
     assert values["uiActiveMagazine"] == 2
     values["axMagazineExchangeInProgress[1]"] = False
+    magazine_selection(values)
+    assert values["uiActiveMagazine"] == 2
+    values["astMagazineStatus[2].stTypeStatus.aiBlankSlot[1]"] = 0
     magazine_selection(values)
     assert values["uiActiveMagazine"] == 1
 
@@ -924,3 +941,130 @@ def test_waiting_second_magazine_replans_actual_take_without_disable_or_start():
     assert values["iTakeSlot"] == values["iTakeOriginSlot"] == 14
     assert values["uiSelectedMachine"] == 1
     assert values["xRunning"]
+
+
+def pallet_preflight(magazine=1, robot_pallet=1, *, robot_blanks=(), other_blanks=(96,),
+                     loaded=True, finished=False, edit_command=0, edit_magazine=None,
+                     swap_window=True):
+    """Execute the real inventory scan and pending decision before the TWIN call."""
+    values = {
+        "uiTwin": magazine,
+        f"GVL_TWO_PALLET.astStatus[{magazine}].uiRobotPallet": robot_pallet,
+        f"GVL_TWO_PALLET.astStore[{magazine}].axLoaded[{3 - robot_pallet}]": loaded,
+        "xTwinInventoryCommand": bool(edit_command),
+        "stTwinRequest.uiMagazine": magazine if edit_magazine is None else edit_magazine,
+        "stTwinRequest.uiCommand": edit_command,
+        "GVL_TWO_PALLET.uiMode": 1,
+        "GVL_CELL_MANAGER.Status.xRunning": True,
+        "GVL_CELL_MANAGER.Status.xStopPending": False,
+        "GVL_CELL_CONTROL.xStop": False, "GVL_CELL_CONTROL.xManual": False,
+        f"GVL_MAGAZINE.astPartStatus[{magazine}].xFinished": finished,
+        f"astTwinCommand[{magazine}].xDisable": False,
+        f"astTwinCommand[{magazine}].xStop": False,
+        "xTwinAutoSwapEnabled": True, "xTwinRobotSwapWindow": swap_window,
+    }
+    for pallet in (1, 2):
+        for slot in range(1, 97):
+            blank = slot in (robot_blanks if pallet == robot_pallet else other_blanks)
+            prefix = f"GVL_TWO_PALLET.astStore[{magazine}].astPallet[{pallet}].aSlots[{slot}]"
+            values[prefix + ".xInPosition"] = True
+            # Non-blank positions deliberately contain finished parts: a mixed
+            # or fully finished pallet is not the same as a pallet with a blank.
+            values[prefix + ".eDetailType"] = "E_DETAIL_TYPE." + ("BLANK" if blank else "DETAIL")
+    start = RUN.index("\txTwinOtherLoaded := FALSE;")
+    end = RUN.index("\tuiTwinRobotPalletBefore :=", start)
+    source = RUN[start:end].replace("[uiTwin]", f"[{magazine}]")
+    source = source.replace(f"[GVL_TWO_PALLET.astStatus[{magazine}].uiRobotPallet]",
+                            f"[{robot_pallet}]")
+    source = source.replace("[uiTwinPallet]", f"[{3 - robot_pallet}]")
+    loop = re.search(r"FOR uiTwinSlot := UINT#1 TO UINT#96 DO(.*?)END_FOR;", source, re.S)
+    assert loop
+    unfolded = "\n".join(loop[1].replace("[uiTwinSlot]", f"[{slot}]") for slot in range(1, 97))
+    source = source[:loop.start()] + unfolded + source[loop.end():]
+    run(source, values)
+    return values
+
+
+@pytest.mark.parametrize("magazine", [1, 2])
+@pytest.mark.parametrize("robot_pallet", [1, 2])
+def test_early_exchange_uses_confirmed_mixed_operator_pallet_without_finishing_working_bank(magazine, robot_pallet):
+    state = working_pallet_state(magazine)
+    for machine in range(1, 4):
+        state[f"astMachineStatus[{machine}].xProcessing"] = True
+    finished_condition(state)
+    magazine_scan(state, magazine)
+    assert not state["Status.xFinished"]
+    values = pallet_preflight(magazine, robot_pallet)
+    assert not values["xTwinRobotHasBlank"]
+    assert values["xTwinOtherHasBlank"]
+    assert values[f"axTwinAutoSwapPending[{magazine}]"]
+    assert start_exchange(True, magazine, finished=False)["Diag.eState"] == "E_TWO_PALLET_STATE.AUTO_LOWER"
+    assert not state["Status.xFinished"]
+
+
+@pytest.mark.parametrize("magazine", [1, 2])
+@pytest.mark.parametrize("robot_pallet", [1, 2])
+@pytest.mark.parametrize("slot", [1, 48, 96])
+def test_any_remaining_robot_blank_blocks_early_and_finished_exchange(magazine, robot_pallet, slot):
+    for finished in (False, True):
+        values = pallet_preflight(magazine, robot_pallet, robot_blanks=(slot,), finished=finished)
+        assert values["xTwinRobotHasBlank"]
+        assert not values[f"axTwinAutoSwapPending[{magazine}]"]
+        assert start_exchange(True, magazine, robot_has_blank=True, finished=finished)["Diag.eState"] == "E_TWO_PALLET_STATE.IDLE"
+
+
+@pytest.mark.parametrize("magazine", [1, 2])
+@pytest.mark.parametrize("finished", [False, True])
+def test_confirmed_operator_pallet_without_blanks_cannot_start_auto_exchange(magazine, finished):
+    values = pallet_preflight(magazine, other_blanks=(), finished=finished)
+    assert not values["xTwinOtherHasBlank"]
+    assert values[f"axTwinAutoSwapPending[{magazine}]"] is finished
+    assert start_exchange(True, magazine, other_has_blank=False, finished=finished)["Diag.eState"] == "E_TWO_PALLET_STATE.IDLE"
+
+
+@pytest.mark.parametrize("magazine", [1, 2])
+@pytest.mark.parametrize("command", [21, 22, 23, 24])
+def test_inventory_edit_in_launch_scan_cancels_early_request_before_old_confirmation_is_used(magazine, command):
+    before = pallet_preflight(magazine)
+    assert before[f"axTwinAutoSwapPending[{magazine}]"]
+    values = pallet_preflight(magazine, edit_command=command)
+    assert values["xTwinOtherLoaded"]  # The old confirmed bit still exists in this scan.
+    assert values["xTwinInventoryEditPending"]
+    assert not values[f"axTwinAutoSwapPending[{magazine}]"]
+    assert start_exchange(True, magazine, finished=False, edit_pending=True)["Diag.eState"] == "E_TWO_PALLET_STATE.IDLE"
+    after = pallet_preflight(magazine, loaded=False)
+    assert not after[f"axTwinAutoSwapPending[{magazine}]"]
+    # A command for the peer pallet must not cancel this magazine's request.
+    peer_edit = pallet_preflight(magazine, edit_command=command, edit_magazine=3 - magazine)
+    assert peer_edit[f"axTwinAutoSwapPending[{magazine}]"]
+
+
+@pytest.mark.parametrize("magazine", [1, 2])
+def test_lost_confirmation_or_last_operator_blank_withdraws_early_request(magazine):
+    for overrides in ({"loaded": False}, {"other_blanks": ()}):
+        assert pallet_preflight(magazine)[f"axTwinAutoSwapPending[{magazine}]"]
+        assert not pallet_preflight(magazine, **overrides)[f"axTwinAutoSwapPending[{magazine}]"]
+
+
+@pytest.mark.parametrize("cycle_owner", [1, 2])
+def test_cycle_owner_blocks_own_exchange_until_put_but_not_peer_exchange(cycle_owner):
+    for magazine in (1, 2):
+        values = {
+            "CELL_MANAGER.uiReturnMagazine": cycle_owner,
+            f"GVL_MAGAZINE.astPartStatus[{magazine}].xBusy": False,
+            f"GVL_MAGAZINE.astPartStatus[{magazine}].xDisablePending": False,
+            f"GVL_MAGAZINE.astAutoCommand[{magazine}].xExecute": False,
+            f"GVL_MAGAZINE.astCommand[{magazine}].xExecute": False,
+            "GVL_ROBOT.Status.xBusy": True, "xMotionBusy": True,
+            "GVL_ROBOT.Status.uiMagazineContext": 0,
+            "GVL_CELL_MANAGER.Status.uiActiveMagazine": cycle_owner,
+            "GVL_CELL_MANAGER.Diag.eState": "E_CELL_STATE.SERVICE_MACHINE",
+            "uiTwin": magazine,
+        }
+        source = RUN.replace("[uiTwin]", f"[{magazine}]")
+        run(assignment(source, "xTwinRobotOperation"), values)
+        run(assignment(source, "xTwinRobotSwapWindow"), values)
+        window = values["xTwinRobotSwapWindow"]
+        assert window is (cycle_owner != magazine)
+        preflight = pallet_preflight(magazine, swap_window=window)
+        assert preflight[f"axTwinAutoSwapPending[{magazine}]"] is window

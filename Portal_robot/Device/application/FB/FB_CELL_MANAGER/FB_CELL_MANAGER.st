@@ -48,6 +48,7 @@ VAR_OUTPUT
 	Error              : ST_CELL_ERRORS; // Общий контракт ошибок ячейки
 	CycleStatus        : ST_CELL_CYCLE_STATUS; // Расширенная диагностика универсального цикла
 	FaultStatus        : ST_FAULT_INJECTION_STATUS; // Инъекция логической ошибки ячейки
+	uiReturnMagazine   : UINT; // Внутренний владелец парного цикла до возврата детали; 0 — цикл освобождён
 END_VAR
 VAR
 	axGeometryUnloadBlocked : ARRAY [1..3] OF BOOL; // Вызванная деталь ждёт доступного свободного ГК
@@ -78,7 +79,8 @@ VAR
 	xMagazineReady       : BOOL; // Магазин готов к операции
 	xActiveMagazineExchangeInProgress : BOOL; // Выбранный магазин сейчас меняет палеты
 	stMagazineStatus     : ST_MAGAZINE_STATUS; // Снимок выбранного магазина для существующего автомата
-	uiActiveMagazine     : UINT; // Защёлкнутый магазин текущего цикла
+	uiActiveMagazine     : UINT; // Магазин текущей команды роботу
+	uiSupplyMagazine     : UINT; // Источник следующих заготовок сохраняется между парными циклами
 	xMagazine1Available  : BOOL;
 	xMagazine2Available  : BOOL;
 	xMagazineSelectionAllowed : BOOL; // Новое владение допускается только между операциями
@@ -92,7 +94,7 @@ VAR
 	xHeldBlankLoadAvailable : BOOL; // При двух грузах можно сначала загрузить пустой станок
 	xMagazineMachineWorkPending : BOOL; // Из станка ещё потребуется выгрузка
 	uiMagazineType       : UINT; // Тип станка при проверке содержимого обоих магазинов
-	uiPreferredMagazine  : UINT; // Первый подходящий магазин в порядке 1, 2
+	uiPreferredMagazine  : UINT; // Назначение с учётом владельца цикла и сохранённого источника
 	xReselectMagazine    : BOOL; // Требуется передать владение подходящему магазину
 	xAlternateMagazineAvailable : BOOL; // Второй магазин готов принять непрерывный автоматический цикл
 	xUseAlternateMagazineForDetail : BOOL; // У текущего магазина нет слота детали, у второго есть
@@ -228,6 +230,7 @@ UpdateGeometryWait();
 // по двум владельцам и не переключается посреди TAKE/CHANGE.
 xMagazine1Available := astMagazineStatus[1].xEnabled
 	AND astMagazineStatus[1].xReady
+	AND NOT axMagazineAutoSwapPending[1]
 	AND NOT axMagazineExchangeInProgress[1]
 	AND NOT astMagazineStatus[1].xBusy
 	AND NOT astMagazineStatus[1].xError
@@ -235,6 +238,7 @@ xMagazine1Available := astMagazineStatus[1].xEnabled
 	AND NOT astMagazineStatus[1].xFinished;
 xMagazine2Available := astMagazineStatus[2].xEnabled
 	AND astMagazineStatus[2].xReady
+	AND NOT axMagazineAutoSwapPending[2]
 	AND NOT axMagazineExchangeInProgress[2]
 	AND NOT astMagazineStatus[2].xBusy
 	AND NOT astMagazineStatus[2].xError
@@ -268,10 +272,12 @@ FOR uiMachine := FIRST_MACHINE TO LAST_MACHINE DO
 				AND ((astMachineStatus[uiMachine].ePartState = E_PART_STATE.EMPTY)
 					OR astMachineStatus[uiMachine].xServiceRequired))) THEN
 			IF astMagazineStatus[1].stTypeStatus.aiBlankSlot[uiMagazineType] > SINT#0 THEN
-				xMagazine1CanExchangeDetail := xMagazine1Available;
+				xMagazine1CanExchangeDetail := xMagazine1Available
+					AND ((uiReturnMagazine = UINT#0) OR (uiReturnMagazine = UINT#1));
 			END_IF;
 			IF astMagazineStatus[2].stTypeStatus.aiBlankSlot[uiMagazineType] > SINT#0 THEN
-				xMagazine2CanExchangeDetail := xMagazine2Available;
+				xMagazine2CanExchangeDetail := xMagazine2Available
+					AND ((uiReturnMagazine = UINT#0) OR (uiReturnMagazine = UINT#2));
 			END_IF;
 		END_IF;
 	END_IF;
@@ -381,12 +387,26 @@ IF xRunning AND xMagazineSelectionAllowed THEN
 		END_FOR;
 	END_IF;
 END_IF;
-// Как и штатный PLAN_TARGET, сначала ищем TAKE, затем отдельную выгрузку.
-// Пустой М1 не должен заставлять ждать обработку, если М2 позволяет загрузку.
+// PUT возвращается в магазин взятой заготовки. Резервная укладка не меняет источник.
+// Между циклами дорабатываем выбранную палету; М1 имеет приоритет при первом выборе.
 uiPreferredMagazine := UINT#0;
-IF xMagazine1CanSupplyBlank THEN
+IF stRobotStatus.xDetailAvailable AND xMagazine1CanContinue
+AND (uiReturnMagazine = UINT#1) THEN
+	uiPreferredMagazine := UINT#1;
+ELSIF stRobotStatus.xDetailAvailable AND xMagazine2CanContinue
+AND (uiReturnMagazine = UINT#2) THEN
+	uiPreferredMagazine := UINT#2;
+ELSIF (uiSupplyMagazine = UINT#1) AND xMagazine1CanSupplyBlank THEN
+	uiPreferredMagazine := UINT#1;
+ELSIF (uiSupplyMagazine = UINT#2) AND xMagazine2CanSupplyBlank THEN
+	uiPreferredMagazine := UINT#2;
+ELSIF xMagazine1CanSupplyBlank THEN
 	uiPreferredMagazine := UINT#1;
 ELSIF xMagazine2CanSupplyBlank THEN
+	uiPreferredMagazine := UINT#2;
+ELSIF (uiSupplyMagazine = UINT#1) AND xMagazine1CanContinue THEN
+	uiPreferredMagazine := UINT#1;
+ELSIF (uiSupplyMagazine = UINT#2) AND xMagazine2CanContinue THEN
 	uiPreferredMagazine := UINT#2;
 ELSIF xMagazine1CanContinue THEN
 	uiPreferredMagazine := UINT#1;
@@ -645,6 +665,7 @@ xRobotReady := NOT stRobotStatus.xBusy
 xMagazineReady := (uiActiveMagazine >= UINT#1)
 	AND (uiActiveMagazine <= UINT#2)
 	AND NOT xActiveMagazineExchangeInProgress
+	AND NOT xActiveMagazineAutoSwapPending
 	AND stMagazineStatus.xEnabled
 	AND stMagazineStatus.xReady
 	AND NOT stMagazineStatus.xBusy
@@ -667,6 +688,7 @@ AND (uiDetailPayloadType <= Config.uiTypeCount) THEN
 		IF astMagazineStatus[uiMagazineIndex].xEnabled
 		AND astMagazineStatus[uiMagazineIndex].xReady
 		AND NOT axMagazineExchangeInProgress[uiMagazineIndex]
+		AND NOT axMagazineAutoSwapPending[uiMagazineIndex]
 		AND NOT astMagazineStatus[uiMagazineIndex].xBusy
 		AND NOT astMagazineStatus[uiMagazineIndex].xError
 		AND NOT astMagazineStatus[uiMagazineIndex].xFinished
@@ -1025,6 +1047,9 @@ IF xIoManual THEN
 	FOR uiMachine := FIRST_MACHINE TO LAST_MACHINE DO
 		axMachineStartPending[uiMachine] := FALSE;
 	END_FOR;
+	// Передача I/O оператору отменяет внутреннюю привязку прежнего цикла.
+	uiReturnMagazine := UINT#0;
+	uiSupplyMagazine := UINT#0;
 	IF eState <> E_CELL_MANAGER_STATE.ERROR THEN
 		eState := E_CELL_MANAGER_STATE.IDLE;
 	END_IF;
@@ -1064,6 +1089,8 @@ CASE eState OF
 				iPutSlot := SINT#0;
 				iTakeOriginSlot := SINT#0;
 				eState := E_CELL_MANAGER_STATE.PRESTART_IDENTIFY;
+				uiReturnMagazine := UINT#0;
+				uiSupplyMagazine := UINT#0;
 			END_IF;
 		END_IF;
 
@@ -1334,6 +1361,7 @@ CASE eState OF
 				// Закрытый или переходный первый захват исключает CHANGE, даже если
 				// логический флаг груза сейчас снят.
 				IF stRobotStatus.xGripper1Open
+				AND ((uiReturnMagazine = UINT#0) OR (uiReturnMagazine = uiActiveMagazine))
 				AND (uiCandidateMachine >= FIRST_MACHINE)
 				AND (uiCandidateMachine <= LAST_MACHINE) THEN
 					uiSelectedMachine := uiCandidateMachine;
@@ -1477,13 +1505,19 @@ CASE eState OF
 			CASE eMagazineOperation OF
 				E_MAGAZINE_OPERATION.TAKE:
 					uiBlankPayloadType := uiSelectedType;
+					uiReturnMagazine := uiActiveMagazine;
+					uiSupplyMagazine := uiActiveMagazine;
 				E_MAGAZINE_OPERATION.PUT:
 					uiDetailPayloadType := UINT#0;
+					uiReturnMagazine := UINT#0;
 				E_MAGAZINE_OPERATION.CHANGE:
 					uiDetailPayloadType := UINT#0;
 					uiBlankPayloadType := uiSelectedType;
+					uiReturnMagazine := uiActiveMagazine;
+					uiSupplyMagazine := uiActiveMagazine;
 				E_MAGAZINE_OPERATION.RETURN_BLANK:
 					uiBlankPayloadType := UINT#0;
+					uiReturnMagazine := UINT#0;
 					uiSelectedType := UINT#0;
 					iTakeOriginSlot := SINT#0;
 					iTakeSlot := SINT#0;
@@ -1936,6 +1970,34 @@ CASE eState OF
 			eState := E_CELL_MANAGER_STATE.IDLE;
 		END_IF;
 END_CASE;
+
+// Назначение фиксируется уже при планировании, до следующего RunTwoPallet.
+// После загрузки заготовки владелец остаётся до PUT; отсутствие xBlankAvailable
+// само по себе не разрешает смену палеты или переназначение готовой детали.
+IF (uiActiveMagazine >= UINT#1) AND (uiActiveMagazine <= UINT#2) THEN
+	IF (eState = E_CELL_MANAGER_STATE.MAGAZINE_EXECUTE)
+	AND ((eMagazineOperation = E_MAGAZINE_OPERATION.TAKE)
+		OR (eMagazineOperation = E_MAGAZINE_OPERATION.CHANGE)) THEN
+		uiReturnMagazine := uiActiveMagazine;
+	ELSIF (uiReturnMagazine = UINT#0)
+	AND (eMachineOperation = E_MACHINE_OPERATION.UNLOAD)
+	AND (eState = E_CELL_MANAGER_STATE.ROUTE_TO_TARGET) THEN
+		uiReturnMagazine := uiActiveMagazine;
+	END_IF;
+END_IF;
+
+// LOAD пустого станка и доставка на ГК завершаются без PUT. Публикуем
+// освобождение в ТОМ ЖЕ вызове, который завершил операцию: RunTwoPallet
+// следующего скана должен увидеть окно до нового планирования UNLOAD.
+IF NOT stRobotStatus.xBusy
+AND NOT stRobotStatus.xBlankAvailable
+AND NOT stRobotStatus.xDetailAvailable
+AND ((eState = E_CELL_MANAGER_STATE.IDLE)
+	OR (eState = E_CELL_MANAGER_STATE.PLAN_TARGET)
+	OR (eState = E_CELL_MANAGER_STATE.SELECT_FALLBACK)
+	OR (eState = E_CELL_MANAGER_STATE.WAIT_MAGAZINE)) THEN
+	uiReturnMagazine := UINT#0;
+END_IF;
 
 // Фиксируем позу только после завершённой штатной остановки или нормального
 // окончания цикла. Аварийный переход оставляет xSafetyHomeRequired активным.

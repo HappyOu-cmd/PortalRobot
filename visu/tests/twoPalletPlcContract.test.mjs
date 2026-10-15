@@ -124,6 +124,7 @@ test('PLC owns per-pallet edit permissions and does not write into FB outputs fr
     'GVL_MAGAZINE.astAutoCommand[uiTwin].xExecute': false, 'GVL_MAGAZINE.astCommand[uiTwin].xExecute': false,
     'GVL_ROBOT.Status.xBusy': false, xMotionBusy: false, 'GVL_ROBOT.Status.uiMagazineContext': 0, uiTwin: 1,
     'GVL_CELL_MANAGER.Status.uiActiveMagazine': 0, 'GVL_CELL_MANAGER.Diag.eState': 0,
+    'CELL_MANAGER.uiReturnMagazine': 0,
     'E_CELL_STATE.MAGAZINE': 7, 'E_CELL_STATE.RELEASE_MAGAZINE': 8 };
   assert.equal(plcPermission('xTwinRobotOperation', released, run), false);
   for (const key of ['GVL_MAGAZINE.astPartStatus[uiTwin].xBusy', 'GVL_MAGAZINE.astPartStatus[uiTwin].xDisablePending',

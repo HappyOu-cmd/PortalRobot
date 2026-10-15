@@ -194,6 +194,7 @@ FOR uiTwin := 1 TO 2 DO
 	// xBusy не покрывает удерживаемый запрос и завершение Disable.
 	// Занятость другого магазина/станка сама по себе не запрещает правку инвентаря.
 	xTwinRobotOperation := GVL_MAGAZINE.astPartStatus[uiTwin].xBusy
+		OR (CELL_MANAGER.uiReturnMagazine = uiTwin)
 		OR GVL_MAGAZINE.astPartStatus[uiTwin].xDisablePending
 		OR GVL_MAGAZINE.astAutoCommand[uiTwin].xExecute
 		OR GVL_MAGAZINE.astCommand[uiTwin].xExecute
@@ -206,19 +207,40 @@ FOR uiTwin := 1 TO 2 DO
 	// интерфейса робота после инициализации могут быть неизвестны.
 	xTwinRobotSwapWindow := NOT xTwinRobotOperation;
 	xTwinOtherLoaded := FALSE;
+	xTwinRobotHasBlank := TRUE; // Неизвестная роль палеты запрещает автоматический обмен
+	xTwinOtherHasBlank := FALSE;
+	xTwinInventoryEditPending := xTwinInventoryCommand
+		AND (stTwinRequest.uiMagazine = uiTwin)
+		AND (stTwinRequest.uiCommand >= UINT#21)
+		AND (stTwinRequest.uiCommand <= UINT#24);
 	IF (GVL_TWO_PALLET.astStatus[uiTwin].uiRobotPallet >= UINT#1)
 		AND (GVL_TWO_PALLET.astStatus[uiTwin].uiRobotPallet <= UINT#2) THEN
 		uiTwinPallet := UINT#3 - GVL_TWO_PALLET.astStatus[uiTwin].uiRobotPallet;
 		xTwinOtherLoaded := GVL_TWO_PALLET.astStore[uiTwin].axLoaded[uiTwinPallet];
+		xTwinRobotHasBlank := FALSE;
+		FOR uiTwinSlot := UINT#1 TO UINT#96 DO
+			IF GVL_TWO_PALLET.astStore[uiTwin].astPallet[GVL_TWO_PALLET.astStatus[uiTwin].uiRobotPallet].aSlots[uiTwinSlot].xInPosition
+			AND (GVL_TWO_PALLET.astStore[uiTwin].astPallet[GVL_TWO_PALLET.astStatus[uiTwin].uiRobotPallet].aSlots[uiTwinSlot].eDetailType = E_DETAIL_TYPE.BLANK) THEN
+				xTwinRobotHasBlank := TRUE;
+			END_IF;
+			IF GVL_TWO_PALLET.astStore[uiTwin].astPallet[uiTwinPallet].aSlots[uiTwinSlot].xInPosition
+			AND (GVL_TWO_PALLET.astStore[uiTwin].astPallet[uiTwinPallet].aSlots[uiTwinSlot].eDetailType = E_DETAIL_TYPE.BLANK) THEN
+				xTwinOtherHasBlank := TRUE;
+			END_IF;
+		END_FOR;
 	END_IF;
-	// Finished удерживает цикл в ожидании даже до подтверждения загрузки второй палеты.
-	// Подтверждение, разрешение автообмена и готовность зоны отдельно разрешают движение.
+	// Finished сохраняет ожидание оператора. Ранний запрос отменяемый: при утрате
+	// подготовки палета остаётся доступной для выгрузки, её Finished не защёлкивается.
+	// Сканируем фактические карты, включая заготовки неподходящих сейчас типов.
 	axTwinAutoSwapPending[uiTwin] := (GVL_TWO_PALLET.uiMode = UINT#1)
 		AND GVL_CELL_MANAGER.Status.xRunning
 		AND NOT GVL_CELL_MANAGER.Status.xStopPending
 		AND NOT GVL_CELL_CONTROL.xStop
 		AND NOT GVL_CELL_CONTROL.xManual
-		AND GVL_MAGAZINE.astPartStatus[uiTwin].xFinished
+		AND NOT xTwinRobotHasBlank
+		AND (GVL_MAGAZINE.astPartStatus[uiTwin].xFinished
+			OR (xTwinAutoSwapEnabled AND xTwinOtherLoaded AND xTwinOtherHasBlank
+				AND NOT xTwinInventoryEditPending AND xTwinRobotSwapWindow))
 		AND NOT astTwinCommand[uiTwin].xDisable
 		AND NOT astTwinCommand[uiTwin].xStop;
 	uiTwinRobotPalletBefore := GVL_TWO_PALLET.astStatus[uiTwin].uiRobotPallet;
@@ -238,7 +260,8 @@ FOR uiTwin := 1 TO 2 DO
 			AND GVL_MAGAZINE.astPartStatus[uiTwin].xEnableCheckGeometry,
 		xConnection := xHmiConnectionAlive,
 		xStopRequest := GVL_CELL_CONTROL.xStop OR xIoManualActive OR GVL_HMI.astMagazineCommand[uiTwin].xStop OR GVL_TWO_PALLET.xModeChanged,
-		xAutoSwap := axTwinAutoSwapPending[uiTwin] AND xTwinAutoSwapEnabled AND xTwinOtherLoaded,
+		xAutoSwap := axTwinAutoSwapPending[uiTwin] AND xTwinAutoSwapEnabled
+			AND xTwinOtherLoaded AND xTwinOtherHasBlank AND NOT xTwinInventoryEditPending,
 		xOtherLoaded := xTwinOtherLoaded,
 		xActivePalletEditAllowed := NOT xTwinRobotOperation,
 		xConfigurationChanged := axTwinConfigurationChanged[uiTwin],

@@ -120,8 +120,11 @@ VAR
 	xTwinRobotSwapWindow : BOOL;
 	xTwinRobotOperation : BOOL; // Текущая, ожидающая отключения или уже выданная операция магазина
 	xTwinOtherLoaded : BOOL;
+	xTwinRobotHasBlank : BOOL; // Любая заготовка рабочего банка запрещает автоматический обмен
+	xTwinOtherHasBlank : BOOL; // Подтверждённая операторская палета должна содержать заготовку
+	xTwinInventoryEditPending : BOOL; // Правка текущего скана отменяет запуск по старому подтверждению
 	xTwinAutoSwapEnabled : BOOL;
-	axTwinAutoSwapPending : ARRAY [1..2] OF BOOL; // Законченная палета ждёт окна автоматического обмена
+	axTwinAutoSwapPending : ARRAY [1..2] OF BOOL; // Ожидание смены Finished либо отменяемый ранний запрос
 	axMagazineInventoryChanged : ARRAY [1..2] OF BOOL; // Смена/правка только рабочего банка снимает его Finished
 	xTwinInventoryCommand : BOOL;
 	uiTwinRequestResult : UINT;
