@@ -136,8 +136,9 @@
 .robot-redesign .rj-home-button:active:not(:disabled) { transform: scale(.99); }
 .robot-redesign .rj-home-button:is(:disabled, .command-unavailable) { border-color: #d8e1eb; background: #e7edf4; color: #8a98aa; }
 .robot-redesign .rj-home-button:disabled { cursor: not-allowed; }
-.robot-redesign .rj-home-button[data-state=found] { border-color: rgb(179 197 218 / 65%); background: #fff; color: var(--rx-accent); box-shadow: 0 12px 28px rgb(38 64 96 / 14%), 0 2px 5px rgb(38 64 96 / 7%), 0 -1px 0 rgb(120 142 166 / 14%) inset; }
-.robot-redesign .rj-home-button[data-state=found]:hover:not(:disabled):not(.command-unavailable) { background: #fff; border-color: var(--rx-accent); }
+.robot-redesign .rj-home-button[data-state=found] { border-color: rgb(32 177 103 / 45%); background: #f1fff7; color: #16834f; box-shadow: 0 8px 22px rgb(26 140 81 / 12%), 0 0 18px rgb(32 219 124 / 16%), 0 1px 0 rgb(255 255 255 / 90%) inset; text-shadow: 0 0 9px rgb(32 219 124 / 30%); }
+.robot-redesign .rj-home-button[data-state=found] svg { filter: drop-shadow(0 0 4px rgb(32 219 124 / 30%)); }
+.robot-redesign .rj-home-button[data-state=found]:hover:not(:disabled):not(.command-unavailable) { background: #e7faef; border-color: #38b778; }
 .robot-redesign .rj-mode-selector.ui-segmented { margin-top: 14px; border-radius: 25px; background: #edf3f9; }
 .robot-redesign .rj-mode-selector :is(.ui-segmented__track, .ui-segmented__thumb, .ui-segmented__option) { border-radius: 22px; }
 .robot-redesign .rj-mode-selector .ui-segmented__option { display: flex; align-items: center; justify-content: center; gap: 6px; padding-inline: 8px; font-size: 11px; }
