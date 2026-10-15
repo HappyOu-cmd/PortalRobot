@@ -3,7 +3,7 @@ import * as Dialog from '@radix-ui/react-dialog';
 import { Icon } from '@iconify/react';
 import conveyorIcon from '@iconify-icons/material-symbols/conveyor-belt-outline';
 import { X, Settings, CheckCircle2, ChevronDown, TriangleAlert, PackageOpen, Power, Gauge, ClipboardList, ScanLine } from 'lucide-react';
-import { createGeometrySnapshot, GEOMETRY_STATES, geometryReadinessConditions, type GeometrySnapshot } from '../../model/geometryControl';
+import { createGeometrySnapshot, geometryOverviewStatus, geometryReadinessConditions, type GeometrySnapshot } from '../../model/geometryControl';
 import { ConfirmationChoice, OperatorConfirmationLayout } from '../ui/OperatorConfirmationLayout';
 import { cn } from '../../lib/utils';
 import { QuickStatusCard, type QuickStatusTone } from '../ui/QuickStatusCard';
@@ -43,7 +43,8 @@ export function GeometryControlPanel({ snapshot = EMPTY_GEOMETRY_SNAPSHOT, onlin
     ariaControls: 'geometry-quick-control-menu',
     onClick: (event: MouseEvent<HTMLButtonElement>) => toggle(target, event.currentTarget),
   });
-  const tone: QuickStatusTone = !online ? 'gray' : station.error ? 'red' : station.state === 5 ? 'amber' : station.ready ? 'green' : station.enabled ? 'blue' : 'gray';
+  const stationStatus = geometryOverviewStatus(snapshot, selected, online);
+  const tone: QuickStatusTone = stationStatus.tone;
   const pending = snapshot.calls.filter(call => call.state >= 1 && call.state <= 3).length;
   const MenuIcon = MENU_ICONS[menu];
   const powerAllowed = station.recoveryRequired || (station.enabled ? station.disableAllowed : station.enableAllowed);
@@ -57,14 +58,14 @@ export function GeometryControlPanel({ snapshot = EMPTY_GEOMETRY_SNAPSHOT, onlin
             type="button" aria-expanded={menuOpen && menu === 'readiness'} aria-controls="geometry-quick-control-menu"
             aria-label={`Состояние и условия включения ГК ${stationId}`} onClick={event => toggle('readiness', event.currentTarget)}>
             <Indicator active={online && tone !== 'gray'} tone={tone === 'gray' ? 'blue' : tone} />
-            <span>{!online ? 'Нет связи' : GEOMETRY_STATES[station.state]}</span><ChevronDown aria-hidden="true" />
+            <span>{stationStatus.text}</span><ChevronDown aria-hidden="true" />
           </button>
         </div>
         <nav className="machine-quick-tabs geometry-station-tabs" aria-label="Выбор геометрического контроля">{[0, 1].map(index => <button key={index} className={selected === index ? 'active' : ''} type="button" onClick={() => setSelected(index)}>ГК {index + 1}</button>)}</nav>
         <div className="quick-panel-header-actions"><button className="extended-control extended-control--icon" type="button" onClick={extended} title="Расширенное управление ГК" aria-label="Расширенное управление ГК"><Settings /></button><button className="panel-close-button" type="button" onClick={onClose} aria-label="Закрыть"><X /></button></div>
       </header>
       <div className="machine-quick-content-row geometry-quick-content-row">
-        <button className={cn('machine-quick-power', station.enabled ? 'enabled' : 'ready', !powerAllowed && 'command-unavailable')} type="button" disabled={!online} aria-disabled={!powerAllowed} onClick={() => station.recoveryRequired ? onRequestState(stationId as 1 | 2) : onCommand(geometryCommand(station.enabled ? 2 : 1, stationId))}>{station.recoveryRequired ? <CheckCircle2 /> : <Power />}<span>{station.recoveryRequired ? 'Указать состояние ГК' : station.enabled ? 'Выключить ГК' : 'Включить ГК'}</span></button>
+        <button className={cn('machine-quick-power', station.enabled ? 'enabled' : 'ready', !powerAllowed && 'command-unavailable')} type="button" disabled={!online} aria-disabled={!powerAllowed} onClick={() => station.recoveryRequired ? onRequestState(stationId as 1 | 2) : onCommand(geometryCommand(station.enabled ? 2 : 1, stationId))}>{station.recoveryRequired ? <CheckCircle2 /> : <Power />}<span>{station.recoveryRequired ? 'Указать состояние ГК' : station.disablePending ? 'Выключение после доставки' : station.enabled ? 'Выключить ГК' : 'Включить ГК'}</span></button>
         <div className="machine-quick-status-grid">
           <QuickStatusCard icon={Gauge} title="Конвейер" status={!online ? 'Нет связи' : station.driveAlarm || station.error ? 'Авария' : station.running ? 'В работе' : 'Остановлен'} tone={!online ? 'gray' : station.error ? 'red' : station.running ? 'green' : 'gray'} interactive {...triggerProps('drive')} />
           <QuickStatusCard icon={ScanLine} title="Деталь на ГК" status={!online ? 'Нет связи' : station.partStored ? `Станок ${station.machine} · тип ${station.productType}` : station.occupied ? 'Проверьте станцию' : 'Детали нет'} detail={station.partStored ? `#${station.partId}` : undefined} tone={!online ? 'gray' : station.partStored ? 'blue' : station.occupied ? 'amber' : 'gray'} interactive {...triggerProps('part')} />

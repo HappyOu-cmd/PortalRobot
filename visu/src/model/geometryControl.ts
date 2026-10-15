@@ -1,7 +1,7 @@
 export interface GeometryConfig { configured: boolean; x: number; y: number; z: number; safeZ: number; changeZ: number; speedFactor: number }
 export interface GeometryCall { id: number; machine: number; productType: number; station: number; forced: boolean; state: number; reason: number; magazine: number; pallet: number; slot: number }
 export interface GeometryStation {
-  state: number; enabled: boolean; ready: boolean; occupied: boolean; reserved: boolean; partStored: boolean;
+  state: number; enabled: boolean; disablePending: boolean; ready: boolean; occupied: boolean; reserved: boolean; partStored: boolean;
   partAtEnd: boolean; running: boolean; driveAlarm: boolean; error: boolean; robotStopRequired: boolean;
   enableAllowed: boolean; disableAllowed: boolean; confirmAllowed: boolean; confirmationActive: boolean; recoveryRequired: boolean;
   manualStartAllowed: boolean; resetAllowed: boolean; resetBusy: boolean;
@@ -28,6 +28,7 @@ export function geometryOverviewStatus(snapshot: GeometrySnapshot | undefined, s
   if (!snapshot.supported) return { text: 'Недоступен', tone: 'gray' };
   if (station.error || station.driveAlarm || station.state === 6) return { text: 'Авария', tone: 'red' };
   if (station.recoveryRequired || station.confirmationActive || station.state === 5) return { text: 'Указать состояние ГК', tone: 'amber' };
+  if (station.disablePending) return { text: 'Выключение после доставки', tone: 'amber' };
   const text = GEOMETRY_STATES[station.state];
   if (!text) return { text: 'Нет данных', tone: 'gray' };
   return { text, tone: station.state === 0 ? 'gray' : station.state === 1 ? 'green' : station.state === 4 ? 'amber' : 'blue' };
@@ -51,7 +52,7 @@ export function geometryPartPosition(station: GeometryStation | undefined, onlin
   return 'unknown';
 }
 
-const boolFields = { enabled: 'xEnabled', ready: 'xReady', occupied: 'xOccupied', reserved: 'xReserved', partStored: 'xPartStored', partAtEnd: 'xPartAtEnd', running: 'xDriveRunning', driveAlarm: 'xDriveAlarm', error: 'xError', robotStopRequired: 'xRobotStopRequired', enableAllowed: 'xEnableAllowed', disableAllowed: 'xDisableAllowed', confirmAllowed: 'xConfirmAllowed', confirmationActive: 'xConfirmationActive', recoveryRequired: 'xRecoveryRequired', manualStartAllowed: 'xManualStartAllowed', resetAllowed: 'xResetAllowed', resetBusy: 'xResetBusy', configAllowed: 'xConfigAllowed', pointWriteAllowed: 'xPointWriteAllowed', simulationRemoveAllowed: 'xSimulationRemoveAllowed', simulationAlarmAllowed: 'xSimulationAlarmAllowed', configured: 'xConfigured', callWaitWarning: 'xCallWaitWarning' } as const;
+const boolFields = { enabled: 'xEnabled', disablePending: 'xDisablePending', ready: 'xReady', occupied: 'xOccupied', reserved: 'xReserved', partStored: 'xPartStored', partAtEnd: 'xPartAtEnd', running: 'xDriveRunning', driveAlarm: 'xDriveAlarm', error: 'xError', robotStopRequired: 'xRobotStopRequired', enableAllowed: 'xEnableAllowed', disableAllowed: 'xDisableAllowed', confirmAllowed: 'xConfirmAllowed', confirmationActive: 'xConfirmationActive', recoveryRequired: 'xRecoveryRequired', manualStartAllowed: 'xManualStartAllowed', resetAllowed: 'xResetAllowed', resetBusy: 'xResetBusy', configAllowed: 'xConfigAllowed', pointWriteAllowed: 'xPointWriteAllowed', simulationRemoveAllowed: 'xSimulationRemoveAllowed', simulationAlarmAllowed: 'xSimulationAlarmAllowed', configured: 'xConfigured', callWaitWarning: 'xCallWaitWarning' } as const;
 const numberFields = { state: 'uiState', produced: 'udiProducedPartsTotal', partId: 'udiPartId', machine: 'uiMachine', productType: 'uiProductType', travel: 'rTravel' } as const;
 const configFields = { x: 'lrX', y: 'lrY', z: 'lrZ', safeZ: 'lrSafeZ', changeZ: 'lrChangeZ', speedFactor: 'lrSpeedFactor' } as const;
 const callFields = { id: 'udiId', machine: 'uiMachine', productType: 'uiProductType', station: 'uiStation', state: 'uiState', reason: 'uiReason', magazine: 'uiMagazine', pallet: 'uiPallet', slot: 'uiSlot' } as const;

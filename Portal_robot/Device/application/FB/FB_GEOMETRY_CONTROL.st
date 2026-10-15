@@ -41,6 +41,7 @@ VAR
 	xTransport : BOOL;
 	xManualRun : BOOL;
 	xDisablePending : BOOL;
+	xStopPending : BOOL;
 	xEnableWanted : BOOL;
 	xResetBusy : BOOL;
 	xResetSeen : BOOL;
@@ -63,7 +64,7 @@ IF xInitialize THEN xInitialized := FALSE; END_IF;
 IF NOT xInitialized THEN
 	// После рестарта конечный датчик не доказывает пустоту всей ленты.
 	xEnabled := FALSE; xReserved := FALSE; xTransport := FALSE; xManualRun := FALSE;
-	xDisablePending := FALSE; xEnableWanted := FALSE; xResetBusy := FALSE; xResetSeen := FALSE;
+	xDisablePending := FALSE; xStopPending := FALSE; xEnableWanted := FALSE; xResetBusy := FALSE; xResetSeen := FALSE;
 	Memory.xRecoveryRequired := TRUE; xInitialized := TRUE;
 END_IF;
 xCommandAccepted := FALSE;
@@ -79,15 +80,18 @@ IF Memory.dwAlarm <> DWORD#0 THEN
 	Memory.xRecoveryRequired := TRUE;
 	IF Signals.xRobotInteraction THEN Memory.xRobotStopLatched := TRUE; END_IF;
 	xEnabled := FALSE; xEnableWanted := FALSE; xTransport := FALSE; xManualRun := FALSE;
+	xDisablePending := FALSE; xStopPending := FALSE;
 END_IF;
 IF xGlobalError OR NOT xSupported OR xIoManual THEN
 	IF Memory.xOccupied OR xReserved OR xTransport OR xManualRun THEN Memory.xRecoveryRequired := TRUE; END_IF;
 	xEnabled := FALSE; xEnableWanted := FALSE; xTransport := FALSE; xManualRun := FALSE;
+	xDisablePending := FALSE; xStopPending := FALSE;
 	xResetBusy := FALSE;
 END_IF;
 IF NOT xHmiAlive OR NOT xManual OR xCellRunning THEN xManualRun := FALSE; END_IF;
 
-IF Signals.xReserve AND xEnabled AND xConfigurationValid AND NOT Memory.xOccupied
+IF Signals.xReserve AND xEnabled AND NOT xDisablePending AND NOT xStopPending
+	AND xConfigurationValid AND NOT Memory.xOccupied
 	AND NOT Memory.xRecoveryRequired AND NOT xPartAtEnd AND NOT xDriveRunning
 	AND NOT xManualRun AND NOT xResetBusy AND NOT xGlobalError AND xSupported AND NOT xIoManual
 	AND (Memory.dwAlarm = DWORD#0) THEN
@@ -106,12 +110,14 @@ IF Signals.xDeposited AND xReserved AND (Signals.Call.udiId <> UDINT#0)
 END_IF;
 IF Signals.xReleased THEN
 	xReserved := FALSE;
-	IF Memory.xOccupied AND xEnabled AND NOT xDisablePending AND NOT Memory.xRecoveryRequired
+	// Штатное выключение завершает доставку; Stop запрещает пуск после отхода.
+	IF Memory.xOccupied AND xEnabled AND NOT xStopPending AND NOT Memory.xRecoveryRequired
 		AND (Memory.dwAlarm = DWORD#0) AND NOT xGlobalError THEN xTransport := TRUE; END_IF;
 END_IF;
 
 xManualBase := xSupported AND xManual AND NOT xCellRunning AND NOT xRobotBusy
 	AND NOT xMotionBusy AND NOT Signals.xRobotInteraction AND NOT xReserved
+	AND NOT xDisablePending AND NOT xStopPending
 	AND xHmiAlive AND NOT xGlobalError AND NOT xIoManual AND NOT xResetBusy;
 Status.xConfigAllowed := xManualBase AND NOT xEnabled AND NOT xDriveRunning AND NOT Memory.xOccupied;
 // Допуск записи данных публикует RunGeometryControl независимо от состояния ГК.
@@ -130,7 +136,7 @@ IF xReserved THEN dwControlBlockers := dwControlBlockers OR DWORD#128; END_IF;
 IF xDriveRunning THEN dwControlBlockers := dwControlBlockers OR DWORD#256; END_IF;
 IF xManualRun THEN dwControlBlockers := dwControlBlockers OR DWORD#512; END_IF;
 IF xResetBusy THEN dwControlBlockers := dwControlBlockers OR DWORD#1024; END_IF;
-IF xDisablePending THEN dwControlBlockers := dwControlBlockers OR DWORD#2048; END_IF;
+IF xDisablePending OR xStopPending THEN dwControlBlockers := dwControlBlockers OR DWORD#2048; END_IF;
 IF xTransport THEN dwControlBlockers := dwControlBlockers OR DWORD#8192; END_IF;
 Status.dwEnableBlockers := dwControlBlockers;
 IF NOT xConfigurationValid THEN Status.dwEnableBlockers := Status.dwEnableBlockers OR DWORD#32; END_IF;
@@ -161,9 +167,10 @@ CASE uiAction OF
 	UINT#2:
 		IF Status.xDisableAllowed THEN
 			xEnableWanted := FALSE; xManualRun := FALSE;
-			IF Signals.xRobotInteraction THEN xDisablePending := TRUE;
+			IF Signals.xRobotInteraction OR xReserved OR xTransport
+			OR (Memory.xOccupied AND NOT Memory.xRecoveryRequired) THEN xDisablePending := TRUE;
 			ELSE
-				xEnabled := FALSE; xTransport := FALSE;
+				xEnabled := FALSE; xTransport := FALSE; xDisablePending := FALSE;
 				IF Memory.xOccupied OR xReserved THEN Memory.xRecoveryRequired := TRUE; END_IF;
 			END_IF;
 			xCommandAccepted := TRUE;
@@ -196,8 +203,8 @@ CASE uiAction OF
 			IF Memory.xOccupied THEN Memory.xRecoveryRequired := TRUE; xEnabled := FALSE; END_IF;
 		END_IF;
 	UINT#6:
-		xManualRun := FALSE; xTransport := FALSE; xCommandAccepted := TRUE;
-		IF Signals.xRobotInteraction THEN xDisablePending := TRUE;
+		xManualRun := FALSE; xTransport := FALSE; xDisablePending := FALSE; xCommandAccepted := TRUE;
+		IF Signals.xRobotInteraction OR xReserved THEN xStopPending := TRUE;
 		ELSIF Memory.xOccupied THEN Memory.xRecoveryRequired := TRUE; xEnabled := FALSE; END_IF;
 	UINT#7:
 		IF Status.xSimulationRemoveAllowed THEN
@@ -206,8 +213,8 @@ CASE uiAction OF
 		END_IF;
 END_CASE;
 IF (uiAction >= UINT#1) AND (uiAction <= UINT#7) AND NOT xCommandAccepted THEN xCommandRejected := TRUE; END_IF;
-IF xDisablePending AND NOT Signals.xRobotInteraction THEN
-	xEnabled := FALSE; xTransport := FALSE; xDisablePending := FALSE;
+IF xStopPending AND NOT Signals.xRobotInteraction THEN
+	xEnabled := FALSE; xTransport := FALSE; xDisablePending := FALSE; xStopPending := FALSE;
 	IF Memory.xOccupied OR xReserved THEN Memory.xRecoveryRequired := TRUE; END_IF;
 END_IF;
 
@@ -235,11 +242,19 @@ IF tonTransport.Q THEN Memory.dwAlarm := Memory.dwAlarm OR DWORD#2; END_IF;
 IF tonFeedback.Q THEN Memory.dwAlarm := Memory.dwAlarm OR DWORD#4; END_IF;
 IF Memory.dwAlarm <> DWORD#0 THEN
 	xEnabled := FALSE; xEnableWanted := FALSE; xRunOutput := FALSE;
+	xDisablePending := FALSE; xStopPending := FALSE;
 	xTransport := FALSE; xManualRun := FALSE; Memory.xRecoveryRequired := TRUE;
 	IF Signals.xRobotInteraction THEN Memory.xRobotStopLatched := TRUE; END_IF;
 END_IF;
+// Выключаем только после подтверждённого конца доставки и останова привода.
+// Освобождённый резерв без укладки не требует движения пустой ленты.
+IF xDisablePending AND NOT Signals.xRobotInteraction AND NOT xReserved
+	AND NOT xTransport AND NOT xManualRun AND NOT xDriveRunning AND NOT xResetBusy
+	AND (NOT Memory.xOccupied OR Memory.xAtEndSeen) THEN
+	xEnabled := FALSE; xDisablePending := FALSE;
+END_IF;
 tonRemoved(IN := Memory.xOccupied AND Memory.xAtEndSeen AND NOT xPartAtEnd
-	AND xEnabled AND NOT Memory.xRecoveryRequired AND NOT xTransport AND NOT xManualRun
+	AND NOT Memory.xRecoveryRequired AND NOT xTransport AND NOT xManualRun
 	AND NOT xDriveRunning AND NOT xReserved AND NOT Signals.xRobotInteraction
 	AND (Memory.dwAlarm = DWORD#0) AND NOT xGlobalError, PT := T#3S);
 // Явное изъятие в SIMULATION подтверждает пустоту всей ленты сразу.
@@ -259,12 +274,14 @@ IF xPartAtEnd AND NOT xSimulationEmptyConfirmed AND NOT Memory.xOccupied AND NOT
 END_IF;
 IF xCommandRejected THEN Warning.uiCode := UINT#3; Warning.udiSequence := Warning.udiSequence + UDINT#1; END_IF;
 Status.xEnabled := xEnabled;
+Status.xDisablePending := xDisablePending;
 Status.xReserved := xReserved;
 // Виртуальный датчик снимается моделью на следующем скане после принятой команды.
 Status.xPartAtEnd := xPartAtEnd AND NOT xSimulationEmptyConfirmed;
 Status.xOccupied := Memory.xOccupied OR xReserved OR Memory.xRecoveryRequired OR Status.xPartAtEnd;
 Status.xPartStored := Memory.xOccupied;
 Status.xReady := xEnabled AND xConfigurationValid AND NOT Status.xOccupied AND NOT xDriveRunning
+	AND NOT xDisablePending AND NOT xStopPending
 	AND (Memory.dwAlarm = DWORD#0) AND NOT xGlobalError AND xSupported AND NOT xIoManual AND NOT xResetBusy;
 Status.xDriveRunning := xDriveRunning;
 Status.xDriveAlarm := xDriveAlarm;

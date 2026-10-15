@@ -4,7 +4,7 @@ import conveyorIcon from '@iconify-icons/material-symbols/conveyor-belt-outline'
 import overviewIcon from '@iconify-icons/material-symbols/grid-view-outline';
 import sensorsIcon from '@iconify-icons/material-symbols/sensors';
 import { CheckCircle2, Power, TriangleAlert, X } from 'lucide-react';
-import { createGeometrySnapshot, GEOMETRY_STATES, type GeometrySnapshot } from '../../model/geometryControl';
+import { createGeometrySnapshot, geometryOverviewStatus, type GeometrySnapshot } from '../../model/geometryControl';
 import { cn } from '../../lib/utils';
 import { SegmentedControl } from '../ui/ControlPrimitives';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/Tabs';
@@ -21,7 +21,8 @@ export function GeometryExtendedPanel({ snapshot = EMPTY_GEOMETRY_SNAPSHOT, sele
 }) {
   const [tab, setTab] = useState('overview');
   const station = snapshot.stations[selectedStation - 1];
-  const tone = !online ? 'gray' : station.error ? 'red' : station.state === 5 ? 'amber' : station.ready ? 'green' : station.enabled ? 'blue' : 'gray';
+  const stationStatus = geometryOverviewStatus(snapshot, selectedStation - 1, online);
+  const tone = stationStatus.tone;
   const send = (action: number) => onCommand(geometryCommand(action, selectedStation));
 
   return <aside className={cn('side-panel geometry-extended-panel', className)} aria-label="Расширенное управление геометрическим контролем">
@@ -33,7 +34,7 @@ export function GeometryExtendedPanel({ snapshot = EMPTY_GEOMETRY_SNAPSHOT, sele
     <SegmentedControl value={String(selectedStation)} className="geometry-extended-stations" thumbFullHeight ariaLabel="Выбор станции ГК"
       options={snapshot.stations.map((item, index) => ({ value: String(index + 1), label: <><span>ГК <b>{index + 1}</b></span><i className={online && item.error ? 'error' : online && item.enabled ? 'enabled' : ''} /></> }))}
       onChange={value => onStationChange(Number(value) as 1 | 2)} />
-    <div className="geometry-extended-state" data-tone={tone}><span><i aria-hidden="true" />{online ? GEOMETRY_STATES[station.state] : 'Нет связи с PLC'}</span><small>{simulation ? 'Симуляция' : 'Реальная ячейка'}</small></div>
+    <div className="geometry-extended-state" data-tone={tone}><span><i aria-hidden="true" />{stationStatus.text}</span><small>{simulation ? 'Симуляция' : 'Реальная ячейка'}</small></div>
 
     <Tabs value={tab} onValueChange={setTab} className="geometry-extended-tabs">
       <TabsList className="geometry-extended-tabs-list" data-active-tab={tab} aria-label="Разделы расширенного управления ГК">
@@ -48,7 +49,7 @@ export function GeometryExtendedPanel({ snapshot = EMPTY_GEOMETRY_SNAPSHOT, sele
             {!station.configured && <p className="geometry-menu-note">Базовую точку, SAFE_Z и скорость ГК задайте в разделе «Точки» расширенного управления роботом.</p>}
             <div className="geometry-extended-metric"><span>Уложено деталей на ГК {selectedStation}</span><b>{online ? station.produced.toLocaleString('ru-RU') : '—'}</b></div>
             <GeometryCommandButton online={online} allowed={station.recoveryRequired || (station.enabled ? station.disableAllowed : station.enableAllowed)}
-              onClick={() => station.recoveryRequired ? onRequestState(selectedStation) : send(station.enabled ? 2 : 1)} className="geometry-extended-power">{station.recoveryRequired ? <CheckCircle2 /> : <Power />}{station.recoveryRequired ? 'Указать состояние ГК' : station.enabled ? 'Выключить ГК' : 'Включить ГК'}</GeometryCommandButton>
+              onClick={() => station.recoveryRequired ? onRequestState(selectedStation) : send(station.enabled ? 2 : 1)} className="geometry-extended-power">{station.recoveryRequired ? <CheckCircle2 /> : <Power />}{station.recoveryRequired ? 'Указать состояние ГК' : station.disablePending ? 'Выключение после доставки' : station.enabled ? 'Выключить ГК' : 'Включить ГК'}</GeometryCommandButton>
           </section>
           <section className="geometry-extended-section"><header><h3>Конвейер</h3></header>
             <GeometryDriveMenu station={station} stationId={selectedStation} online={online} onCommand={onCommand} />

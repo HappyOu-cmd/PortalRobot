@@ -60,6 +60,26 @@ test('partial OPC UA updates preserve each independent station and permissions a
   const next = mapGeometrySnapshot({ 'astGeometryStatus[2].xDriveRunning': true }, first);
   assert.equal(next.available, true); assert.equal(next.stations[0].enabled, true); assert.equal(next.stations[0].manualStartAllowed, false); assert.equal(next.stations[1].running, true); assert.equal(next.stations[1].productType, 3); assert.equal(next.periods[1], 50); assert.equal(next.resetSeconds, 1.5);
 });
+
+test('pending disable follows PLC updates independently for both GK and preserves fault priority', () => {
+  for (const stationId of [1, 2]) {
+    const root = `astGeometryStatus[${stationId}]`;
+    const first = mapGeometrySnapshot({ xGeometrySupported: true, [`${root}.uiState`]: 2,
+      [`${root}.xEnabled`]: true, [`${root}.xDisablePending`]: true, [`${root}.xDisableAllowed`]: true });
+    const next = mapGeometrySnapshot({ [`astGeometryStatus[${3 - stationId}].xEnabled`]: true }, first);
+    assert.equal(next.stations[stationId - 1].disablePending, true);
+    assert.equal(next.stations[2 - stationId].disablePending, false);
+    assert.equal(next.stations[stationId - 1].disableAllowed, true);
+    assert.deepEqual(geometryOverviewStatus(next, stationId - 1, true), { text: 'Выключение после доставки', tone: 'amber' });
+    assert.deepEqual(geometryOverviewStatus(next, stationId - 1, false), { text: 'Нет данных', tone: 'gray' });
+    const fault = mapGeometrySnapshot({ [`${root}.xError`]: true }, next);
+    assert.deepEqual(geometryOverviewStatus(fault, stationId - 1, true), { text: 'Авария', tone: 'red' });
+    const done = mapGeometrySnapshot({ [`${root}.xDisablePending`]: false, [`${root}.xEnabled`]: false,
+      [`${root}.uiState`]: 0 }, next);
+    assert.equal(done.stations[stationId - 1].disablePending, false);
+    assert.deepEqual(geometryOverviewStatus(done, stationId - 1, true), { text: 'Выключен', tone: 'gray' });
+  }
+});
 test('recovery requirement is independent of enabled, alarm, confirmation prompt and point writing', () => {
   const first = mapGeometrySnapshot({ 'astGeometryStatus[1].xRecoveryRequired': true,
     'astGeometryStatus[1].xPointWriteAllowed': true, 'astGeometryStatus[1].xEnabled': false,

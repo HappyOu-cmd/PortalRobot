@@ -19,6 +19,7 @@ FOR uiTry := UINT#1 TO UINT#2 DO
 	IF uiTry = UINT#2 THEN uiStation := UINT#3 - uiStation; END_IF;
 	IF (F_GEOMETRY_SELECT_STATION = UINT#0) AND GVL_GEOMETRY_CONTROL.xSupported
 	AND GVL_GEOMETRY_CONTROL.astStatus[uiStation].xEnabled
+	AND NOT GVL_GEOMETRY_CONTROL.astStatus[uiStation].xDisablePending
 	AND GVL_GEOMETRY_CONTROL.astStatus[uiStation].xConfigured
 	AND NOT GVL_GEOMETRY_CONTROL.astStatus[uiStation].xError
 	AND (GVL_GEOMETRY_CONTROL.astStatus[uiStation].uiState <> UINT#5) THEN

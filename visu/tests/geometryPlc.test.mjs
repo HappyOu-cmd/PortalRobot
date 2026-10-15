@@ -294,12 +294,125 @@ test('removing an earlier sample preserves a newer queued call from the same mac
   assert.equal(s.Memory.xOccupied, false); assert.equal(s.events.at(-1).udiId, 42);
   assert.equal(s.GVL_GEOMETRY_CONTROL.astCalls[2].udiId, 43); assert.equal(s.GVL_GEOMETRY_CONTROL.astCalls[2].uiState, 1);
 });
-test('disabled handoff finishes robot release, then demands confirmation before enabling', () => {
-  const s = station(); enable(s); deposit(s); s.scan({ uiAction: 2 }); assert.equal(s.Status.xEnabled, true);
-  release(s); assert.equal(s.Status.xEnabled, false); assert.equal(s.Memory.xOccupied, true); assert.equal(s.xRunOutput, false);
-  s.scan({ uiAction: 1 }); assert.equal(s.Status.xConfirmationActive, true);
-  s.scan({ xPartAtEnd: true, uiAction: 3 }); assert.equal(s.Memory.xOccupied, true);
-  s.scan({ xPartAtEnd: false, uiAction: 3 }); assert.equal(s.Memory.xOccupied, false); assert.equal(s.Status.xEnabled, true);
+test('disable during handoff keeps transport until the end sensor and stopped feedback', () => {
+  for (const simulation of [false, true]) for (const stationId of [1, 2]) for (const phase of ['reserved', 'approach', 'deposited']) {
+    const s = station(); enable(s); s.xSimulation = simulation;
+    const Call = { ...emptyCall(), udiId: 42, uiMachine: 2, uiProductType: 3, uiStation: stationId, uiState: 3 };
+    s.Signals = { ...s.Signals, xReserve: true, xRobotInteraction: phase !== 'reserved', Call }; s.scan();
+    if (phase === 'deposited') { s.Signals.xDeposited = true; s.scan(); }
+    s.scan({ uiAction: 2 });
+    assert.equal(s.xCommandAccepted, true); assert.equal(s.Status.xEnabled, true);
+    assert.equal(s.Status.xDisablePending, true); assert.equal(s.Status.xReady, false);
+    assert.equal(s.Status.xManualStartAllowed, false);
+    s.Signals.xRobotInteraction = true; s.Signals.xDeposited = true; s.scan(); s.scan();
+    assert.equal(s.xRunOutput, false); assert.equal(s.Memory.udiProducedPartsTotal, 1);
+    release(s);
+    assert.equal(s.Status.xEnabled, true); assert.equal(s.Status.xDisablePending, true);
+    assert.equal(s.xRunOutput, true); assert.equal(s.Memory.xRecoveryRequired, false);
+    s.scan({ xPartAtEnd: true, xDriveRunning: true });
+    assert.equal(s.xRunOutput, false); assert.equal(s.Status.xEnabled, true);
+    s.scan({ xDriveRunning: true }, 2800);
+    assert.equal(s.Status.xDisablePending, true); assert.equal(s.Status.xEnabled, true);
+    s.scan({ xDriveRunning: false });
+    assert.equal(s.Status.xEnabled, false); assert.equal(s.Status.xDisablePending, false);
+    assert.equal(s.Memory.xOccupied, true); assert.equal(s.Memory.xAtEndSeen, true);
+    assert.equal(s.Memory.xRecoveryRequired, false); assert.equal(s.Memory.Part.udiId, 42);
+    assert.equal(s.Memory.udiProducedPartsTotal, 1); assert.equal(s.events.length, 1);
+    s.scan({}, 3000); assert.equal(s.xRunOutput, false); assert.equal(s.Status.xError, false);
+  }
+});
+
+test('disable during transport tolerates repeated requests and late running feedback', () => {
+  const s = station(); enable(s); deposit(s); release(s);
+  for (let request = 0; request < 3; request++) {
+    s.scan({ uiAction: 2, xDriveRunning: false }, 500);
+    assert.equal(s.xCommandAccepted, true); assert.equal(s.xRunOutput, true);
+    assert.equal(s.Status.xDisablePending, true); assert.equal(s.Memory.xRecoveryRequired, false);
+  }
+  s.scan({ xDriveRunning: true });
+  s.scan({ xPartAtEnd: true }); s.scan({ xDriveRunning: false });
+  assert.equal(s.Status.xEnabled, false); assert.equal(s.Status.xDisablePending, false);
+  assert.equal(s.Memory.Part.udiId, 42); assert.equal(s.Memory.udiProducedPartsTotal, 1);
+});
+
+test('disable after reaching the end waits for stopped feedback and preserves known occupancy', () => {
+  for (const running of [false, true]) {
+    const s = station(); enable(s); deposit(s); release(s); s.scan({ xPartAtEnd: true });
+    s.scan({ uiAction: 2, xDriveRunning: running });
+    assert.equal(s.Status.xEnabled, running); assert.equal(s.Status.xDisablePending, running);
+    s.scan({ xDriveRunning: false });
+    assert.equal(s.Status.xEnabled, false); assert.equal(s.Memory.xRecoveryRequired, false);
+    assert.equal(s.Memory.xOccupied, true); assert.equal(s.xRunOutput, false);
+  }
+});
+
+test('known sample removal after deferred disable keeps the three-second confirmation and newer call', () => {
+  const s = station(); enable(s); deposit(s); release(s); s.scan({ uiAction: 2 });
+  s.scan({ xPartAtEnd: true }); s.scan();
+  s.GVL_GEOMETRY_CONTROL.astCalls[2] = callFor(43, true);
+  s.scan({ xPartAtEnd: false }); s.scan({}, 2999); assert.equal(s.Memory.xOccupied, true);
+  s.scan({ xPartAtEnd: true }); s.scan({ xPartAtEnd: false }); s.scan({}, 3000);
+  assert.equal(s.Memory.xOccupied, false); assert.equal(s.Memory.xRecoveryRequired, false);
+  assert.equal(s.Status.xEnabled, false); assert.equal(s.xRunOutput, false);
+  assert.deepEqual(s.events.map(event => event.uiState), [4, 8]);
+  assert.equal(s.events.at(-1).udiId, 42); assert.equal(s.GVL_GEOMETRY_CONTROL.astCalls[2].udiId, 43);
+  s.scan({ uiAction: 1 }); assert.equal(s.Status.xEnabled, true); assert.equal(s.Status.xConfirmationActive, false);
+});
+
+test('Stop cancels deferred disable during handoff or transport and never restarts the belt', () => {
+  for (const phase of ['handoff', 'transport']) {
+    const s = station(); enable(s); deposit(s); if (phase === 'transport') release(s);
+    s.scan({ uiAction: 2 }); s.scan({ uiAction: 6 });
+    assert.equal(s.xCommandAccepted, true); assert.equal(s.xRunOutput, false);
+    assert.equal(s.Status.xDisablePending, false);
+    if (phase === 'handoff') release(s);
+    s.scan(); s.scan({}, 5000);
+    assert.equal(s.xRunOutput, false); assert.equal(s.Status.xEnabled, false);
+    assert.equal(s.Memory.xOccupied, true); assert.equal(s.Memory.xRecoveryRequired, true);
+    assert.equal(s.Memory.Part.udiId, 42);
+  }
+});
+
+test('faults and global blockers cancel deferred disable without reviving transport', () => {
+  for (const phase of ['handoff', 'transport']) for (const [field, value] of [
+    ['xDriveAlarm', true], ['xGlobalError', true], ['xIoManual', true], ['xSupported', false],
+  ]) {
+    const s = station(); enable(s); deposit(s); if (phase === 'transport') release(s);
+    s.scan({ uiAction: 2 }); s.scan({ [field]: value });
+    assert.equal(s.xRunOutput, false); assert.equal(s.Status.xEnabled, false);
+    assert.equal(s.Status.xDisablePending, false); assert.equal(s.Memory.xRecoveryRequired, true);
+    s.scan({ [field]: !value }); if (phase === 'handoff') release(s); s.scan();
+    assert.equal(s.xRunOutput, false); assert.equal(s.Memory.xOccupied, true);
+    assert.equal(s.Memory.Part.udiId, 42);
+  }
+});
+
+test('deferred disable keeps transport and drive feedback timeouts active', () => {
+  for (const failure of ['transport', 'start-feedback', 'stop-feedback']) {
+    const s = station(); enable(s); deposit(s); release(s); s.scan({ uiAction: 2 });
+    if (failure === 'transport') s.scan({}, 10001);
+    else {
+      const input = failure === 'start-feedback' ? { xDriveRunning: false } : { xPartAtEnd: true, xDriveRunning: true };
+      s.scan(input); s.scan(input, 3001);
+    }
+    assert.ok(s.Memory.dwAlarm & (failure === 'transport' ? 2 : 4), failure);
+    assert.equal(s.Status.xEnabled, false); assert.equal(s.Status.xDisablePending, false);
+    assert.equal(s.Memory.xRecoveryRequired, true); assert.equal(s.Memory.xOccupied, true);
+    assert.equal(s.xRunOutput, false);
+  }
+});
+
+test('released reservation without a deposit completes pending disable independently of the other GK', () => {
+  const s = station(), other = station(); enable(s); enable(other);
+  s.Signals = { ...s.Signals, xReserve: true, Call: { ...emptyCall(), udiId: 42 } }; s.scan();
+  s.scan({ uiAction: 2 });
+  assert.equal(s.Status.xEnabled, true); assert.equal(s.Status.xDisablePending, true);
+  s.Signals.xReserve = false; s.Signals.xReleased = true; s.scan();
+  assert.equal(s.Status.xEnabled, false); assert.equal(s.Status.xDisablePending, false);
+  assert.equal(s.Memory.xOccupied, false); assert.equal(s.Memory.xRecoveryRequired, false);
+  s.Signals.xReleased = false; s.Signals.xReserve = true; s.scan();
+  assert.equal(s.Status.xReserved, false); assert.equal(s.xRunOutput, false);
+  other.scan(); assert.equal(other.Status.xEnabled, true); assert.equal(other.Status.xReady, true);
 });
 test('manual drive ignores the end sensor and is denied with robot interaction, auto cycle or lost HMI', () => {
   const s = station(); s.scan({ xPartAtEnd: true, uiAction: 5 }); assert.equal(s.xRunOutput, true);
@@ -347,6 +460,21 @@ test('routing picks any free enabled GK without a magazine dependency', () => {
   s.GVL_GEOMETRY_CONTROL.astStatus[2].xReady = false; select(s); assert.equal(s.F_GEOMETRY_SELECT_STATION, 0);
   s.xRequireFree = false; select(s); assert.equal(s.F_GEOMETRY_SELECT_STATION, 1);
   s.GVL_GEOMETRY_CONTROL.astStatus[1].xError = true; select(s); assert.equal(s.F_GEOMETRY_SELECT_STATION, 2);
+});
+
+test('routing excludes pending GK from free selection and availability without blocking the other station', () => {
+  const select = compileSt(readPlc('FB/F_GEOMETRY_SELECT_STATION.st'));
+  for (const stationId of [1, 2]) for (const requireFree of [false, true]) {
+    const first = station(), second = station(); enable(first); enable(second);
+    const stations = [null, first, second];
+    const pending = stations[stationId]; deposit(pending, 42, stationId); pending.scan({ uiAction: 2 });
+    const state = { ...conversions, uiMachine: stationId === 1 ? 1 : 3, uiTry: 0, uiStation: 0,
+      F_GEOMETRY_SELECT_STATION: 0, xRequireFree: requireFree,
+      GVL_GEOMETRY_CONTROL: { xSupported: true, astStatus: [null, first.Status, second.Status] } };
+    select(state); assert.equal(state.F_GEOMETRY_SELECT_STATION, 3 - stationId);
+    stations[3 - stationId].Status.xEnabled = false;
+    select(state); assert.equal(state.F_GEOMETRY_SELECT_STATION, 0);
+  }
 });
 
 test('automatic cadence uses confirmed taken parts; forced sample restarts its own machine counter', () => {

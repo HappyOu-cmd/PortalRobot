@@ -32,5 +32,6 @@ STRUCT
 	dwEnableBlockers : DWORD; // Причины запрета команды включения; 0 = xEnableAllowed
 	dwConfirmBlockers : DWORD; // Причины запрета подтверждения пустоты; 0 = xConfirmAllowed
 	xCallWaitWarning : BOOL; // Активный W52 ячейки; снимается подтверждением предупреждений
+	xDisablePending : BOOL; // Штатное выключение ждёт завершения доставки и останова ленты
 END_STRUCT
 END_TYPE
