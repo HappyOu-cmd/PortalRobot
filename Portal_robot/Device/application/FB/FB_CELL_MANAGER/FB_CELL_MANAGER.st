@@ -90,6 +90,8 @@ VAR
 	xMagazine2CanSupplyBlank : BOOL; // М2 позволяет штатный план TAKE перед отдельной выгрузкой
 	xMagazine1CanExchangeDetail : BOOL; // Заготовка М1 освобождает слот для детали робота
 	xMagazine2CanExchangeDetail : BOOL;
+	xMagazine1CanPutDetail : BOOL; // Готовый магазин со свободным местом для детали робота
+	xMagazine2CanPutDetail : BOOL;
 	xActiveMagazineCanExchangeDetail : BOOL;
 	xHeldBlankLoadAvailable : BOOL; // При двух грузах можно сначала загрузить пустой станок
 	xMagazineMachineWorkPending : BOOL; // Из станка ещё потребуется выгрузка
@@ -245,6 +247,20 @@ xMagazine2Available := astMagazineStatus[2].xEnabled
 	AND NOT astMagazineStatus[2].xDisablePending
 	AND NOT astMagazineStatus[2].xFinished;
 
+// Реальная свободная позиция имеет приоритет перед дополнительным TAKE ради
+// освобождения места. Индекс типа проверяется до чтения массивов.
+xMagazine1CanPutDetail := FALSE;
+xMagazine2CanPutDetail := FALSE;
+IF stRobotStatus.xDetailAvailable
+AND (uiDetailPayloadType >= UINT#1)
+AND (uiDetailPayloadType <= Config.uiTypeCount)
+AND (uiDetailPayloadType <= UINT#3) THEN
+	xMagazine1CanPutDetail := xMagazine1Available
+		AND (astMagazineStatus[1].stTypeStatus.aiFreeSlot[uiDetailPayloadType] > SINT#0);
+	xMagazine2CanPutDetail := xMagazine2Available
+		AND (astMagazineStatus[2].stTypeStatus.aiFreeSlot[uiDetailPayloadType] > SINT#0);
+END_IF;
+
 // Полная палета тоже принимает деталь: сначала берём заготовку свободным
 // захватом 1, затем кладём деталь в освободившийся универсальный слот.
 // Заготовке нужен совместимый маршрут; станок может ещё обрабатывать изделие.
@@ -306,21 +322,9 @@ AND ((eState = E_CELL_MANAGER_STATE.PLAN_TARGET)
 AND (uiDetailPayloadType >= UINT#1)
 AND (uiDetailPayloadType <= Config.uiTypeCount) THEN
 	IF uiActiveMagazine = UINT#1 THEN
-		IF (astMagazineStatus[1].stTypeStatus.aiFreeSlot[uiDetailPayloadType] = SINT#0)
-		AND NOT xMagazine1CanExchangeDetail
-		AND xMagazine2Available THEN
-			IF astMagazineStatus[2].stTypeStatus.aiFreeSlot[uiDetailPayloadType] > SINT#0 THEN
-				xUseAlternateMagazineForDetail := TRUE;
-			END_IF;
-		END_IF;
+		xUseAlternateMagazineForDetail := NOT xMagazine1CanPutDetail AND xMagazine2CanPutDetail;
 	ELSIF uiActiveMagazine = UINT#2 THEN
-		IF (astMagazineStatus[2].stTypeStatus.aiFreeSlot[uiDetailPayloadType] = SINT#0)
-		AND NOT xMagazine2CanExchangeDetail
-		AND xMagazine1Available THEN
-			IF astMagazineStatus[1].stTypeStatus.aiFreeSlot[uiDetailPayloadType] > SINT#0 THEN
-				xUseAlternateMagazineForDetail := TRUE;
-			END_IF;
-		END_IF;
+		xUseAlternateMagazineForDetail := NOT xMagazine2CanPutDetail AND xMagazine1CanPutDetail;
 	END_IF;
 END_IF;
 // На каждой границе планирования проверяем ОБА магазина. Готовность механики
@@ -390,7 +394,15 @@ END_IF;
 // PUT возвращается в магазин взятой заготовки. Резервная укладка не меняет источник.
 // Между циклами дорабатываем выбранную палету; М1 имеет приоритет при первом выборе.
 uiPreferredMagazine := UINT#0;
-IF stRobotStatus.xDetailAvailable AND xMagazine1CanContinue
+IF xMagazine1CanPutDetail AND (uiReturnMagazine = UINT#1) THEN
+	uiPreferredMagazine := UINT#1;
+ELSIF xMagazine2CanPutDetail AND (uiReturnMagazine = UINT#2) THEN
+	uiPreferredMagazine := UINT#2;
+ELSIF xMagazine1CanPutDetail THEN
+	uiPreferredMagazine := UINT#1;
+ELSIF xMagazine2CanPutDetail THEN
+	uiPreferredMagazine := UINT#2;
+ELSIF stRobotStatus.xDetailAvailable AND xMagazine1CanContinue
 AND (uiReturnMagazine = UINT#1) THEN
 	uiPreferredMagazine := UINT#1;
 ELSIF stRobotStatus.xDetailAvailable AND xMagazine2CanContinue

@@ -198,6 +198,70 @@ test('fallback PUT does not take a new blank from the fallback magazine or repla
   }
 });
 
+test('a full preferred magazine yields to an available free slot without taking another blank', () => {
+  for (const owner of [1, 2]) {
+    const peer = 3 - owner, s = fixture();
+    s.uiActiveMagazine = s.uiSupplyMagazine = s.uiReturnMagazine = owner;
+    s.astMachineStatus[1].xEnabled = true;
+    for (const id of [1, 2]) s.astMagazineStatus[id].xEnabled = true;
+    s.astMagazineStatus[owner].stTypeStatus.aiBlankSlot[1] = 14;
+    s.astMagazineStatus[peer].stTypeStatus.aiFreeSlot[1] = 3;
+    for (let scan = 0; scan < 5; scan++) {
+      refresh(s);
+      assert.equal(s.uiActiveMagazine, peer);
+    }
+    plan(s); captureCycle(s);
+    assert.equal(s.eMagazineOperation, 'E_MAGAZINE_OPERATION.PUT');
+    assert.equal(s.iTakeSlot, 0);
+    assert.equal(s.uiReturnMagazine, owner);
+  }
+});
+
+test('fallback PUT works with both grippers occupied and waits when neither magazine has a place', () => {
+  for (const owner of [1, 2]) for (const conflict of ['disabled', 'error', 'full']) {
+    const peer = 3 - owner, s = fixture();
+    s.uiActiveMagazine = s.uiSupplyMagazine = s.uiReturnMagazine = owner;
+    s.stRobotStatus.xBlankAvailable = true; s.uiBlankPayloadType = 1;
+    for (const id of [1, 2]) s.astMagazineStatus[id].xEnabled = true;
+    s.astMagazineStatus[owner].stTypeStatus.aiFreeSlot[1] = conflict === 'full' ? 0 : 3;
+    if (conflict === 'disabled') s.astMagazineStatus[owner].xEnabled = false;
+    if (conflict === 'error') s.astMagazineStatus[owner].xError = true;
+    s.astMagazineStatus[peer].stTypeStatus.aiFreeSlot[1] = 4;
+    refresh(s); assert.equal(s.uiActiveMagazine, peer);
+    plan(s); assert.equal(s.eMagazineOperation, 'E_MAGAZINE_OPERATION.PUT');
+    assert.equal(s.uiReturnMagazine, owner); assert.equal(s.iTakeSlot, 0);
+    s.eState = 'E_CELL_MANAGER_STATE.PLAN_TARGET';
+    s.astMagazineStatus[peer].stTypeStatus.aiFreeSlot[1] = 0;
+    refresh(s); plan(s);
+    assert.equal(s.eState, 'E_CELL_MANAGER_STATE.WAIT_MAGAZINE');
+    assert.equal(s.stRobotStatus.xBlankAvailable, true); assert.equal(s.stRobotStatus.xDetailAvailable, true);
+  }
+});
+
+test('one magazine exchanges while the robot works through the other and recovery does not steal its source', () => {
+  for (const exchanging of [1, 2]) {
+    const working = 3 - exchanging, s = fixture();
+    s.uiActiveMagazine = s.uiSupplyMagazine = s.uiReturnMagazine = working;
+    s.astMachineStatus[1].xEnabled = true;
+    for (const id of [1, 2]) {
+      s.astMagazineStatus[id].xEnabled = true;
+      s.astMagazineStatus[id].stTypeStatus.aiFreeSlot[1] = 3;
+    }
+    s.astMagazineStatus[working].stTypeStatus.aiBlankSlot[1] = 14;
+    s.axMagazineExchangeInProgress[exchanging] = true;
+    refresh(s); assert.equal(s.uiActiveMagazine, working);
+    plan(s); assert.equal(s.eState, 'E_CELL_MANAGER_STATE.MAGAZINE_EXECUTE');
+    assert.equal(s.eMagazineOperation, 'E_MAGAZINE_OPERATION.CHANGE');
+    s.eState = 'E_CELL_MANAGER_STATE.PLAN_TARGET';
+    s.axMagazineExchangeInProgress[exchanging] = false;
+    s.astMagazineStatus[exchanging].stTypeStatus.aiBlankSlot[1] = 8;
+    for (let scan = 0; scan < 10; scan++) { refresh(s); assert.equal(s.uiActiveMagazine, working); }
+    s.stRobotStatus.xDetailAvailable = false;
+    s.astMagazineStatus[working].stTypeStatus.aiBlankSlot[1] = 0;
+    refresh(s); assert.equal(s.uiActiveMagazine, exchanging);
+  }
+});
+
 test('a full fallback pallet cannot advertise CHANGE for a payload owned by the other magazine', () => {
   const s = fixture();
   s.astMachineStatus[1].xEnabled = true;
@@ -313,11 +377,11 @@ test('a newly enabled full magazine resumes the cycle for empty, finished and pr
   }
 });
 
-test('magazine priority is stable when its full pallet can exchange, and unavailable magazines are excluded', () => {
+test('a free destination stays preferred over a full pallet exchange and unavailable magazines are excluded', () => {
   const s = fixture(); s.astMachineStatus[1].xEnabled = true;
   for (const id of [1, 2]) { s.astMagazineStatus[id].xEnabled = true; s.astMagazineStatus[id].stTypeStatus.aiBlankSlot[1] = 14; }
   s.astMagazineStatus[2].stTypeStatus.aiFreeSlot[1] = 3;
-  for (let scan = 0; scan < 10; scan++) { refresh(s); assert.equal(s.uiActiveMagazine, 1); }
+  for (let scan = 0; scan < 10; scan++) { refresh(s); assert.equal(s.uiActiveMagazine, 2); }
   for (const [field, value] of [['xEnabled', false], ['xReady', false], ['xBusy', true], ['xError', true], ['xDisablePending', true], ['xFinished', true]]) {
     const q = fixture(); q.astMachineStatus[1].xEnabled = true;
     q.astMagazineStatus[1].xEnabled = true; q.astMagazineStatus[1].stTypeStatus.aiBlankSlot[1] = 14;

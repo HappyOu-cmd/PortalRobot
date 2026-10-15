@@ -61,7 +61,7 @@ export interface TwinState {
   config: TwinConfig; pallets: [PalletInventory, PalletInventory];
 }
 export const TWIN_REASONS = ['', 'Выбран статичный магазин', 'Настройте и подтвердите параметры механизма',
-  'Не подключены ось SoftMotion или I/O', 'Нет разрешения безопасности', 'Робот не готов к магазину или находится в его зоне',
+  'Не подключены ось SoftMotion или I/O', 'Нет разрешения безопасности', 'Робот выполняет или ожидает операцию с этим магазином',
   'Ошибка привода: сброс, затем Home', 'Противоречивые датчики', 'Требуется поиск дома при опущенной П2',
   'Замок и фиксатор не соответствуют настроенным сочетаниям П1/П2', 'Каретка не остановлена',
   'Каретка не в рабочей позиции выбранной палеты', 'Герконы не соответствуют настроенной конфигурации П1/П2',
@@ -69,7 +69,8 @@ export const TWIN_REASONS = ['', 'Выбран статичный магазин
   'Настройте базовую точку этого магазина, Safe Z и Change Z в точках робота',
   'Проверьте геометрию матрицы магазина',
   'Нет связи HMI с PLC', 'Привод каретки выключен', 'Активна авария механизма магазина',
-  'Для первого подтверждения включите ручной режим', '', 'Механизм выполняет команду'];
+  'Для первого подтверждения включите ручной режим', 'Для ручной наладки выключите магазин', 'Механизм выполняет команду',
+  'Автообмен ждёт завершения последнего обслуживания и возврата детали'];
 export const TWIN_STEPS: Record<number, string> = { 0: 'Ожидание', 20: '1/5 · Опускание П2', 30: '2/5 · Возврат к оператору',
   40: '3/5 · Переключение зацепления', 50: '4/5 · Подача к роботу', 60: '5/5 · Рабочее положение подъёма П2',
   100: 'Опускание П2', 110: 'Подъём П2', 120: 'Переключение зацепления', 130: 'Ход каретки', 150: 'Поиск дома', 160: 'JOG',
@@ -141,20 +142,21 @@ export function syncTwinPreview(twin: TwinState, controller: TwoPalletPreviewCon
     const phase = Number(pose.label.match(/^([1-5])\/5/)?.[1]);
     if (phase) next.step = (phase + 1) * 10;
   }
-  next.allowed = { confirm: idle && next.powered && next.homed && !!next.candidate && !next.error && !next.homeRequired,
-    start: idle && next.powered && next.homed && !!next.candidate && !next.error && !next.homeRequired,
+  const setup = idle && !next.enabled;
+  next.allowed = { confirm: setup && next.powered && next.homed && !!next.candidate && !next.error && !next.homeRequired,
+    start: setup && next.powered && next.homed && !!next.candidate && !next.error && !next.homeRequired,
     enable: idle && next.confirmed && !!next.candidate && !next.error && next.powered,
     swap: idle && next.confirmed && !next.enabled && !!next.candidate && !next.error && next.powered,
-    power: idle && !next.driveError, driveReset: idle, home: idle && lower && next.powered && !next.driveError,
-    lower: idle, raise: idle && !next.homeRequired,
-    select: idle && pose.canSelect, lock: idle, stop: idle, move: idle && lower && next.powered && next.homed && !next.homeRequired,
-    jog: idle && lower && next.powered && !next.driveError,
-    teachOperator: idle && lower && next.powered && next.homed && !next.homeRequired && !next.driveError,
-    teachWork: idle && lower && next.powered && next.homed && !next.homeRequired && !next.driveError && !!next.selected,
-    reset: idle && !!next.error && !next.driveError && !next.homeRequired,
+    power: setup && !next.driveError, driveReset: setup, home: setup && lower && next.powered && !next.driveError,
+    lower: setup, raise: setup && !next.homeRequired,
+    select: setup && pose.canSelect, lock: setup, stop: setup, move: setup && lower && next.powered && next.homed && !next.homeRequired,
+    jog: setup && lower && next.powered && !next.driveError,
+    teachOperator: setup && lower && next.powered && next.homed && !next.homeRequired && !next.driveError,
+    teachWork: setup && lower && next.powered && next.homed && !next.homeRequired && !next.driveError && !!next.selected,
+    reset: setup && !!next.error && !next.driveError && !next.homeRequired,
     edit1: false, edit2: false, load: false,
     edit: true,
-    config: idle && !next.enabled && !next.powered };
+    config: setup && !next.powered };
   if (!valid) {
     for (const key of Object.keys(next.allowed) as (keyof TwinState['allowed'])[]) {
       if (!['config', 'driveReset', 'edit', 'edit1', 'edit2', 'lock', 'stop', 'lower'].includes(key)) next.allowed[key] = false;
@@ -165,7 +167,7 @@ export function syncTwinPreview(twin: TwinState, controller: TwoPalletPreviewCon
   next.allowed.load = next.confirmed && !next.busy && !next.pallets[2 - next.robotPallet].loaded
     && (next.robotPallet === 1 ? next.allowed.edit2 : next.allowed.edit1);
   next.ready = next.powered && valid && next.enabled && next.confirmed && !next.busy && !next.error && !!next.candidate;
-  next.reason = !valid ? 2 : next.driveError ? 6 : next.homeRequired ? 8 : !next.candidate ? upper ? 11 : 12 : !next.confirmed ? 13 : !next.pallets[2 - next.robotPallet].loaded ? 14 : 0;
+  next.reason = !valid ? 2 : next.driveError ? 6 : next.homeRequired ? 8 : !next.candidate ? upper ? 11 : 12 : next.enabled ? 21 : !next.confirmed ? 13 : !next.pallets[2 - next.robotPallet].loaded ? 14 : 0;
   return next;
 }
 export interface TwinCommandData { pallet?: number; revision?: number; slot?: number; content?: number; productType?: number; autoSwapEnabled?: boolean; config?: TwinConfig }

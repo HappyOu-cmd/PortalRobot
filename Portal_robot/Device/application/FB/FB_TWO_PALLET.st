@@ -3,7 +3,7 @@ VAR_INPUT
 	xSelected : BOOL;
 	xManual : BOOL;
 	xSafe : BOOL;
-	xRobotSwapWindow : BOOL; // Робот не выполняет и не ожидает операцию именно с этим магазином
+	xRobotSwapWindow : BOOL; // Завершено последнее обслуживание: разрешён автоматический обмен
 	xRobotOperation : BOOL; // Текущая или уже выданная операция с этим магазином
 	xPointsConfigured : BOOL; // Собственная база магазина нужна для ввода в автомат
 	xRobotGeometryReady : BOOL; // Собственная база магазина и поддерживаемый интерфейс робота
@@ -47,6 +47,7 @@ VAR
 	xExchange : BOOL;
 	xIdle : BOOL;
 	xBase : BOOL;
+	xManualSetupAllowed : BOOL;
 	xRecovery : BOOL;
 	xPneumaticBase : BOOL;
 	xPneumaticRecovery : BOOL;
@@ -229,15 +230,17 @@ xBase := xSelected
 	AND Input.xAxisBound
 	AND xSafe
 	AND NOT xRobotOperation;
+xManualSetupAllowed := xManual
+	AND NOT Status.xEnabled
+	AND NOT xRobotOperation;
 xRecovery := xBase
-	AND xManual
+	AND xManualSetupAllowed
 	AND xConnection
 	AND xIdle
 	AND Input.xStandstill;
 xPneumaticBase := xSelected
-	AND xManual
+	AND xManualSetupAllowed
 	AND xSafe
-	AND NOT xRobotOperation
 	AND Input.xIoMapped
 	AND Input.xStandstill;
 xPneumaticRecovery := xPneumaticBase AND xIdle;
@@ -313,6 +316,12 @@ ELSIF uiSignals <> uiSelectedSignals THEN
 	Diag.uiReason := UINT#12;
 ELSIF NOT xIdle THEN
 	Diag.uiReason := UINT#22;
+ELSIF xRobotOperation THEN
+	Diag.uiReason := UINT#5;
+ELSIF xManual AND Status.xEnabled THEN
+	Diag.uiReason := UINT#21;
+ELSIF NOT xManual AND NOT xRobotSwapWindow THEN
+	Diag.uiReason := UINT#23;
 ELSIF NOT xRobotMagazineReady THEN
 	Diag.uiReason := UINT#16;
 ELSIF NOT xPointsConfigured THEN
@@ -336,9 +345,10 @@ END_IF;
 IF xSelected
 	AND NOT xIdle
 	AND (((NOT xBase) AND NOT (xManualPneumaticState AND xPneumaticBase))
+		OR (xManualState AND NOT xManual)
 		OR ((NOT xConnection) AND xManualState AND NOT xManualPneumaticState) OR xStopRequest
 		OR (xAutomaticState AND ((xExchangeStartedManual AND NOT xManual)
-			OR NOT xRobotSwapWindow))) THEN
+			OR (NOT xExchangeStartedManual AND NOT xRobotSwapWindow)))) THEN
 	Error.dwErrorActive := Error.dwErrorActive OR ERR_SEQUENCE_INTERRUPTED;
 	Diag.eState := E_TWO_PALLET_STATE.IDLE;
 	Output.xStop := TRUE;
@@ -394,6 +404,8 @@ Status.xConfirmAllowed := xRecovery
 Status.xStartAllowed := Status.xConfirmAllowed
 	AND xRobotMagazineReady
 	AND xPointsConfigured;
+// Включение подтверждённого магазина не двигает палету и не снимает резерв
+// возврата изделия. Иначе Disable при грузе в роботе блокирует продолжение цикла.
 // Общая технологическая готовность не зависит от heartbeat HMI.
 xEnableBaseAllowed := xBase
 	AND xIdle
@@ -416,7 +428,7 @@ Status.xSwapAllowed := xBase
 	AND (uiCandidate = Status.uiRobotPallet)
 	AND NOT Status.xEnabled
 	AND NOT xStopRequest
-	AND xRobotSwapWindow;
+	AND (xRobotSwapWindow OR xManual);
 xAutoSwapAllowed := xEnableBaseAllowed
 	AND xRobotSwapWindow
 	AND Status.xEnabled
@@ -425,7 +437,7 @@ Status.xPowerAllowed := xRecovery
 	AND NOT Input.xDriveError
 	AND NOT xContradiction;
 Status.xDriveResetAllowed := xSelected
-	AND xManual
+	AND xManualSetupAllowed
 	AND xConnection
 	AND Input.xAxisBound
 	AND Input.xStandstill
@@ -467,12 +479,11 @@ Status.xResetAllowed := xRecovery
 	AND xPairValid
 	AND (Input.xLiftDown XOR Input.xLiftUp);
 Status.xConfigAllowed := xSelected
-	AND xManual
+	AND xManualSetupAllowed
 	AND xIdle
 	AND NOT Status.xEnabled
 	AND (Input.xStandstill OR NOT Input.xAxisBound)
-	AND NOT Input.xPowered
-	AND NOT xRobotOperation;
+	AND NOT Input.xPowered;
 
 // Командный интерфейс FB не зависит от транспортных номеров HMI 1..19.
 xCommandPresent := Command.xEnable
@@ -643,7 +654,7 @@ ELSIF Command.xJogPositive OR Command.xJogNegative THEN
 	IF Status.xJogAllowed
 		OR ((Diag.eState = E_TWO_PALLET_STATE.MANUAL_JOG)
 			AND xBase
-			AND xManual
+			AND xManualSetupAllowed
 			AND xConnection) THEN
 		Diag.eState := E_TWO_PALLET_STATE.MANUAL_JOG;
 		IF Command.xJogPositive THEN
@@ -1073,9 +1084,9 @@ END_IF;
 // при выключенном магазине после освобождения текущей/выданной операции с ним.
 // Считаем после команд и обмена, чтобы роль палеты была актуальна в этом скане.
 Status.xEdit1Allowed := xSelected
-	AND ((Status.uiRobotPallet <> UINT#1) OR (NOT Status.xEnabled AND xActivePalletEditAllowed));
+	AND ((Status.uiRobotPallet <> UINT#1) OR (xManual AND NOT Status.xEnabled AND xActivePalletEditAllowed));
 Status.xEdit2Allowed := xSelected
-	AND ((Status.uiRobotPallet <> UINT#2) OR (NOT Status.xEnabled AND xActivePalletEditAllowed));
+	AND ((Status.uiRobotPallet <> UINT#2) OR (xManual AND NOT Status.xEnabled AND xActivePalletEditAllowed));
 Status.xEditAllowed := Status.xEdit1Allowed OR Status.xEdit2Allowed;
 Status.xLoadAllowed := Status.xConfirmed AND NOT Status.xBusy AND NOT xOtherLoaded
 	AND (((Status.uiRobotPallet = UINT#1) AND Status.xEdit2Allowed)

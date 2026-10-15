@@ -843,7 +843,7 @@ CODESYS, PLC Runtime, gateway и оборудование не запускаю�
 | Фиксированный тест | Входное состояние | Ожидаемый результат |
 | --- | --- | --- |
 | `a newly enabled full magazine resumes the cycle for empty, finished and processing machines, across all product types`, 72 сочетания | Робот с деталью ждёт, оба магазина выключены; включается полный М1/М2 с заготовкой; типы детали и заготовки 1..3; совместимый станок пуст, готов к обмену, обрабатывает или подтверждает запуск | Условие W29 исчезает, без Start выбирается CHANGE с TAKE=PUT=14 и совместимый станок; прежняя запись предупреждения остаётся до подтверждения |
-| `magazine priority is stable when its full pallet can exchange, and unavailable magazines are excluded` | Полный М1 позволяет обмен, М2 имеет свободный слот; отдельно выключенный/не готовый/занятый/аварийный/отключаемый/выработанный М1 и смена его палет | Десять сканов сохраняют приоритет М1 без переключений туда-сюда; недоступный магазин не считается маршрутом, при обмене выбран М2 |
+| `a free destination stays preferred over a full pallet exchange and unavailable magazines are excluded` | Полный М1 позволяет CHANGE, М2 имеет свободный слот; отдельно недоступный М1 | Десять сканов сохраняют выбор свободного места М2 без переключений туда-сюда; недоступный магазин исключён |
 | `missing compatible stock, excluded machines and a closed first gripper keep W29 and do not issue CHANGE` | Нет пустых слотов; неверный тип заготовок, выключенный/аварийный/отключаемый/заблокированный ГК станок, закрытый захват 1 либо неизвестный тип детали | Нет CHANGE; сохраняется ожидание и W29 при известном типе, неизвестный тип детали даёт существующую ошибку |
 | `W29 is suppressed for a valid exchange at Start and for loading a held blank into an empty machine` | Start из IDLE с деталью и доступным обменом; затем два груза и пустой совместимый станок | Нового W29 нет; при двух грузах выбран LOAD |
 | `same-slot CHANGE takes first, rotates above the slot, then deposits and counts the detail exactly once` | CHANGE слота 14: заготовка T2, у робота деталь T1 | CLAMP_1 на шаге 3 освобождает слот; поворот в MAGAZINE_CHANGE; UNCLAMP_2 на шаге 8 записывает деталь T1; счётчик выпуска увеличивается ровно один раз, выход в MAGAZINE_SAFE |
@@ -1196,3 +1196,39 @@ Node: `tests/magazineDetailExchangePlc.test.mjs`.
 Существующий тест разрешений `PLC owns per-pallet edit permissions and does not write into FB outputs from outside`
 учитывает новое внутреннее поле владельца. Контракты внешних OPC UA-полей и
 тексты/эффекты предупреждений и аварий не изменены.
+
+## Повторное включение магазина с резервом возврата — 15.10.2026
+
+Запуск из `visu`: `node --test tests/twoPalletPlcContract.test.mjs tests/magazineDetailExchangePlc.test.mjs tests/twoPalletControl.test.mjs gateway/two-pallet-channel.test.mjs`.
+Проверяются выражения и ограниченные ветви фактических ST-исходников; CODESYS,
+рабочие базы и оборудование не запускаются. Сохранены проверки резерва возврата
+из `robot_simulator/tests/test_pallet_exchange_regressions.py`.
+
+| Фиксированный тест | Входное состояние | Ожидаемый результат |
+| --- | --- | --- |
+| `a stopped paired cycle can re-enable its confirmed magazine without releasing the return reservation`, 4 сочетания | М1/М2 выключен после Stop, механизм исправен и подтверждён; фактическая операция завершена, `uiReturnMagazine` сохранён; Manual/Auto | PLC разрешает и принимает Enable; подтверждение, роль, ревизия, координата и резерв сохранены; движения нет |
+| `a stopped disabled magazine permits manual recovery and robot-pallet edits despite a return preference`, М1/М2 | Stop, Manual, выключенный магазин с предпочтением возврата и освобождённой операцией; отдельно Auto, включённый магазин, аварийная защита/Busy/Execute | Предпочтение не блокирует ручную наладку, обмен и правку рабочей палеты; автообмен остаётся запрещён до последнего возврата. Наладка запрещена при Auto/включённом магазине/занятой операции/неготовой защите; операторская палета остаётся доступна |
+| `an actual robot operation still blocks magazine re-enable while an unrelated reservation does not`, М1/М2 | Подтверждённый магазин; Busy, DisablePending, Execute, движение робота в его контексте либо этап MAGAZINE/RELEASE_MAGAZINE; отдельно резерв другого магазина | Каждый из восьми признаков своей фактической/выданной операции запрещает Enable; резерв другого магазина включению не мешает |
+
+## Уточнение ручной наладки и резервного возврата — 15.10.2026
+
+В том же наборе `node --test tests/twoPalletPlcContract.test.mjs tests/magazineDetailExchangePlc.test.mjs tests/twoPalletControl.test.mjs gateway/two-pallet-channel.test.mjs`
+добавлены и уточнены следующие фиксированные проверки. Они исполняют ограниченные
+ветви и выражения фактического ST без CODESYS и оборудования. Локальная модель
+проверяется отдельно; оформление интерфейса оценивает пользователь.
+
+| Фиксированный тест | Входное состояние | Ожидаемый результат |
+| --- | --- | --- |
+| `manual exchange ignores the return preference but automatic exchange waits for its release` | Идёт ручной/автоматический обмен; предпочтение возврата сохранено/снято; роботная операция появилась/отсутствует | Ручной обмен не прерывается из-за предпочтения. Автоматический останавливается при потере разрешения завершённого обслуживания; реальная операция своего магазина блокирует оба |
+| `automatic exchange waits for the final return but permits robot work through the peer magazine`, М1/М2 | Включённый подтверждённый механизм; своё последнее обслуживание ещё закреплено, затем освобождено; робот движется в своём/чужом контексте | До последнего возврата автообмена нет; после освобождения движение и обслуживание другого магазина не мешают, собственная операция запрещает обмен |
+| `PLC explains busy operations, enabled manual setup and the automatic return wait separately` | Исправный механизм; реальная операция, включённый магазин в Manual либо резерв последнего возврата в Auto; затем Manual при выключенном магазине | Причины 5, 21, 23 соответственно; старое предпочтение в Manual само по себе не создаёт запрет |
+| `a full preferred magazine yields to an available free slot without taking another blank`, М1/М2 | Предпочтительный магазин полный и содержит подходящую заготовку; другой готов и имеет свободное место | Пять сканов стабильно выбирают другой магазин; PUT без TAKE/CHANGE; предпочтительный магазин и источник сохранены до подтверждения укладки |
+| `fallback PUT works with both grippers occupied and waits when neither magazine has a place`, 6 сочетаний | Заготовка и деталь в захватах, станки не принимают заготовку; исходный магазин выключен/аварийный/полный, другой имеет место; затем место исчезло | Сначала PUT в другой без взятия новой заготовки. После исчезновения всех доступных мест WAIT_MAGAZINE, оба груза сохранены |
+| `one magazine exchanges while the robot works through the other and recovery does not steal its source`, обе стороны | М1/М2 в обмене, другой обслуживает станок; затем первый восстановлен и содержит заготовки | CHANGE через работающий магазин разрешён во время чужого обмена. Десять сканов после восстановления сохраняют источник; переключение после исчерпания его заготовок |
+| `enabled preview blocks manual setup until disable and motion requires a fresh arrangement confirmation` | Локальный магазин включён; попытка опустить П2; затем Disable, опускание, подъём и новое подтверждение | Включённый магазин отклоняет ручную наладку без движения; после Disable она доступна. Движение снимает подтверждение, Enable ждёт нового подтверждения |
+| `operator exchange uses the return lock in Auto and released manual setup in Manual` | Операторский обмен в Auto/Manual при выключенном магазине | В Auto требуется освобождение последнего обслуживания; в Manual старое предпочтение не препятствует обмену. Режим начала обмена фиксируется и проверяется до завершения |
+| `PLC inventory truth table keeps the operator pallet editable independently of mechanism and mode` | Обе роли палет, Enabled/Disable, Manual/Auto, реальная операция освобождена/занята | Операторская палета доступна независимо от этих флагов; роботная требует Manual при остановленном цикле, выключенного магазина и освобождённой операции |
+
+W30 сохраняет эффект WARNING; условия, сброс и сообщение синхронизированы с
+документами 15/16 и alarm-catalog.json. Причины готовности 21/23 не являются новыми
+авариями или предупреждениями. OPC UA-структуры не расширялись.

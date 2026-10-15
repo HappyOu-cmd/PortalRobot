@@ -132,6 +132,22 @@ test('ordinary disable and re-enable preserve the confirmed arrangement', () => 
   f.send('enable'); assert.equal(f.state.enabled, true);
 });
 
+test('enabled preview blocks manual setup until disable and motion requires a fresh arrangement confirmation', () => {
+  const f = fixture(); f.confirm(); f.send('enable');
+  assert.equal(f.state.reason, 21);
+  for (const permission of ['confirm', 'start', 'power', 'driveReset', 'home', 'lower', 'raise', 'select',
+    'lock', 'stop', 'move', 'jog', 'teachOperator', 'teachWork', 'config']) {
+    assert.equal(f.state.allowed[permission], false, permission);
+  }
+  const pose = { ...f.controller.pose };
+  f.send('lower'); assert.equal(f.state.busy, false); assert.deepEqual(f.controller.pose, pose);
+  f.send('disable'); assert.equal(f.state.allowed.lower, true);
+  f.send('lower'); f.settle();
+  assert.equal(f.state.confirmed, false); assert.equal(f.state.allowed.enable, false);
+  f.send('raise'); f.settle(); f.confirm(); f.send('enable');
+  assert.equal(f.state.enabled, true);
+});
+
 test('idle Stop after disable preserves the arrangement, revision, Home, pose and inventories', () => {
   const f = fixture(); f.confirm(); f.send('fill', { pallet: 1 }); f.send('loaded', { pallet: 1 });
   f.send('enable'); f.send('disable');

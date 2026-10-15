@@ -191,10 +191,11 @@ FOR uiTwin := 1 TO 2 DO
 	END_IF;
 	astTwinCommand[uiTwin].udiRevision := GVL_TWO_PALLET.audiRevision[uiTwin];
 
-	// xBusy не покрывает удерживаемый запрос и завершение Disable.
+	// Фактическая операция включает удерживаемый запрос и завершение Disable.
+	// Предпочтение возврата удерживает только автообмен до последнего PUT.
+	// Повторное включение и ручная наладка зависят от фактической операции.
 	// Занятость другого магазина/станка сама по себе не запрещает правку инвентаря.
 	xTwinRobotOperation := GVL_MAGAZINE.astPartStatus[uiTwin].xBusy
-		OR (CELL_MANAGER.uiReturnMagazine = uiTwin)
 		OR GVL_MAGAZINE.astPartStatus[uiTwin].xDisablePending
 		OR GVL_MAGAZINE.astAutoCommand[uiTwin].xExecute
 		OR GVL_MAGAZINE.astCommand[uiTwin].xExecute
@@ -205,7 +206,8 @@ FOR uiTwin := 1 TO 2 DO
 				OR (GVL_CELL_MANAGER.Diag.eState = E_CELL_STATE.RELEASE_MAGAZINE)));
 	// Для обмена важна занятость только этого магазина. Точка и состояние
 	// интерфейса робота после инициализации могут быть неизвестны.
-	xTwinRobotSwapWindow := NOT xTwinRobotOperation;
+	xTwinRobotSwapWindow := NOT xTwinRobotOperation
+		AND (CELL_MANAGER.uiReturnMagazine <> uiTwin);
 	xTwinOtherLoaded := FALSE;
 	xTwinRobotHasBlank := TRUE; // Неизвестная роль палеты запрещает автоматический обмен
 	xTwinOtherHasBlank := FALSE;
