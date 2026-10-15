@@ -120,7 +120,7 @@ def smoke_scenarios() -> list[dict[str, Any]]:
         # После возврата заготовки работа в ячейке ещё потенциально существует,
         # но ни одного станка нет. Проверяем операцию и штатно запрашиваем Stop,
         # а не ошибочно ждём самостоятельного завершения всего автоцикла.
-        scenario("Вернуть ненужную заготовку", machines=((MACHINE_DISABLED, 0),) * 3, slots=_slots((1, EMPTY, 1)), gripper_1=(BLANK, 1), orientation=1, expected="return-blank", full_cycle=False),
+        scenario("Ждать с заготовкой одного типа", machines=((MACHINE_DISABLED, 0),) * 3, slots=_slots((1, EMPTY, 1)), gripper_1=(BLANK, 1), orientation=1, expected="held-blank-wait", full_cycle=False),
         scenario("Готовая деталь в захвате 2", slots=_slots((1, EMPTY, 1)), gripper_2=(DETAIL, 1), orientation=1, expected="magazine-put"),
         scenario("Два типа и запрос оператора", type_count=2, machines=((1, 1), (1, 2), (0, 1)), slots=_slots((1, EMPTY, 1)), gripper_1=(BLANK, 2), expected="operator-type-choice", full_cycle=False),
         scenario("Три типа и совместимый станок", type_count=3, machines=((1, 1), (1, 2), (1, 3)), slots=_slots((1, EMPTY, 1)), gripper_1=(BLANK, 3), expected="operator-type-choice", full_cycle=False),
@@ -252,6 +252,41 @@ def expected_error_owner(initial_state: dict[str, Any]) -> int:
     return owners[0] if len(owners) == 1 else 0
 
 
+def _can_return_held_blank(initial_state: dict[str, Any], blank_type: int) -> bool:
+    if int(initial_state["typeCount"]) <= 1:
+        return False
+    faults = initial_state.get("faultMasks", {})
+    magazine_faults = faults.get("magazines", [0, 0])
+    machine_faults = faults.get("machines", [0, 0, 0])
+    available = [
+        (index, magazine)
+        for index, magazine in enumerate(initial_state["magazines"])
+        if bool(magazine.get("enabled", False)) and not magazine_faults[index]
+    ]
+    if not available:
+        return False
+    return_magazine, return_inventory = available[0]
+    if not any(int(slot["content"]) == EMPTY for slot in return_inventory["slots"]):
+        return False
+    for index, magazine in available:
+        blank_types = {
+            int(slot["productType"])
+            for slot in magazine["slots"] if int(slot["content"]) == BLANK
+        }
+        free_count = sum(int(slot["content"]) == EMPTY for slot in magazine["slots"])
+        for machine_index, machine in enumerate(initial_state["machines"]):
+            state = int(machine["state"])
+            product_type = int(machine["productType"])
+            if machine_faults[machine_index] or product_type == blank_type:
+                continue
+            if state in (MACHINE_EMPTY_READY, MACHINE_BLANK_PROCESSING, MACHINE_DETAIL_READY):
+                if product_type in blank_types:
+                    return True
+            if state == MACHINE_DETAIL_READY and free_count > int(index == return_magazine):
+                return True
+    return False
+
+
 def expected_first_decision(initial_state: dict[str, Any]) -> str:
     grippers = initial_state["grippers"]
     if grippers[0]["content"] == BLANK:
@@ -283,7 +318,7 @@ def expected_first_decision(initial_state: dict[str, Any]) -> str:
             )
         if any(int(machine["state"]) == MACHINE_BLANK_PROCESSING for machine in compatible):
             return "machine-change"
-        return "return-blank"
+        return "return-blank" if _can_return_held_blank(initial_state, blank_type) else "held-blank-wait"
     if grippers[1]["content"] == DETAIL:
         return "magazine-put"
 
@@ -359,15 +394,16 @@ def generated_scenarios(seed: int, count: int) -> list[dict[str, Any]]:
             # The PLC asks for a compatible starting machine when both payloads are present.
             machines[0] = (MACHINE_EMPTY_READY, gripper_1[1])
         rejected = (index + 1) % 10 == 0
-        run_full_cycle = not rejected and full_cycle_assigned < full_cycle_target
-        if run_full_cycle:
-            full_cycle_assigned += 1
         item = scenario(
             f"Generated {seed}-{index + 1}", type_count=type_count, machines=machines,
             slots=slot_values, gripper_1=gripper_1, gripper_2=gripper_2,
-            orientation=randomizer.randint(0, 1), full_cycle=run_full_cycle,
+            orientation=randomizer.randint(0, 1), full_cycle=False,
         )
         item["expectations"]["firstDecision"] = expected_first_decision(item["initialState"])
+        if (not rejected and item["expectations"]["firstDecision"] != "held-blank-wait"
+                and full_cycle_assigned < full_cycle_target):
+            item["expectations"]["fullCycle"] = True
+            full_cycle_assigned += 1
         if rejected:
             # Тип слота является общей конфигурацией двух магазинов. Оставляем
             # одинаковое намеренно неверное значение в обоих снимках, чтобы

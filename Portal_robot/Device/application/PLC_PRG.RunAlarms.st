@@ -70,11 +70,6 @@ FOR uiTwin := 1 TO 2 DO
 END_FOR;
 
 // В журнал передаются все активные ошибки и предупреждения каждого функционального блока.
-IF GVL_GEOMETRY_CONTROL.stCellWarning.udiSequence <> udiGeometryCellWarningSeen THEN
-	udiGeometryCellWarningSeen := GVL_GEOMETRY_CONTROL.stCellWarning.udiSequence;
-	GVL_CELL_MANAGER.Diag.stWarning.uiCode := GVL_GEOMETRY_CONTROL.stCellWarning.uiCode;
-	GVL_CELL_MANAGER.Diag.stWarning.udiSequence := GVL_CELL_MANAGER.Diag.stWarning.udiSequence + UDINT#1;
-END_IF;
 astAlarmSource[18].eSource := E_ALARM_SOURCE.GEOMETRY_1;
 astAlarmSource[19].eSource := E_ALARM_SOURCE.GEOMETRY_2;
 FOR uiGeometry := UINT#1 TO UINT#2 DO
@@ -90,6 +85,12 @@ astAlarmSource[1].dwAlarmActive := GVL_CELL_MANAGER.Error.dwAlarmActive;
 astAlarmSource[1].xRobotStopRequired := FALSE;
 astAlarmSource[1].xGlobalError := GVL_CELL_CONTROL.xGlobalError;
 astAlarmSource[1].stWarning := GVL_CELL_MANAGER.Diag.stWarning;
+
+// Каждый владелец сохраняет собственные код и счётчик. Подмена Diag ячейки
+// чужим событием приводила к откату на старое предупреждение в следующем скане.
+// ALARM_MANAGER регистрирует все три канала независимо под источником CELL.
+astAdditionalCellWarning[1] := GVL_MULTI_TYPE.ConfigStatus.stWarning;
+astAdditionalCellWarning[2] := GVL_GEOMETRY_CONTROL.stCellWarning;
 
 astAlarmSource[2].eSource := E_ALARM_SOURCE.ROBOT;
 astAlarmSource[2].dwAlarmActive := GVL_ROBOT.Error.dwAlarmActive;
@@ -200,6 +201,7 @@ astAlarmSource[17].stWarning := CELL_SAFETY.Diag.stWarning;
 
 ALARM_MANAGER(
 	xResetWarnings := GVL_ALARM.Command.xResetWarnings,
+	astAdditionalCellWarning := astAdditionalCellWarning,
 	Sources := astAlarmSource,
 	Status => GVL_ALARM.Status,
 	Events => GVL_ALARM.Events

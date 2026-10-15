@@ -10,6 +10,8 @@ auiMagazineEditSlot[2] := GVL_HMI.astMagazineCommand[2].uiEditSlot;
 
 fbMagazine1(
 	uiMagazineId := UINT#1,
+	xInventoryChanged := axMagazineInventoryChanged[1],
+	xPointsConfigured := axMagazinePointsReady[1],
 	xMechanismReady := (GVL_TWO_PALLET.uiMode = 0) OR GVL_TWO_PALLET.astStatus[1].xReady,
 	xTestInitialize := xTestInitializePulse OR xTestAbortActive,
 	xTestEnabled := GVL_HMI.stTestScenario.axMagazineEnabled[1],
@@ -19,6 +21,7 @@ fbMagazine1(
 	stMagazineCommand := GVL_MAGAZINE.astAutoCommand[1],
 	stHmiCommand := GVL_HMI.stRobotCommand,
 	xManual := GVL_CELL_CONTROL.xManual AND NOT GVL_CELL_MANAGER.Status.xRunning,
+	xIoManual := xIoManualActive,
 	xReset := GVL_CELL_CONTROL.xReset OR GVL_HMI.astMagazineCommand[1].xReset OR ((GVL_TWO_PALLET.uiMode = 1) AND (GVL_TWO_PALLET.auiCommand[1] = 16) AND GVL_TWO_PALLET.astStatus[1].xCommandAccepted),
 	xGlobalError := GVL_CELL_CONTROL.xGlobalError,
 	xHmiEnable := ((GVL_TWO_PALLET.uiMode = 0) AND (GVL_HMI.astMagazineCommand[1].xEnable OR GVL_HMI.xMagazineEnable))
@@ -40,7 +43,7 @@ fbMagazine1(
 	xRobotOwnsMagazine := (GVL_CELL_MANAGER.Status.uiActiveMagazine = UINT#1)
 		AND (GVL_CELL_MANAGER.Status.xRunning OR GVL_ROBOT.Status.xBusy),
 	xRobotCanWorkWithMagazine := xRobotInterfaceReady
-		AND xPointTableReady
+		AND axMagazinePointsReady[1]
 		AND NOT axTwinMagazineExchangeInProgress[1]
 		AND NOT GVL_ROBOT.Status.xError,
 	xSharedGeometryEditAllowed := NOT GVL_MAGAZINE.astStatus[1].xEnabled
@@ -64,6 +67,8 @@ fbMagazine1(
 
 fbMagazine2(
 	uiMagazineId := UINT#2,
+	xInventoryChanged := axMagazineInventoryChanged[2],
+	xPointsConfigured := axMagazinePointsReady[2],
 	xMechanismReady := (GVL_TWO_PALLET.uiMode = 0) OR GVL_TWO_PALLET.astStatus[2].xReady,
 	xTestInitialize := xTestInitializePulse OR xTestAbortActive,
 	xTestEnabled := GVL_HMI.stTestScenario.axMagazineEnabled[2],
@@ -73,6 +78,7 @@ fbMagazine2(
 	stMagazineCommand := GVL_MAGAZINE.astAutoCommand[2],
 	stHmiCommand := GVL_HMI.stRobotCommand,
 	xManual := GVL_CELL_CONTROL.xManual AND NOT GVL_CELL_MANAGER.Status.xRunning,
+	xIoManual := xIoManualActive,
 	xReset := GVL_CELL_CONTROL.xReset OR GVL_HMI.astMagazineCommand[2].xReset OR ((GVL_TWO_PALLET.uiMode = 1) AND (GVL_TWO_PALLET.auiCommand[2] = 16) AND GVL_TWO_PALLET.astStatus[2].xCommandAccepted),
 	xGlobalError := GVL_CELL_CONTROL.xGlobalError,
 	xHmiEnable := ((GVL_TWO_PALLET.uiMode = 0) AND (GVL_HMI.astMagazineCommand[2].xEnable))
@@ -94,7 +100,7 @@ fbMagazine2(
 	xRobotOwnsMagazine := (GVL_CELL_MANAGER.Status.uiActiveMagazine = UINT#2)
 		AND (GVL_CELL_MANAGER.Status.xRunning OR GVL_ROBOT.Status.xBusy),
 	xRobotCanWorkWithMagazine := xRobotInterfaceReady
-		AND xPointTableReady
+		AND axMagazinePointsReady[2]
 		AND NOT axTwinMagazineExchangeInProgress[2]
 		AND NOT GVL_ROBOT.Status.xError,
 	xSharedGeometryEditAllowed := NOT GVL_MAGAZINE.astStatus[1].xEnabled

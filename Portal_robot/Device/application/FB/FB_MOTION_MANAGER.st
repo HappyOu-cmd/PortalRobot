@@ -18,11 +18,14 @@ VAR
 	fbPointFaultInjector : FB_POINT_FAULT_INJECTOR; // Безопасная подмена проверяемой точки
 	rtReset       : R_TRIG; // Фронт команды сброса менеджера движения
 	xFaultAllowed : BOOL; // Менеджер готов к синтетической проверке без движения
+	xGroupMotionStarted : BOOL; // Группа приняла движение, ожидание запуска завершено
+	tonMotionStart : TON; // Общий предел проверки точки и старта группы
 END_VAR
 VAR CONSTANT
 	ERR_POINT_INVALID : DWORD := DWORD#16#0000_0001; // Недопустимая точка
 	ERR_GROUP         : DWORD := DWORD#16#0000_0002; // Ошибка группы осей
 	ERR_GLOBAL_STOP   : DWORD := DWORD#16#0000_0004; // Глобальная ошибка ячейки
+	ERR_START_TIMEOUT : DWORD := DWORD#16#0000_0008; // Проверка/запуск группы не завершены вовремя
 	WRN_RESET_GLOBAL_ERROR : UINT := 1; // Глобальная ошибка ещё активна
 	WRN_SIM_ERROR_NOT_ALLOWED : UINT := 2; // Тестовая проверка запрещена текущим состоянием
 END_VAR
@@ -97,6 +100,41 @@ AND stMotionManager.Command.xGlobalError THEN
 END_IF;
 
 
+IF (stMotionManager.Diag.eState = E_MOTION_MANAGER_STATE.MOTION_SIM)
+AND ((GroupData.Diag.iStep = E_AXIS_GROUP_STATE.MOVING_DIRECT)
+	OR (GroupData.Status.xMoveDirectDone AND GroupData.Command.xMoveDirect)) THEN
+	xGroupMotionStarted := TRUE;
+END_IF;
+tonMotionStart(
+	IN := (stMotionManager.Diag.eState = E_MOTION_MANAGER_STATE.VALIDATE)
+		OR ((stMotionManager.Diag.eState = E_MOTION_MANAGER_STATE.MOTION_SIM)
+			AND NOT xGroupMotionStarted),
+	PT := GroupData.Timeouts.tGroupTimeout
+);
+
+// Stop должен отменять ещё не запущенную команду и завершённую команду,
+// ожидающую освобождения. Проверка точки тоже получает спад Execute.
+IF stMotionManager.Command.xGlobalError THEN
+	stPointManager.Command.xExecute := FALSE;
+	GroupData.Command.xMoveDirect := FALSE;
+	GroupData.Command.xMoveLinear := FALSE;
+	stMotionManager.Error.dwErrorActive := stMotionManager.Error.dwErrorActive OR ERR_GLOBAL_STOP;
+	stMotionManager.Diag.eState := E_MOTION_MANAGER_STATE.ERROR;
+ELSIF stMotionManager.Command.xStop
+AND (stMotionManager.Diag.eState <> E_MOTION_MANAGER_STATE.ERROR) THEN
+	stPointManager.Command.xExecute := FALSE;
+	GroupData.Command.xMoveDirect := FALSE;
+	GroupData.Command.xMoveLinear := FALSE;
+	xGroupMotionStarted := FALSE;
+	stMotionManager.Diag.eState := E_MOTION_MANAGER_STATE.IDLE;
+ELSIF tonMotionStart.Q THEN
+	stPointManager.Command.xExecute := FALSE;
+	GroupData.Command.xMoveDirect := FALSE;
+	GroupData.Command.xMoveLinear := FALSE;
+	stMotionManager.Error.dwErrorActive := stMotionManager.Error.dwErrorActive OR ERR_START_TIMEOUT;
+	stMotionManager.Diag.eState := E_MOTION_MANAGER_STATE.ERROR;
+END_IF;
+
 CASE stMotionManager.Diag.eState OF 
 	// --------------------------------------------------
 	E_MOTION_MANAGER_STATE.IDLE:
@@ -105,9 +143,11 @@ CASE stMotionManager.Diag.eState OF
 		// После завершения или сброса не оставляем уровень Execute защёлкнутым.
 		GroupData.Command.xMoveDirect := FALSE;
 		GroupData.Command.xMoveLinear := FALSE;
+		xGroupMotionStarted := FALSE;
 		stMotionManager.Status.xReady:= TRUE;
 		IF (stMotionManager.Command.xExecute OR fbPointFaultInjector.xExecute)
-		AND NOT stMotionManager.Command.xGlobalError THEN
+		AND NOT stMotionManager.Command.xGlobalError
+		AND NOT stMotionManager.Command.xStop THEN
 			stMotionManager.Status.xBusy := TRUE;
 			stMotionManager.Diag.eState := E_MOTION_MANAGER_STATE.VALIDATE;
 		ELSIF stMotionManager.Command.xGlobalError THEN

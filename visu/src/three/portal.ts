@@ -272,12 +272,8 @@ function createDualGripper(
 export function createPortal(layout: CellLayout): PortalRig {
   const mechanics = createPortalMechanics(layout);
   const gripper = createDualGripper(layout.partGeometry, layout.gripperPayloadPose);
-  const alarmSurfaceMaterials: AlarmSurfaceMaterial[] = [];
-  mechanics.root.traverse((object) => {
-    if (object instanceof THREE.Group && object.name.startsWith('portal_x_rail_')) {
-      alarmSurfaceMaterials.push(...collectAlarmSurfaceMaterials(object));
-    }
-  });
+  // Collect the upper moving assembly before attaching the tool heads below it.
+  const alarmSurfaceMaterials = collectAlarmSurfaceMaterials(mechanics.indicationRoot);
   mechanics.gripperMount.add(gripper.pivot);
   // Stationary pneumatic actuator and adapter stay attached to the ram. Only
   // the diagonal output hub and both complete chuck heads rotate during a swap.

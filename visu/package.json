@@ -8,6 +8,7 @@
     "dev:web": "vite --host 0.0.0.0",
     "dev:live": "concurrently -k -n OPCUA,HMI -c yellow,cyan \"npm:gateway\" \"npm:dev:web\"",
     "gateway": "node gateway/server.mjs",
+    "test:diagnostics": "node --test gateway/runtime-diagnostics.test.mjs gateway/controller-diagnostics.test.mjs",
     "test:opcua": "node --test gateway/opcua-monitoring.test.mjs gateway/opcua-symbols.test.mjs gateway/opcua-aggregate.test.mjs gateway/opcua-user-identity.test.mjs",
     "start": "node gateway/server.mjs",
     "test:gateway": "node --test gateway/opcua-monitoring.test.mjs gateway/opcua-symbols.test.mjs gateway/opcua-aggregate.test.mjs gateway/opcua-user-identity.test.mjs gateway/acknowledged-command.test.mjs gateway/cell-mode-channel.test.mjs gateway/auth-store.test.mjs gateway/cyclogram.test.mjs gateway/cell-events.test.mjs gateway/mobile-points.test.mjs gateway/primary-hmi-session.test.mjs gateway/mobile-login.integration.test.mjs gateway/point-editor-channel.test.mjs gateway/point-backup-store.test.mjs gateway/statistics-store.test.mjs gateway/test-contract.test.mjs gateway/test-store.test.mjs gateway/test-session.test.mjs gateway/physical-io.test.mjs",
@@ -15,11 +16,13 @@
     "test:io": "node --test tests/physicalIoContract.test.mjs tests/ioDiagnosticsPlc.test.mjs tests/physicalIoState.test.ts gateway/physical-io.test.mjs",
     "test:two-pallet": "node --test tests/twoPalletControl.test.mjs tests/twoPalletPlcContract.test.mjs gateway/two-pallet-channel.test.mjs",
     "test:inspection": "node --test tests/equipmentInspection.test.ts gateway/cell-events.test.mjs",
+    "test:warnings": "node --test tests/warningTargets.test.ts tests/geometryState.test.ts tests/equipmentInspection.test.ts tests/portalRig.test.mjs",
+    "test:machining": "node --test tests/machineTurret.test.mjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "storybook": "storybook dev -p 6006",
     "build-storybook": "storybook build",
-    "test:geometry": "node --test tests/geometryPlc.test.mjs tests/geometryPointsPlc.test.mjs tests/geometryState.test.ts tests/geometryContract.test.mjs gateway/geometry-control.test.mjs"
+    "test:geometry": "node --test tests/geometryPlc.test.mjs tests/geometryWaitPlc.test.mjs tests/geometryPointsPlc.test.mjs tests/geometryState.test.ts tests/geometryContract.test.mjs gateway/geometry-control.test.mjs"
   },
   "dependencies": {
     "@fontsource/commissioner": "^5.3.0",

@@ -22,10 +22,14 @@ VAR_GLOBAL RETAIN
 	uiMode : UINT := UINT#1; // По умолчанию два двухпалетных; 0: два статичных; 1: два двухпалетных
 	astConfig : ARRAY [1..2] OF ST_TWO_PALLET_CONFIG;
 	astStore : ARRAY [1..2] OF ST_TWO_PALLET_STORE;
+	axAutoSwapEnabled : ARRAY [1..2] OF BOOL := [TRUE, TRUE];
+	xAutoSwapDefaultsApplied : BOOL; // Однократная инициализация новой RETAIN-настройки
+END_VAR
+
+VAR_GLOBAL PERSISTENT RETAIN
+	// Постоянный шаг сетки для расчёта координат робота, отдельно по типам магазинов.
 	lrStaticPitchX : LREAL := 60.0;
 	lrStaticPitchY : LREAL := 60.0;
 	lrTwinPitchX : LREAL := 70.0;
 	lrTwinPitchY : LREAL := 70.0;
-	axAutoSwapEnabled : ARRAY [1..2] OF BOOL := [TRUE, TRUE];
-	xAutoSwapDefaultsApplied : BOOL; // Однократная инициализация новой RETAIN-настройки
 END_VAR

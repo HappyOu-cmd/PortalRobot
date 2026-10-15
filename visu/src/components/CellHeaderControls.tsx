@@ -5,8 +5,9 @@ import stopIcon from '@iconify-icons/mdi/stop';
 import { Icon } from '@iconify/react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { cva } from 'class-variance-authority';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { cn } from '../lib/utils';
+import { RobotSpeedEditor, normalizeRobotSpeed } from './RobotSpeedEditor';
 import './cell-header-controls.css';
 
 const statusCard = cva('cell-header-card', {
@@ -15,6 +16,7 @@ const statusCard = cva('cell-header-card', {
       system: 'cell-header-card--system',
       alarm: 'cell-header-card--system cell-header-card--alarm',
       mode: 'cell-header-card--mode',
+      speed: 'cell-header-card--speed',
     },
   },
 });
@@ -31,21 +33,29 @@ type CellHeaderControlsProps = {
   stopAllowed: boolean;
   manualAllowed: boolean;
   automaticAllowed: boolean;
+  speedOverridePercent: number;
+  speedEditable: boolean;
+  modbusMode: boolean;
   onCycleCommand: (command: 'cell.start' | 'cell.stop') => void;
   onModeChange: (manual: boolean) => void;
+  onSpeedChange: (value: number) => void;
   onOpen: () => void;
 };
 
 export function CellHeaderControls({
   systemText, modeText, alarm, online, running, manualMode, stopPending,
   startAllowed, stopAllowed, manualAllowed, automaticAllowed,
-  onCycleCommand, onModeChange, onOpen,
+  speedOverridePercent, speedEditable, modbusMode,
+  onCycleCommand, onModeChange, onSpeedChange, onOpen,
 }: CellHeaderControlsProps) {
-  const [openMenu, setOpenMenu] = useState<'system' | 'mode' | null>(null);
+  const [openMenu, setOpenMenu] = useState<'system' | 'mode' | 'speed' | null>(null);
+  const speedContentRef = useRef<HTMLDivElement | null>(null);
+  const normalizedSpeed = normalizeRobotSpeed(speedOverridePercent);
+  const speedText = !online ? 'Нет связи' : modbusMode ? 'С пульта' : `${normalizedSpeed.toFixed(1)} %`;
   const cycleCommand = stopPending || !running ? 'cell.start' : 'cell.stop';
   const cycleLabel = stopPending ? 'Отменить остановку' : running ? 'Остановить ячейку' : 'Запустить ячейку';
   const cycleAllowed = cycleCommand === 'cell.start' ? startAllowed : stopAllowed;
-  const changeOpen = (menu: 'system' | 'mode', open: boolean) => {
+  const changeOpen = (menu: 'system' | 'mode' | 'speed', open: boolean) => {
     setOpenMenu((current) => open ? menu : current === menu ? null : current);
     if (open) onOpen();
   };
@@ -96,6 +106,37 @@ export function CellHeaderControls({
               aria-disabled={!online || !automaticAllowed}
             ><span>Автомат</span><DropdownMenu.ItemIndicator className="cell-header-menu__check"><Icon icon={checkIcon} aria-hidden="true" /></DropdownMenu.ItemIndicator></DropdownMenu.RadioItem>
           </DropdownMenu.RadioGroup>
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
+    <DropdownMenu.Root open={openMenu === 'speed'} onOpenChange={(open) => changeOpen('speed', open)} modal={false}>
+      <DropdownMenu.Trigger asChild>
+        <button type="button" className={statusCard({ tone: 'speed' })} title="Управление скоростью робота" aria-haspopup="dialog">
+          <span className="cell-header-card__label">СКОРОСТЬ РОБОТА</span>
+          <b className="cell-header-card__value">{speedText}</b>
+          <Icon icon={chevronDownIcon} className="cell-header-card__arrow" aria-hidden="true" />
+        </button>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content
+          className="cell-header-menu cell-header-menu--speed"
+          side="bottom" align="start" sideOffset={10} collisionPadding={12}
+          role="dialog" aria-label="Управление скоростью робота"
+          onFocus={(event) => {
+            if (event.target === event.currentTarget) speedContentRef.current?.focus();
+          }}
+        >
+          <div ref={speedContentRef} className="cell-header-menu__speed-content" tabIndex={-1} onKeyDown={(event) => {
+            // Поля редактора используют обычные Tab и стрелки, без навигации меню.
+            if (event.key !== 'Escape') event.stopPropagation();
+          }}>
+            {modbusMode ? <p className="cell-header-menu__note">Общая скорость настраивается на контроллере робота.</p> : <>
+              <RobotSpeedEditor value={normalizedSpeed} online={online && speedEditable} onChange={onSpeedChange} compact />
+              {(!online || !speedEditable) && <p className="cell-header-menu__note">
+                {!online ? 'Нет связи с PLC' : 'Для управления скоростью войдите в аккаунт'}
+              </p>}
+            </>}
+          </div>
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>

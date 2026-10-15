@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import machineModelUrl from '../assets/models/Headman.glb?url';
+import machineScreenUrl from '../assets/textures/siemens-screen.png?url';
 import type { CellLayout, MachineState, PartGeometryLayout } from '../model/types';
 import {
   alarmPulse,
@@ -14,8 +15,10 @@ import {
   setAlarmSurfaceMaterials,
   type AlarmSurfaceMaterial,
 } from './primitives';
-import { OilMistEffect } from './OilMistEffect';
+import { MachineCoolantEffect } from './MachineCoolantEffect';
 import { createMachineHatch, updateMachineHatch, type MachineHatchRig } from './machineHatch';
+import { removeMachineTailstock } from './machineTailstock';
+import { createMachineTurret, prepareMachineTurret, updateMachineTurret, type MachineTurretRig } from './machineTurret';
 
 const MODEL_DOOR_TRAVEL = 1.01;
 const DEFAULT_DOOR_TRAVEL_MM = 1120;
@@ -43,6 +46,7 @@ export interface MachineRig {
   hatch?: THREE.Object3D;
   hatchMechanism?: MachineHatchRig;
   chuck?: THREE.Object3D;
+  turret?: MachineTurretRig;
   doorOpenX: number;
   doorClosedX: number;
   hatchOpenX: number;
@@ -58,13 +62,30 @@ export interface MachineRig {
   alarmSurfaceMaterials: AlarmSurfaceMaterial[];
   alarmElapsed: number;
   reducedMotion: boolean;
-  oilMist?: OilMistEffect;
+  coolant?: MachineCoolantEffect;
+  screenTexture?: THREE.CanvasTexture;
   disposed: boolean;
   selection: THREE.LineSegments;
 }
 
+const machineScreenImage = new THREE.ImageLoader().loadAsync(machineScreenUrl).catch((error: unknown) => {
+  console.warn('Failed to load the Siemens machine screen:', error);
+  return null;
+});
+
 const machineTemplate = new GLTFLoader().loadAsync(machineModelUrl).then((gltf): MachineTemplate => {
   const scene = gltf.scene;
+  let disc: THREE.Mesh | undefined;
+  let steel: THREE.Mesh | undefined;
+  scene.traverse((object) => {
+    if (!(object instanceof THREE.Mesh)) return;
+    const source = gltf.parser.associations.get(object) as { meshes?: number; primitives?: number } | undefined;
+    if (source?.meshes !== 2) return;
+    if (source.primitives === 10) disc = object;
+    if (source.primitives === 12) steel = object;
+  });
+  if (disc && steel) prepareMachineTurret(disc, steel);
+  if (steel) removeMachineTailstock(steel);
   scene.updateMatrixWorld(true);
   return { scene };
 });
@@ -126,6 +147,49 @@ function lampMaterials(root: THREE.Object3D, materialName: string): THREE.MeshSt
   return result;
 }
 
+function configureMachineScreen(rig: MachineRig, model: THREE.Group, image: HTMLImageElement): void {
+  let screen: THREE.Mesh | undefined;
+  model.traverse((object) => {
+    if (object instanceof THREE.Mesh && !Array.isArray(object.material)
+      && object.material.name === 'blue_neon_tube') screen = object;
+  });
+  if (!screen) return;
+
+  const geometry = screen.geometry;
+  geometry.computeBoundingBox();
+  const bounds = geometry.boundingBox!;
+  const size = bounds.getSize(new THREE.Vector3());
+  const positions = geometry.getAttribute('position');
+  // Headman's screen has no UVs; map its front rectangle from bottom left to top right.
+  const uv = new Float32Array(positions.count * 2);
+  for (let i = 0; i < positions.count; i += 1) {
+    uv[i * 2] = (positions.getX(i) - bounds.min.x) / size.x;
+    uv[i * 2 + 1] = (positions.getY(i) - bounds.min.y) / size.y;
+  }
+  geometry.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = image.width;
+  // Include the machine's non-uniform scale so the menu keeps its original proportions.
+  canvas.height = Math.round(canvas.width * size.y * model.scale.y / (size.x * model.scale.x));
+  const context = canvas.getContext('2d')!;
+  context.fillStyle = '#000000';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  const fit = Math.min(canvas.width / image.width, canvas.height / image.height);
+  const width = image.width * fit;
+  const height = image.height * fit;
+  context.drawImage(image, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const previous = screen.material as THREE.Material;
+  screen.material = new THREE.MeshBasicMaterial({ name: 'siemens_screen', map: texture, toneMapped: false });
+  screen.castShadow = false;
+  screen.receiveShadow = false;
+  previous.dispose();
+  rig.screenTexture = texture;
+}
+
 function configureMachineModel(rig: MachineRig, template: MachineTemplate, layout: CellLayout, index: number): void {
   if (rig.disposed) return;
   const model = cloneModel(template.scene);
@@ -180,12 +244,18 @@ function configureMachineModel(rig: MachineRig, template: MachineTemplate, layou
     ...(rig.hatch ? collectAlarmSurfaceMaterials(rig.hatch) : []),
   ];
 
-  if (rig.chuck) rig.chuck.add(rig.part);
-  if (rig.chuck && rig.door) rig.oilMist = new OilMistEffect(model, rig.chuck, rig.door);
+  if (rig.chuck) {
+    rig.chuck.add(rig.part);
+    rig.turret = createMachineTurret(model, rig.chuck, rig.part, layout.partGeometry);
+  }
+  if (rig.chuck) rig.coolant = new MachineCoolantEffect(model, rig.chuck, rig.part, layout.partGeometry, rig.turret);
   rig.redLights = lampMaterials(model, 'red_neon_tube');
   rig.greenLights = lampMaterials(model, 'green_neon_tube');
   markClickable(model, index);
   rig.root.add(model);
+  void machineScreenImage.then((image) => {
+    if (image && !rig.disposed) configureMachineScreen(rig, model, image);
+  });
 }
 
 export function createMachine(layout: CellLayout, index: number): MachineRig {
@@ -264,6 +334,7 @@ export function updateMachineRig(
   if (rig.hatchMechanism) updateMachineHatch(rig.hatchMechanism, state.hatchLocked);
 
   if (rig.chuck && state.mode === 'processing') rig.chuck.rotation.x += dt * 13.5;
+  if (rig.turret) updateMachineTurret(rig.turret, state, dt, response);
 
   rig.part.visible = state.partPresent;
   rig.blankPart.visible = state.partType === 'BLANK';
@@ -286,12 +357,15 @@ export function updateMachineRig(
     rig.alarmElapsed,
     rig.reducedMotion,
   );
-  rig.oilMist?.setActive(state.mode === 'processing');
-  rig.oilMist?.update(dt);
+  rig.coolant?.setActive(state.mode === 'processing' && state.partPresent && !alarm
+    && !state.chuckOpen && !state.doorOpen && !state.hatchOpen && !rig.turret?.returning);
+  rig.coolant?.update(dt);
 }
 
 export function disposeMachineRig(rig: MachineRig): void {
   rig.disposed = true;
-  rig.oilMist?.dispose();
-  rig.oilMist = undefined;
+  rig.screenTexture?.dispose();
+  rig.screenTexture = undefined;
+  rig.coolant?.dispose();
+  rig.coolant = undefined;
 }

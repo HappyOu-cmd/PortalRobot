@@ -46,6 +46,7 @@ import { MobilePointsService, MOBILE_COOKIE, isPhoneAgent } from './mobile-point
 import { PointEditorChannel } from './point-editor-channel.mjs';
 import { PrimaryHmiSession } from './primary-hmi-session.mjs';
 import { RuntimeHeartbeat } from './runtime-diagnostics.mjs';
+import { ControllerDiagnostics, controllerWebOptions } from './controller-diagnostics.mjs';
 import { ioSymbols, ioSymbolSet, readStableIo, IoJournalIngestor } from './physical-io.mjs';
 import { IoOverrideChannel } from './io-override-channel.mjs';
 import { monitoringIntervals, monitoringBatches, initializeMonitoring, monitoringSummary } from './opcua-monitoring.mjs';
@@ -82,7 +83,7 @@ const opcuaClientOptions = {
   applicationName: 'Portal Robot HMI Gateway',
   applicationUri: `urn:${opcuaClientHostname}:PortalRobotHmiGateway`,
   clientCertificateManager: new OPCUACertificateManager({
-    rootFolder: join(__dirname, 'data', 'opcua-pki', opcuaClientHostname),
+    rootFolder: process.env.OPCUA_PKI_DIR ?? join(__dirname, 'data', 'opcua-pki', opcuaClientHostname),
     automaticallyAcceptUnknownCertificate: true,
   }),
   endpointMustExist: false,
@@ -876,6 +877,9 @@ let connectionState = {
   cyclogram: cyclogramHealth(), cellEvents: cellEventHealth(),
 };
 const runtimeHeartbeat = new RuntimeHeartbeat();
+const controllerDiagnostics = new ControllerDiagnostics(controllerWebOptions(
+  endpointUrl, join(__dirname, 'data', 'controller-web.json'),
+));
 let runtimeStallLogged = false;
 let runtimeDiagnostics = {
   endpoint: endpointUrl,
@@ -884,6 +888,7 @@ let runtimeDiagnostics = {
   error: null,
   server: null,
   application: runtimeHeartbeat.snapshot(),
+  controller: controllerDiagnostics.state,
 };
 let pointEditorSequence = 0;
 const pendingPointEditorAudits = new Map();
@@ -976,9 +981,11 @@ function publishRuntimeDiagnostics(patch) {
   const nextMode = runtimeDiagnostics.application.mode;
   if (nextMode === 'stalled' && !runtimeStallLogged) {
     runtimeStallLogged = true;
-    recordSystemEvent('warning', 'Циклы PLC не выполняются: возможен STOP приложения', {
+    recordSystemEvent('warning', 'Счётчик циклов PLC_PRG не меняется более 4 секунд', {
       endpoint: endpointUrl, heartbeat: runtimeDiagnostics.application.counter,
       evidence: 'OPC UA отвечает, но udiPlcHeartbeat не меняется 4 секунды',
+      controllerRunning: runtimeDiagnostics.controller?.status === 'online'
+        ? runtimeDiagnostics.controller.resources?.applicationRunning ?? null : null,
     });
   } else if (nextMode === 'running' && runtimeStallLogged) {
     runtimeStallLogged = false;
@@ -1303,6 +1310,15 @@ async function runtimeDiagnosticsLoop() {
       try { await client.disconnect(); } catch { /* reconnect below */ }
     }
     await new Promise((resolve) => setTimeout(resolve, reconnectDelayMs));
+  }
+}
+
+// Independent read-only polling also works when OPC UA or the PLC application stops.
+async function controllerDiagnosticsLoop() {
+  if (!controllerDiagnostics.options.enabled) return;
+  while (true) {
+    publishRuntimeDiagnostics({ controller: await controllerDiagnostics.poll() });
+    await new Promise((resolve) => setTimeout(resolve, 3_000));
   }
 }
 
@@ -3045,7 +3061,7 @@ webSocketServer.on('connection', (socket, request) => {
         throw new Error(`Команда заблокирована эксклюзивным тестовым прогоном ${activeTestRun.id}`);
       }
       const requestId = String(message.requestId ?? Date.now());
-      const description = describeOperatorCommand(message);
+      const description = describeOperatorCommand(message, latestValues);
       const actorDetails = { ...description.details, actor: liveSession ? {
         id: liveSession.user.id, username: liveSession.user.username, role: liveSession.user.role,
       } : null };
@@ -3071,7 +3087,7 @@ webSocketServer.on('connection', (socket, request) => {
       const errorMessage = error instanceof Error ? error.message : String(error);
       if (message?._pointEditorSequence) pendingPointEditorAudits.delete(message._pointEditorSequence);
       if (message?.type === 'command' && !['hmi.heartbeat', 'io.heartbeat'].includes(message.command)) {
-        const description = describeOperatorCommand(message);
+        const description = describeOperatorCommand(message, latestValues);
         const actor = authStore?.getSession(authToken)?.user ?? null;
         recordCellEvent({
           timestampMs: Date.now(), sourceId: 6, eventType: 'operator-command', status: 'rejected',
@@ -3100,6 +3116,7 @@ httpServer.listen(gatewayPort, gatewayHost, () => {
 
 opcUaLoop().catch(console.error);
 runtimeDiagnosticsLoop().catch(console.error);
+controllerDiagnosticsLoop().catch(console.error);
 
 const closeStores = () => {
   clearInterval(archiveExpiryTimer);

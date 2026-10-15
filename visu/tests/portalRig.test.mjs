@@ -20,6 +20,7 @@ const { createPortal, updatePortalRig } = await server.ssrLoadModule('/src/three
 const { sampleChainPath } = await server.ssrLoadModule('/src/three/cableChain.ts');
 const { DEFAULT_LAYOUT, DEFAULT_STATE } = await server.ssrLoadModule('/src/model/defaults.ts');
 const { disposeObject } = await server.ssrLoadModule('/src/three/primitives.ts');
+const { WarningGlowLayer } = await server.ssrLoadModule('/src/three/warningGlow.ts');
 const near = (actual, expected, tolerance = 1e-7) => assert.ok(
   Math.abs(actual - expected) < tolerance, `${actual} != ${expected}`,
 );
@@ -39,6 +40,67 @@ function settle(rig, layout, state, coordinates = { x: 6200, y: 800, z: 800 }) {
   const frame = { sequence: 1, timestampMs: Date.now(), sourceTimestampMs: Date.now(), coordinates };
   for (let i = 0; i < 220; i++) updatePortalRig(rig, state, frame, layout, 1 / 60);
 }
+
+test('robot alarms and warnings colour only the upper moving assembly selected by the operator', (t) => {
+  const { rig, layout } = makeRig(t);
+  rig.reducedMotion = true;
+  settle(rig, layout, DEFAULT_STATE.robot);
+  const meshes = [];
+  rig.root.traverse(object => { if (object instanceof THREE.Mesh) meshes.push(object); });
+  const rail = meshes.find(object => /^portal_x_rail_.*_body$/.test(object.name));
+  const bridge = rig.root.getObjectByName('axis_y_extrusion_body');
+  const mast = rig.root.getObjectByName('axis_z_column_body');
+  const tool = rig.gripper.fingers1[0].children.find(object => object instanceof THREE.Mesh);
+  const outside = [rail, rig.chains.x.links, tool];
+  const inside = [bridge, mast, rig.chains.z.links];
+  const originals = new Map([...inside, ...outside].map(object => [object, { material: object.material, color: object.material.color.getHex() }]));
+  const alarmMaterials = new Set(rig.alarmSurfaceMaterials.map(surface => surface.material));
+  inside.forEach(object => assert.ok(alarmMaterials.has(object.material), object.name));
+  outside.forEach(object => assert.ok(!alarmMaterials.has(object.material), object.name));
+  settle(rig, layout, { ...DEFAULT_STATE.robot, error: true });
+  inside.forEach(object => assert.notEqual(object.material.color.getHex(), originals.get(object).color, object.name));
+  outside.forEach(object => assert.equal(object.material.color.getHex(), originals.get(object).color, object.name));
+  settle(rig, layout, { ...DEFAULT_STATE.robot, error: false });
+  inside.forEach(object => assert.equal(object.material.color.getHex(), originals.get(object).color, object.name));
+  const layer = new WarningGlowLayer();
+  layer.update([rig.indicationRoot], 0);
+  inside.forEach(object => {
+    assert.notEqual(object.material, originals.get(object).material, object.name);
+    assert.equal(object.material.color.getHex(), 0xff6500, object.name);
+  });
+  outside.forEach(object => {
+    assert.equal(object.material, originals.get(object).material, object.name);
+    assert.equal(object.material.color.getHex(), originals.get(object).color, object.name);
+  });
+  layer.dispose();
+  [...inside, ...outside].forEach(object => assert.equal(object.material, originals.get(object).material, object.name));
+});
+
+test('robot warning halo follows XYZ motion and excludes lower tool heads from its bounds', (t) => {
+  const { rig } = makeRig(t);
+  const layer = new WarningGlowLayer();
+  rig.updateMechanics(0, 0, 0);
+  layer.update([rig.indicationRoot], 0);
+  const halo = rig.indicationRoot.children.find(object => object.userData.warningOverlay);
+  const face = halo.children.find(object => object.name === 'warning_halo_z_1');
+  const originalHalfHeight = face.material.uniforms.halfCore.value.y;
+  const originalCenter = world(halo);
+  // Moving the uncoloured heads must not stretch the upper assembly's halo.
+  rig.gripperMount.position.y -= 10;
+  layer.update([rig.indicationRoot], 0.1);
+  near(face.material.uniforms.halfCore.value.y, originalHalfHeight);
+  near(world(halo).distanceTo(originalCenter), 0);
+  rig.updateMechanics(4, 0.7, 1.5);
+  layer.update([rig.indicationRoot], 0.1);
+  near(world(halo).x - originalCenter.x, 4);
+  assert.ok(Math.abs(world(halo).y - originalCenter.y) > 0.1);
+  assert.ok(Math.abs(face.material.uniforms.halfCore.value.y - originalHalfHeight) > 0.1);
+  const movedHalfHeight = face.material.uniforms.halfCore.value.y;
+  assert.equal(rig.indicationRoot.children.filter(object => object.userData.warningOverlay).length, 1);
+  layer.update([rig.indicationRoot], 0.1);
+  near(face.material.uniforms.halfCore.value.y, movedHalfHeight);
+  layer.dispose();
+});
 
 test('all chains retain arc length and end tangents throughout their stroke', (t) => {
   const { rig } = makeRig(t);

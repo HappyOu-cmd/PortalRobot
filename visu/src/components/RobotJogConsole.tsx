@@ -1,8 +1,7 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Icon } from '@iconify/react';
 import arrowIcon from '@iconify-icons/material-symbols/arrow-forward';
 import targetIcon from '@iconify-icons/material-symbols/my-location';
-import homeIcon from '@iconify-icons/material-symbols/home-outline';
 import touchIcon from '@iconify-icons/material-symbols/touch-app-outline';
 import { cva } from 'class-variance-authority';
 import { cn } from '../lib/utils';
@@ -11,105 +10,15 @@ import { SegmentedControl } from './ui/ControlPrimitives';
 import { RobotSpeedEditor } from './RobotSpeedEditor';
 import { RobotAxisDial } from './RobotAxisDial';
 import { RobotMotionSettings } from './RobotMotionSettings';
+import { RobotJogKey } from './RobotJogKey';
+import { RobotAxisHomeButton } from './RobotAxisHomeButton';
 
 const AXES = ['X', 'Y', 'Z'] as const;
 const STEPS = [0.1, 1, 10, 100];
-const AXIS_HOMING_STATE = 6; // E_AXIS_STATE.HOMING
 type Direction = 'negative' | 'positive';
 const commandClass = cva('rj-button', {
   variants: { unavailable: { true: 'command-unavailable', false: '' }, primary: { true: 'rj-primary', false: '' } },
 });
-
-function JogKey({ axis, direction, allowed, online, continuous, step, onJog, onStep }: {
-  axis: string;
-  direction: Direction;
-  allowed: boolean;
-  online: boolean;
-  continuous: boolean;
-  step: number;
-  onJog: (active: boolean) => void;
-  onStep: () => void;
-}) {
-  const [pressed, setPressed] = useState(false);
-  const heldRef = useRef(false);
-  const keyboardHeldRef = useRef(false);
-  const pointerRef = useRef<number | null>(null);
-  const onJogRef = useRef(onJog);
-  onJogRef.current = onJog;
-  const finish = (event?: ReactPointerEvent<HTMLButtonElement>) => {
-    if (event && pointerRef.current !== event.pointerId) return;
-    pointerRef.current = null;
-    keyboardHeldRef.current = false;
-    setPressed(false);
-    if (heldRef.current) {
-      heldRef.current = false;
-      onJogRef.current(false);
-    }
-    if (event?.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-  };
-  const start = () => {
-    setPressed(true);
-    if (continuous && !heldRef.current) {
-      heldRef.current = true;
-      onJogRef.current(true);
-    }
-  };
-  useEffect(() => {
-    const release = () => finish();
-    const visibility = () => { if (document.hidden) release(); };
-    window.addEventListener('blur', release);
-    document.addEventListener('visibilitychange', visibility);
-    return () => {
-      window.removeEventListener('blur', release);
-      document.removeEventListener('visibilitychange', visibility);
-      if (heldRef.current) {
-        heldRef.current = false;
-        onJogRef.current(false);
-      }
-    };
-  }, []);
-  useEffect(() => { if (!online) finish(); }, [online]);
-  const negative = direction === 'negative';
-  return <button
-    type="button"
-    className={cn('rj-key', commandClass({ unavailable: !allowed }))}
-    data-direction={direction}
-    data-pressed={pressed}
-    disabled={!online}
-    aria-disabled={!allowed || !online}
-    aria-label={`${axis} ${negative ? 'в минус' : 'в плюс'}: ${continuous ? 'удерживать для движения' : `шаг ${step} мм`}`}
-    onPointerDown={(event) => {
-      if (event.button !== 0 || pointerRef.current !== null) return;
-      event.preventDefault();
-      pointerRef.current = event.pointerId;
-      event.currentTarget.setPointerCapture(event.pointerId);
-      start();
-    }}
-    onPointerUp={finish}
-    onPointerCancel={finish}
-    onLostPointerCapture={finish}
-    onBlur={() => finish()}
-    onKeyDown={(event) => {
-      if (event.key !== ' ' && event.key !== 'Enter') return;
-      event.preventDefault();
-      if (!event.repeat && !keyboardHeldRef.current && pointerRef.current === null) {
-        keyboardHeldRef.current = true;
-        start();
-      }
-    }}
-    onKeyUp={(event) => {
-      if (event.key !== ' ' && event.key !== 'Enter') return;
-      event.preventDefault();
-      finish();
-    }}
-    onClick={() => { if (!continuous) onStep(); }}
-  >
-    <span className="rj-key-wave" aria-hidden="true" />
-    <Icon icon={arrowIcon} aria-hidden="true" />
-    <strong>{axis}<span>{negative ? '−' : '+'}</span></strong>
-    <small>{continuous ? 'Удерживать' : `${negative ? '−' : '+'} ${step} мм`}</small>
-  </button>;
-}
 
 export function RobotJogConsole({ runtime, online, selectedAxis, continuous, target, onSelectAxis, onModeChange,
   onTargetChange, onTargetFocus, onTargetBlur, onJog, onSend, numericTarget,
@@ -150,8 +59,6 @@ export function RobotJogConsole({ runtime, online, selectedAxis, continuous, tar
   }, [axis.actualPosition, axis.maxVelocity, selectedAxis, online]);
   const direction = online && motion?.axis === selectedAxis ? motion.direction : null;
   const moving = direction !== null;
-  const homeSearching = online && axis.stateCode === AXIS_HOMING_STATE;
-  const homeIndicator = homeSearching ? 'searching' : online && axis.homed ? 'found' : 'idle';
   const progress = Math.max(0, Math.min(100, (axis.actualPosition - axis.minPosition) / Math.max(1, axis.maxPosition - axis.minPosition) * 100));
   const validTarget = target.trim() !== '' && Number.isFinite(Number(target.replace(',', '.')));
 
@@ -164,9 +71,7 @@ export function RobotJogConsole({ runtime, online, selectedAxis, continuous, tar
         label: <span className="rj-axis-option"><span><b>{axisName}</b><i data-ready={runtime.axisManual[index].driveReady} data-busy={online && runtime.axisManual[index].busy} /></span><strong>{runtime.axisManual[index].actualPosition.toFixed(1)}<small>мм</small></strong></span>,
       }))} />
 
-      <button type="button" className={cn('rj-home-button', !axis.homeAllowed && 'command-unavailable')} disabled={!online || homeSearching} aria-disabled={!online || !axis.homeAllowed || homeSearching} aria-label={`HOME оси ${name}${!online ? ': нет связи' : homeSearching ? ': выполняется' : axis.homed ? ': найден' : ': не найден'}`} onClick={() => onSend({ command: 'robot.axis.home', machine: selectedAxis })}>
-        <span><Icon icon={homeIcon} aria-hidden="true" />HOME</span><i aria-hidden="true" data-state={homeIndicator} />
-      </button>
+      <RobotAxisHomeButton axis={selectedAxis} status={axis} online={online} onSend={onSend} />
 
       <SegmentedControl className="rj-mode-selector" value={continuous ? 'continuous' : 'precise'} onChange={(value) => onModeChange(value === 'continuous')} ariaLabel="Режим перемещения" options={[
         { value: 'continuous', label: <><Icon icon={touchIcon} />Непрерывно</> },
@@ -174,9 +79,9 @@ export function RobotJogConsole({ runtime, online, selectedAxis, continuous, tar
       ]} />
 
       <div className="rj-pad" aria-label={`Пульт оси ${name}`}>
-        <JogKey key={`${selectedAxis}-${continuous}-negative`} axis={name} direction="negative" continuous={continuous} step={runtime.manualStep} online={online} allowed={continuous ? axis.jogNegativeAllowed : axis.moveRelativeNegativeAllowed} onJog={(active) => onJog('negative', active)} onStep={() => onSend({ command: 'robot.axis.moveRelative', machine: selectedAxis, value: -runtime.manualStep })} />
+        <RobotJogKey key={`${selectedAxis}-${continuous}-negative`} axis={name} direction="negative" continuous={continuous} step={runtime.manualStep} online={online} allowed={continuous ? axis.jogNegativeAllowed : axis.moveRelativeNegativeAllowed} onJog={(active) => onJog('negative', active)} onStep={() => onSend({ command: 'robot.axis.moveRelative', machine: selectedAxis, value: -runtime.manualStep })} />
         <RobotAxisDial key={selectedAxis} name={name} direction={direction} speedRatio={motion?.axis === selectedAxis ? motion.speedRatio : 0} continuous={continuous} online={online} error={axis.error} ready={axis.driveReady} busy={axis.busy} />
-        <JogKey key={`${selectedAxis}-${continuous}-positive`} axis={name} direction="positive" continuous={continuous} step={runtime.manualStep} online={online} allowed={continuous ? axis.jogPositiveAllowed : axis.moveRelativePositiveAllowed} onJog={(active) => onJog('positive', active)} onStep={() => onSend({ command: 'robot.axis.moveRelative', machine: selectedAxis, value: runtime.manualStep })} />
+        <RobotJogKey key={`${selectedAxis}-${continuous}-positive`} axis={name} direction="positive" continuous={continuous} step={runtime.manualStep} online={online} allowed={continuous ? axis.jogPositiveAllowed : axis.moveRelativePositiveAllowed} onJog={(active) => onJog('positive', active)} onStep={() => onSend({ command: 'robot.axis.moveRelative', machine: selectedAxis, value: runtime.manualStep })} />
       </div>
 
       <div className="rj-travel"><div className="rj-travel-track"><i style={{ width: `${progress}%` }} /><b style={{ left: `${progress}%` }} /></div><div><span>{axis.minPosition.toFixed(0)} мм</span><span>Диапазон оси {name}</span><span>{axis.maxPosition.toFixed(0)} мм</span></div></div>

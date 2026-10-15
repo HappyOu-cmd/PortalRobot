@@ -115,6 +115,7 @@ IF (udiGeometryRequest <> UDINT#0) AND (udiGeometryRequest <> GVL_HMI.udiGeometr
 				UINT#2: IF (stGeometryRequest.udiValue >= UDINT#100) AND (stGeometryRequest.udiValue <= UDINT#600000) THEN GVL_GEOMETRY_CONTROL.tTransportTimeout := UDINT_TO_TIME(stGeometryRequest.udiValue); GVL_HMI.uiGeometryResult := UINT#1; END_IF;
 				UINT#3: IF (stGeometryRequest.udiValue >= UDINT#100) AND (stGeometryRequest.udiValue <= UDINT#60000) THEN GVL_GEOMETRY_CONTROL.tDriveFeedbackTimeout := UDINT_TO_TIME(stGeometryRequest.udiValue); GVL_HMI.uiGeometryResult := UINT#1; END_IF;
 				UINT#4: IF (stGeometryRequest.udiValue >= UDINT#100) AND (stGeometryRequest.udiValue <= UDINT#10000) THEN GVL_GEOMETRY_CONTROL.tResetPulse := UDINT_TO_TIME(stGeometryRequest.udiValue); GVL_HMI.uiGeometryResult := UINT#1; END_IF;
+				UINT#5: IF (stGeometryRequest.udiValue >= UDINT#1000) AND (stGeometryRequest.udiValue <= UDINT#3600000) THEN GVL_GEOMETRY_CONTROL.tWaitWarningTimeout := UDINT_TO_TIME(stGeometryRequest.udiValue); GVL_HMI.uiGeometryResult := UINT#1; END_IF;
 			END_CASE;
 		ELSIF (stGeometryRequest.uiStation >= UINT#1) AND (stGeometryRequest.uiStation <= UINT#2) THEN
 			uiGeometry := stGeometryRequest.uiStation;

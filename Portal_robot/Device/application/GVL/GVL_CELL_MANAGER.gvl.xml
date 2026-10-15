@@ -22,7 +22,7 @@
                       <Single Type="System.Guid">d9b2b2cc-ea99-4c3b-aa42-1e5c49e65b84</Single>
                     </Key>
                     <Value>
-                      <Single Type="System.Guid">3fe5920a-4b84-4acf-a2c0-c04494c55ea0</Single>
+                      <Single Type="System.Guid">51877f2e-01c8-4fa1-ada8-7e46cf42da69</Single>
                     </Value>
                   </Entry>
                 </Dictionary>
@@ -54,7 +54,7 @@ END_VAR
         <Single Name="ParameterList" Type="bool">False</Single>
         <Single Name="AddAttributeSubsequent" Type="bool">False</Single>
       </Single>
-      <Single Name="ParentSVNodeGuid" Type="System.Guid">3fe5920a-4b84-4acf-a2c0-c04494c55ea0</Single>
+      <Single Name="ParentSVNodeGuid" Type="System.Guid">51877f2e-01c8-4fa1-ada8-7e46cf42da69</Single>
       <Array Name="Path" Type="string">
         <Single Type="string">Device</Single>
         <Single Type="string">PLC Logic</Single>

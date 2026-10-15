@@ -47,6 +47,14 @@ GVL_CELL_CONTROL.xEnable := GVL_CELL_CONTROL.xEnable OR CELL_SAFETY.xCellEnableP
 GVL_CELL_CONTROL.xDisable := GVL_CELL_CONTROL.xDisable OR CELL_SAFETY.xCellDisablePulse;
 GVL_CELL_CONTROL.xReset := GVL_CELL_CONTROL.xReset OR CELL_SAFETY.xCellResetPulse;
 
+// Ручное I/O владеет механизмами. Физический Start также не возобновляет
+// прерванный автомат; выход из этого режима сам по себе ничего не запускает.
+IF xIoManualActive THEN
+	GVL_CELL_CONTROL.xStart := FALSE;
+	GVL_CELL_CONTROL.xEnable := FALSE;
+	GVL_CELL_CONTROL.xStop := TRUE;
+END_IF;
+
 GVL_CELL_CONTROL.xGlobalError := CELL_SAFETY.Status.xGlobalError;
 
 // HMI записывает payload, затем CommandSeq. Gateway удерживает единственного
@@ -80,6 +88,7 @@ END_IF;
 
 // Разрешения рассчитываются после применения режима и Safety текущего скана.
 xRobotHmiPermit := GVL_CELL_CONTROL.xManual AND NOT GVL_CELL_MANAGER.Status.xRunning
+    AND NOT xIoManualActive
     AND NOT GVL_HMI.xIoEmergencyStopActive;
 xRobotAutoPowerOff := NOT GVL_CELL_CONTROL.xManual
 	AND (GVL_ROBOT.Status.xError

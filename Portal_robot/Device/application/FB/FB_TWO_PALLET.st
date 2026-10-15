@@ -5,10 +5,11 @@ VAR_INPUT
 	xSafe : BOOL;
 	xRobotSwapWindow : BOOL; // Робот не выполняет и не ожидает операцию именно с этим магазином
 	xRobotOperation : BOOL; // Текущая или уже выданная операция с этим магазином
-	xRobotGeometryReady : BOOL; // Точки робота нужны для работы ячейки, но не для включения магазина
+	xPointsConfigured : BOOL; // Собственная база магазина нужна для ввода в автомат
+	xRobotGeometryReady : BOOL; // Собственная база магазина и поддерживаемый интерфейс робота
 	xRobotMagazineReady : BOOL; // Ошибки и геометрия магазина; содержимое не блокирует включение
 	xConnection : BOOL; // Heartbeat HMI нужен только для ручных команд
-	xStopRequest : BOOL;
+	xStopRequest : BOOL; // Общий Stop прерывает движение, но не отключает неподвижный магазин
 	xAutoSwap : BOOL;
 	xOtherLoaded : BOOL;
 	xActivePalletEditAllowed : BOOL;
@@ -90,6 +91,7 @@ VAR CONSTANT
 	ERR_LOGIC : DWORD := DWORD#16#1000;
 	ERR_SEQUENCE_INTERRUPTED : DWORD := DWORD#16#2000;
 	WRN_COMMAND_REJECTED : UINT := UINT#30;
+	WRN_ENABLE_POINTS : UINT := UINT#18; // Общий код с FB_MAGAZINE для отсутствующей базы
 	WRN_START_REJECTED_BY_OPERATOR : UINT := UINT#31;
 	JOG_POSITIVE : UINT := UINT#1;
 	JOG_NEGATIVE : UINT := UINT#2;
@@ -313,6 +315,8 @@ ELSIF NOT xIdle THEN
 	Diag.uiReason := UINT#22;
 ELSIF NOT xRobotMagazineReady THEN
 	Diag.uiReason := UINT#16;
+ELSIF NOT xPointsConfigured THEN
+	Diag.uiReason := UINT#15;
 ELSIF NOT Status.xConfirmed AND NOT xManual THEN
 	Diag.uiReason := UINT#20;
 ELSIF NOT Status.xConfirmed THEN
@@ -388,12 +392,14 @@ Status.xConfirmAllowed := xRecovery
 	AND (uiCandidate <> UINT#0)
 	AND (Error.dwErrorActive = DWORD#0);
 Status.xStartAllowed := Status.xConfirmAllowed
-	AND xRobotMagazineReady;
+	AND xRobotMagazineReady
+	AND xPointsConfigured;
 // Общая технологическая готовность не зависит от heartbeat HMI.
 xEnableBaseAllowed := xBase
 	AND xIdle
 	AND Status.xConfirmed
 	AND xRobotMagazineReady
+	AND xPointsConfigured
 	AND (uiCandidate = Status.uiRobotPallet)
 	AND Input.xPowered
 	AND (Error.dwErrorActive = DWORD#0);
@@ -667,7 +673,11 @@ ELSIF Command.xTeachWork THEN
 END_IF;
 
 IF xCommandPresent AND NOT xAccepted THEN
-	Diag.stWarning.uiCode := WRN_COMMAND_REJECTED;
+	IF (Command.xEnable OR Command.xStart) AND NOT xPointsConfigured THEN
+		Diag.stWarning.uiCode := WRN_ENABLE_POINTS;
+	ELSE
+		Diag.stWarning.uiCode := WRN_COMMAND_REJECTED;
+	END_IF;
 	Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
 	IF Diag.stWarning.udiSequence = UDINT#0 THEN
 		Diag.stWarning.udiSequence := UDINT#1;
@@ -693,15 +703,16 @@ IF xAutoSwap
 END_IF;
 
 // Стоп ячейки имеет приоритет над командой, принятой в том же скане.
-// В IDLE при остановленной оси сохраняем подтверждение и не запускаем MC_Stop.
+// В IDLE при остановленной оси сохраняем включение и подтверждение.
+// Собственные Command.xStop / Command.xDisable отдельно отключают магазин.
 IF xStopRequest THEN
 	IF (Diag.eState <> E_TWO_PALLET_STATE.IDLE) OR (Input.xPowered AND NOT Input.xStandstill) THEN
 		Error.dwErrorActive := Error.dwErrorActive OR ERR_SEQUENCE_INTERRUPTED;
 		Output.xStop := TRUE;
 		Status.xConfirmed := FALSE;
+		Status.xEnabled := FALSE;
 	END_IF;
 	Diag.eState := E_TWO_PALLET_STATE.IDLE;
-	Status.xEnabled := FALSE;
 END_IF;
 
 // Команда могла сменить состояние в этом же скане — обновляем классификацию

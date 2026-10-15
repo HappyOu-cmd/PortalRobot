@@ -1,7 +1,8 @@
-// Source contracts only: these checks do not compile or execute CODESYS/ST.
+// Static contracts and limited ST fragments: no CODESYS or equipment runtime.
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync, readdirSync } from 'node:fs';
+import { compileSt } from './helpers/geometryStRuntime.mjs';
 const root = new URL('../../Portal_robot/Device/application/', import.meta.url);
 const read = (path) => readFileSync(new URL(path, root), 'utf8');
 const fb = read('FB/FB_TWO_PALLET.st');
@@ -107,9 +108,10 @@ test('PLC owns per-pallet edit permissions and does not write into FB outputs fr
   }
   assert.doesNotMatch(run, /TWIN\[[^\]]+\]\.Status\.[A-Za-z0-9_]+\s*:=/);
   assert.match(run, /Command := astTwinCommand\[uiTwin\]/);
-  assert.match(run, /xRobotGeometryReady := NOT GVL_HMI.xModbusMode AND xPointTableReady/);
+  assert.match(run, /xPointsConfigured := axMagazinePointsReady\[uiTwin\]/);
+  assert.match(run, /xRobotGeometryReady := NOT GVL_HMI.xModbusMode AND axMagazinePointsReady\[uiTwin\]/);
   assert.match(run, /uiTwinSlot := 1 TO 96/);
-  assert.match(run, /xStopRequest := GVL_CELL_CONTROL.xStop OR GVL_HMI.astMagazineCommand\[uiTwin\].xStop/);
+  assert.match(run, /xStopRequest := GVL_CELL_CONTROL.xStop OR xIoManualActive OR GVL_HMI.astMagazineCommand\[uiTwin\].xStop/);
   assert.match(read('PLC_PRG.RunMagazine.st'), /astStore\[uiTwin\].astPallet\[uiTwinPallet\] := GVL_DETAIL.astMagazine\[uiTwin\]/);
   const main = read('PLC_PRG.st');
   assert.ok(main.indexOf('RunTwoPallet();') < main.indexOf('RunCellControl();'));
@@ -157,7 +159,7 @@ test('operator exchange uses the target-magazine lock in both cell modes', () =>
   assert.doesNotMatch(swapWindow, /eCurrentPoint|xRobotInterfaceReady|Status\.xError|uiMagazineContext|Status\.xBusy|xMotionBusy|xMagazineExchangeAllowed/);
   assert.equal(plcPermission('xTwinRobotSwapWindow', { xTwinRobotOperation: false }, run), true);
   assert.equal(plcPermission('xTwinRobotSwapWindow', { xTwinRobotOperation: true }, run), false);
-  assert.match(run, /xRobotGeometryReady := NOT GVL_HMI\.xModbusMode AND xPointTableReady/);
+  assert.match(run, /xRobotGeometryReady := NOT GVL_HMI\.xModbusMode AND axMagazinePointsReady\[uiTwin\]/);
   assert.match(run, /xRobotMagazineReady := GVL_MAGAZINE\.astPartStatus\[uiTwin\]\.xEnableCheckNoError[\s\S]*?xEnableCheckGeometry/);
   const magazine = read('FB/FB_MAGAZINE.st');
   const magazineEnable = magazine.slice(magazine.indexOf('Status.xEnableSequenceAllowed :='), magazine.indexOf('// Finished'));
@@ -197,8 +199,9 @@ test('pallet exchange locks only its magazine until Completed and leaves other r
   assert.match(cell, /xMagazineReady :=[\s\S]*?AND NOT xActiveMagazineExchangeInProgress/);
   assert.doesNotMatch(cell, /IF xMagazineExchangeActive AND/);
   assert.match(robot, /axMagazineExchangeInProgress\[Command\.uiMagazineId\][\s\S]*?E_POINT_NAME\.MAGAZINE_SAFE[\s\S]*?E_POINT_NAME\.MAGAZINE_CHANGE[\s\S]*?E_POINT_NAME\.MAGAZINE_IN_SLOT/);
+  assert.match(robot, /IF \(NOT xManual OR xMagazineCommandActive\)[\s\S]*?axMagazineExchangeInProgress\[Command\.uiMagazineId\]/);
   assert.doesNotMatch(robotRun, /xHmiRobotActionBaseAllowed := xRobotHmiPermit\s+AND NOT GVL_TWO_PALLET\.astStatus\[1\]\.xBusy/);
-  assert.match(robotRun, /AND NOT axTwinMagazineExchangeInProgress\[stRobotHmiCommand\.uiMagazineId\]/);
+  assert.doesNotMatch(robotRun, /AND NOT axTwinMagazineExchangeInProgress\[stRobotHmiCommand\.uiMagazineId\]/);
 });
 
 test('PLC inventory truth table keeps the operator pallet editable independently of mechanism and mode', () => {
@@ -213,22 +216,121 @@ test('PLC inventory truth table keeps the operator pallet editable independently
   }
 });
 
-test('idle Stop preserves the PLC confirmation and does not start MC_Stop; an active or moving mechanism is interrupted', () => {
+test('idle cell Stop preserves magazine enable; own Stop disables; active or moving mechanisms are interrupted', () => {
   const command = fb.slice(fb.indexOf('ELSIF Command.xStop THEN'), fb.indexOf('ELSIF Command.xReset THEN'));
   const cell = fb.slice(fb.indexOf('\nIF xStopRequest THEN'), fb.indexOf('// Команда могла сменить состояние'));
-  for (const block of [command, cell]) {
-    const condition = block.match(/IF (\(Diag\.eState[^\n]+) THEN/)?.[1];
-    assert.ok(condition);
-    for (const [state, powered, standstill, interrupted] of [[0, true, true, false], [20, true, true, true],
-      [0, true, false, true], [0, false, false, false]]) {
-      assert.equal(stBoolean(condition, { 'Diag.eState': state, 'E_TWO_PALLET_STATE.IDLE': 0,
-        'Input.xPowered': powered, 'Input.xStandstill': standstill }), interrupted);
+  for (const [block, cellStop] of [[cell, true], [command.replace(/^ELSIF/, 'IF') + '\nEND_IF;', false]]) {
+    const execute = compileSt(block);
+    for (const enabled of [false, true]) {
+      for (const [state, powered, standstill, interrupted] of [[0, true, true, false], [20, true, true, true],
+        [0, true, false, true], [0, false, false, false]]) {
+        const values = {
+          Command: { xStop: true }, xStopRequest: true,
+          Diag: { eState: state }, E_TWO_PALLET_STATE: { IDLE: 0 },
+          Input: { xPowered: powered, xStandstill: standstill, lrPosition: 200 },
+          Status: { xEnabled: enabled, xConfirmed: true, udiRevision: 7, xHomeRequired: false, uiRobotPallet: 2 },
+          Error: { dwErrorActive: 0 }, Output: { xStop: false },
+          ERR_SEQUENCE_INTERRUPTED: 0x2000, uiJogDirection: 0, xAccepted: false,
+        };
+        execute(values);
+        assert.equal(values.Status.xEnabled, cellStop && !interrupted && enabled);
+        assert.equal(values.Status.xConfirmed, !interrupted);
+        assert.equal(values.Output.xStop, interrupted);
+        assert.equal(values.Error.dwErrorActive, interrupted ? 0x2000 : 0);
+        assert.equal(values.Diag.eState, 0);
+        assert.equal(values.Status.udiRevision, 7);
+        assert.equal(values.Status.xHomeRequired, false);
+        assert.equal(values.Status.uiRobotPallet, 2);
+        assert.equal(values.Input.lrPosition, 200);
+      }
     }
-    const guard = block.slice(block.indexOf('IF (Diag.eState'), block.indexOf('END_IF;'));
-    assert.match(guard, /Status.xConfirmed := FALSE/);
-    assert.match(guard, /Output.xStop := TRUE/);
-    assert.match(guard, /ERR_SEQUENCE_INTERRUPTED/);
-    assert.doesNotMatch(block.slice(block.indexOf('END_IF;')), /Status.xConfirmed := FALSE|Output.xStop := TRUE/);
+  }
+});
+
+function cellRoutingFixture(mode, activeMagazine) {
+  const command = () => ({ xEnable: false, xDisable: false, xStop: false, xReset: false });
+  return {
+    uiTwin: 1, uiMagazine: 0, E_MAGAZINE_OPERATION: { NONE: 0 },
+    GVL_CELL_CONTROL: { xDisable: true, xStop: false, xReset: false },
+    GVL_HMI: { astMagazineCommand: [null, command(), command()] },
+    GVL_TWO_PALLET: { uiMode: mode, auiCommand: [0, 0, 0],
+      astStatus: [null, { xResetAllowed: false }, { xResetAllowed: false }] },
+    GVL_CELL_MANAGER: { Status: { uiActiveMagazine: activeMagazine },
+      Command: { stMagazine: { xEnable: false, xDisable: false, xExecute: true, xStop: false,
+        eOperation: 1, iTakeSlot: 3, iPutSlot: 0 } } },
+    GVL_MAGAZINE: { astAutoCommand: [null, { xDisable: true }, { xDisable: true }] },
+  };
+}
+
+const twinRun = read('PLC_PRG.RunTwoPallet.st');
+const legacyRouting = compileSt(twinRun.slice(
+  twinRun.indexOf('\n\tIF (GVL_TWO_PALLET.auiCommand[uiTwin] = 0)'),
+  twinRun.indexOf('// Единственное место преобразования'),
+));
+
+test('cell Disable does not dispatch magazine Disable in either mode or to the active magazine', () => {
+  const routing = read('PLC_PRG.RunCellControl.st');
+  // The local executor infers types from the final field name. Use a snapshot
+  // for this qualified array index so it does not treat the whole struct as UINT.
+  const execute = compileSt(routing.slice(routing.lastIndexOf('FOR uiMagazine := UINT#1 TO UINT#2 DO'))
+    .replaceAll('[GVL_CELL_MANAGER.Status.uiActiveMagazine]', '[uiActiveMagazine]'));
+  for (const mode of [0, 1]) for (const activeMagazine of [0, 1, 2]) {
+    const values = cellRoutingFixture(mode, activeMagazine);
+    for (const magazine of [1, 2]) {
+      values.uiTwin = magazine;
+      legacyRouting(values);
+      assert.equal(values.GVL_TWO_PALLET.auiCommand[magazine], 0);
+    }
+    values.uiActiveMagazine = values.GVL_CELL_MANAGER.Status.uiActiveMagazine;
+    execute(values);
+    for (const magazine of [1, 2]) {
+      assert.equal(values.GVL_MAGAZINE.astAutoCommand[magazine].xDisable, false);
+      assert.equal(values.GVL_MAGAZINE.astAutoCommand[magazine].xExecute, magazine === activeMagazine);
+    }
+  }
+});
+
+test('own magazine Disable still reaches its mechanism and preserves the confirmed arrangement', () => {
+  const mapDisable = compileSt(twinRun.match(/astTwinCommand\[uiTwin\]\.xDisable :=[^;]+;/)[0]);
+  const branch = fb.slice(fb.indexOf('ELSIF Command.xDisable THEN'), fb.indexOf('ELSIF Command.xSwap THEN'));
+  const execute = compileSt(branch.replace(/^ELSIF/, 'IF') + '\nEND_IF;');
+  for (const magazine of [1, 2]) {
+    const values = cellRoutingFixture(1, 0);
+    values.GVL_CELL_CONTROL.xDisable = false;
+    values.GVL_HMI.astMagazineCommand[magazine].xDisable = true;
+    values.astTwinCommand = [null, { xDisable: false }, { xDisable: false }];
+    for (const id of [1, 2]) {
+      values.uiTwin = id;
+      legacyRouting(values);
+      mapDisable(values);
+      assert.equal(values.astTwinCommand[id].xDisable, id === magazine);
+    }
+    values.Command = values.astTwinCommand[magazine];
+    values.Status = { xEnabled: true, xConfirmed: true };
+    values.xAccepted = false;
+    execute(values);
+    assert.equal(values.Status.xEnabled, false);
+    assert.equal(values.Status.xConfirmed, true);
+    assert.equal(values.xAccepted, true);
+  }
+});
+
+test('loss of safety, axis binding, IO mapping or power still faults and disables a confirmed magazine', () => {
+  const fault = fb.match(/IF xSelected\s+AND xTrustedAtScanStart\s+AND \(NOT xSafe[\s\S]*?END_IF;/)[0];
+  const disable = fb.slice(fb.lastIndexOf('IF Error.dwErrorActive <> DWORD#0 THEN'), fb.indexOf('Error.dwAlarmActive :='));
+  const execute = compileSt(fault + '\n' + disable);
+  for (const missing of ['xSafe', 'xAxisBound', 'xIoMapped', 'xPowered']) {
+    const values = { xSelected: true, xTrustedAtScanStart: true, xSafe: true,
+      Input: { xAxisBound: true, xIoMapped: true, xPowered: true },
+      Status: { xEnabled: true, xConfirmed: true },
+      Error: { dwErrorActive: 0, dwErrorLast: 0 }, ERR_SEQUENCE_INTERRUPTED: 0x2000 };
+    if (missing === 'xSafe') values.xSafe = false;
+    else values.Input[missing] = false;
+    execute(values);
+    assert.equal(values.Error.dwErrorActive, 0x2000);
+    assert.equal(values.Error.dwErrorLast, 0x2000);
+    assert.equal(values.Status.xEnabled, false);
+    assert.equal(values.Status.xConfirmed, false);
   }
 });
 

@@ -11,5 +11,6 @@ END_VAR
 stError.POINT_INVALID := (dwError AND ERR_POINT_INVALID) <> DWORD#0;
 stError.GROUP_ERROR := (dwError AND ERR_GROUP) <> DWORD#0;
 stError.GLOBAL_STOP := (dwError AND ERR_GLOBAL_STOP) <> DWORD#0;
+stError.START_TIMEOUT := (dwError AND ERR_START_TIMEOUT) <> DWORD#0;
 
 UpdateErrorView := stError;

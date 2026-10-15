@@ -60,6 +60,7 @@ const MAGAZINE_STATES = [
   'Освобождение интерфейса робота', 'Переход к следующему шагу', 'Завершено', 'Ошибка',
 ];
 const MAGAZINE_OPERATIONS = ['Нет операции', 'Положить деталь', 'Взять заготовку', 'Сменить деталь на заготовку', 'Вернуть заготовку'];
+const PART_STATES = ['состояние изделия неизвестно', 'станок пуст', 'изделие загружено'];
 const ROBOT_ACTIONS = [
   'Нет действия', 'Движение к точке', 'Открыть захват 1', 'Закрыть захват 1',
   'Открыть захват 2', 'Закрыть захват 2', 'Повернуть к заготовке', 'Повернуть к детали',
@@ -430,6 +431,56 @@ export class CellEventStore {
   close() { this.db.close(); }
 }
 
+const observedNumber = (values, path) => Number.isInteger(values?.[path]) ? values[path] : null;
+const observedBoolean = (values, path) => typeof values?.[path] === 'boolean' ? values[path] : null;
+
+function machineContentContext(values, machine) {
+  const root = `astMachineStatus[${machine}]`;
+  return {
+    partState: observedNumber(values, `${root}.ePartState`),
+    partType: observedNumber(values, `${root}.ePartType`),
+    busy: observedBoolean(values, `${root}.xBusy`),
+    processing: observedBoolean(values, `${root}.xProcessing`),
+  };
+}
+
+// Only copy scalar values already in the gateway cache. This is an observed
+// snapshot, not an atomic PLC scan; missing telemetry must remain unknown.
+export function captureCellEventContext(values, machine = observedNumber(values, 'stCellStatus.uiSelectedMachine')) {
+  const activeMagazine = observedNumber(values, 'stCellStatus.uiActiveMagazine');
+  const mode = observedNumber(values, 'uiMagazineMode');
+  const context = {
+    cellState: observedNumber(values, 'stCellDiag.eState'),
+    selectedMachine: observedNumber(values, 'stCellStatus.uiSelectedMachine'),
+    selectedType: observedNumber(values, 'stMultiType.CycleStatus.uiSelectedType'),
+    activeMagazine,
+    robotPallet: mode === 0 ? 0 : mode === 1 && [1, 2].includes(activeMagazine)
+      ? observedNumber(values, `astTwinStatus[${activeMagazine}].uiRobotPallet`) : null,
+  };
+  if (![1, 2, 3].includes(machine)) return context;
+  const call = `astGeometryCalls[${machine}]`;
+  return {
+    ...context, ...machineContentContext(values, machine),
+    callId: observedNumber(values, `${call}.udiId`),
+    callState: observedNumber(values, `${call}.uiState`),
+    station: observedNumber(values, `${call}.uiStation`),
+  };
+}
+
+function palletEventContext(values) {
+  return {
+    ...captureCellEventContext(values, 0),
+    machines: [1, 2, 3].map(machine => ({ machine, ...machineContentContext(values, machine) })),
+  };
+}
+
+function automaticMachineService(values, machine) {
+  return boolValue(values, 'stCellStatus.xRunning')
+    && numberValue(values, 'stCellDiag.eState') === 6 // E_CELL_STATE.SERVICE_MACHINE
+    && numberValue(values, 'stCellStatus.uiSelectedMachine') === machine
+    && boolValue(values, `astMachineStatus[${machine}].xBusy`);
+}
+
 function modbusSnapshot(values) {
   return {
     mode: boolValue(values, 'xModbusMode') ? 'MODBUS_TCP' : 'SOFTMOTION',
@@ -463,6 +514,7 @@ export class CellEventClassifier {
     this.activeOperationId = null;
     this.operationSequence = 0;
     this.alarms = new Map();
+    this.serviceContextRecorded = new Set();
   }
 
   event(sourceId, eventType, status, message, extra = {}) {
@@ -476,6 +528,10 @@ export class CellEventClassifier {
       if (boolValue(current, 'stCellStatus.xRunning')) {
         this.operationSequence += 1;
         this.activeOperationId = `cycle-${timestampMs}-${this.operationSequence}`;
+      }
+      // Reconnecting during a service does not create another start context.
+      for (let machine = 1; machine <= 3; machine += 1) {
+        if (automaticMachineService(current, machine)) this.serviceContextRecorded.add(machine);
       }
       return [...this.alarmEvents(current, timestampMs, true), ...inspectionIoEvents(current, null, timestampMs),
         ...cellControlEvents(current, null, timestampMs)]
@@ -504,11 +560,18 @@ export class CellEventClassifier {
       const status = `astMachineStatus[${machine}]`;
       const io = `astMachineIoStatus[${machine}]`;
       const diag = `astMachineDiag[${machine}]`;
-      const transition = (path, eventType, message, state = 'changed') => {
-        if (changed(path)) push(this.event(sourceId, eventType, state, message(), { oldValue: previous[path], newValue: current[path] }));
+      const servicing = automaticMachineService(current, machine);
+      if (!servicing) this.serviceContextRecorded.delete(machine);
+      const serviceDetails = servicing && changed(`${diag}.eState`) && !this.serviceContextRecorded.has(machine)
+        ? { context: captureCellEventContext(current, machine) } : undefined;
+      if (serviceDetails) this.serviceContextRecorded.add(machine);
+      const transition = (path, eventType, message, state = 'changed', details) => {
+        if (changed(path)) push(this.event(sourceId, eventType, state, message(), {
+          oldValue: previous[path], newValue: current[path], ...(details ? { details } : {}),
+        }));
       };
       transition(`${status}.xEnabled`, 'power', () => boolValue(current, `${status}.xEnabled`) ? `Станок ${machine} включён` : `Станок ${machine} выключен`);
-      transition(`${diag}.eState`, 'state', () => `Станок ${machine}: ${catalog(MACHINE_STATES, numberValue(current, `${diag}.eState`), 'состояние')}`);
+      transition(`${diag}.eState`, 'state', () => `Станок ${machine}: ${catalog(MACHINE_STATES, numberValue(current, `${diag}.eState`), 'состояние')}`, 'changed', serviceDetails);
       transition(`${io}.xDoorOpen`, 'hatch', () => boolValue(current, `${io}.xDoorOpen`) ? `Станок ${machine}: люк открыт` : `Станок ${machine}: сигнал «люк открыт» снят`);
       transition(`${io}.xDoorClosed`, 'hatch', () => boolValue(current, `${io}.xDoorClosed`) ? `Станок ${machine}: люк закрыт` : `Станок ${machine}: сигнал «люк закрыт» снят`);
       transition(`${io}.xHatchLocked`, 'hatch', () => boolValue(current, `${io}.xHatchLocked`) ? `Станок ${machine}: замок люка закрыт` : `Станок ${machine}: замок люка открыт`);
@@ -517,7 +580,7 @@ export class CellEventClassifier {
       transition(`${io}.xChuckUnclamped`, 'chuck', () => boolValue(current, `${io}.xChuckUnclamped`) ? `Станок ${machine}: патрон разжат` : `Станок ${machine}: сигнал разжима патрона снят`);
       transition(`${io}.xChuckClamped`, 'chuck', () => boolValue(current, `${io}.xChuckClamped`) ? `Станок ${machine}: патрон зажат` : `Станок ${machine}: сигнал зажима патрона снят`);
       transition(`${status}.xProcessing`, 'processing', () => boolValue(current, `${status}.xProcessing`) ? `Станок ${machine}: обработка началась` : `Станок ${machine}: обработка завершилась`, boolValue(current, `${status}.xProcessing`) ? 'started' : 'completed');
-      transition(`${status}.ePartState`, 'part', () => `Станок ${machine}: изменилось состояние изделия на код ${numberValue(current, `${status}.ePartState`)}`);
+      transition(`${status}.ePartState`, 'part', () => `Станок ${machine}: ${catalog(PART_STATES, numberValue(current, `${status}.ePartState`), 'состояние изделия')}`);
       transition(`${status}.ePartType`, 'part', () => `Станок ${machine}: тип изделия — ${numberValue(current, `${status}.ePartType`) === 1 ? 'готовая деталь' : numberValue(current, `${status}.ePartType`) === 2 ? 'заготовка' : 'не определён'}`);
     }
 
@@ -544,7 +607,9 @@ export class CellEventClassifier {
         const root = `astTwinStatus[${magazine}]`;
         const steps = { 0: 'ожидание', 20: 'опускание П2', 30: 'возврат к оператору', 40: 'переключение зацепления', 50: 'подача к роботу', 60: 'подъём П2', 100: 'ручное опускание', 110: 'ручной подъём', 120: 'ручной выбор палеты', 130: 'ручной ход', 150: 'Home', 160: 'JOG' };
         for (const [field, label] of [['uiStep', 'шаг'], ['uiRobotPallet', 'палета у робота'], ['xConfirmed', 'подтверждение расстановки'], ['xHomeRequired', 'требование Home']]) {
-          magazineTransition(`${root}.${field}`, 'pallet-state', () => `Магазин ${magazine}: ${label} — ${field === 'uiStep' ? steps[current[`${root}.${field}`]] ?? current[`${root}.${field}`] : current[`${root}.${field}`]}`, 'changed', { magazine });
+          magazineTransition(`${root}.${field}`, 'pallet-state', () => `Магазин ${magazine}: ${label} — ${field === 'uiStep' ? steps[current[`${root}.${field}`]] ?? current[`${root}.${field}`] : current[`${root}.${field}`]}`, 'changed', {
+            magazine, ...(field === 'uiRobotPallet' && changed(`${root}.${field}`) ? { context: palletEventContext(current) } : {}),
+          });
         }
       }
       // Смена активной палеты не должна выглядеть как перезапись её 96 слотов.
@@ -701,7 +766,7 @@ const COMMAND_LABELS = {
   'machine.manualChuckClose': 'Зажать патрон станка',
 };
 
-export function describeOperatorCommand(message) {
+export function describeOperatorCommand(message, values) {
   const command = String(message.command ?? 'unknown');
   const twinActions = ['', 'включить', 'подтвердить расстановку', 'выключить', 'обмен', 'питание оси', 'отключить ось', 'сброс привода', 'Home', 'опустить П2', 'поднять П2', 'зацепить П1', 'зацепить П2', 'к оператору', 'к роботу', 'стоп', 'сброс магазина', 'JOG +', 'JOG −', 'отпустить JOG', 'загрузка завершена', 'очистить палету', 'заполнить палету', 'изменить слот', 'параметры', 'запомнить операторскую координату', 'запомнить рабочую координату', 'подтвердить и включить', 'отказаться от включения', 'втянуть замок', 'выдвинуть замок', 'втянуть фиксатор', 'выдвинуть фиксатор', 'автоматическая смена палет'];
   const geometryActions = ['', 'включить', 'выключить', 'подтвердить освобождение', 'отказаться от включения', 'ручной пуск', 'стоп', 'изъять деталь в симуляции', 'вызвать деталь', 'автоматический вызов', 'период вызова', 'точка укладки', 'отменить вызов', 'прочитать XYZ', 'включить аварию в симуляции', 'снять аварию в симуляции', 'параметры ячейки'];
@@ -726,5 +791,8 @@ export function describeOperatorCommand(message) {
           : `Команда HMI: ${command}`);
   const details = Object.fromEntries(Object.entries(message)
     .filter(([key]) => !['type', 'requestId', 'command'].includes(key)));
+  if (values && command === 'geometry.command' && Number(message.action) === 8) {
+    details.context = captureCellEventContext(values, Number(message.machine));
+  }
   return { label, details };
 }

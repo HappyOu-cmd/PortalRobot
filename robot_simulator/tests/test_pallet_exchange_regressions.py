@@ -107,6 +107,8 @@ def scheduler_state(magazine=1, phase="MAGAZINE_EXECUTE"):
         "stMagazineStatus.xBusy": False, "stMagazineStatus.xDone": True,
         "stMagazineStatus.xFinished": True, "xActiveMagazineAutoSwapPending": True,
         "xAlternateMagazineAvailable": False, "xUseAlternateMagazineForDetail": False,
+        "xReselectMagazine": False, "uiPreferredMagazine": 0,
+        "xMagazine1CanExchangeDetail": False, "xMagazine2CanExchangeDetail": False,
         "eState": f"E_CELL_MANAGER_STATE.{phase}",
         "eMagazineOperation": "E_MAGAZINE_OPERATION.PUT",
         "eMachineOperation": "E_MACHINE_OPERATION.UNLOAD",
@@ -153,6 +155,13 @@ def magazine_scan(values, magazine):
     run(enable_decision(magazine), values)
     values["rtEnable.Q"] = values["enable"] and not values["previous_enable"]
     values["previous_enable"] = values["enable"]
+    changes = re.findall(r"\bxInventoryChanged := (.*?),\n", RUN_MAGAZINE, re.S)
+    if changes:
+        assert len(changes) == 2
+        run("xInventoryChanged := " + changes[magazine - 1] + ";", values)
+    reset = re.search(r"IF xInventoryChanged THEN.*?END_IF;", MAGAZINE, re.S)
+    if reset:
+        run(reset[0], values)
     if values["Diag.eState"] == "E_MAGAZINE_STATE.DISABLED":
         run(state_body(MAGAZINE, "E_MAGAZINE_STATE.DISABLED"), values)
     else:
@@ -160,15 +169,22 @@ def magazine_scan(values, magazine):
         idle = idle[:idle.index("// Активный автоматический цикл")] + "END_IF;"
         run(idle, values)
     run(assignment(MAGAZINE, "Status.xEnabled"), values)
+    run(assignment(MAGAZINE, "Status.xBusy"), values)
+    latched = re.findall(r"\bxFinishedLatched\s*:=\s*.*?;", MAGAZINE, re.S)
+    if latched:
+        run(latched[-1], values)
     run(assignment(MAGAZINE, "Status.xFinished"), values)
 
 
 def magazine_state(magazine, phase="DISABLED"):
     return {
+        "xIoManual": False,
         "GVL_TWO_PALLET.uiMode": 1,
         f"GVL_TWO_PALLET.astStatus[{magazine}].xReady": True,
         f"GVL_HMI.astMagazineCommand[{magazine}].xEnable": False,
         f"axTwinMagazineExchangeInProgress[{magazine}]": False,
+        f"axMagazineInventoryChanged[{magazine}]": False,
+        "xInventoryChanged": False, "xFinishedLatched": True,
         "GVL_HMI.xMagazineEnable": False,
         "Diag.eState": f"E_MAGAZINE_STATE.{phase}",
         "Status.xEnabled": phase == "IDLE", "Status.xFinished": True,
@@ -193,11 +209,186 @@ def test_loaded_bank_reenables_after_inventory_refresh(magazine):
     values = magazine_state(magazine)
     magazine_scan(values, magazine)
     values["xFinishedCondition"] = False  # New bank contains blanks.
+    values[f"axMagazineInventoryChanged[{magazine}]"] = True
     magazine_scan(values, magazine)
     assert not values["Status.xEnabled"]  # Last scan's Finished still blocks Enable.
+    values[f"axMagazineInventoryChanged[{magazine}]"] = False
     magazine_scan(values, magazine)
     assert values["Status.xEnabled"]
     assert not values["Status.xFinished"]
+
+
+def finished_condition(values):
+    start = MAGAZINE.index("xMachineHasRelevantPart := FALSE;")
+    loop = re.search(r"FOR uiMachineIndex := UINT#1 TO UINT#3 DO(.*?)END_FOR;",
+                     MAGAZINE[start:], re.S)
+    assert loop
+    bodies = []
+    for machine in range(1, 4):
+        product = values[f"auiMachineType[{machine}]"]
+        bodies.append(loop[1].replace("[uiMachineIndex]", f"[{machine}]")
+                      .replace("[uiMachineTypeIndex]", f"[{product}]"))
+    run(MAGAZINE[start:start + loop.start()] + "\n".join(bodies), values)
+    for target in ("xNoBlankNoMachinePart", "xNoBlankNoDestination", "xFinishedCondition"):
+        run(assignment(MAGAZINE, target), values)
+
+
+def working_pallet_state(magazine):
+    values = magazine_state(magazine, "IDLE")
+    values.update({
+        "Status.xFinished": False, "xFinishedLatched": False,
+        "Status.xOutBlank": True, "xAllSlotsDetails": False,
+        "stRobotStatus.xBlankAvailable": False,
+        "stRobotStatus.xDetailAvailable": False,
+    })
+    for machine in range(1, 4):
+        values[f"auiMachineType[{machine}]"] = machine
+        values[f"Status.stTypeStatus.aiFreeSlot[{machine}]"] = 93
+        for field, value in {"xEnabled": True, "xError": False, "xProcessing": False,
+                             "ePartState": "E_PART_STATE.EMPTY",
+                             "ePartType": "E_PART_TYPE.UNKNOWN"}.items():
+            values[f"astMachineStatus[{machine}].{field}"] = value
+    return values
+
+
+def finished_pallet_state(magazine):
+    values = working_pallet_state(magazine)
+    finished_condition(values)
+    magazine_scan(values, magazine)
+    assert values["Status.xFinished"]
+    assert not values["Status.xEnabled"]
+    return values
+
+
+def bank_change(magazine, before, after, completed=False):
+    values = {
+        "uiTwinRobotPalletBefore": before,
+        f"GVL_TWO_PALLET.astStatus[{magazine}].uiRobotPallet": after,
+        f"GVL_TWO_PALLET.astStatus[{magazine}].xCompleted": completed,
+        f"axMagazineInventoryChanged[{magazine}]": False,
+        f"GVL_TWO_PALLET.astStore[{magazine}].axLoaded[1]": True,
+        f"GVL_TWO_PALLET.astStore[{magazine}].axLoaded[2]": True,
+    }
+    start = RUN.index("\tIF GVL_TWO_PALLET.astStatus[uiTwin].xCompleted THEN")
+    end = RUN.index("\t// Ручная смена", start)
+    run(RUN[start:end].replace("[uiTwin]", f"[{magazine}]"), values)
+    return values[f"axMagazineInventoryChanged[{magazine}]"]
+
+
+@pytest.mark.parametrize("magazine", [1, 2])
+@pytest.mark.parametrize("remaining", ["blank", "detail", "machine"])
+def test_pallet_does_not_finish_before_its_last_payload_or_machine_return(magazine, remaining):
+    values = working_pallet_state(magazine)
+    values["stRobotStatus.xBlankAvailable"] = remaining == "blank"
+    values["stRobotStatus.xDetailAvailable"] = remaining == "detail"
+    values["astMachineStatus[1].xProcessing"] = remaining == "machine"
+    for _ in range(10):
+        finished_condition(values)
+        magazine_scan(values, magazine)
+        assert not values["Status.xFinished"]
+        assert values["Status.xEnabled"]
+    values["stRobotStatus.xBlankAvailable"] = False
+    values["stRobotStatus.xDetailAvailable"] = False
+    values["astMachineStatus[1].xProcessing"] = False
+    finished_condition(values)
+    magazine_scan(values, magazine)
+    assert values["Status.xFinished"]
+    assert not values["Status.xEnabled"]
+
+
+@pytest.mark.parametrize("magazine", [1, 2])
+@pytest.mark.parametrize("peer_work", ["blank", "detail", "both", "machine"])
+def test_finished_pallet_stays_closed_when_other_magazine_starts(magazine, peer_work):
+    values = finished_pallet_state(magazine)
+    values["stRobotStatus.xBlankAvailable"] = peer_work in ("blank", "both")
+    values["stRobotStatus.xDetailAvailable"] = peer_work in ("detail", "both")
+    values["astMachineStatus[1].xProcessing"] = peer_work == "machine"
+    values["astMachineStatus[1].ePartState"] = "E_PART_STATE.LOADED"
+    values["astMachineStatus[1].ePartType"] = "E_PART_TYPE.PART"
+    for _ in range(80):
+        finished_condition(values)
+        assert not values["xFinishedCondition"]
+        magazine_scan(values, magazine)
+        assert values["Status.xFinished"]
+        assert not values["Status.xEnabled"]
+        assert not values["enable"]
+    assert exchange_request(magazine, {"xTwinOtherLoaded": False})
+    assert start_exchange(True, magazine, other_loaded=False)["Diag.eState"] == "E_TWO_PALLET_STATE.IDLE"
+    assert start_exchange(True, magazine)["Diag.eState"] == "E_TWO_PALLET_STATE.AUTO_LOWER"
+
+
+@pytest.mark.parametrize("magazine", [1, 2])
+@pytest.mark.parametrize("command", [20, 21, 22, 23])
+@pytest.mark.parametrize("active", [False, True])
+@pytest.mark.parametrize("accepted", [False, True])
+def test_pallet_edit_resets_only_the_accepted_active_bank(magazine, command, active, accepted):
+    values = finished_pallet_state(magazine)
+    values.update({
+        "uiTwinRequestResult": 1 if accepted else 2,
+        "stTwinRequest.uiCommand": command,
+        "uiTwinPallet": 2 if active else 1,
+        f"GVL_TWO_PALLET.astStatus[{magazine}].uiRobotPallet": 2,
+    })
+    decision = re.search(r"IF \(uiTwinRequestResult = UINT#1\).*?END_IF;", RUN, re.S)
+    if decision:
+        run(decision[0].replace("[uiTwin]", f"[{magazine}]"), values)
+    # The new machine work removes the instantaneous completion condition.
+    values["astMachineStatus[1].xProcessing"] = True
+    finished_condition(values)
+    magazine_scan(values, magazine)
+    changed = accepted and active and command in (21, 22, 23)
+    assert values["Status.xFinished"] is (not changed)
+    assert values[f"axMagazineInventoryChanged[{magazine}]"] is changed
+
+
+@pytest.mark.parametrize("magazine", [1, 2])
+@pytest.mark.parametrize(("after", "completed", "changed"), [
+    (1, False, False),  # Waiting, start, failure and reconfirmation of the same role.
+    (2, False, True),   # A different role explicitly confirmed after recovery.
+    (2, True, True),    # Exchange completed; only now has the working bank changed.
+])
+def test_finished_resets_only_when_its_working_bank_changes(magazine, after, completed, changed):
+    values = finished_pallet_state(magazine)
+    values["stRobotStatus.xBlankAvailable"] = True  # The robot works with the peer.
+    finished_condition(values)
+    values[f"axMagazineInventoryChanged[{magazine}]"] = bank_change(magazine, 1, after, completed)
+    magazine_scan(values, magazine)
+    assert values["Status.xFinished"] is (not changed)
+    if changed:
+        values[f"axMagazineInventoryChanged[{magazine}]"] = False
+        magazine_scan(values, magazine)
+        assert values["Status.xEnabled"]
+
+
+@pytest.mark.parametrize("magazine", [1, 2])
+def test_peer_swap_then_own_loading_swaps_only_the_finished_pallet(magazine):
+    peer = 3 - magazine
+    own_values = finished_pallet_state(magazine)
+    peer_values = finished_pallet_state(peer)
+    assert start_exchange(True, peer)["Diag.eState"] == "E_TWO_PALLET_STATE.AUTO_LOWER"
+    peer_values[f"axMagazineInventoryChanged[{peer}]"] = bank_change(peer, 1, 2, completed=True)
+    peer_values["xFinishedCondition"] = False  # The peer's new bank contains blanks.
+    magazine_scan(peer_values, peer)
+    assert not peer_values["Status.xFinished"]
+    assert own_values["Status.xFinished"]
+
+    # The peer starts machining; filling/confirming our operator pallet cannot
+    # resurrect the finished 92-detail / 4-free-slot working pallet.
+    own_values["astMachineStatus[1].xProcessing"] = True
+    own_values["stRobotStatus.xBlankAvailable"] = True
+    finished_condition(own_values)
+    magazine_scan(own_values, magazine)
+    assert own_values["Status.xFinished"] and not own_values["Status.xEnabled"]
+    assert start_exchange(True, magazine, other_loaded=False)["Diag.eState"] == "E_TWO_PALLET_STATE.IDLE"
+    assert start_exchange(True, magazine)["Diag.eState"] == "E_TWO_PALLET_STATE.AUTO_LOWER"
+    assert not start_exchange(False, magazine)["xAutoSwapAllowed"]
+
+    own_values[f"axMagazineInventoryChanged[{magazine}]"] = bank_change(magazine, 1, 1)
+    magazine_scan(own_values, magazine)
+    assert own_values["Status.xFinished"]  # The exchange has only started.
+    own_values[f"axMagazineInventoryChanged[{magazine}]"] = bank_change(magazine, 1, 2, completed=True)
+    magazine_scan(own_values, magazine)
+    assert not own_values["Status.xFinished"]
 
 
 @pytest.mark.parametrize("magazine", [1, 2])
@@ -260,7 +451,8 @@ def start_exchange(robot_swap_window, magazine=1, other_loaded=True):
     values = {
         "xAutoSwap": request_values["xAutoSwap"],
         "xBase": True, "xIdle": True, "Status.xConfirmed": True,
-        "xRobotMagazineReady": True, "uiCandidate": 1, "Status.uiRobotPallet": 1,
+        "xRobotMagazineReady": True, "xPointsConfigured": True,
+        "uiCandidate": 1, "Status.uiRobotPallet": 1,
         "Input.xPowered": True, "Error.dwErrorActive": 0,
         "xRobotSwapWindow": robot_swap_window, "Status.xEnabled": True, "xOtherLoaded": other_loaded,
         "Output.xStop": False, "xCommandPresent": False,
@@ -405,3 +597,330 @@ def test_last_put_releases_command_then_swaps_and_resumes_without_start(magazine
     assert values["eState"] == "E_CELL_MANAGER_STATE.MAGAZINE_EXECUTE"
     assert values["eMagazineOperation"] == "E_MAGAZINE_OPERATION.TAKE"
     assert values["uiSelectedMachine"] == 3
+
+# Replay the complete magazine choice, including availability, stock and handoff.
+ELIGIBLE = read("FB/FB_CELL_MANAGER/FB_CELL_MANAGER.IsMachineEligible.st")
+
+
+def magazine_selection(values):
+    source = MANAGER[MANAGER.index("xMagazine1Available :="):
+                     MANAGER.index("\nIF (uiActiveMagazine >= UINT#1)")]
+    source = source.replace("[uiActiveMagazine]", f"[{values['uiActiveMagazine']}]")
+    source = source.replace("[uiDetailPayloadType]", f"[{values['uiDetailPayloadType']}]")
+    loop = re.search(r"FOR uiMachine := FIRST_MACHINE TO LAST_MACHINE DO(.*?)END_FOR;", source, re.S)
+    while loop:
+        unfolded = []
+        for machine in range(1, 4):
+            values["uiMachine"] = machine
+            eligible = ELIGIBLE.split("// --- BEGIN IMPLEMENTATION ---", 1)[1]
+            run(eligible.replace("[uiMachine]", f"[{machine}]"), values)
+            values[f"selection_machine_{machine}_eligible"] = values["IsMachineEligible"]
+            body = loop[1].replace("IsMachineEligible(uiMachine := uiMachine)",
+                                   f"selection_machine_{machine}_eligible")
+            body = body.replace("[uiMachine]", f"[{machine}]")
+            body = body.replace("[uiMagazineType]", f"[{values[f'Config.auiMachineType[{machine}]']}]")
+            unfolded.append(body)
+        source = source[:loop.start()] + "\n".join(unfolded) + source[loop.end():]
+        loop = re.search(r"FOR uiMachine := FIRST_MACHINE TO LAST_MACHINE DO(.*?)END_FOR;", source, re.S)
+    run(source, values)
+
+
+def magazine_selection_state(magazine=2, phase="PLAN_TARGET"):
+    values = scheduler_state(magazine, phase)
+    values.update({
+        "xRunning": phase != "IDLE",
+        "stRobotStatus.xBlankAvailable": False,
+        "stRobotStatus.xDetailAvailable": False,
+        "stRobotStatus.xGripper1Open": True,
+        "uiBlankPayloadType": 1,
+        "uiDetailPayloadType": 1, "Config.uiTypeCount": 3,
+        "FIRST_MACHINE": 1, "LAST_MACHINE": 3,
+        "iTakeSlot": 5, "iPutSlot": 6, "iTakeOriginSlot": 5,
+    })
+    for index in (1, 2):
+        for field, value in {"xEnabled": True, "xReady": True, "xBusy": False,
+                             "xError": False, "xDisablePending": False, "xFinished": False}.items():
+            values[f"astMagazineStatus[{index}].{field}"] = value
+        values[f"axMagazineAutoSwapPending[{index}]"] = False
+        values[f"axMagazineExchangeInProgress[{index}]"] = False
+        for product in range(1, 4):
+            values[f"astMagazineStatus[{index}].stTypeStatus.aiBlankSlot[{product}]"] = 1
+            values[f"astMagazineStatus[{index}].stTypeStatus.aiFreeSlot[{product}]"] = 2
+    for machine in range(1, 4):
+        values[f"Config.auiMachineType[{machine}]"] = 1
+        values[f"axMachineStartPending[{machine}]"] = False
+        values[f"axGeometryUnloadBlocked[{machine}]"] = False
+        for field, value in {"xEnabled": machine == 1, "xError": False, "xDisablePending": False,
+                             "xProcessing": False, "xCanAcceptService": True,
+                             "xServiceRequired": False,
+                             "ePartState": "E_PART_STATE.EMPTY", "ePartType": "E_PART_TYPE.NONE"}.items():
+            values[f"astMachineStatus[{machine}].{field}"] = value
+    return values
+
+
+@pytest.mark.parametrize("magazine", [1, 2])
+def test_finished_pallet_with_free_slots_is_not_a_detail_destination(magazine):
+    values = magazine_selection_state(magazine)
+    peer = 3 - magazine
+    values.update({
+        f"astMagazineStatus[{magazine}].xFinished": True,
+        f"astMagazineStatus[{magazine}].stTypeStatus.aiBlankSlot[1]": 0,
+        f"astMagazineStatus[{peer}].xEnabled": False,
+        "stMagazineStatus.xEnabled": True, "stMagazineStatus.xReady": True,
+        "stMagazineStatus.xFinished": True, "stMagazineStatus.xDisablePending": False,
+        "xActiveMagazineExchangeInProgress": False,
+    })
+    start = MANAGER.index("xAnyMagazineDetailSlotAvailable := FALSE;")
+    end = MANAGER.index("// WARNING: место требуется", start)
+    source = MANAGER[start:end].replace("[uiDetailPayloadType]", "[1]")
+    loop = re.search(r"FOR uiMagazineIndex := .*? DO(.*?)END_FOR;", source, re.S)
+    assert loop
+    source = source[:loop.start()] + "\n".join(
+        loop[1].replace("[uiMagazineIndex]", f"[{index}]") for index in (1, 2)
+    ) + source[loop.end():]
+    run(source, values)
+    run(assignment(MANAGER, "xMagazineReady"), values)
+    assert not values["xAnyMagazineDetailSlotAvailable"]
+    assert not values["xMagazineReady"]
+    magazine_selection(values)
+    assert not values[f"xMagazine{magazine}Available"]
+
+    values[f"astMagazineStatus[{magazine}].xFinished"] = False
+    values["stMagazineStatus.xFinished"] = False
+    values["uiActiveMagazine"] = magazine  # The refreshed bank can be selected again.
+    run(source, values)
+    run(assignment(MANAGER, "xMagazineReady"), values)
+    assert values["xAnyMagazineDetailSlotAvailable"]
+    assert values["xMagazineReady"]
+
+
+@pytest.mark.parametrize("phase", ["PLAN_TARGET", "WAIT_TARGET", "SELECT_FALLBACK", "WAIT_MAGAZINE"])
+def test_first_magazine_priority_returns_at_planning_boundaries(phase):
+    values = magazine_selection_state(phase=phase)
+    magazine_selection(values)
+    assert values["uiActiveMagazine"] == 1
+    assert values["eState"] == "E_CELL_MANAGER_STATE.PLAN_TARGET"
+    assert values["xRunning"]
+    assert values["eMagazineOperation"] == "E_MAGAZINE_OPERATION.NONE"
+    assert values["eMachineOperation"] == "E_MACHINE_OPERATION.NONE"
+    assert [values[name] for name in ("uiSelectedMachine", "uiSelectedType", "iTakeSlot", "iPutSlot", "iTakeOriginSlot")] == [0] * 5
+
+
+def test_first_magazine_priority_is_applied_before_new_start():
+    values = magazine_selection_state(phase="IDLE")
+    magazine_selection(values)
+    assert values["uiActiveMagazine"] == 1
+    assert values["eState"] == "E_CELL_MANAGER_STATE.IDLE"
+    assert not values["xRunning"]
+
+
+@pytest.mark.parametrize("magazine", [1, 2])
+def test_finished_magazine_waiting_for_pallet_does_not_block_other_stock(magazine):
+    values = magazine_selection_state(magazine, "WAIT_MAGAZINE")
+    values[f"astMagazineStatus[{magazine}].xFinished"] = True
+    values[f"axMagazineAutoSwapPending[{magazine}]"] = True
+    magazine_selection(values)
+    assert values["uiActiveMagazine"] == 3 - magazine
+    assert values["xRunning"]
+    assert values["eState"] == "E_CELL_MANAGER_STATE.PLAN_TARGET"
+    assert values[f"axMagazineAutoSwapPending[{magazine}]"]
+
+
+@pytest.mark.parametrize("phase", [
+    "MAGAZINE_EXECUTE", "RELEASE_MAGAZINE", "ROUTE_TO_TARGET", "RELEASE_ROBOT_COMMAND",
+    "SERVICE_TARGET", "PRESTART_IDENTIFY", "WAIT_GRIPPER1_CONTENT", "WAIT_GRIPPER1_TYPE",
+    "WAIT_GRIPPER2_CONTENT", "WAIT_GRIPPER2_TYPE", "WAIT_START_MACHINE", "ERROR",
+    "MACHINE_FAULT_STOP", "TEST_ABORT_STOP", "GEOMETRY_WAIT_FREE", "GEOMETRY_DELIVER",
+    "GEOMETRY_RELEASE_COMMAND",
+])
+def test_magazine_priority_keeps_issued_route_and_geometry_phases(phase):
+    values = magazine_selection_state(phase=phase)
+    magazine_selection(values)
+    assert values["uiActiveMagazine"] == 2
+    assert values["eState"] == f"E_CELL_MANAGER_STATE.{phase}"
+    assert values["iTakeOriginSlot"] == 5
+
+
+@pytest.mark.parametrize("busy", ["stRobotStatus.xBusy", "astMagazineStatus[2].xBusy"])
+def test_magazine_priority_waits_for_current_operation_to_release(busy):
+    values = magazine_selection_state()
+    values[busy] = True
+    magazine_selection(values)
+    assert values["uiActiveMagazine"] == 2
+    assert values["iTakeOriginSlot"] == 5
+
+
+@pytest.mark.parametrize("both_payloads", [False, True])
+def test_magazine_priority_preserves_held_blank_origin(both_payloads):
+    values = magazine_selection_state(phase="SELECT_FALLBACK")
+    values["stRobotStatus.xBlankAvailable"] = True
+    values["stRobotStatus.xDetailAvailable"] = both_payloads
+    magazine_selection(values)
+    assert values["uiActiveMagazine"] == 2
+    assert values["iTakeOriginSlot"] == 5
+
+
+@pytest.mark.parametrize("field,value", [
+    ("xEnabled", False), ("xReady", False), ("xBusy", True), ("xError", True),
+    ("xDisablePending", True), ("xFinished", True), ("exchange", True),
+])
+def test_magazine_priority_skips_unavailable_first_magazine(field, value):
+    values = magazine_selection_state()
+    name = "axMagazineExchangeInProgress[1]" if field == "exchange" else f"astMagazineStatus[1].{field}"
+    values[name] = value
+    magazine_selection(values)
+    assert values["uiActiveMagazine"] == 2
+
+
+@pytest.mark.parametrize("product", [1, 2, 3])
+def test_magazine_priority_requires_free_slot_for_held_detail(product):
+    values = magazine_selection_state(magazine=1)
+    values["stRobotStatus.xDetailAvailable"] = True
+    values["stRobotStatus.xGripper1Open"] = False  # No safe TAKE before PUT.
+    values["uiDetailPayloadType"] = product
+    values[f"astMagazineStatus[1].stTypeStatus.aiFreeSlot[{product}]"] = 0
+    for _ in range(3):
+        magazine_selection(values)
+        assert values["uiActiveMagazine"] == 2
+    values[f"astMagazineStatus[1].stTypeStatus.aiFreeSlot[{product}]"] = 4
+    magazine_selection(values)
+    assert values["uiActiveMagazine"] == 1
+
+
+@pytest.mark.parametrize("product", [0, 4])
+def test_magazine_priority_does_not_index_unknown_detail_type(product):
+    values = magazine_selection_state()
+    values["stRobotStatus.xDetailAvailable"] = True
+    values["uiDetailPayloadType"] = product
+    magazine_selection(values)
+    assert values["uiActiveMagazine"] == 2
+
+
+@pytest.mark.parametrize("first_blank_type", [None, 2])
+def test_magazine_selection_uses_stock_compatible_with_enabled_machine(first_blank_type):
+    values = magazine_selection_state(magazine=1, phase="WAIT_TARGET")
+    for product in range(1, 4):
+        values[f"astMagazineStatus[1].stTypeStatus.aiBlankSlot[{product}]"] = int(product == first_blank_type)
+    magazine_selection(values)
+    assert values["uiActiveMagazine"] == 2
+    assert values["eState"] == "E_CELL_MANAGER_STATE.PLAN_TARGET"
+    assert values["xRunning"]
+
+
+@pytest.mark.parametrize("pending", ["processing", "start", "part", "detail"])
+def test_magazine_selection_keeps_first_destination_for_machine_work(pending):
+    values = magazine_selection_state()
+    values["astMagazineStatus[1].stTypeStatus.aiBlankSlot[1]"] = 0
+    values["astMagazineStatus[2].stTypeStatus.aiBlankSlot[1]"] = 0
+    if pending == "processing":
+        values["astMachineStatus[1].xProcessing"] = True
+    elif pending == "start":
+        values["axMachineStartPending[1]"] = True
+    else:
+        values["astMachineStatus[1].ePartState"] = "E_PART_STATE.LOADED"
+        values["astMachineStatus[1].ePartType"] = "E_PART_TYPE." + ("PART" if pending == "part" else "DETAIL")
+    magazine_selection(values)
+    assert values["uiActiveMagazine"] == 1
+
+
+def test_magazine_selection_waits_if_neither_magazine_can_continue():
+    values = magazine_selection_state(phase="WAIT_MAGAZINE")
+    for magazine in (1, 2):
+        for product in range(1, 4):
+            values[f"astMagazineStatus[{magazine}].stTypeStatus.aiBlankSlot[{product}]"] = 0
+    for _ in range(3):
+        magazine_selection(values)
+        assert values["uiActiveMagazine"] == 2
+        assert values["eState"] == "E_CELL_MANAGER_STATE.WAIT_MAGAZINE"
+        assert values["xRunning"]
+
+
+def test_magazine_selection_rechecks_first_after_reenable_and_pallet_exchange():
+    values = magazine_selection_state(phase="MAGAZINE_EXECUTE")
+    values["astMagazineStatus[1].xEnabled"] = False
+    magazine_selection(values)
+    values["astMagazineStatus[1].xEnabled"] = True
+    magazine_selection(values)
+    assert values["uiActiveMagazine"] == 2
+    values["eState"] = "E_CELL_MANAGER_STATE.PLAN_TARGET"
+    values["axMagazineExchangeInProgress[1]"] = True
+    magazine_selection(values)
+    assert values["uiActiveMagazine"] == 2
+    values["axMagazineExchangeInProgress[1]"] = False
+    magazine_selection(values)
+    assert values["uiActiveMagazine"] == 1
+
+@pytest.mark.parametrize("magazine", [0, 1, 2])
+def test_magazine_selection_initial_owner_has_first_priority(magazine):
+    values = magazine_selection_state(magazine)
+    magazine_selection(values)
+    assert values["uiActiveMagazine"] == 1
+
+
+def test_magazine_selection_takes_second_stock_before_waiting_for_first_unload():
+    values = magazine_selection_state(magazine=1, phase="WAIT_TARGET")
+    values["astMagazineStatus[1].stTypeStatus.aiBlankSlot[1]"] = 0
+    values["astMachineStatus[1].xProcessing"] = True
+    values["astMachineStatus[2].xEnabled"] = True
+    magazine_selection(values)
+    assert values["uiActiveMagazine"] == 2
+    assert values["xRunning"]
+    assert values["eState"] == "E_CELL_MANAGER_STATE.PLAN_TARGET"
+
+
+@pytest.mark.parametrize("field,value", [
+    ("xEnabled", False), ("xError", True), ("xDisablePending", True), ("type", 0), ("type", 4),
+])
+def test_magazine_selection_does_not_take_stock_for_excluded_machine(field, value):
+    values = magazine_selection_state(magazine=1, phase="WAIT_TARGET")
+    for magazine in (1, 2):
+        for product in range(1, 4):
+            values[f"astMagazineStatus[{magazine}].stTypeStatus.aiBlankSlot[{product}]"] = int(product == magazine)
+    values["astMachineStatus[2].xEnabled"] = True
+    values["Config.auiMachineType[2]"] = 2
+    name = "Config.auiMachineType[1]" if field == "type" else f"astMachineStatus[1].{field}"
+    values[name] = value
+    magazine_selection(values)
+    assert values["uiActiveMagazine"] == 2
+
+
+def test_waiting_second_magazine_replans_actual_take_without_disable_or_start():
+    values = magazine_selection_state(phase="WAIT_MAGAZINE")
+    values.update({
+        "astMagazineStatus[2].xFinished": True,
+        "axMagazineAutoSwapPending[2]": True,
+        "astMagazineStatus[2].stTypeStatus.aiBlankSlot[1]": 0,
+        "astMagazineStatus[1].stTypeStatus.aiBlankSlot[1]": 14,
+    })
+    magazine_selection(values)
+    assert values["uiActiveMagazine"] == 1 and values["xRunning"]
+
+    # Execute the real ready-machine part of SelectMachineBeforeTake with the
+    # selected magazine snapshot, then the actual empty-gripper PLAN_TARGET.
+    values["SelectMachineBeforeTake"] = 0
+    values["stMagazineStatus.stTypeStatus.aiBlankSlot[1]"] = 14
+    before_take = read("FB/FB_CELL_MANAGER/FB_CELL_MANAGER.SelectMachineBeforeTake.st")
+    loop = re.search(r"FOR uiMachine := FIRST_MACHINE TO LAST_MACHINE DO(.*?)END_FOR;", before_take, re.S)
+    assert loop
+    for machine in range(1, 4):
+        values["uiMachine"] = machine
+        body = loop[1].replace("[uiMachine]", f"[{machine}]").replace("[uiType]", "[1]")
+        body = body.replace("IsMachineEligible(uiMachine := uiMachine)", f"selection_machine_{machine}_eligible")
+        run(body, values)
+    values["candidate_before_take"] = values["SelectMachineBeforeTake"]
+    assert values["candidate_before_take"] == 1
+    values["candidate_for_unload"] = 0
+    values["xMagazineReady"] = True
+    values["stMagazineStatus.xFinished"] = False
+    planner = state_body(MANAGER, "E_CELL_MANAGER_STATE.PLAN_TARGET")
+    start = planner.index("\n\t\tELSE\n\t\t\tuiBlankPayloadType := UINT#0;")
+    planner = planner[start + len("\n\t\tELSE"):].rsplit("END_IF;", 1)[0]
+    planner = planner.replace("SelectMachineBeforeTake()", "candidate_before_take")
+    planner = planner.replace("SelectMachineForUnload(uiCurrentMachine := UINT#0)", "candidate_for_unload")
+    planner = planner.replace("[uiSelectedMachine]", "[1]").replace("[uiSelectedType]", "[1]")
+    run(planner, values)
+    assert values["eState"] == "E_CELL_MANAGER_STATE.MAGAZINE_EXECUTE"
+    assert values["eMagazineOperation"] == "E_MAGAZINE_OPERATION.TAKE"
+    assert values["iTakeSlot"] == values["iTakeOriginSlot"] == 14
+    assert values["uiSelectedMachine"] == 1
+    assert values["xRunning"]

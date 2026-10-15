@@ -48,6 +48,24 @@ test('scenario CRUD and compact run results', () => {
   store.close();
 });
 
+test('run history keeps the newest creation first when start timestamps are equal', () => {
+  const store = new TestStore();
+  try {
+    const config = { suite: 'smoke', environment: 'simulation', robotInterface: 'softmotion' };
+    const first = store.createRun(config);
+    const second = store.createRun(config);
+    const older = store.createRun(config);
+    // Controlled timestamps in this in-memory fixture reproduce the same-ms race.
+    store.db.prepare('UPDATE test_run SET started_at=2000 WHERE id IN (?, ?)').run(first.id, second.id);
+    store.db.prepare('UPDATE test_run SET started_at=1000 WHERE id=?').run(older.id);
+    store.addCase(second.id, { caseIndex: 1, name: 'failed', status: 'FAIL', reason: 'inventory mismatch' });
+    store.finishRun(second.id);
+    assert.deepEqual(store.listRuns().map(run => run.id), [second.id, first.id, older.id]);
+    assert.equal(store.listRuns()[0].lastFailure, 'inventory mismatch');
+    assert.deepEqual(store.listRuns(2).map(run => run.id), [second.id, first.id]);
+  } finally { store.close(); }
+});
+
 test('marks an unfinished run as interrupted after gateway restart', () => {
   const store = new TestStore();
   const run = store.createRun({ suite: 'smoke', environment: 'simulation', robotInterface: 'softmotion' });

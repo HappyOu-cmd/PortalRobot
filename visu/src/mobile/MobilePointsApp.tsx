@@ -56,6 +56,12 @@ const button = cva('mobile-points__button', {
 const parseNumber = (value: string) => Number(value.replace(',', '.'));
 const formatNumber = (value: number, digits = 3) => Number.isFinite(value)
   ? value.toFixed(digits).replace(/\.0+$/, '.0').replace(/(\.\d*?[1-9])0+$/, '$1') : '0.0';
+const formatPointCoordinate = (value: string) => {
+  const numeric = parseNumber(value);
+  return Number.isFinite(numeric)
+    ? numeric.toLocaleString('ru-RU', { useGrouping: false, minimumFractionDigits: 1, maximumFractionDigits: 1 })
+    : value;
+};
 const clampPercent = (value: number, fallback = 0.1) => {
   const numeric = Number(value);
   return Math.max(0.1, Math.min(100, Number.isFinite(numeric) ? numeric : fallback));
@@ -69,7 +75,7 @@ const createMotionLeaseId = () => {
   return `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
 };
 const pointDraft = (point?: PointState | ActionResult['point']): Draft => ({
-  x: formatNumber(Number(point?.x ?? 0)), y: formatNumber(Number(point?.y ?? 0)), z: formatNumber(Number(point?.z ?? 0)),
+  x: String(point?.x ?? 0), y: String(point?.y ?? 0), z: String(point?.z ?? 0),
   magazineSafeZ: formatNumber(Number(point?.magazineSafeZ ?? 0)), magazineChangeZ: formatNumber(Number(point?.magazineChangeZ ?? 0)),
   speed: formatNumber(Number(point?.speedFactor ?? 0), 2),
 });
@@ -305,6 +311,7 @@ export function MobilePointsApp() {
   const [index, setIndex] = useState(0);
   const [draft, setDraft] = useState<Draft>(pointDraft());
   const [baseline, setBaseline] = useState<Draft>(pointDraft());
+  const [focusedCoordinate, setFocusedCoordinate] = useState<'x' | 'y' | 'z' | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -428,7 +435,7 @@ export function MobilePointsApp() {
           speedFactor: parseNumber(draft.speed),
         } }),
       });
-      if (result.point && action === 'capture') setDraft((current) => ({ ...current, x: formatNumber(result.point!.x), y: formatNumber(result.point!.y), z: formatNumber(result.point!.z) }));
+      if (result.point && action === 'capture') setDraft((current) => ({ ...current, x: String(result.point!.x), y: String(result.point!.y), z: String(result.point!.z) }));
       if (result.point && action === 'save') {
         const saved = pointDraft(result.point); setDraft(saved); setBaseline(saved);
       }
@@ -532,7 +539,7 @@ export function MobilePointsApp() {
       <label className="mobile-points__field">Выберите точку<select value={index} disabled={busy || running || controlled} onChange={(event) => { const next = Number(event.target.value); if (dirty) { setPendingIndex(next); openDialog('discard'); } else choose(next); }}>{labels.map((label, pointIndex) => <option value={pointIndex} key={label}>{label}</option>)}</select></label>
       <div className="mobile-points__meta"><span>Точка {index + 1} из {labels.length}</span><span className={dirty || !selected?.configured ? 'is-dirty' : 'is-saved'}>{dirty || !selected?.configured ? 'Не сохранена' : 'Сохранена'}</span></div>
       <h2>Координаты точки</h2>
-      <div className="mobile-points__coordinates">{(['x', 'y', 'z'] as const).map((axis) => <label className="mobile-points__coordinate" key={axis}><span>{axis.toUpperCase()}</span><input aria-label={`Координата ${axis.toUpperCase()}`} inputMode="decimal" value={draft[axis]} disabled={busy || running || controlled} onChange={(event) => { setDraft((current) => ({ ...current, [axis]: event.target.value })); setMessage(''); }} /><span>мм</span></label>)}</div>
+      <div className="mobile-points__coordinates">{(['x', 'y', 'z'] as const).map((axis) => <label className="mobile-points__coordinate" key={axis}><span>{axis.toUpperCase()}</span><input aria-label={`Координата ${axis.toUpperCase()}`} inputMode="decimal" value={focusedCoordinate === axis ? draft[axis].replace('.', ',') : formatPointCoordinate(draft[axis])} disabled={busy || running || controlled} onFocus={() => setFocusedCoordinate(axis)} onBlur={() => setFocusedCoordinate(null)} onChange={(event) => { setDraft((current) => ({ ...current, [axis]: event.target.value })); setMessage(''); }} /><span>мм</span></label>)}</div>
       {magazinePointSelected && <div className="mobile-points__coordinates mobile-points__magazine-offsets"><label className="mobile-points__coordinate"><span>Safe Z</span><input aria-label="Смещение Safe Z" inputMode="decimal" value={draft.magazineSafeZ} disabled={busy || running || controlled} onChange={(event) => { setDraft((current) => ({ ...current, magazineSafeZ: event.target.value })); setMessage(''); }} /><span>мм</span></label><label className="mobile-points__coordinate"><span>Change Z</span><input aria-label="Смещение Change Z" inputMode="decimal" value={draft.magazineChangeZ} disabled={busy || running || controlled} onChange={(event) => { setDraft((current) => ({ ...current, magazineChangeZ: event.target.value })); setMessage(''); }} /><span>мм</span></label></div>}
       {geometryPointSelected && <div className="mobile-points__coordinates"><label className="mobile-points__coordinate"><span>SAFE_Z</span><input aria-label="Смещение SAFE_Z ГК" inputMode="decimal" value={draft.magazineSafeZ} disabled={busy || running || controlled} onChange={(event) => setDraft(current => ({ ...current, magazineSafeZ: event.target.value }))} /><span>мм</span></label></div>}
       <label className="mobile-points__field mobile-points__speed">Коэффициент скорости точки<div><input aria-label="Коэффициент скорости точки" inputMode="decimal" value={draft.speed} disabled={busy || running || controlled} onChange={(event) => setDraft((current) => ({ ...current, speed: event.target.value }))} /><span>×</span></div></label>
@@ -552,7 +559,7 @@ export function MobilePointsApp() {
     <Dialog.Root open={dialog !== null} onOpenChange={(open) => { if (!open) { checkHold.release(); setDialog(null); } }}><Dialog.Portal><Dialog.Overlay className="mobile-points-dialog__overlay" /><Dialog.Content className="mobile-points-dialog" onCloseAutoFocus={(event) => { event.preventDefault(); lastFocus.current?.focus(); }}>
       <Dialog.Title>{dialogKind === 'check' ? 'Проверка точки' : 'Изменения не сохранены'}</Dialog.Title>
       <Dialog.Description>{dialogKind === 'check' ? 'Освободите рабочую зону. Движение разрешено только пока вы удерживаете кнопку. Отпускание передаёт команду остановки.' : 'Отбросить изменения текущей точки?'}</Dialog.Description>
-      {dialogKind === 'check' && selected && <div className="mobile-points-dialog__summary"><strong>{labels[index]}</strong><span>X {baseline.x} · Y {baseline.y} · Z {baseline.z}</span>{magazinePointSelected && <span>Safe Z {baseline.magazineSafeZ} · Change Z {baseline.magazineChangeZ}</span>}{geometryPointSelected && <span>SAFE_Z {baseline.magazineSafeZ}</span>}<span>Скорость проверки: {formatNumber(state?.checkSpeedPercent ?? 10, 1)} %</span></div>}
+      {dialogKind === 'check' && selected && <div className="mobile-points-dialog__summary"><strong>{labels[index]}</strong><span>X {formatPointCoordinate(baseline.x)} · Y {formatPointCoordinate(baseline.y)} · Z {formatPointCoordinate(baseline.z)}</span>{magazinePointSelected && <span>Safe Z {baseline.magazineSafeZ} · Change Z {baseline.magazineChangeZ}</span>}{geometryPointSelected && <span>SAFE_Z {baseline.magazineSafeZ}</span>}<span>Скорость проверки: {formatNumber(state?.checkSpeedPercent ?? 10, 1)} %</span></div>}
       {dialogKind === 'check' ? <section className="mobile-point-check">
         <p role="status" aria-live="polite">{{ ready: 'Готово к удержанию', starting: 'Передаём команду — удерживайте', moving: 'Движение — удерживайте кнопку', stopping: 'Палец отпущен. Ожидаем остановки PLC…', completed: 'Точка достигнута. Проверка завершена.', stopped: 'Проверка остановлена.', error: 'Проверка прервана. Проверьте сообщение ниже.' }[checkPhase]}</p>
         <MobileHoldButton className="mobile-point-check__hold"

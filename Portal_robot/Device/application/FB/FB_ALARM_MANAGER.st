@@ -1,6 +1,7 @@
 FUNCTION_BLOCK FB_ALARM_MANAGER
 VAR_INPUT
 	xResetWarnings : BOOL; // Сброс накопленных предупреждений
+	astAdditionalCellWarning : ARRAY [1..2] OF ST_WARNING_EVENT; // Конфигуратор и ГК: независимые события источника CELL
 END_VAR
 VAR_IN_OUT
 	Sources : ARRAY [1..19] OF ST_ALARM_SOURCE_DATA; // Старые источники и два ГК
@@ -14,6 +15,7 @@ VAR
 	udiSequence  : UDINT; // Общий порядковый номер события
 	adwPreviousAlarm : ARRAY [1..19] OF DWORD;
 	audiPreviousWarning : ARRAY [1..19] OF UDINT;
+	audiPreviousAdditionalCellWarning : ARRAY [1..2] OF UDINT;
 	uiIndex : UINT; // Индекс источника или события
 END_VAR
 
@@ -51,6 +53,25 @@ FOR uiIndex := 1 TO 19 DO
 		);
 		END_IF;
 		audiPreviousWarning[uiIndex] := Sources[uiIndex].stWarning.udiSequence;
+	END_IF;
+END_FOR;
+
+// Общие предупреждения ГК и конфигуратора не изменяют последний код/счётчик
+// FB_CELL_MANAGER. Иначе возврат его старого снимка становился новым событием.
+// Обрабатываем все каналы в одном вызове: события одного скана не теряются,
+// а xResetWarnings не очищает предупреждение, выданное после сброса в этом скане.
+FOR uiIndex := UINT#1 TO UINT#2 DO
+	IF astAdditionalCellWarning[uiIndex].udiSequence <> audiPreviousAdditionalCellWarning[uiIndex] THEN
+		IF (astAdditionalCellWarning[uiIndex].udiSequence <> UDINT#0)
+		AND (astAdditionalCellWarning[uiIndex].uiCode <> UINT#0) THEN
+			AddEvent(
+				eSource := E_ALARM_SOURCE.CELL,
+				eSeverity := E_ALARM_SEVERITY.WARNING,
+				eEffect := E_ALARM_EFFECT.WARNING,
+				uiCode := astAdditionalCellWarning[uiIndex].uiCode
+			);
+		END_IF;
+		audiPreviousAdditionalCellWarning[uiIndex] := astAdditionalCellWarning[uiIndex].udiSequence;
 	END_IF;
 END_FOR;
 

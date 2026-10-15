@@ -6,6 +6,7 @@ import { X } from 'lucide-react';
 import type { PlcCommand, PlcConnectionInfo, RuntimeDiagnostics } from '../plc/client';
 import type { PhysicalIoState } from '../plc/physicalIo';
 import { PhysicalIoDiagnostics } from './PhysicalIoDiagnostics';
+import { ControllerSystemDiagnostics } from './ControllerSystemDiagnostics';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/Tabs';
 import './runtime-diagnostics.css';
 
@@ -39,11 +40,14 @@ export function RuntimeDiagnosticsPanel({ diagnostics, connection, physicalIo, i
   const gatewayAvailable = connection.endpoint !== '' || connection.status === 'degraded' || connection.status === 'connected';
   const transport = gatewayAvailable ? diagnostics.transport : 'offline';
   const applicationMode = transport === 'online' ? diagnostics.application.mode : 'unknown';
-  const applicationText = applicationMode === 'running' ? 'Циклы выполняются'
+  const cyclesText = applicationMode === 'running' ? 'Циклы выполняются'
     : applicationMode === 'stalled' ? 'Циклы не выполняются'
       : applicationMode === 'verifying' ? 'Проверяем счётчик'
         : 'Состояние неизвестно';
-  const appTone = applicationMode === 'running' ? 'ok' : applicationMode === 'stalled' ? 'alarm' : 'muted';
+  const controllerRunning = gatewayAvailable && diagnostics.controller?.status === 'online'
+    ? diagnostics.controller.resources?.applicationRunning ?? null : null;
+  const applicationText = controllerRunning === true ? 'RUN' : controllerRunning === false ? 'STOP' : 'Нет данных RUN/STOP';
+  const appTone = controllerRunning === true ? applicationMode === 'stalled' ? 'alarm' : 'ok' : 'muted';
   const transportText = transport === 'online' ? 'На связи' : transport === 'connecting' ? 'Подключение' : 'Нет связи';
   const server = transport === 'online' ? diagnostics.server : null;
 
@@ -63,13 +67,11 @@ export function RuntimeDiagnosticsPanel({ diagnostics, connection, physicalIo, i
       <div className="runtime-diagnostics-status-grid">
         <article className="runtime-diagnostics-status" data-tone={appTone}>
           <span>ПРИЛОЖЕНИЕ PLC</span><strong>{applicationText}</strong>
-          <p>{applicationMode === 'stalled'
-            ? 'OPC UA отвечает, но счётчик циклов не меняется более 4 секунд. Вероятен STOP приложения или остановка задачи.'
-            : applicationMode === 'running'
-              ? 'Счётчик обновляется программой PLC_PRG.'
-              : applicationMode === 'verifying'
-                ? 'Первое значение получено. Ждём изменения счётчика.'
-                : 'Нет свежего подтверждения выполнения PLC-программы.'}</p>
+          <p>{controllerRunning === false ? 'Контроллер сообщает, что приложение остановлено.'
+            : controllerRunning === true && applicationMode === 'stalled'
+              ? 'Контроллер сообщает RUN, но счётчик PLC_PRG не меняется более 4 секунд. Проверь выполнение задачи.'
+              : controllerRunning === true ? 'Прямой статус приложения от контроллера.'
+                : 'Прямой статус приложения сейчас недоступен.'}</p>
         </article>
         <article className="runtime-diagnostics-status" data-tone={transport === 'online' ? 'ok' : 'muted'}>
           <span>СЕРВЕР OPC UA</span><strong>{transportText}</strong>
@@ -83,28 +85,26 @@ export function RuntimeDiagnosticsPanel({ diagnostics, connection, physicalIo, i
 
       <div className="runtime-diagnostics-details">
         <section className="runtime-diagnostics-card">
-          <h3>Контроллер и связь</h3>
+          <h3>Связь с CODESYS</h3>
           <dl>
-            <Field label="Устройство" value={server?.productName ?? 'Нет данных'} />
-            <Field label="Версия" value={server?.softwareVersion ?? 'Нет данных'} />
-            <Field label="OPC UA ServerStatus" value={server ? (SERVER_STATES[server.stateCode] ?? `Код ${server.stateCode}`) : 'Нет данных'} />
-            <Field label="Уровень сервиса OPC UA" value={server?.serviceLevel === null || server?.serviceLevel === undefined ? 'Нет данных' : `${server.serviceLevel} / 255`} />
-            <Field label="Адрес" value={diagnostics.endpoint || connection.endpoint || 'Нет данных'} />
-            <Field label="Запуск OPC UA" value={dateTime(server?.startTime ?? null)} />
-            <Field label="Время OPC UA" value={dateTime(server?.currentTime ?? null)} />
+            <Field label="Версия CODESYS Runtime" value={server?.softwareVersion ?? 'Нет данных'} />
+            <Field label="Состояние сервера OPC UA" value={server ? (SERVER_STATES[server.stateCode] ?? `Код ${server.stateCode}`) : 'Нет данных'} />
+            <Field label="Адрес OPC UA" value={diagnostics.endpoint || connection.endpoint || 'Нет данных'} />
+            <Field label="Последний опрос связи" value={dateTime(transport === 'online' ? diagnostics.observedAt : null)} />
           </dl>
         </section>
         <section className="runtime-diagnostics-card">
-          <h3>Контроль выполнения программы</h3>
+          <h3>Контроль циклов PLC</h3>
           <dl>
+            <Field label="Выполнение циклов" value={cyclesText} />
             <Field label="Счётчик PLC_PRG" value={transport === 'online' && diagnostics.application.counter !== null ? diagnostics.application.counter : 'Нет данных'} />
             <Field label="Последнее изменение" value={dateTime(transport === 'online' ? diagnostics.application.lastAdvancedAt : null)} />
             <Field label="Последнее чтение" value={dateTime(transport === 'online' ? diagnostics.application.lastReadAt : null)} />
-            <Field label="Последний опрос сервера" value={dateTime(transport === 'online' ? diagnostics.observedAt : null)} />
           </dl>
-          <p className="runtime-diagnostics-note">Счётчик взят из существующего <code>GVL_HMI.udiPlcHeartbeat</code>. При STOP программа не обновляет его, поэтому для точного режима и причины остановки проверь в CODESYS PLC Shell команду <code>getprgstat Application</code> и журнал контроллера.</p>
+          <p className="runtime-diagnostics-note">Счётчик подтверждает выполнение PLC_PRG и помогает обнаружить зависание задачи при статусе RUN. Его обновление также проверяется перед ручным управлением I/O.</p>
           {(diagnostics.error || (!gatewayAvailable && connection.message)) && <p className="runtime-diagnostics-error">{!gatewayAvailable ? connection.message : diagnostics.error}</p>}
         </section>
+        <ControllerSystemDiagnostics controller={diagnostics.controller} available={gatewayAvailable} />
       </div>
 
       </div></TabsContent>

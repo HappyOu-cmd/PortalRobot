@@ -30,6 +30,9 @@ import { inspectionKey, inspectionSlot, type EquipmentInspection, type Inspectio
 import { EquipmentInspectionLayer, inspectionBounds, isObjectVisible, type InspectionEntry } from './equipmentInspection';
 import { Workshop } from './workshop';
 import { InspectionWorker } from './inspectionWorker';
+import type { PlcAlarmEvent } from '../plc/client';
+import { sceneWarningTargets, warningTargetHasAlarm, type SceneWarningTarget } from '../model/warningTargets';
+import { WarningGlowLayer } from './warningGlow';
 
 export type CameraPreset = 'iso' | 'front' | 'side' | 'top';
 
@@ -106,6 +109,10 @@ export class CellScene {
   private inspection: EquipmentInspection | null = null;
   private inspectionEnabled = false;
   private inspectionLayer: EquipmentInspectionLayer;
+  private readonly warningLayer = new WarningGlowLayer();
+  private warningEvents: readonly PlcAlarmEvent[] = [];
+  private warningTargets: SceneWarningTarget[] = [];
+  private warningsLive = false;
   private inspectionEntries: InspectionEntry[] = [];
   private inspectionModelSignature = '';
   private inspectionCameraKey = '';
@@ -236,6 +243,7 @@ export class CellScene {
   }
 
   rebuild(layout: CellLayout): void {
+    this.warningLayer.dispose();
     this.twoPalletRigs = [];
     this.twoPalletDisplayPoses = [null, null];
     this.inspectionLayer?.update(this.cellRoot, undefined, null, 0, true);
@@ -268,8 +276,7 @@ export class CellScene {
     this.cellRoot.add(this.portalRig.root);
     // The small confirmation view only needs the equipment and its positions.
     if (!this.preview) {
-      this.inspectionWorker = new InspectionWorker(layout);
-      this.cellRoot.add(this.inspectionWorker.root);
+      this.setInspectionWorker(this.visualEffects.inspectionWorkerEnabled);
       this.enclosureRig = createEnclosure(layout);
       this.cellRoot.add(this.enclosureRig.root);
       this.controlCabinetsRig = createControlCabinets(layout);
@@ -338,6 +345,53 @@ export class CellScene {
 
   setState(state: CellState): void {
     this.state = state;
+  }
+
+  setWarningEvents(events: readonly PlcAlarmEvent[], live: boolean): void {
+    this.warningEvents = events;
+    this.warningsLive = live;
+    this.warningTargets = sceneWarningTargets(events, live);
+  }
+
+  private geometryWarningActive(index: number): boolean {
+    if (!this.warningsLive || warningTargetHasAlarm({ kind: 'geometry', index }, this.state, this.warningEvents)) return false;
+    return !!this.state.geometryControl?.stations[index]?.callWaitWarning || this.warningTargets.some(({ equipment }) =>
+      equipment.kind === 'cell' || equipment.kind === 'geometry' && equipment.index === index);
+  }
+
+  private warningEquipmentHasAlarm(equipment: SceneWarningTarget['equipment']): boolean {
+    return warningTargetHasAlarm(equipment, this.state, this.warningEvents) || this.sceneActivity.alarmTargets.some(target =>
+      equipment.kind === 'robot' && target.kind === 'portal'
+      || (equipment.kind === 'machine' || equipment.kind === 'magazine') && target.kind === equipment.kind && target.index === equipment.index);
+  }
+
+  private updateWarnings(dt: number): void {
+    const objects: THREE.Object3D[] = [];
+    if (this.warningTargets.length) this.refreshInspectionEntries();
+    for (const { equipment, node } of this.warningTargets) {
+      if (this.warningEquipmentHasAlarm(equipment)) continue;
+      if (equipment.kind === 'geometry') continue; // Reuse the original conveyor surfaces/halo.
+      if (equipment.kind === 'cell') {
+        for (const entry of this.inspectionEntries) {
+          if (!this.warningEquipmentHasAlarm(entry.target)) objects.push(
+            entry.target.kind === 'robot' && this.portalRig ? this.portalRig.indicationRoot : entry.root,
+          );
+        }
+      } else if (equipment.kind === 'enclosure-door') {
+        const door = this.enclosureRig?.doors.find(door => door.id === equipment.id);
+        if (door) objects.push(door.pivot);
+      } else {
+        const entry = this.inspectionEntries.find(entry => inspectionKey(entry.target) === inspectionKey(equipment));
+        if (!entry) continue;
+        if (equipment.kind === 'robot' && this.portalRig) {
+          objects.push(this.portalRig.indicationRoot);
+        } else {
+          const parts = node !== 'grippers' ? entry.parts[node] : undefined;
+          objects.push(...(parts?.length ? parts : [entry.root]));
+        }
+      }
+    }
+    this.warningLayer.update(objects.filter(isObjectVisible), dt, this.reducedMotion.matches, this.inspectionModelSignature);
   }
 
   setTwoPalletControllers(controllers: TwoPalletPreviewController[]): void {
@@ -504,10 +558,23 @@ export class CellScene {
     this.easterEggController?.setDriftSettings(settings);
   }
 
+  private setInspectionWorker(enabled: boolean): void {
+    if (this.preview || !enabled) {
+      this.inspectionWorker?.dispose();
+      this.inspectionWorker = undefined;
+      return;
+    }
+    if (this.inspectionWorker) return;
+    this.inspectionWorker = new InspectionWorker(this.layout);
+    this.cellRoot.add(this.inspectionWorker.root);
+  }
+
   setVisualEffects(settings: VisualEffectSettings): void {
     const workshopChanged = settings.workshopEnabled !== this.visualEffects.workshopEnabled;
+    const inspectionWorkerChanged = settings.inspectionWorkerEnabled !== this.visualEffects.inspectionWorkerEnabled;
     this.visualEffects = settings;
     if (workshopChanged) this.setWorkshopScene(settings.workshopEnabled);
+    if (inspectionWorkerChanged) this.setInspectionWorker(settings.inspectionWorkerEnabled);
     this.operationalEffects?.setSettings(settings);
     this.activeFocusKey = null;
   }
@@ -548,6 +615,21 @@ export class CellScene {
       0,
       1,
     );
+  }
+
+  subscribeZoomLevel(onChange: (level: number) => void): () => void {
+    let lastPercent: number | undefined;
+    const updateZoomLevel = (): void => {
+      // OrbitControls also emits changes for rotation and damping. React only
+      // needs an update when the displayed percentage / slider step changes.
+      const percent = Math.round(this.getZoomLevel() * 100);
+      if (percent === lastPercent) return;
+      lastPercent = percent;
+      onChange(percent / 100);
+    };
+    this.controls.addEventListener('change', updateZoomLevel);
+    updateZoomLevel();
+    return () => this.controls.removeEventListener('change', updateZoomLevel);
   }
 
   setZoomLevel(level: number): void {
@@ -820,6 +902,7 @@ export class CellScene {
     }
     const now = performance.now();
     const dt = Math.min(this.clock.getDelta(), 0.05);
+    this.warningLayer.restoreMaterials();
     this.staticMagazineRigs.forEach((rig) => { rig.root.visible = this.state.magazineMode !== 1; });
     this.twoPalletRigs.forEach((rig, index) => {
       rig.root.visible = this.state.magazineMode === 1;
@@ -845,7 +928,8 @@ export class CellScene {
       }
       const geometry = this.state.geometryControl ? this.geometryAnimations[index].update(
         this.state.geometryControl.available ? this.state.geometryControl.stations[index] : undefined,
-        dt, this.visualEffects.geometryConveyorSpeed,
+        dt, this.visualEffects.geometryConveyorSpeed, this.reducedMotion.matches,
+        this.geometryWarningActive(index),
       ) : undefined;
       updateTwoPalletMagazine(rig, controller, twin?.pallets, !twin?.live || twin.confirmed, displayPose, geometry);
       if (twin?.live || twin?.manualLockOut !== undefined || twin?.manualStopOut !== undefined) {
@@ -908,6 +992,7 @@ export class CellScene {
     this.easterEggController?.update(dt, this.camera);
     this.workshop?.update(dt, this.reducedMotion.matches || !!this.inspection || this.easterEggMode !== 'off');
     this.inspectionWorker?.update(dt, this.reducedMotion.matches || !!this.inspection || this.easterEggMode !== 'off');
+    this.updateWarnings(dt);
     this.updateInspection();
     if (!this.easterEggController?.controlsCamera) {
       this.updateCameraFocus(dt);
@@ -925,6 +1010,7 @@ export class CellScene {
 
   dispose(): void {
     cancelAnimationFrame(this.animationFrame);
+    this.warningLayer.dispose();
     if (this.controlCabinetsRig) disposeControlCabinets(this.controlCabinetsRig);
     if (this.mpgPendantRig) disposeMpgPendant(this.mpgPendantRig);
     this.resizeObserver.disconnect();

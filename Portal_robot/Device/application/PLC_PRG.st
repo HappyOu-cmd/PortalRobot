@@ -20,7 +20,6 @@ VAR
 	stGeometrySignals : ST_GEOMETRY_SIGNALS;
 	xGeometryRequestFresh : BOOL;
 	xGeometryStopAttempt : BOOL;
-	udiGeometryCellWarningSeen : UDINT;
 	eGeometryPlace : E_POINT_NAME;
 	eGeometrySafe : E_POINT_NAME;
 	eGeometryChange : E_POINT_NAME;
@@ -123,6 +122,7 @@ VAR
 	xTwinOtherLoaded : BOOL;
 	xTwinAutoSwapEnabled : BOOL;
 	axTwinAutoSwapPending : ARRAY [1..2] OF BOOL; // Законченная палета ждёт окна автоматического обмена
+	axMagazineInventoryChanged : ARRAY [1..2] OF BOOL; // Смена/правка только рабочего банка снимает его Finished
 	xTwinInventoryCommand : BOOL;
 	uiTwinRequestResult : UINT;
 	stTwinRequest : ST_TWO_PALLET_REQUEST;
@@ -211,6 +211,7 @@ VAR
 	xHmiDrivesDisableAccepted : BOOL; // Авторитетное решение RunMotion по команде отключения
 	xHmiResetAccepted : BOOL; // Авторитетное решение RunMotion по команде сброса
 	xHmiStopAccepted : BOOL; // Авторитетное решение RunMotion по команде остановки
+	xRobotMotionCommandActive : BOOL; // Принятая команда, включая проверку точки и освобождение
 	xRobotProgramStopRequest : BOOL; // Штатная остановка группового движения по запросу автоматики
 	xMotionResetRequest : BOOL; // Общий запрос последовательного сброса группы и осей
 	xGroupResetPulse : BOOL; // Импульс MC_GroupReset; он также сбрасывает оси группы
@@ -226,7 +227,6 @@ VAR
 	eMagazineBasePoint : E_POINT_NAME; // База выбранного магазина
 	uiMagazine : UINT; // Индекс магазина 1..2
 	auiMagazineEditSlot : ARRAY [1..2] OF UINT; // Новый контракт с fallback на legacy-команду первого магазина
-	udiLastTypeConfigWarningSequence : UDINT; // Последнее переданное предупреждение конфигуратора
 	astMachineFaultRequest : ARRAY [1..3] OF ST_MACHINE_FAULT_REQUEST; // Запросы ошибок станков
 	astAxisFaultRequest    : ARRAY [1..3] OF ST_AXIS_FAULT_REQUEST; // Запросы ошибок осей
 	stAxisGroupFaultRequest: ST_AXIS_GROUP_FAULT_REQUEST; // Запрос ошибки группы XYZ
@@ -235,11 +235,15 @@ VAR
 	stCellFaultRequest     : ST_CELL_FAULT_REQUEST; // Запрос локальной ошибки менеджера ячейки
 	stSafetyFaultRequest   : ST_CELL_SAFETY_FAULT_REQUEST; // Независимые инъекции дискретной безопасности
 	astAlarmSource : ARRAY [1..19] OF ST_ALARM_SOURCE_DATA; // Старые коды сохранены; ГК 1/2 добавлены в конец
+	astAdditionalCellWarning : ARRAY [1..2] OF ST_WARNING_EVENT; // 1: конфигуратор, 2: общие предупреждения ГК
 	uiPointEditorIndex : UINT; // Компактный индекс фиксированной точки редактора 1..14
 	uiPointEditorGeometryStation : UINT; // 0 прежняя точка, 1/2 база ГК
 	uiPointStorageIndex : UINT; // Индекс в совместимом Persistent-массиве 1..15
 	ePointEditorName : E_POINT_NAME; // Фактический enum выбранной инженерной точки
 	xPointTableReady : BOOL; // Все 12 базовых точек подтверждены редактором
+	axMachinePointsReady : ARRAY [1..3] OF BOOL; // Три рабочие точки каждого станка
+	axMagazinePointsReady : ARRAY [1..2] OF BOOL; // База и оба Z-смещения каждого магазина
+	xCellPointsReady : BOOL; // HOME_SAFETY и точки только включённого оборудования
 	xPointEditorBaseAllowed : BOOL; // Общие безопасные условия Capture/Save
 	xPointEditorAllHomed : BOOL; // Все оси XYZ прошли Home
 	xPointEditorRequestValid : BOOL; // Индекс и код новой транзакции распознаны
@@ -260,7 +264,6 @@ VAR
 	ePointCheckName : E_POINT_NAME;
 	uiPointCheckLoop : UINT;
 	uiPointCheckMachine : UINT;
-	uiPointCheckGeometryStation : UINT;
 	uiPointCheckReason : UINT;
 	stPointCheckCandidate : ST_POINT;
 	rPointCheckLatchedSpeed : REAL;

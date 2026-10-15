@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { compileSt, conversions, defaultsFromSt, emptyCall, readPlc, ton } from './helpers/geometryStRuntime.mjs';
+import { compileSt, conversions, defaultsFromSt, emptyCall, firstGeometryCall, readPlc, ton } from './helpers/geometryStRuntime.mjs';
 import { GeometryBeltAnimation, mapGeometrySnapshot } from '../src/model/geometryControl.ts';
 
 const source = readPlc('FB/FB_GEOMETRY_CONTROL.st');
@@ -67,15 +67,15 @@ test('startup state confirmation works without enabling or configuring GK', () =
   assert.equal(s.Warning.uiCode, 3);
 });
 
-test('standalone state rejection keeps recovery and confirmation never bypasses motion or safety gates', () => {
+test('standalone state rejection keeps recovery and confirmation never bypasses station or safety gates', () => {
   const s = station();
   s.scan({ uiAction: 4 });
   assert.equal(s.xCommandAccepted, true);
   assert.equal(s.Warning.uiCode, 2);
   assert.equal(s.Status.xRecoveryRequired, true);
   assert.equal(s.Status.xEnabled, false);
-  for (const input of [{ xPartAtEnd: true }, { xDriveRunning: true }, { xRobotBusy: true },
-    { xMotionBusy: true }, { xGlobalError: true }, { xIoManual: true }, { xHmiAlive: false },
+  for (const input of [{ xPartAtEnd: true }, { xDriveRunning: true },
+    { xGlobalError: true }, { xIoManual: true }, { xHmiAlive: false },
     { xSupported: false }, { xDriveAlarm: true }]) {
     const blocked = station(); blocked.scan({ ...input, uiAction: 3 });
     assert.equal(blocked.xCommandAccepted, false, JSON.stringify(input));
@@ -93,6 +93,87 @@ test('standalone state rejection keeps recovery and confirmation never bypasses 
     blocked.scan({ uiAction: 3, xDriveRunning: false });
     assert.equal(blocked.xCommandAccepted, false, flag);
     assert.equal(blocked.Status.xRecoveryRequired, true);
+  }
+});
+
+test('standalone empty confirmation and enable work during unrelated robot motion in either cell mode and environment', () => {
+  for (const simulation of [false, true]) for (const manual of [false, true]) for (const running of [false, true]) {
+    for (const motion of [{ xRobotBusy: true }, { xMotionBusy: true }, { xRobotBusy: true, xMotionBusy: true }]) {
+      const s = station(); s.Config.xConfigured = false;
+      s.scan({ xSimulation: simulation, xManual: manual, xCellRunning: running, ...motion });
+      assert.equal(s.Status.xConfirmAllowed, true); assert.equal(s.Status.dwConfirmBlockers, 0);
+      s.scan({ uiAction: 3 });
+      assert.equal(s.xCommandAccepted, true); assert.equal(s.Status.xRecoveryRequired, false);
+      assert.equal(s.Status.xEnabled, false); assert.equal(s.xRunOutput, false); assert.equal(s.xResetOutput, false);
+      s.Config.xConfigured = true; s.scan();
+      assert.equal(s.Status.xEnableAllowed, true); assert.equal(s.Status.dwEnableBlockers, 0);
+      s.scan({ uiAction: 1 });
+      assert.equal(s.xCommandAccepted, true); assert.equal(s.Status.xEnabled, true); assert.equal(s.Status.xReady, true);
+      assert.equal(s.Status.xConfirmationActive, false); assert.equal(s.xRunOutput, false);
+    }
+  }
+});
+
+test('enable followed by confirmation also works while the cell and robot are running elsewhere', () => {
+  for (const simulation of [false, true]) {
+    const s = station();
+    s.scan({ xSimulation: simulation, xManual: false, xCellRunning: true, xRobotBusy: true, xMotionBusy: true, uiAction: 1 });
+    assert.equal(s.xCommandAccepted, true); assert.equal(s.Status.xConfirmationActive, true);
+    assert.equal(s.Status.xEnabled, false); assert.equal(s.Warning.uiCode, 1);
+    s.scan({ uiAction: 3 });
+    assert.equal(s.xCommandAccepted, true); assert.equal(s.Status.xEnabled, true); assert.equal(s.Status.xReady, true);
+    assert.equal(s.xRunOutput, false); assert.equal(s.xResetOutput, false);
+  }
+});
+
+test('PLC blocker masks explain every remaining enable and confirmation gate and reject the current command', () => {
+  const gates = [
+    [1, s => { s.xSupported = false; }], [2, s => { s.xHmiAlive = false; }],
+    [4, s => { s.xGlobalError = true; }], [8, s => { s.xIoManual = true; }],
+    [16, s => { s.xDriveAlarm = true; }], [64, s => { s.Signals.xRobotInteraction = true; }],
+    [128, s => { s.xReserved = true; }], [256, s => { s.xDriveRunning = true; }],
+    [512, s => { s.xManualRun = true; }], [1024, s => { s.xResetBusy = true; }],
+    [2048, s => { s.xDisablePending = true; }], [8192, s => { s.xTransport = true; }],
+  ];
+  for (const simulation of [false, true]) for (const action of [1, 3]) for (const [mask, setup] of gates) {
+    const s = station(); s.xSimulation = simulation; setup(s);
+    s.scan({ uiAction: action, xDriveRunning: s.xDriveRunning });
+    const field = action === 1 ? 'dwEnableBlockers' : 'dwConfirmBlockers';
+    assert.equal(s.Status[field] & mask, mask, `${action}: ${mask}`);
+    assert.equal(s.Status[action === 1 ? 'xEnableAllowed' : 'xConfirmAllowed'], false);
+    assert.equal(s.xCommandAccepted, false); assert.equal(s.Warning.uiCode, 3);
+    assert.equal(s.Status.xRecoveryRequired, true);
+  }
+  const configuration = station(); configuration.Config.xConfigured = false; configuration.scan({ uiAction: 1 });
+  assert.equal(configuration.Status.dwEnableBlockers, 32); assert.equal(configuration.xCommandAccepted, false);
+  const pending = station(); pending.scan({ uiAction: 1 }); pending.Config.xConfigured = false; pending.scan({ uiAction: 3 });
+  assert.equal(pending.Status.dwConfirmBlockers, 32); assert.equal(pending.xCommandAccepted, false);
+  const enabled = station(); enable(enabled); enabled.scan({ uiAction: 1 });
+  assert.equal(enabled.Status.dwEnableBlockers, 4096); assert.equal(enabled.xCommandAccepted, false);
+  enabled.scan({ uiAction: 3 }); assert.equal(enabled.Status.dwConfirmBlockers, 16384); assert.equal(enabled.xCommandAccepted, false);
+  const sensor = station(); sensor.scan({ xPartAtEnd: true, uiAction: 3 });
+  assert.equal(sensor.Status.dwConfirmBlockers, 32768); assert.equal(sensor.xCommandAccepted, false);
+  const several = station(); several.scan({ xSupported: false, xHmiAlive: false, xGlobalError: true, uiAction: 1 });
+  assert.equal(several.Status.dwEnableBlockers, 7); assert.equal(several.Status.dwConfirmBlockers, 7);
+});
+
+test('actual PLC interaction detection blocks only the selected GK including manual approach and retained placement pose', () => {
+  const detect = compileSt(readPlc('PLC_PRG.RunGeometryControl.st').match(/stGeometrySignals :=[\s\S]*?(?=\s*GEOMETRY\[uiGeometry\]\()/)[0]);
+  for (const stationId of [1, 2]) {
+    const place = stationId === 1 ? 24 : 27, change = stationId === 1 ? 26 : 29, other = stationId === 1 ? 27 : 24;
+    for (const [current, target, busy, interacting] of [[place, 0, false, true], [change, 0, false, true],
+      [0, place, true, true], [0, change, true, true], [0, place, false, false], [other, other, true, false], [4, 20, true, false]]) {
+      const context = { uiGeometry: stationId, stGeometrySignals: {},
+        E_POINT_NAME: { GEOMETRY_1_PLACE: 24, GEOMETRY_1_CHANGE: 26, GEOMETRY_2_PLACE: 27, GEOMETRY_2_CHANGE: 29 },
+        GVL_ROBOT: { Status: { eCurrentPoint: current, xBusy: busy }, Command: { eSetPoint: target } },
+        GVL_GEOMETRY_CONTROL: { astSignals: [null, { xRobotInteraction: false }, { xRobotInteraction: false }] } };
+      detect(context);
+      assert.equal(context.stGeometrySignals.xRobotInteraction, interacting);
+      const s = station(); s.Signals.xRobotInteraction = context.stGeometrySignals.xRobotInteraction;
+      s.scan({ xManual: false, xCellRunning: true, xRobotBusy: busy, xMotionBusy: busy, uiAction: 3 });
+      assert.equal(s.xCommandAccepted, !interacting);
+      s.scan({ uiAction: 1 }); assert.equal(s.xCommandAccepted, !interacting);
+    }
   }
 });
 
@@ -223,7 +304,7 @@ test('disabled handoff finishes robot release, then demands confirmation before 
 test('manual drive ignores the end sensor and is denied with robot interaction, auto cycle or lost HMI', () => {
   const s = station(); s.scan({ xPartAtEnd: true, uiAction: 5 }); assert.equal(s.xRunOutput, true);
   s.scan({ uiAction: 6 }); assert.equal(s.xRunOutput, false);
-  for (const input of [{ xCellRunning: true }, { xHmiAlive: false }, { xRobotBusy: true }, { xGlobalError: true }]) {
+  for (const input of [{ xCellRunning: true }, { xHmiAlive: false }, { xRobotBusy: true }, { xMotionBusy: true }, { xManual: false }, { xGlobalError: true }]) {
     const blocked = station(); blocked.scan({ ...input, uiAction: 5 }); assert.equal(blocked.xCommandAccepted, false); assert.equal(blocked.xRunOutput, false);
   }
   const robot = station(); robot.Signals.xRobotInteraction = true; robot.scan({ uiAction: 5 }); assert.equal(robot.xCommandAccepted, false);
@@ -261,7 +342,7 @@ test('simulation keeps progress through pause and consumes only accepted removal
 
 test('routing picks any free enabled GK without a magazine dependency', () => {
   const select = compileSt(readPlc('FB/F_GEOMETRY_SELECT_STATION.st'));
-  const s = { ...conversions, uiTry: 0, uiStation: 0, F_GEOMETRY_SELECT_STATION: 0, xRequireFree: true, GVL_GEOMETRY_CONTROL: { xSupported: true, uiLastStation: 0, astStatus: [null, { xEnabled: true, xConfigured: true, xReady: false, xError: false, uiState: 4 }, { xEnabled: true, xConfigured: true, xReady: true, xError: false, uiState: 1 }] } };
+  const s = { ...conversions, uiMachine: 0, uiTry: 0, uiStation: 0, F_GEOMETRY_SELECT_STATION: 0, xRequireFree: true, GVL_GEOMETRY_CONTROL: { xSupported: true, uiLastStation: 0, astStatus: [null, { xEnabled: true, xConfigured: true, xReady: false, xError: false, uiState: 4 }, { xEnabled: true, xConfigured: true, xReady: true, xError: false, uiState: 1 }] } };
   select(s); assert.equal(s.F_GEOMETRY_SELECT_STATION, 2);
   s.GVL_GEOMETRY_CONTROL.astStatus[2].xReady = false; select(s); assert.equal(s.F_GEOMETRY_SELECT_STATION, 0);
   s.xRequireFree = false; select(s); assert.equal(s.F_GEOMETRY_SELECT_STATION, 1);
@@ -272,6 +353,7 @@ test('automatic cadence uses confirmed taken parts; forced sample restarts its o
   const run = compileSt(readPlc('FB/F_GEOMETRY_TAKE_DETAIL.st'));
   const s = { ...conversions, uiMachine: 2, uiProductType: 3, F_GEOMETRY_TAKE_DETAIL: false, Call: emptyCall(), EmptyCall: emptyCall(), events: [],
     GVL_GEOMETRY_CONTROL: { xSupported: true, xAutoEnabled: true, udiNextCallId: 0, astStatus: [null, { xEnabled: true }, { xEnabled: true }], auiActiveCount: [0, 0, 0, 0], auiPeriod: [0, 3, 3, 3], astCalls: [null, emptyCall(), emptyCall(), emptyCall()] } };
+  s.F_GEOMETRY_FIRST_CALL = () => firstGeometryCall(s.GVL_GEOMETRY_CONTROL);
   s.F_GEOMETRY_EVENT = ({ Call }) => { s.events.push(structuredClone(Call)); return true; };
   run(s); run(s); assert.equal(s.F_GEOMETRY_TAKE_DETAIL, false); assert.equal(s.GVL_GEOMETRY_CONTROL.auiActiveCount[2], 2);
   run(s); assert.equal(s.F_GEOMETRY_TAKE_DETAIL, true); assert.equal(s.GVL_GEOMETRY_CONTROL.astCalls[2].uiProductType, 3);

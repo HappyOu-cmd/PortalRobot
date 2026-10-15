@@ -13,6 +13,8 @@ export interface VisualEffectSettings {
   geometryConveyorSpeed: number;
   /** Показывать дополнительный цех с маршрутом и циклом погрузчика. */
   workshopEnabled: boolean;
+  /** Показывать рабочего с чертежом рядом с первым станком. */
+  inspectionWorkerEnabled: boolean;
   cameraFocus: boolean;
   alarmBeacons: boolean;
   /** Непрозрачность сетчатых ограждений и дверных полотен. */
@@ -32,6 +34,7 @@ const createDefaultIndicatorSettings = (): VisualIndicatorSettings => ({
 export const DEFAULT_VISUAL_EFFECT_SETTINGS: VisualEffectSettings = {
   geometryConveyorSpeed: 0.24,
   workshopEnabled: true,
+  inspectionWorkerEnabled: false,
   cameraFocus: false,
   alarmBeacons: false,
   enclosureOpacity: 1,
@@ -105,9 +108,10 @@ export function normalizeVisualEffectSettings(value: unknown): VisualEffectSetti
   const savedMachines = Array.isArray(savedIndicators.machines) ? savedIndicators.machines : [];
   const savedMagazines = Array.isArray(savedIndicators.magazines) ? savedIndicators.magazines : [];
   return {
-    // Для ранее сохранённых настроек оставляем новые элементы включёнными.
     geometryConveyorSpeed: boundedNumber(saved.geometryConveyorSpeed, DEFAULT_VISUAL_EFFECT_SETTINGS.geometryConveyorSpeed, 0, 2),
+    // Дополнительный цех включён и для ранее сохранённых настроек.
     workshopEnabled: saved.workshopEnabled !== false,
+    inspectionWorkerEnabled: saved.inspectionWorkerEnabled === true,
     cameraFocus: saved.cameraFocus === true,
     alarmBeacons: saved.alarmBeacons === true,
     enclosureOpacity: boundedNumber(saved.enclosureOpacity, DEFAULT_VISUAL_EFFECT_SETTINGS.enclosureOpacity, 0.1, 1),

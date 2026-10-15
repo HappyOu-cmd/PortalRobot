@@ -144,7 +144,7 @@ export class TestStore {
   }
   listRuns(limit = 50) { return this.db.prepare(`SELECT test_run.*,
     (SELECT reason FROM test_case_result WHERE run_id=test_run.id AND status='FAIL' ORDER BY case_index DESC LIMIT 1) AS last_failure_reason
-    FROM test_run ORDER BY started_at DESC LIMIT ?`).all(Math.max(1, Math.min(500, Number(limit)))).map((row) => runRow(row)); }
+    FROM test_run ORDER BY started_at DESC, id DESC LIMIT ?`).all(Math.max(1, Math.min(500, Number(limit)))).map((row) => runRow(row)); }
   getRun(id) {
     const row = this.db.prepare('SELECT * FROM test_run WHERE id = ?').get(Number(id));
     if (!row) return null;

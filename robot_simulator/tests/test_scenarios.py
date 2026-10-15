@@ -1,4 +1,7 @@
+import pytest
+
 from robot_simulator.test_scenarios import (
+    scenario,
     error_owner_scenarios,
     expected_error_owner,
     expected_first_decision,
@@ -120,10 +123,45 @@ def test_first_decision_oracle_reports_no_task_without_enabled_machine() -> None
     assert expected_first_decision(item["initialState"]) == "no-task"
 
 
-def test_return_blank_smoke_case_checks_decision_without_waiting_for_an_impossible_empty_cell() -> None:
+def test_single_type_smoke_waits_with_blank_and_stops_without_losing_it() -> None:
     item = smoke_scenarios()[4]
-    assert item["expectations"]["firstDecision"] == "return-blank"
+    assert item["expectations"]["firstDecision"] == "held-blank-wait"
+    assert expected_first_decision(item["initialState"]) == "held-blank-wait"
     assert item["expectations"]["fullCycle"] is False
+
+
+@pytest.mark.parametrize("type_count", [1, 2, 3])
+def test_held_blank_oracle_waits_without_other_work(type_count: int) -> None:
+    item = scenario("Ожидание", type_count=type_count, machines=((0, 1), (0, 2), (0, 3)),
+                    gripper_1=(1, 1))
+    assert expected_first_decision(item["initialState"]) == "held-blank-wait"
+
+
+@pytest.mark.parametrize("type_count", [2, 3])
+@pytest.mark.parametrize("machine_state", [1, 2, 3])
+@pytest.mark.parametrize("magazine", [0, 1])
+def test_held_blank_oracle_returns_for_other_stock(type_count: int, machine_state: int, magazine: int) -> None:
+    state = scenario("Другой тип", type_count=type_count,
+                     machines=((0, 1), (machine_state, 2), (0, type_count)),
+                     magazine_enabled=(True, True), gripper_1=(1, 1))["initialState"]
+    state["magazines"][magazine]["slots"][0] = {"content": 1, "productType": 2}
+    assert expected_first_decision(state) == "return-blank"
+
+
+@pytest.mark.parametrize("free_count,expected", [(1, "held-blank-wait"), (2, "return-blank")])
+def test_held_blank_oracle_keeps_a_destination_after_return(free_count: int, expected: str) -> None:
+    state = scenario("Выгрузка другого типа", type_count=2,
+                     machines=((0, 1), (3, 2), (0, 1)), gripper_1=(1, 1))["initialState"]
+    for index, slot in enumerate(state["magazines"][0]["slots"]):
+        slot["content"] = 0 if index < free_count else 2
+    assert expected_first_decision(state) == expected
+
+
+def test_generated_wait_with_blank_never_requires_cycle_completion() -> None:
+    cases = generated_scenarios(7, 1000)
+    waiting = [item for item in cases if item["expectations"]["firstDecision"] == "held-blank-wait"]
+    assert waiting
+    assert all(not item["expectations"]["fullCycle"] for item in waiting)
 
 
 def test_payload_recovery_cases_cover_reenable_and_put_fallback() -> None:

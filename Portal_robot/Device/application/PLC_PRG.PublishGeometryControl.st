@@ -1,8 +1,25 @@
 METHOD PRIVATE PublishGeometryControl
+VAR
+	uiWarningEvent : UINT;
+	xWaitWarningActive : BOOL;
+END_VAR
 
 // --- BEGIN IMPLEMENTATION ---
 
 GVL_HMI.astGeometryStatus := GVL_GEOMETRY_CONTROL.astStatus;
+// Подсветка следует накопленному предупреждению, включая его сброс в этом скане.
+xWaitWarningActive := FALSE;
+FOR uiWarningEvent := UINT#1 TO UINT#100 DO
+	IF GVL_ALARM.Events[uiWarningEvent].xActive
+	AND (GVL_ALARM.Events[uiWarningEvent].eSource = E_ALARM_SOURCE.CELL)
+	AND (GVL_ALARM.Events[uiWarningEvent].eSeverity = E_ALARM_SEVERITY.WARNING)
+	AND (GVL_ALARM.Events[uiWarningEvent].uiCode = UINT#52) THEN xWaitWarningActive := TRUE; END_IF;
+END_FOR;
+FOR uiGeometry := UINT#1 TO UINT#2 DO
+	GVL_HMI.astGeometryStatus[uiGeometry].xCallWaitWarning := xWaitWarningActive
+		AND (GVL_GEOMETRY_CONTROL.astStatus[uiGeometry].xEnabled
+			OR NOT (GVL_GEOMETRY_CONTROL.astStatus[1].xEnabled OR GVL_GEOMETRY_CONTROL.astStatus[2].xEnabled));
+END_FOR;
 GVL_HMI.astGeometryConfig := GVL_GEOMETRY_CONTROL.astActiveConfig;
 GVL_HMI.astGeometryCalls := GVL_GEOMETRY_CONTROL.astCalls;
 GVL_HMI.auiGeometryPeriod := GVL_GEOMETRY_CONTROL.auiPeriod;
@@ -16,6 +33,7 @@ GVL_HMI.xGeometryWaitWhenOccupied := GVL_GEOMETRY_CONTROL.xWaitWhenOccupied;
 GVL_HMI.tGeometryTransportTimeout := GVL_GEOMETRY_CONTROL.tTransportTimeout;
 GVL_HMI.tGeometryFeedbackTimeout := GVL_GEOMETRY_CONTROL.tDriveFeedbackTimeout;
 GVL_HMI.tGeometryResetPulse := GVL_GEOMETRY_CONTROL.tResetPulse;
+GVL_HMI.tGeometryWaitWarningTimeout := GVL_GEOMETRY_CONTROL.tWaitWarningTimeout;
 GVL_HMI.xGeometrySettingsAllowed := GVL_GEOMETRY_CONTROL.xSettingsAllowed;
 // Снимок FIFO имеет версию: gateway читает одинаковый Seq до/после payload.
 GVL_HMI.udiGeometryEventSequence := UDINT#0;

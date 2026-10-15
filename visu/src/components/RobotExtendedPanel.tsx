@@ -65,6 +65,11 @@ function pointNumber(value: string) {
   return Number(value.replace(',', '.'));
 }
 
+function formatPointCoordinate(value: string) {
+  const numeric = pointNumber(value);
+  return Number.isFinite(numeric) ? numeric.toFixed(1) : value;
+}
+
 const backupDateFormatter = new Intl.DateTimeFormat('ru-RU', {
   day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit',
 });
@@ -249,6 +254,7 @@ export function RobotExtendedPanel({
   const [selectedMagazine, setSelectedMagazine] = useState(1);
   const [selectedEditorPoint, setSelectedEditorPoint] = useState(1);
   const [editorDraft, setEditorDraft] = useState<PointDraft>(() => pointDraft(runtime.pointEditor.points[0]));
+  const [focusedCoordinate, setFocusedCoordinate] = useState<'x' | 'y' | 'z' | null>(null);
   const [editorDirty, setEditorDirty] = useState(false);
   const [editorPending, setEditorPending] = useState<PointPendingCommand>(null);
   const [editorMessage, setEditorMessage] = useState('');
@@ -752,7 +758,7 @@ export function RobotExtendedPanel({
                 <div className="point-editor-fields">
                   {(['x', 'y', 'z'] as const).map((field) => <label key={field}>
                     <span>{field.toUpperCase()}</span>
-                    <div><input type="number" step="0.1" disabled={!editorEditable || Boolean(editorPending)} value={editorDraft[field]} onChange={(event) => changeEditorDraft(field, event.target.value)} /><small>мм</small></div>
+                    <div><input type="number" step="0.1" disabled={!editorEditable || Boolean(editorPending)} value={focusedCoordinate === field ? editorDraft[field] : formatPointCoordinate(editorDraft[field])} onFocus={() => setFocusedCoordinate(field)} onBlur={() => setFocusedCoordinate(null)} onChange={(event) => changeEditorDraft(field, event.target.value)} /><small>мм</small></div>
                   </label>)}
                   {magazinePointSelected && <>
                     <label><span>Смещение Safe Z</span><div><input type="text" inputMode="decimal" disabled={!editorEditable || Boolean(editorPending)} value={editorDraft.magazineSafeZ} onChange={(event) => changeEditorDraft('magazineSafeZ', event.target.value)} /><small>мм</small></div></label>

@@ -29,5 +29,8 @@ STRUCT
 	uiMachine : UINT;
 	uiProductType : UINT;
 	rTravel : REAL; // Положение модели 0..1; в NORMAL только оценка для изображения
+	dwEnableBlockers : DWORD; // Причины запрета команды включения; 0 = xEnableAllowed
+	dwConfirmBlockers : DWORD; // Причины запрета подтверждения пустоты; 0 = xConfirmAllowed
+	xCallWaitWarning : BOOL; // Активный W52 ячейки; снимается подтверждением предупреждений
 END_STRUCT
 END_TYPE

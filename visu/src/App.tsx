@@ -1,9 +1,9 @@
 import { TwoPalletControl, MagazineModeSwitch } from './components/magazine/TwoPalletControl';
 import { createTwinState, changeOfflineMagazineMode, commandTwinPreview, syncTwinPreview, twinMagazine, TWIN_COMMANDS, TWIN_CONFIG_FIELDS, type TwinAction, type TwinCommandData, type TwinConfig, type TwinState } from './model/twoPalletControl';
-import conveyorBeltOutlineIcon from '@iconify-icons/material-symbols/conveyor-belt-outline';
 import displaySettingsOutlineIcon from '@iconify-icons/material-symbols/display-settings-outline';
 import measuringTapeOutlineIcon from '@iconify-icons/material-symbols/measuring-tape-outline';
 import microwaveGenOutlineIcon from '@iconify-icons/material-symbols/microwave-gen-outline';
+import northEastRoundedIcon from '@iconify-icons/material-symbols/north-east-rounded';
 import robotIndustrialOutlineIcon from '@iconify-icons/mdi/robot-industrial-outline';
 import settingsOutlineIcon from '@iconify-icons/material-symbols/settings-outline';
 import touchAppOutlineIcon from '@iconify-icons/material-symbols/touch-app-outline';
@@ -23,6 +23,8 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { CellViewport } from './components/CellViewport';
+import { BottomNavigation } from './components/BottomNavigation';
+import type { BottomNavigationTarget, BottomSection } from './model/bottomNavigation';
 import { TwoPalletPreviewControl } from './components/TwoPalletPreviewControl';
 import { TwoPalletPreviewController } from './model/twoPalletPreview';
 import { CellHeaderControls } from './components/CellHeaderControls';
@@ -53,6 +55,7 @@ import {
 import { CellSettingsPanel, ProductTypeBadge, ProductTypeSelector } from './components/multiType/MultiTypeControls';
 import { CyclogramPanel } from './components/cyclogram/CyclogramPanel';
 import { GeometryControlPanel, GeometryCellSettings, GeometryRecoveryPrompt } from './components/geometry/GeometryControlPanel';
+import { GeometryOverviewCard } from './components/geometry/GeometryOverviewCard';
 import { GeometryExtendedPanel } from './components/geometry/GeometryExtendedPanel';
 import { CellEventLog } from './components/CellEventLog';
 import { RuntimeDiagnosticsPanel } from './components/RuntimeDiagnosticsPanel';
@@ -80,6 +83,7 @@ import { DEFAULT_MPG_PENDANT } from './model/mpgPendant';
 import { getPortalRailClearanceMm, getPortalSupportHeightMm, PORTAL_MEASUREMENTS, PORTAL_MOUNTING } from './config/portalMeasurements';
 import { getRobotTravelLimits } from './model/travel';
 import { mergeCyclogramUpdate, type CyclogramHistory } from './model/cyclogram';
+import { geometryOverviewStatus } from './model/geometryControl';
 import { pickFaultSimulationValues, readBool, readNumber } from './model/faultSimulation';
 import {
   DEFAULT_DRIFT_SETTINGS,
@@ -120,7 +124,6 @@ import { pointBackupApi } from './points/client';
 import { DEMO_OPERATOR } from './statistics/demoData';
 
 type Page = 'monitoring' | 'machines' | 'robot' | 'magazine' | 'geometry' | 'manual' | 'injections' | 'diagnostics' | 'events' | 'alarms' | 'tests' | 'settings' | 'cell-settings' | 'simulation-settings' | 'users' | 'statistics' | 'statistics-settings' | 'admin' | 'cyclogram';
-type BottomSection = 'cell' | 'machines' | 'robot' | 'magazine' | 'geometry';
 type TopMenuSection = 'root' | 'settings' | 'manual';
 type FontPreset = 'apple' | 'tesla' | 'manrope' | 'plex' | 'onest' | 'geologica' | 'commissioner';
 type SettingsTopic = 'interface' | 'scene' | 'equipment' | 'product';
@@ -128,14 +131,6 @@ type ManualTopic = 'robot' | 'machines' | 'magazines' | 'enclosure' | 'cabinets'
 const PLC_UI_REFRESH_MS = 50;
 const MANUAL_MODE_SPEED_PERCENT = 10;
 const WORKSPACE_CLICK_MOVE_TOLERANCE_PX = 6;
-const BOTTOM_NAV_PRESS_MOVE_TOLERANCE_PX = 14;
-const BOTTOM_NAV_ITEMS = [
-  { key: 'cell' as const, label: 'Ячейка', icon: conveyorBeltOutlineIcon, sources: ['cell'] as PlcAlarmSource[] },
-  { key: 'machines' as const, label: 'Станки', icon: microwaveGenOutlineIcon, sources: ['machine-1', 'machine-2', 'machine-3'] as PlcAlarmSource[] },
-  { key: 'robot' as const, label: 'Робот', icon: robotIndustrialOutlineIcon, sources: ['robot', 'axis-x', 'axis-y', 'axis-z', 'axis-group', 'motion-manager', 'point-manager'] as PlcAlarmSource[] },
-  { key: 'magazine' as const, label: 'Магазины', icon: viewGridOutlineIcon, sources: ['magazine-1', 'magazine-2'] as PlcAlarmSource[] },
-  { key: 'geometry' as const, label: 'Геометрический контроль', icon: measuringTapeOutlineIcon, sources: ['geometry-1', 'geometry-2'] as PlcAlarmSource[] },
-];
 const SETTINGS_TOPICS = [
   { id: 'interface' as const, label: 'Интерфейс' },
   { id: 'scene' as const, label: 'Сцена' },
@@ -599,7 +594,7 @@ function CellQuickPanel({ running, stopPending, online, globalError, readyToStar
     { key: 'errors', ready: startReadiness.noBlockingError, title: 'Блокирующие аварии', done: 'Активных блокировок нет', blocked: 'Обнаружена активная блокирующая авария' },
     { key: 'interface', ready: startReadiness.robotInterfaceReady, title: 'Интерфейс робота', done: 'Выбранный интерфейс готов', blocked: 'Интерфейс робота не подтвердил готовность' },
     { key: 'config', ready: startReadiness.configurationValid, title: 'Конфигурация типов', done: 'Конфигурация корректна', blocked: 'Конфигурация продукции некорректна' },
-    { key: 'points', ready: startReadiness.pointsConfigured, title: 'Инженерные точки', done: 'Все 12 точек настроены', blocked: 'Настроены не все 12 обязательных точек робота' },
+    { key: 'points', ready: startReadiness.pointsConfigured, title: 'Инженерные точки', done: 'HOME_SAFETY и точки включённого оборудования настроены', blocked: 'Не настроена HOME_SAFETY или точки включённого оборудования' },
     { key: 'drives', ready: startReadiness.drivesReady, title: 'Приводы и группа осей', done: 'Готовы к движению', blocked: 'Приводы или группа осей не готовы' },
     { key: 'robot', ready: startReadiness.robotReady, title: 'Робот', done: 'Готов принять команду', blocked: 'Робот занят, в ошибке или захваты конфликтуют' },
     { key: 'magazine', ready: startReadiness.magazineReady, title: 'Магазин', done: 'Готов к операции', blocked: 'Магазин выключен, занят или находится в ошибке' },
@@ -1212,6 +1207,7 @@ function ProcessOverviewCard({ state, runtime, connected, dataActive, equipmentV
   const process = cellProcessStatus(state, runtime, connected, dataActive);
   const robot = robotOverviewStatus(state, runtime, connected, dataActive);
   const magazines = state.magazines.map((item, index) => magazineOverviewStatus(item.state, runtime, connected, index));
+  const geometry = [0, 1].map((index) => geometryOverviewStatus(state.geometryControl, index, connected && dataActive));
 
   return <section className={`process-overview-card tone-${process.tone}${equipmentVisible ? '' : ' equipment-collapsed'}`} aria-label="Текущий процесс и состояния оборудования">
     <header className="process-current-card">
@@ -1244,24 +1240,19 @@ function ProcessOverviewCard({ state, runtime, connected, dataActive, equipmentV
         <b>Магазин {index + 1}</b>
         <div className="process-equipment-state"><i /><span title={magazine.text}>{magazine.text}</span></div>
       </article>)}
+      {geometry.map((station, index) => <article className={`process-equipment-line tone-${station.tone}`} key={`geometry-${index}`}>
+        <div className="process-equipment-icon"><Icon icon={measuringTapeOutlineIcon} aria-hidden="true" /></div>
+        <b>ГК {index + 1}</b>
+        <div className="process-equipment-state"><i /><span title={station.text}>{station.text}</span></div>
+      </article>)}
       </div>
     </div>
   </section>;
 }
 
-const EQUIPMENT_LOAD_ITEMS = [
-  { lane: 'machine-1', label: 'Станок 1' },
-  { lane: 'machine-2', label: 'Станок 2' },
-  { lane: 'machine-3', label: 'Станок 3' },
-  { lane: 'robot', label: 'Робот' },
-] as const;
-const EQUIPMENT_LOAD_RING_LENGTH = 2 * Math.PI * 11;
-
-function OperatorShiftCard({ user, summary, metricsVisible, onMetricsVisibilityChange }: {
+function OperatorShiftCard({ user, summary }: {
   user: AppUser;
   summary: StatisticsSummary | null;
-  metricsVisible: boolean;
-  onMetricsVisibilityChange: (visible: boolean) => void;
 }) {
   const plan = summary?.shiftPlan ?? (user.role === 'operator' ? user.shiftPlan : null);
   const producedParts = summary?.producedParts ?? 0;
@@ -1270,87 +1261,30 @@ function OperatorShiftCard({ user, summary, metricsVisible, onMetricsVisibilityC
   const planLabel = plan && plan > 0 ? plan : 'Нет данных';
   const role = user.role === 'admin' ? 'Администратор' : 'Оператор';
 
-  return <section className={`operator-shift-card${metricsVisible ? ' metrics-visible' : ''}`} aria-label="План, факт и загрузка оборудования">
+  return <section className="operator-shift-card" aria-label="План и факт за смену">
     <div className="operator-shift-card__profile">
       <div className="operator-shift-card__identity">
-        <UserAvatar className="operator-shift-card__avatar" avatarDataUrl={user.avatarDataUrl} displayName={user.displayName} />
-        <div><h2>{user.displayName}</h2><p><ShieldCheck aria-hidden="true" />{role}</p></div>
+        <div className="operator-shift-card__avatar-frame">
+          <UserAvatar className="operator-shift-card__avatar" avatarDataUrl={user.avatarDataUrl} displayName={user.displayName} />
+          <span className="operator-shift-card__presence" aria-hidden="true" />
+        </div>
+        <div className="operator-shift-card__details"><h2 title={user.displayName}>{user.displayName}</h2><p>{role}</p></div>
       </div>
       <div className="operator-shift-card__progress">
-        <span>Изготовлено деталей</span>
-        <div><b>{producedParts} / {planLabel}</b><strong>{progress === null ? '—' : `${progress}%`}</strong></div>
-        <i aria-hidden="true"><u style={{ width: `${progressWidth}%` }} /></i>
+        <div className="operator-shift-card__production">
+          <span>Изготовлено деталей</span>
+          <b>{producedParts}<small> / {planLabel}</small></b>
+          <strong>
+            {progress !== null && <Icon icon={northEastRoundedIcon} aria-hidden="true" />}
+            {progress === null ? '—' : `${progress}%`}
+          </strong>
+        </div>
+        <span className="operator-shift-card__plan-bar" role="progressbar" aria-label="Выполнение плана за смену" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress === null ? undefined : progressWidth} aria-valuetext={progress === null ? 'План не задан' : `${progress}%: ${producedParts} из ${planLabel} деталей`}>
+          <i style={{ width: `${progressWidth}%` }} />
+        </span>
       </div>
     </div>
-    <section id="operator-equipment-load" className="operator-shift-card__metrics" aria-hidden={!metricsVisible} aria-label="Загрузка оборудования за смену">
-      <h3>Загрузка за смену</h3>
-      <div>{EQUIPMENT_LOAD_ITEMS.map(({ lane, label }) => {
-        const source = summary?.equipment.find((item) => item.lane === lane);
-        const value = Math.min(100, Math.max(0, Math.round(source?.loadPercent ?? 0)));
-        return <article key={lane}>
-          <span className="operator-load-ring" role="progressbar" aria-label={`${label}: ${value}%`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={value}>
-            <svg viewBox="0 0 28 28" aria-hidden="true"><circle className="track" cx="14" cy="14" r="11" /><circle className="value" cx="14" cy="14" r="11" strokeDasharray={EQUIPMENT_LOAD_RING_LENGTH} strokeDashoffset={EQUIPMENT_LOAD_RING_LENGTH * (1 - value / 100)} /></svg><b>{value}%</b>
-          </span>
-          <span className="operator-load-data"><span><b>{label}</b><strong>{value}%</strong></span><i aria-hidden="true"><u style={{ width: `${value}%` }} /></i></span>
-        </article>;
-      })}</div>
-    </section>
-    <button className="operator-shift-card__metrics-toggle" type="button" aria-label={metricsVisible ? 'Скрыть загрузку оборудования за смену' : 'Показать загрузку оборудования за смену'} aria-controls="operator-equipment-load" aria-expanded={metricsVisible} onClick={() => onMetricsVisibilityChange(!metricsVisible)} title={metricsVisible ? 'Скрыть загрузку оборудования за смену' : 'Показать загрузку оборудования за смену'}>
-      {metricsVisible ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
-    </button>
   </section>;
-}
-
-function BottomNavigation({ active, onSelect, alarmEvents }: {
-  active: BottomSection | null;
-  onSelect: (section: BottomSection) => void;
-  alarmEvents: PlcAlarmEvent[];
-}) {
-  const pointerRef = useRef<{ pointerId: number; key: BottomSection; x: number; y: number } | null>(null);
-  const suppressPointerClickRef = useRef(false);
-  return <nav className="cell-bottom-nav" aria-label="Быстрое управление">
-    {BOTTOM_NAV_ITEMS.map(({ key, label, icon, sources }) => {
-      const events = alarmEvents.filter((event) => event.active && sources.includes(event.source));
-      const tone = events.some((event) => event.severity === 'alarm') ? 'alarm' : events.length ? 'warning' : '';
-      return <button
-        key={key}
-        className={`${active === key ? 'active ' : ''}${tone ? `has-${tone}` : ''}`.trim()}
-        type="button"
-        onPointerDown={(event) => {
-          if (event.button !== 0) return;
-          suppressPointerClickRef.current = true;
-          pointerRef.current = { pointerId: event.pointerId, key, x: event.clientX, y: event.clientY };
-          event.currentTarget.setPointerCapture(event.pointerId);
-        }}
-        onPointerUp={(event) => {
-          const pointer = pointerRef.current;
-          pointerRef.current = null;
-          if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-            event.currentTarget.releasePointerCapture(event.pointerId);
-          }
-          if (!pointer || pointer.pointerId !== event.pointerId || pointer.key !== key) return;
-          const distance = Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y);
-          if (distance <= BOTTOM_NAV_PRESS_MOVE_TOLERANCE_PX) onSelect(key);
-          window.setTimeout(() => { suppressPointerClickRef.current = false; }, 0);
-        }}
-        onPointerCancel={(event) => {
-          if (pointerRef.current?.pointerId === event.pointerId) pointerRef.current = null;
-          suppressPointerClickRef.current = false;
-        }}
-        onClick={() => {
-          if (suppressPointerClickRef.current) {
-            suppressPointerClickRef.current = false;
-            return;
-          }
-          onSelect(key);
-        }}
-        aria-label={label}
-        title={label}
-      ><span className="cell-bottom-nav__icon">
-        <Icon icon={icon} aria-hidden="true" />
-      </span></button>;
-    })}
-  </nav>;
 }
 
 function AlarmScreen({ events, online, resetAllowed, safetyRelayResetAllowed, safetyRelayResetActive,
@@ -1924,6 +1858,12 @@ function SettingsPanel({ layout, setLayout, magazineMode, fontPreset, onFontPres
           checked={visualEffects.workshopEnabled}
           onChange={(enabled) => changeVisualEffects((draft) => { draft.workshopEnabled = enabled; })}
         />
+        <ToggleSwitch
+          label="Рабочий с чертежом"
+          description="Показывать рабочего рядом с первым станком"
+          checked={visualEffects.inspectionWorkerEnabled}
+          onChange={(enabled) => changeVisualEffects((draft) => { draft.inspectionWorkerEnabled = enabled; })}
+        />
       </section>}
       {activeTopic === 'scene' && <section className="scene-effects-settings"><h3>Индикация 3D-сцены</h3>
         <p>Технологические эффекты читают только живые данные PLC и никак не участвуют в управлении; фокус камеры работает при выборе оборудования.</p>
@@ -2335,7 +2275,6 @@ export function App() {
   const [plcDataEnabled, setPlcDataEnabled] = useState(true);
   const [latestEventVisible, setLatestEventVisible] = useState(false);
   const [equipmentStatusVisible, setEquipmentStatusVisible] = useState(true);
-  const [operatorMetricsVisible, setOperatorMetricsVisible] = useState(true);
   const workspacePointerRef = useRef<{ pointerId: number; x: number; y: number; eligible: boolean } | null>(null);
   const refreshShiftSummaryRef = useRef<(() => void) | null>(null);
   const plcDataEnabledRef = useRef(true);
@@ -2628,9 +2567,11 @@ export function App() {
   const updateMagazineSetting = (command: string, key: 'pitchX' | 'pitchY', value: number): boolean => {
     if (rejectGuestAction()) return false;
     if (!Number.isFinite(value)) return false;
-    if (!cellState.magazines[selectedMagazine].state.editAllowed) return false;
     if (!cellState.magazines[selectedMagazine].state.pitchEditAllowed) return false;
-    if (usePlcData) return sendPlcCommand({ command, magazine: selectedMagazine + 1, value });
+    if (plcDataEnabled) {
+      if (!usePlcData) { setCommandError('Нет связи с PLC'); return false; }
+      return sendPlcCommand({ command, magazine: selectedMagazine + 1, value });
+    }
     updateMagazineState(0, { [key]: value });
     updateMagazineState(1, { [key]: value });
     return true;
@@ -3129,7 +3070,7 @@ export function App() {
     const normalized = Math.max(1, Math.min(100, Math.round(value)));
     sendPlcCommand({ command: 'simulation.accelerationFactor', value: normalized });
   };
-  const selectBottomSection = (section: BottomSection) => {
+  const selectBottomSection = (section: BottomSection, machineIndex?: number) => {
     setMatrixQuickOpen(false);
     setMachineMechanism(null);
     setBottomSection(section);
@@ -3140,7 +3081,7 @@ export function App() {
       const preferredIndex = runtimeIndex >= 0 && runtimeIndex < cellState.machines.length
         ? runtimeIndex
         : processingIndex >= 0 ? processingIndex : 0;
-      const nextIndex = selectedMachine ?? preferredIndex;
+      const nextIndex = machineIndex ?? selectedMachine ?? preferredIndex;
       setSelectedMachine(nextIndex);
       setManualMachine(nextIndex);
     } else {
@@ -3173,6 +3114,15 @@ export function App() {
     closeTopMenu();
     if (rejectGuestAction()) return;
     setPage(nextPage);
+  };
+  const navigateFromFolder = (target: BottomNavigationTarget) => {
+    if (target.section === 'machines') {
+      selectBottomSection(target.section, target.index);
+      return;
+    }
+    if (target.section === 'magazine') setSelectedMagazine(target.index);
+    if (target.section === 'geometry') setSelectedGeometry(target.station);
+    selectBottomSection(target.section);
   };
   const sceneFocusTarget: SceneEquipmentTarget | null = (
     (page === 'machines' || (page === 'monitoring' && bottomSection === 'machines')) && selectedMachine !== null
@@ -3214,8 +3164,12 @@ export function App() {
         stopAllowed={usePlcData && plcRuntime.cellStopAllowed}
         manualAllowed={usePlcData && plcRuntime.manualModeAllowed}
         automaticAllowed={usePlcData && plcRuntime.automaticModeAllowed}
+        speedOverridePercent={plcRuntime.speedOverridePercent}
+        speedEditable={Boolean(authUser)}
+        modbusMode={plcRuntime.modbusMode}
         onCycleCommand={sendCellCycleCommand}
         onModeChange={changeCellMode}
+        onSpeedChange={(value) => sendRobotCommand('robot.speedOverride', value)}
         onOpen={() => { closeTopMenu(); setProfileOpen(false); }}
       />
       <div className="profile-area">
@@ -3241,7 +3195,7 @@ export function App() {
       && runtimeDiagnostics.transport === 'online' && runtimeDiagnostics.application.mode === 'stalled'
       && <button className="runtime-diagnostics-alert" type="button" aria-live="assertive" onClick={() => setPage('diagnostics')}>
         <TriangleAlert aria-hidden="true" />
-        <span><strong>PLC не выполняет циклы</strong><small>Возможен STOP приложения · открыть диагностику</small></span>
+        <span><strong>{runtimeDiagnostics.controller?.status === 'online' && runtimeDiagnostics.controller.resources?.applicationRunning === false ? 'PLC в STOP' : 'PLC не выполняет циклы'}</strong><small>Счётчик PLC_PRG остановился · открыть диагностику</small></span>
         <ChevronRight aria-hidden="true" />
       </button>}
     {simulationAccelerationEnabled && <section className={`simulation-speed-control ${simulationAccelerationActive ? 'active' : ''} ${simulationAccelerationError ? 'error' : ''}`} aria-label="Ускорение симуляции">
@@ -3358,10 +3312,14 @@ export function App() {
     }}>
       {page === 'monitoring' && <aside
         className="monitoring-left-column"
-        data-balanced={!inspectionOpen && !!authUser && confirmationMachine === null && !plcRuntime.operatorPromptActive && bottomSection === null}
+        data-balanced={!inspectionOpen && confirmationMachine === null && !plcRuntime.operatorPromptActive && bottomSection === null}
         aria-label="Оператор и состояния оборудования"
       >
-        {!inspectionOpen && authUser && <OperatorShiftCard user={authUser} summary={shiftSummary} metricsVisible={operatorMetricsVisible} onMetricsVisibilityChange={setOperatorMetricsVisible} />}
+        {!inspectionOpen && <div className="monitoring-summary-stack">
+          {authUser && <OperatorShiftCard user={authUser} summary={shiftSummary} />}
+          <GeometryOverviewCard snapshot={cellState.geometryControl} online={usePlcData} onCommand={sendPlcCommand}
+            onStationSelect={stationId => { setSelectedGeometry(stationId); selectBottomSection('geometry'); }} />
+        </div>}
         {confirmationMachine === null && !plcRuntime.operatorPromptActive && <AnimatedPresence open={bottomSection === null}>
           <ProcessOverviewCard
             state={cellState}
@@ -3457,7 +3415,7 @@ export function App() {
         onSpeedChange={(value) => sendRobotCommand('robot.speedOverride', value)}
       /></AnimatedPresence>
       <AnimatedPresence open={page === 'robot'}><RobotExtendedPanel robot={cellState.robot} magazines={cellState.magazines} geometryControl={cellState.geometryControl} runtime={plcRuntime} online={usePlcData} editorEditable={Boolean(authUser)} onListPointBackups={pointBackupApi.list} onExportPointBackup={pointBackupApi.exportCurrent} onPreparePointImport={pointBackupApi.prepareImport} onSend={sendPlcCommand} onPointCommand={sendPointEditorCommand} onClose={() => setPage('monitoring')} /></AnimatedPresence>
-      <AnimatedPresence open={page === 'geometry'}><GeometryExtendedPanel snapshot={cellState.geometryControl} selectedStation={selectedGeometry} onStationChange={setSelectedGeometry} online={usePlcData} simulation={plcRuntime.testEnvironment.applied === 1} captureAllowed={plcRuntime.pointEditor.captureAllowed} onPointCommand={sendPointEditorCommand} onCommand={sendPlcCommand} onRequestState={setGeometryStateStation} onOpenAlarms={() => setPage('alarms')} onClose={() => setPage('monitoring')} /></AnimatedPresence>
+      <AnimatedPresence open={page === 'geometry'}><GeometryExtendedPanel snapshot={cellState.geometryControl} selectedStation={selectedGeometry} onStationChange={setSelectedGeometry} online={usePlcData} simulation={plcRuntime.testEnvironment.applied === 1} onCommand={sendPlcCommand} onRequestState={setGeometryStateStation} onOpenAlarms={() => setPage('alarms')} onClose={() => setPage('monitoring')} /></AnimatedPresence>
       <AnimatedPresence open={page === 'machines' && selectedMachine !== null}>{selectedMachine !== null && <MachineExtendedPanel
         index={selectedMachine}
         state={cellState.machines[selectedMachine]}
@@ -3476,7 +3434,7 @@ export function App() {
         onOpenAlarms={() => setPage('alarms')}
       />}</AnimatedPresence>
       <AnimatedPresence open={page === 'magazine' && cellState.magazineMode !== 1}><MagazineScreen magazine={cellState.magazines[selectedMagazine]} magazineNumber={(selectedMagazine + 1) as 1 | 2} step={usePlcData ? plcRuntime.magazineSteps[selectedMagazine] : 'Локальная модель'} typeCount={plcRuntime.multiTypeCount} onClose={() => setPage('monitoring')} onToggleEnabled={() => toggleMagazineEnabled(selectedMagazine)} onCommand={(action) => sendMagazineCommand(selectedMagazine, action)} onFill={() => fillMagazine(selectedMagazine)} onClear={() => clearMagazine(selectedMagazine)} onSlotApply={(index, content, productType) => applyMagazineSlot(index, content, productType, selectedMagazine)} onSetting={updateMagazineSetting} /></AnimatedPresence>
-      <AnimatedPresence open={page === 'magazine' && cellState.magazineMode === 1}><TwoPalletControl full state={cellState} selected={selectedMagazine} onSelect={setSelectedMagazine} onCommand={sendTwin} local={!plcDataEnabled} connected={!plcDataEnabled || usePlcData} manualReady={!plcDataEnabled || (plcRuntime.manualMode && !plcRuntime.cellRunning)} safetyReady={!plcDataEnabled || (plcRuntime.safety.ready && !plcRuntime.globalError)} hmiAlive={!plcDataEnabled || plcRuntime.hmiConnectionAlive} onClose={() => setPage('monitoring')} /></AnimatedPresence>
+      <AnimatedPresence open={page === 'magazine' && cellState.magazineMode === 1}><TwoPalletControl full state={cellState} selected={selectedMagazine} onSelect={setSelectedMagazine} onCommand={sendTwin} onSetting={updateMagazineSetting} local={!plcDataEnabled} connected={!plcDataEnabled || usePlcData} manualReady={!plcDataEnabled || (plcRuntime.manualMode && !plcRuntime.cellRunning)} safetyReady={!plcDataEnabled || (plcRuntime.safety.ready && !plcRuntime.globalError)} hmiAlive={!plcDataEnabled || plcRuntime.hmiConnectionAlive} onClose={() => setPage('monitoring')} /></AnimatedPresence>
       <AnimatedPresence open={page === 'alarms'}><AlarmScreen events={plcAlarmEvents} online={isPlcOnline}
         resetAllowed={usePlcData && plcRuntime.cellResetAllowed}
         safetyRelayResetAllowed={usePlcData && plcRuntime.safety.safetyRelayResetAllowed}
@@ -3567,11 +3525,11 @@ export function App() {
           onExtended={() => { setMatrixQuickOpen(false); setPage('magazine'); }}
           onClose={() => { setMatrixQuickOpen(false); setBottomSection(null); }}
         /></AnimatedPresence>
-        <AnimatedPresence open={bottomSection === 'magazine' && cellState.magazineMode === 1}><TwoPalletControl state={cellState} selected={selectedMagazine} onSelect={setSelectedMagazine} onCommand={sendTwin} local={!plcDataEnabled} connected={!plcDataEnabled || usePlcData} manualReady={!plcDataEnabled || (plcRuntime.manualMode && !plcRuntime.cellRunning)} safetyReady={!plcDataEnabled || (plcRuntime.safety.ready && !plcRuntime.globalError)} hmiAlive={!plcDataEnabled || plcRuntime.hmiConnectionAlive} onExtended={() => setPage('magazine')} onClose={() => setBottomSection(null)} /></AnimatedPresence>
+        <AnimatedPresence open={bottomSection === 'magazine' && cellState.magazineMode === 1}><TwoPalletControl state={cellState} selected={selectedMagazine} onSelect={setSelectedMagazine} onCommand={sendTwin} onSetting={updateMagazineSetting} local={!plcDataEnabled} connected={!plcDataEnabled || usePlcData} manualReady={!plcDataEnabled || (plcRuntime.manualMode && !plcRuntime.cellRunning)} safetyReady={!plcDataEnabled || (plcRuntime.safety.ready && !plcRuntime.globalError)} hmiAlive={!plcDataEnabled || plcRuntime.hmiConnectionAlive} onExtended={() => setPage('magazine')} onClose={() => setBottomSection(null)} /></AnimatedPresence>
         <AnimatedPresence open={bottomSection === 'geometry'}><GeometryControlPanel selectedStation={selectedGeometry} onStationChange={setSelectedGeometry} dragHandle={<SheetGrip onClose={() => setBottomSection(null)} />} snapshot={cellState.geometryControl} online={usePlcData} authorized={Boolean(authUser)} simulation={plcRuntime.testEnvironment.applied === 1} onCommand={sendPlcCommand} onRequestState={setGeometryStateStation} onExtended={() => setPage('geometry')} onClose={() => setBottomSection(null)} /></AnimatedPresence>
         <AnimatedPresence open={bottomSection === null}>
           <div className="bottom-overview-stage">
-            <BottomNavigation active={bottomSection} onSelect={selectBottomSection} alarmEvents={activeAlarmEvents} />
+            <BottomNavigation onNavigate={navigateFromFolder} alarmEvents={activeAlarmEvents} />
           </div>
         </AnimatedPresence>
       </div>}

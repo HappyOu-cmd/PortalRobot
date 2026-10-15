@@ -1,0 +1,209 @@
+/* Кнопки общие с расширенным управлением; селекторы повторяют его верхние
+   вкладки: белая капсула и сплошная синяя плашка выбранного пункта. */
+.robot-position-control-menu.robot-redesign {
+  background: #f8fbfe;
+  color: var(--rx-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.robot-position-control-menu.robot-redesign .robot-mini-pill-selector.ui-segmented {
+  display: block;
+  margin: 10px 15px;
+  padding: 0;
+  border: 0;
+  border-radius: 30px;
+  background: var(--rx-surface);
+  box-shadow: 0 3px 12px rgb(38 64 96 / 5%);
+  overflow: hidden;
+}
+
+.robot-position-control-menu.robot-redesign .robot-mini-pill-selector .ui-segmented__track {
+  gap: 0;
+  border-radius: 30px;
+}
+
+.robot-position-control-menu.robot-redesign .robot-mini-pill-selector .ui-segmented__thumb {
+  border: 0;
+  border-radius: 30px;
+  background: var(--rx-accent);
+  box-shadow: 0 3px 9px rgb(23 105 232 / 17%);
+}
+
+.robot-position-control-menu.robot-redesign .robot-mini-pill-selector.is-slide .ui-segmented__thumb {
+  transition-duration: 360ms;
+}
+
+.robot-position-control-menu.robot-redesign .robot-mini-pill-selector .ui-segmented__option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 0;
+  min-height: 54px;
+  padding: 10px 8px;
+  border: 0;
+  border-radius: 30px;
+  background: transparent;
+  color: var(--rx-muted);
+  box-shadow: none;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  transition: color 180ms;
+}
+
+.robot-position-control-menu.robot-redesign .robot-mini-pill-selector .ui-segmented__option:hover:not(:disabled) {
+  color: var(--rx-ink);
+  background: transparent;
+}
+
+.robot-position-control-menu.robot-redesign .robot-mini-pill-selector .ui-segmented__option svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.robot-position-control-menu.robot-redesign .robot-mini-mode-selector .ui-segmented__option {
+  min-height: 44px;
+  font-size: 11px;
+}
+
+/* Активный сегмент disabled, потому что повторный выбор не нужен. */
+.robot-position-control-menu.robot-redesign .robot-mini-pill-selector .ui-segmented__option.is-active {
+  opacity: 1;
+  color: #fff;
+}
+
+.robot-position-control-menu.robot-redesign .robot-mini-pad-body {
+  min-height: 230px;
+  padding: 5px 16px 12px;
+}
+
+.robot-position-control-menu.robot-redesign .robot-mini-xy-pad {
+  width: min(216px, 100%);
+  height: 198px;
+  grid-template: repeat(3, 62px) / repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.robot-position-control-menu.robot-redesign .robot-mini-jog-key {
+  width: 100%;
+  min-height: 0;
+  padding: 6px;
+  gap: 3px;
+  border-radius: 18px;
+}
+
+.robot-position-control-menu.robot-redesign .robot-mini-jog-key > svg {
+  width: 18px;
+  height: 18px;
+}
+
+.robot-position-control-menu.robot-redesign .robot-mini-jog-key > strong {
+  gap: 3px;
+  font-size: 18px;
+}
+
+.robot-position-control-menu.robot-redesign .robot-mini-jog-key > small {
+  display: none;
+}
+
+.robot-position-control-menu.robot-redesign .robot-mini-jog-key[data-arrow=up] > svg { transform: rotate(-90deg); }
+.robot-position-control-menu.robot-redesign .robot-mini-jog-key[data-arrow=down] > svg { transform: rotate(90deg); }
+.robot-position-control-menu.robot-redesign .robot-mini-jog-key[data-arrow=left] > svg { transform: rotate(180deg); }
+.robot-position-control-menu.robot-redesign .robot-mini-jog-key[data-arrow=right] > svg { transform: none; }
+.robot-position-control-menu.robot-redesign .robot-mini-jog-key.y-positive { grid-area: 1 / 2; }
+.robot-position-control-menu.robot-redesign .robot-mini-jog-key.x-negative { grid-area: 2 / 1; }
+.robot-position-control-menu.robot-redesign .robot-mini-jog-key.x-positive { grid-area: 2 / 3; }
+.robot-position-control-menu.robot-redesign .robot-mini-jog-key.y-negative { grid-area: 3 / 2; }
+.robot-position-control-menu.robot-redesign .robot-mini-jog-key.z-negative { grid-row: 2; }
+.robot-position-control-menu.robot-redesign .robot-mini-jog-key.z-positive { grid-row: 3; }
+
+.robot-position-control-menu.robot-redesign .robot-mini-presets-selector.ui-segmented {
+  margin: 0;
+}
+
+.robot-position-control-menu.robot-redesign .robot-mini-presets-selector .ui-segmented__option {
+  min-height: 34px;
+  padding: 6px 4px;
+  font-size: 10px;
+}
+
+.robot-position-control-menu.robot-redesign .robot-mini-footer > button {
+  min-width: 86px;
+  min-height: 34px;
+  height: auto;
+  padding: 6px 14px;
+  border-radius: 22px;
+  color: var(--rx-accent);
+}
+
+.robot-position-control-menu.robot-redesign .robot-control-point-action > .rj-button {
+  min-height: 44px;
+  border-radius: 22px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.robot-position-control-menu.robot-redesign .robot-mini-home {
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px 18px;
+}
+
+.robot-position-control-menu.robot-redesign .robot-mini-home > p {
+  margin: 0 0 2px;
+  color: var(--rx-muted);
+  font-size: 11px;
+}
+
+.robot-position-control-menu.robot-redesign .robot-mini-home-axis {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 142px;
+  align-items: center;
+  gap: 8px 14px;
+}
+
+.robot-position-control-menu.robot-redesign .robot-mini-home-axis > div {
+  display: grid;
+  gap: 5px;
+}
+
+.robot-position-control-menu.robot-redesign .robot-mini-home-axis strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.robot-position-control-menu.robot-redesign .robot-mini-home-axis span {
+  color: var(--rx-muted);
+  font-size: 10px;
+}
+
+.robot-position-control-menu.robot-redesign .robot-mini-home-axis .rj-home-button {
+  margin: 0;
+  min-height: 44px;
+}
+
+.robot-position-control-menu.robot-redesign .robot-mini-home-axis .rj-home-button > span {
+  color: inherit;
+  font-size: 12px;
+}
+
+.robot-position-control-menu.robot-redesign .robot-mini-home-axis > p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #9b6e19;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+@media (max-width: 460px) {
+  .robot-position-control-menu.robot-redesign .robot-mini-pill-selector .ui-segmented__option { gap: 5px; padding-inline: 4px; font-size: 10px; }
+  .robot-position-control-menu.robot-redesign .robot-mini-pad-body { grid-template-columns: minmax(0, 1fr) 72px; }
+  .robot-position-control-menu.robot-redesign .robot-mini-xy { padding-right: 10px; }
+  .robot-position-control-menu.robot-redesign .robot-mini-z { padding-left: 10px; }
+  .robot-position-control-menu.robot-redesign .robot-mini-footer { flex-wrap: wrap; }
+  .robot-position-control-menu.robot-redesign .robot-mini-footer > div { gap: 6px; font-size: 10px; }
+  .robot-position-control-menu.robot-redesign .robot-mini-footer > div strong { min-width: 0; }
+  .robot-position-control-menu.robot-redesign .robot-mini-home-axis { grid-template-columns: minmax(0, 1fr) 124px; gap: 8px; }
+}

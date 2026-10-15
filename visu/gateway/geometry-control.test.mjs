@@ -47,6 +47,36 @@ test('STOP uses an independent station counter even when the shared channel is u
   await executeGeometryCommand({ action: 6, magazine: 2 }, f);
   assert.deepEqual(f.writes, [['audiGeometryStopSeq[2]', 1]]);
 });
+
+test('cancel call selects each machine and requires accepted matching ACK', async () => {
+  const f = channelFixture();
+  for (const machine of [1, 2, 3]) {
+    await executeGeometryCommand({ action: 12, machine }, f);
+    assert.equal(f.plc['stGeometryRequest.uiAction'], 12);
+    assert.equal(f.plc['stGeometryRequest.uiMachine'], machine);
+    assert.equal(f.plc['stGeometryRequest.uiStation'], 0);
+    assert.equal(f.plc.udiGeometryCommandSeq, machine);
+    assert.equal(f.plc.udiGeometryAckSeq, f.plc.udiGeometryCommandSeq);
+    assert.equal(f.plc.uiGeometryResult, 1);
+  }
+  for (const result of [2, 4]) {
+    await assert.rejects(executeGeometryCommand({ action: 12, machine: 2 }, channelFixture(result)), /отклонил|устарела/);
+  }
+});
+
+test('waiting-warning timer setting keeps the payload and ACK contract and rejects values outside 1..3600 seconds', async () => {
+  for (const value of [1000, 180000, 3600000]) {
+    const f = channelFixture(); await executeGeometryCommand({ action: 16, machine: 5, value }, f);
+    assert.equal(f.plc['stGeometryRequest.uiMachine'], 5); assert.equal(f.plc['stGeometryRequest.udiValue'], value);
+    assert.deepEqual(f.writes.slice(-2), [['udiGeometryIssuedAtMs', 100], ['udiGeometryCommandSeq', 1]]);
+    assert.equal(f.plc.udiGeometryAckSeq, 1);
+  }
+  for (const message of [{ action: 16, machine: 5, value: 999 }, { action: 16, machine: 5, value: 3600001 },
+    { action: 16, machine: 5, value: 1000.5 }, { action: 16, machine: 6, value: 180000 },
+    { action: 16, machine: 2, value: 600001 }]) {
+    const f = channelFixture(); await assert.rejects(executeGeometryCommand(message, f)); assert.deepEqual(f.writes, []);
+  }
+});
 test('PLC rejection and expiration are errors; invalid configuration and machine cause no writes', async () => {
   for (const result of [2, 4]) await assert.rejects(executeGeometryCommand({ action: 8, machine: 1 }, channelFixture(result)), /отклонил|устарела/);
   for (const message of [{ action: 8, machine: 4 }, { action: 10, value: 0 }, ...[0, -10001].map(lrSafeZ => ({ action: 11, magazine: 1, geometryConfig: { lrX: 0, lrY: 0, lrZ: 0, lrSafeZ, lrChangeZ: -100, lrSpeedFactor: .2 } }))]) {

@@ -4,7 +4,7 @@ import { Icon } from '@iconify/react';
 import machineIcon from '@iconify-icons/material-symbols/microwave-gen-outline';
 import { PackageOpen, Play, Square, TriangleAlert, X } from 'lucide-react';
 import type { PlcCommand } from '../../plc/client';
-import { GEOMETRY_CALL_STATES, GEOMETRY_REASONS, type GeometryCall, type GeometryHistoryCall, type GeometrySnapshot, type GeometryStation } from '../../model/geometryControl';
+import { GEOMETRY_CALL_STATES, GEOMETRY_REASONS, type GeometryHistoryCall, type GeometrySnapshot, type GeometryStation } from '../../model/geometryControl';
 import { gatewayApiUrl } from '../../api/gateway';
 import { cn } from '../../lib/utils';
 import { Indicator } from '../ui/Indicator';
@@ -14,15 +14,15 @@ export type GeometryCommand = (command: PlcCommand) => void;
 export const geometryCommand = (action: number, magazine = 0, machine = 0, value = 0): PlcCommand => ({ command: 'geometry.command', action, magazine, machine, value });
 
 const commandButton = cva('geometry-command-button', {
-  variants: { variant: { secondary: '', primary: 'geometry-command-button--primary', stop: 'geometry-command-button--stop' } },
+  variants: { variant: { secondary: '', primary: 'geometry-command-button--primary', called: 'geometry-command-button--called', cancel: 'geometry-command-button--cancel', stop: 'geometry-command-button--stop' } },
   defaultVariants: { variant: 'secondary' },
 });
 
-export function GeometryCommandButton({ children, online, allowed = true, variant, onClick, className }: {
-  children: ReactNode; online: boolean; allowed?: boolean; variant?: 'secondary' | 'primary' | 'stop'; onClick: () => void; className?: string;
+export function GeometryCommandButton({ children, online, allowed = true, disabled = false, variant, onClick, className }: {
+  children: ReactNode; online: boolean; allowed?: boolean; disabled?: boolean; variant?: 'secondary' | 'primary' | 'called' | 'cancel' | 'stop'; onClick: () => void; className?: string;
 }) {
   return <button type="button" className={cn(commandButton({ variant }), !allowed && 'command-unavailable', className)}
-    disabled={!online} aria-disabled={!allowed} onClick={onClick}>{children}</button>;
+    disabled={!online || disabled} aria-disabled={!online || disabled || !allowed} onClick={onClick}>{children}</button>;
 }
 
 export function NumberDraft({ value, onApply, label, min = 1, max = 10000, step = 1, online = true, allowed = true, applyLabel = 'Применить' }: {
@@ -97,26 +97,18 @@ export function GeometryPartMenu({ station, stationId, online, simulation, onCom
 }
 
 const callCard = cva('geometry-call-card', {
-  variants: { tone: { gray: 'geometry-call-card--gray', blue: 'geometry-call-card--blue', amber: 'geometry-call-card--amber', green: 'geometry-call-card--green', red: 'geometry-call-card--red' } },
+  variants: { called: { true: 'geometry-call-card--called', false: '' } },
 });
-
-function callTone(call: GeometryCall, online: boolean, automatic: boolean) {
-  if (!online) return 'gray';
-  if (call.state === 7) return 'red';
-  if (call.state === 2 || call.state === 5) return 'amber';
-  if (call.state === 4 || call.state === 8) return 'green';
-  if (call.state === 1 || call.state === 3) return 'blue';
-  return automatic && call.state !== 6 ? 'blue' : 'gray';
-}
 
 function GeometryMachineCallCard({ snapshot, index, online, onCommand }: {
   snapshot: GeometrySnapshot; index: number; online: boolean; onCommand: GeometryCommand;
 }) {
   const call = snapshot.calls[index], period = snapshot.periods[index], count = snapshot.counts[index];
   const pending = call.state >= 1 && call.state <= 3;
-  const tone = callTone(call, online, snapshot.automatic);
-  const status = !online ? 'Нет связи' : GEOMETRY_CALL_STATES[call.state] || (snapshot.automatic ? 'Автоматический вызов' : 'Ручной вызов');
-  return <article className={callCard({ tone })} aria-label={`Вызов детали со станка ${index + 1}`}>
+  const called = online && pending;
+  const canCancel = online && snapshot.cancelAllowed[index];
+  const status = !online ? 'Нет связи' : called ? 'Деталь вызвана' : 'Деталь не вызвана';
+  return <article className={callCard({ called })} aria-label={`Вызов детали со станка ${index + 1}`}>
     <header><span className="geometry-call-machine-icon"><Icon icon={machineIcon} aria-hidden="true" /></span>
       <div><h4>Станок {index + 1}</h4><span className="geometry-call-status"><i aria-hidden="true" />{status}</span></div>
     </header>
@@ -126,11 +118,13 @@ function GeometryMachineCallCard({ snapshot, index, online, onCommand }: {
     </div>
     <NumberDraft online={online} allowed={snapshot.autoChangeAllowed} label={`Период станка ${index + 1}, деталей`} value={period}
       onApply={value => onCommand(geometryCommand(10, 0, index + 1, value))} />
-    <GeometryCommandButton online={online} allowed={snapshot.callAllowed[index]} variant="primary" className="geometry-call-submit"
-      onClick={() => onCommand(geometryCommand(8, 0, index + 1))}><PackageOpen />Вызвать на ГК</GeometryCommandButton>
+    <GeometryCommandButton online={online} allowed={canCancel || snapshot.callAllowed[index]} disabled={!canCancel && !snapshot.callAllowed[index]}
+      variant={canCancel ? 'cancel' : called ? 'called' : 'primary'} className="geometry-call-submit"
+      onClick={() => onCommand(geometryCommand(canCancel ? 12 : 8, 0, index + 1))}>
+      {canCancel ? <X /> : <PackageOpen />}{canCancel ? 'Отменить' : called ? 'Уже вызвана' : 'Вызвать на ГК'}
+    </GeometryCommandButton>
     <footer><span>{online && call.id ? `#${call.id}${call.productType ? ` · тип ${call.productType}` : ''}${call.station ? ` · ГК ${call.station}` : pending ? ' · ГК выберет ячейка' : ''}` : 'ГК выберет ячейка'}
       {online && call.reason > 0 && <small>{GEOMETRY_REASONS[call.reason]}</small>}</span>
-      {call.state === 1 && <GeometryCommandButton online={online} allowed={snapshot.cancelAllowed[index]} onClick={() => onCommand(geometryCommand(12, 0, index + 1))}><X />Отменить</GeometryCommandButton>}
     </footer>
   </article>;
 }

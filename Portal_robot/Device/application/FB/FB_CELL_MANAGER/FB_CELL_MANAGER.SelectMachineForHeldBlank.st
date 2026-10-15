@@ -132,8 +132,9 @@ IF SelectMachineForHeldBlank = UINT#0 THEN
 	END_FOR;
 END_IF;
 
-// Возврат заготовки выполняется только при полном отсутствии совместимых
-// включённых и исправных целей, а не просто потому, что станок ещё не готов.
+// Включённая исправная цель сохраняет ожидание своей заготовки, даже если
+// станок ещё не готов. Нулевой результат только разрешает проверку полезности
+// возврата в SELECT_FALLBACK; сам по себе он не требует RETURN_BLANK.
 IF SelectMachineForHeldBlank = UINT#0 THEN
 	IF (uiCurrentMachine >= FIRST_MACHINE)
 	AND (uiCurrentMachine <= LAST_MACHINE) THEN

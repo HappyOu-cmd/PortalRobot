@@ -23,7 +23,7 @@ STRUCT
 	xStartCheckNoBlockingError   : BOOL; // Нет блокирующей запуск ошибки
 	xStartCheckRobotInterfaceReady: BOOL; // Выбранный интерфейс робота готов
 	xStartCheckConfigurationValid: BOOL; // Конфигурация типов корректна
-	xStartCheckPointsConfigured  : BOOL; // Все обязательные инженерные точки настроены
+	xStartCheckPointsConfigured  : BOOL; // HOME_SAFETY и точки включённого оборудования настроены
 	xStartCheckDrivesReady       : BOOL; // Приводы и группа готовы
 	xStartCheckRobotReady        : BOOL; // Робот готов принять маршрут
 	xStartCheckMagazineReady     : BOOL; // Магазин готов к операции

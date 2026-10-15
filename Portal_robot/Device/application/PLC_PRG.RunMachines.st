@@ -6,7 +6,7 @@ METHOD PRIVATE RunMachines
 FOR uiMachine := 1 TO 3 DO
 	IF GVL_HMI.axMachineDisable[uiMachine] THEN
 		GVL_HMI.axMachineUsed[uiMachine] := FALSE;
-	ELSIF GVL_HMI.axMachineEnable[uiMachine] THEN
+	ELSIF GVL_HMI.axMachineEnable[uiMachine] AND axMachinePointsReady[uiMachine] THEN
 		GVL_HMI.axMachineUsed[uiMachine] := TRUE;
 	END_IF;
 END_FOR;
@@ -105,7 +105,9 @@ MACHINE_1(
 	xResetGlobal := GVL_CELL_CONTROL.xReset,
 	xGlobalError := GVL_CELL_CONTROL.xGlobalError,
 	xManualMode := GVL_CELL_CONTROL.xManual,
+	xIoManual := xIoManualActive,
 	xAutomaticUseEnabled := GVL_HMI.axMachineUsed[1],
+	xPointsConfigured := axMachinePointsReady[1],
 	xSafetyDoorControlEnabled := GVL_CELL_SETTINGS.eTestEnvironment <> E_CELL_TEST_ENVIRONMENT.NORMAL,
 	xHmiOpenSafetyDoor := GVL_HMI.axMachineManualSafetyDoorOpen[1],
 	xHmiCloseSafetyDoor := GVL_HMI.axMachineManualSafetyDoorClose[1],
@@ -115,7 +117,7 @@ MACHINE_1(
 	xHmiLockHatch := GVL_HMI.axMachineManualHatchLock[1],
 	xHmiOpenChuck := GVL_HMI.axMachineManualChuckOpen[1],
 	xHmiCloseChuck := GVL_HMI.axMachineManualChuckClose[1],
-	xHmiEnable := GVL_HMI.axMachineEnable[1] AND GVL_HMI.axMachineUsed[1],
+	xHmiEnable := GVL_HMI.axMachineEnable[1],
 	xHmiDisable := GVL_HMI.axMachineDisable[1],
 	xHmiSetBlank := GVL_HMI.axMachineSetBlank[1],
 	xHmiSetDetail := GVL_HMI.axMachineSetDetail[1],
@@ -154,7 +156,9 @@ MACHINE_2(
 	xResetGlobal := GVL_CELL_CONTROL.xReset,
 	xGlobalError := GVL_CELL_CONTROL.xGlobalError,
 	xManualMode := GVL_CELL_CONTROL.xManual,
+	xIoManual := xIoManualActive,
 	xAutomaticUseEnabled := GVL_HMI.axMachineUsed[2],
+	xPointsConfigured := axMachinePointsReady[2],
 	xSafetyDoorControlEnabled := GVL_CELL_SETTINGS.eTestEnvironment <> E_CELL_TEST_ENVIRONMENT.NORMAL,
 	xHmiOpenSafetyDoor := GVL_HMI.axMachineManualSafetyDoorOpen[2],
 	xHmiCloseSafetyDoor := GVL_HMI.axMachineManualSafetyDoorClose[2],
@@ -164,7 +168,7 @@ MACHINE_2(
 	xHmiLockHatch := GVL_HMI.axMachineManualHatchLock[2],
 	xHmiOpenChuck := GVL_HMI.axMachineManualChuckOpen[2],
 	xHmiCloseChuck := GVL_HMI.axMachineManualChuckClose[2],
-	xHmiEnable := GVL_HMI.axMachineEnable[2] AND GVL_HMI.axMachineUsed[2],
+	xHmiEnable := GVL_HMI.axMachineEnable[2],
 	xHmiDisable := GVL_HMI.axMachineDisable[2],
 	xHmiSetBlank := GVL_HMI.axMachineSetBlank[2],
 	xHmiSetDetail := GVL_HMI.axMachineSetDetail[2],
@@ -203,7 +207,9 @@ MACHINE_3(
 	xResetGlobal := GVL_CELL_CONTROL.xReset,
 	xGlobalError := GVL_CELL_CONTROL.xGlobalError,
 	xManualMode := GVL_CELL_CONTROL.xManual,
+	xIoManual := xIoManualActive,
 	xAutomaticUseEnabled := GVL_HMI.axMachineUsed[3],
+	xPointsConfigured := axMachinePointsReady[3],
 	xSafetyDoorControlEnabled := GVL_CELL_SETTINGS.eTestEnvironment <> E_CELL_TEST_ENVIRONMENT.NORMAL,
 	xHmiOpenSafetyDoor := GVL_HMI.axMachineManualSafetyDoorOpen[3],
 	xHmiCloseSafetyDoor := GVL_HMI.axMachineManualSafetyDoorClose[3],
@@ -213,7 +219,7 @@ MACHINE_3(
 	xHmiLockHatch := GVL_HMI.axMachineManualHatchLock[3],
 	xHmiOpenChuck := GVL_HMI.axMachineManualChuckOpen[3],
 	xHmiCloseChuck := GVL_HMI.axMachineManualChuckClose[3],
-	xHmiEnable := GVL_HMI.axMachineEnable[3] AND GVL_HMI.axMachineUsed[3],
+	xHmiEnable := GVL_HMI.axMachineEnable[3],
 	xHmiDisable := GVL_HMI.axMachineDisable[3],
 	xHmiSetBlank := GVL_HMI.axMachineSetBlank[3],
 	xHmiSetDetail := GVL_HMI.axMachineSetDetail[3],

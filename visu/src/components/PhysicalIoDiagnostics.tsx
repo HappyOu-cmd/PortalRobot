@@ -110,13 +110,13 @@ export function PhysicalIoDiagnostics({ data, online, canManage, onCommand }: {
       <TabsList className="io-view-selector" aria-label="Раздел входов и выходов"><TabsTrigger value="signals">Сигналы</TabsTrigger><TabsTrigger value="history">Переключения I/O</TabsTrigger></TabsList>
       <span className="io-signal-count">{signalCounts.di} DI · {signalCounts.do} DO</span>
       <div className={cn('io-manual-control', data.manualActive && 'is-active')}>
-        <span title={data.manualActive ? 'Все DO удерживают ручные уровни; переход в автомат вернёт их программе' : 'Для ручного управления нужны ручной режим ячейки и останов оборудования'}>
+        <span title={data.manualActive ? 'Все DO удерживают ручные уровни; возврат программе не возобновит прежние задания' : 'Для прямого управления включите ручной режим ячейки; аварии и Busy не запрещают передачу I/O'}>
           {online && data.available ? data.manualActive ? 'Ручное I/O' : 'Управляет программа' : 'Нет данных'}
           {online && data.available && forcedDi + forcedDo > 0 && ` · изменено ${forcedDi + forcedDo}`}
         </span>
         <button type="button" disabled={!canSend} aria-disabled={!canSend || (!data.manualActive && !data.manualStartAllowed)}
           className={cn('io-manual-button', !data.manualActive && !data.manualStartAllowed && 'command-unavailable')}
-          title={data.manualActive ? 'Завершить ручное I/O, снять подмены DI и вернуть DO программе' : 'Запомнить текущие DO и включить прямое управление сигналами: ручной режим, оборудование остановлено'}
+          title={data.manualActive ? 'Завершить ручное I/O, снять подмены DI и вернуть DO программе' : 'Запомнить текущие DO и передать I/O оператору: прежние задания будут отменены'}
           onClick={() => onCommand({ command: data.manualActive ? 'io.manual.end' : 'io.manual.begin' })}>
           {data.manualActive ? 'Вернуть управление программе' : 'Управлять сигналами вручную'}
         </button>

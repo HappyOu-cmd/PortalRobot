@@ -12,6 +12,7 @@ import { Indicator, type IndicatorTone } from '../ui/Indicator';
 import { OperatorConfirmationLayout } from '../ui/OperatorConfirmationLayout';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/Tabs';
 import { MagazineMatrix } from './MagazineMatrix';
+import { MagazineSettingField } from './MagazineSettingField';
 import './two-pallet-control.css';
 
 export function MagazineModeSwitch({ mode, allowed, onChange }: { mode: 0 | 1; allowed: boolean; onChange: (mode: 0 | 1) => void }) {
@@ -23,6 +24,7 @@ export function MagazineModeSwitch({ mode, allowed, onChange }: { mode: 0 | 1; a
 interface Props {
   state: CellState; selected: number; onSelect: (index: number) => void; onClose: () => void;
   onCommand: (action: TwinAction, data?: TwinCommandData) => void;
+  onSetting: (command: string, key: 'pitchX' | 'pitchY', value: number) => boolean;
   full?: boolean; local: boolean; connected: boolean;
   manualReady: boolean; safetyReady: boolean; hmiAlive: boolean;
   onExtended?: () => void; className?: string;
@@ -152,7 +154,7 @@ function cylinderPosition(inside: boolean, outside: boolean): string {
   return inside && outside ? 'Противоречие датчиков' : 'Не определено';
 }
 
-export function TwoPalletControl({ state, selected, onSelect, onCommand, onClose, full, local, connected, manualReady, safetyReady, hmiAlive, onExtended, className = '' }: Props) {
+export function TwoPalletControl({ state, selected, onSelect, onCommand, onSetting, onClose, full, local, connected, manualReady, safetyReady, hmiAlive, onExtended, className = '' }: Props) {
   const magazine = state.magazines[selected];
   const twin = magazine.twin ?? createTwinState();
   const doorIds = selected === 0
@@ -653,11 +655,11 @@ export function TwoPalletControl({ state, selected, onSelect, onCommand, onClose
         </div>
         {driveView === 'points' ? <div className="twin-drive-points">
           <section className="twin-drive-point">
-            <div><MapPin aria-hidden="true" /><span><small>Точка привода</small><strong>Загрузка / выгрузка</strong></span><b>{twin.config.exchange.toFixed(2)} мм</b></div>
+            <div><MapPin aria-hidden="true" /><span><small>Точка привода</small><strong>У оператора</strong></span><b>{twin.config.exchange.toFixed(2)} мм</b></div>
             <div>{mechanismButton('Перейти', 'toOperator', a.move, Play, true)}{mechanismButton('Запомнить', 'teachOperator', a.teachOperator, Save)}</div>
           </section>
           <section className="twin-drive-point">
-            <div><MapPin aria-hidden="true" /><span><small>Точка привода</small><strong>Работа у робота · П{twin.selected || '—'}</strong></span><b>{(twin.selected === 2 ? twin.config.workP2 : twin.config.workP1).toFixed(2)} мм</b></div>
+            <div><MapPin aria-hidden="true" /><span><small>Точка привода</small><strong>У робота · П{twin.selected || '—'}</strong></span><b>{(twin.selected === 2 ? twin.config.workP2 : twin.config.workP1).toFixed(2)} мм</b></div>
             <div>{mechanismButton('Перейти', 'toRobot', a.move, Play, true)}{mechanismButton('Запомнить', 'teachRobot', a.teachWork, Save)}</div>
           </section>
         </div> : <div className="twin-drive-jog">
@@ -902,6 +904,20 @@ export function TwoPalletControl({ state, selected, onSelect, onCommand, onClose
         </TabsContent>
 
         <TabsContent value="setup" className="tx-tab-content">
+          <section>
+            <div className="tx-section-heading"><h3><MapPin aria-hidden="true" />Шаг между слотами</h3>
+              <span className="tx-tag">Общий для обоих магазинов</span></div>
+            <p className="tx-note">Расстояние между центрами соседних слотов для расчёта координат робота. Изменение применяется по Enter или при выходе из поля.</p>
+            <div className="tx-parameters">
+              <MagazineSettingField key={`${selected}-pitchX`} label="Шаг по X, мм" value={magazine.state.pitchX}
+                min={1} max={5000} step={0.1} disabled={!connected || !magazine.state.pitchEditAllowed}
+                onCommit={(value) => onSetting('magazine.pitchX', 'pitchX', value)} />
+              <MagazineSettingField key={`${selected}-pitchY`} label="Шаг по Y, мм" value={magazine.state.pitchY}
+                min={1} max={5000} step={0.1} disabled={!connected || !magazine.state.pitchEditAllowed}
+                onCommit={(value) => onSetting('magazine.pitchY', 'pitchY', value)} />
+            </div>
+            <p className="tx-note">Шаг можно менять при выключенных обоих магазинах и освобождённом роботном контексте. PLC сохраняет значения в постоянной памяти отдельно для каждого типа магазина.</p>
+          </section>
           <section className="tx-auto-swap-setting">
             <div className="tx-section-heading"><h3><MoveHorizontal aria-hidden="true" />Автоматическая смена палет</h3>
               <span className="tx-tag" data-active={twin.autoSwapEnabled}>{twin.autoSwapEnabled ? 'Включена' : 'Выключена'}</span></div>

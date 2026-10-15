@@ -1,5 +1,6 @@
 FUNCTION_BLOCK FB_CELL_MANAGER
 VAR_INPUT
+	xIoManual : BOOL; // Прямой ручной слой отменяет задание, не сбрасывая аварии
 	axMagazineAutoSwapPending : ARRAY [1..GVL_CELL_SETTINGS.MagazineCount] OF BOOL; // Палета ждёт окна обмена
 	axMagazineExchangeInProgress : ARRAY [1..GVL_CELL_SETTINGS.MagazineCount] OF BOOL; // Во время смены палет запрещены операции только с этим магазином
 	xMagazineExchangeActive : BOOL; // Есть активный обмен палет; подавляет временные предупреждения о запасах
@@ -33,7 +34,7 @@ VAR_INPUT
 	lrStoppedPoseTolerance : LREAL; // Допуск контроля позы после штатной остановки
 	Config            : ST_MULTI_TYPE_CONFIG; // Активная конфигурация типов
 	xConfigurationValid : BOOL; // Конфигурация типов прошла проверку
-	xPointsConfigured : BOOL; // Все обязательные инженерные точки настроены
+	xPointsConfigured : BOOL; // HOME_SAFETY и точки включённого оборудования настроены
 	stRobotStatus     : ST_ROBOT_STATUS; // Состояние робота
 	astMagazineStatus : ARRAY [1..GVL_CELL_SETTINGS.MagazineCount] OF ST_MAGAZINE_STATUS;
 	astMachineStatus  : ARRAY [1..3] OF ST_MACHINE_PUBLIC; // Состояния станков
@@ -49,6 +50,10 @@ VAR_OUTPUT
 	FaultStatus        : ST_FAULT_INJECTION_STATUS; // Инъекция логической ошибки ячейки
 END_VAR
 VAR
+	axGeometryUnloadBlocked : ARRAY [1..3] OF BOOL; // Вызванная деталь ждёт свободного ГК или своей очереди FIFO
+	atonGeometryWait : ARRAY [1..3] OF TON;
+	audiGeometryWaitCallId : ARRAY [1..3] OF UDINT;
+	axGeometryWaitWarned : ARRAY [1..3] OF BOOL;
 	xGeometryHeld : BOOL;
 	xGeometryDetailCounted : BOOL;
 	uiGeometryMachine : UINT;
@@ -76,6 +81,19 @@ VAR
 	uiActiveMagazine     : UINT; // Защёлкнутый магазин текущего цикла
 	xMagazine1Available  : BOOL;
 	xMagazine2Available  : BOOL;
+	xMagazineSelectionAllowed : BOOL; // Новое владение допускается только между операциями
+	xMagazine1CanContinue : BOOL; // Первый магазин позволяет следующий технологический шаг
+	xMagazine2CanContinue : BOOL; // Второй магазин позволяет следующий технологический шаг
+	xMagazine1CanSupplyBlank : BOOL; // М1 позволяет штатный план TAKE перед отдельной выгрузкой
+	xMagazine2CanSupplyBlank : BOOL; // М2 позволяет штатный план TAKE перед отдельной выгрузкой
+	xMagazine1CanExchangeDetail : BOOL; // Заготовка М1 освобождает слот для детали робота
+	xMagazine2CanExchangeDetail : BOOL;
+	xActiveMagazineCanExchangeDetail : BOOL;
+	xHeldBlankLoadAvailable : BOOL; // При двух грузах можно сначала загрузить пустой станок
+	xMagazineMachineWorkPending : BOOL; // Из станка ещё потребуется выгрузка
+	uiMagazineType       : UINT; // Тип станка при проверке содержимого обоих магазинов
+	uiPreferredMagazine  : UINT; // Первый подходящий магазин в порядке 1, 2
+	xReselectMagazine    : BOOL; // Требуется передать владение подходящему магазину
 	xAlternateMagazineAvailable : BOOL; // Второй магазин готов принять непрерывный автоматический цикл
 	xUseAlternateMagazineForDetail : BOOL; // У текущего магазина нет слота детали, у второго есть
 	xAnyMagazineDetailSlotAvailable : BOOL; // Есть доступный слот детали хотя бы в одном магазине
@@ -166,6 +184,7 @@ VAR CONSTANT
 	WRN_OPERATOR_CANCEL_REJECTED: UINT := UINT#22;
 	WRN_NO_DETAIL_DESTINATION  : UINT := UINT#29;
 	WRN_NO_BLANK_STOCK         : UINT := UINT#30;
+	WRN_GEOMETRY_WAIT_TIMEOUT  : UINT := UINT#52;
 	WRN_IO_OVERRIDE_REJECTED   : UINT := UINT#31;
     WRN_IO_DO_REJECTED : UINT := UINT#32;
     WRN_IO_EMERGENCY_RESET_REJECTED : UINT := UINT#33;
@@ -201,6 +220,9 @@ rtReset(CLK := xResetRequest);
 rtOperatorChoice(CLK := xOperatorChoice);
 rtOperatorCancel(CLK := xOperatorCancel);
 
+// До выбора магазина/станка исключаем выгрузку вызванной детали без свободного ГК.
+UpdateGeometryWait();
+
 // Выбор выполняется только между операциями. Внутренний автомат по-прежнему
 // работает с одним снимком, поэтому уже отлажанный маршрут не размазывается
 // по двум владельцам и не переключается посреди TAKE/CHANGE.
@@ -218,6 +240,42 @@ xMagazine2Available := astMagazineStatus[2].xEnabled
 	AND NOT astMagazineStatus[2].xError
 	AND NOT astMagazineStatus[2].xDisablePending
 	AND NOT astMagazineStatus[2].xFinished;
+
+// Полная палета тоже принимает деталь: сначала берём заготовку свободным
+// захватом 1, затем кладём деталь в освободившийся универсальный слот.
+// Заготовке нужен совместимый маршрут; станок может ещё обрабатывать изделие.
+xMagazine1CanExchangeDetail := FALSE;
+xMagazine2CanExchangeDetail := FALSE;
+xHeldBlankLoadAvailable := FALSE;
+FOR uiMachine := FIRST_MACHINE TO LAST_MACHINE DO
+	IF IsMachineEligible(uiMachine := uiMachine) THEN
+		uiMagazineType := Config.auiMachineType[uiMachine];
+		IF stRobotStatus.xBlankAvailable AND stRobotStatus.xDetailAvailable
+		AND (uiMagazineType = uiBlankPayloadType)
+		AND astMachineStatus[uiMachine].xCanAcceptService
+		AND (astMachineStatus[uiMachine].ePartState = E_PART_STATE.EMPTY) THEN
+			xHeldBlankLoadAvailable := TRUE;
+		END_IF;
+		IF stRobotStatus.xDetailAvailable
+		AND NOT stRobotStatus.xBlankAvailable
+		AND stRobotStatus.xGripper1Open
+		AND (uiDetailPayloadType >= UINT#1)
+		AND (uiDetailPayloadType <= Config.uiTypeCount)
+		AND (uiMagazineType >= UINT#1) AND (uiMagazineType <= UINT#3)
+		AND (astMachineStatus[uiMachine].xProcessing
+			OR axMachineStartPending[uiMachine]
+			OR (astMachineStatus[uiMachine].xCanAcceptService
+				AND ((astMachineStatus[uiMachine].ePartState = E_PART_STATE.EMPTY)
+					OR astMachineStatus[uiMachine].xServiceRequired))) THEN
+			IF astMagazineStatus[1].stTypeStatus.aiBlankSlot[uiMagazineType] > SINT#0 THEN
+				xMagazine1CanExchangeDetail := xMagazine1Available;
+			END_IF;
+			IF astMagazineStatus[2].stTypeStatus.aiBlankSlot[uiMagazineType] > SINT#0 THEN
+				xMagazine2CanExchangeDetail := xMagazine2Available;
+			END_IF;
+		END_IF;
+	END_IF;
+END_FOR;
 
 // После полной выработки или операторского запроса отключения активного магазина
 // автомат не требует нового Start. Переключение выполняется только когда робот
@@ -243,6 +301,7 @@ AND (uiDetailPayloadType >= UINT#1)
 AND (uiDetailPayloadType <= Config.uiTypeCount) THEN
 	IF uiActiveMagazine = UINT#1 THEN
 		IF (astMagazineStatus[1].stTypeStatus.aiFreeSlot[uiDetailPayloadType] = SINT#0)
+		AND NOT xMagazine1CanExchangeDetail
 		AND xMagazine2Available THEN
 			IF astMagazineStatus[2].stTypeStatus.aiFreeSlot[uiDetailPayloadType] > SINT#0 THEN
 				xUseAlternateMagazineForDetail := TRUE;
@@ -250,6 +309,7 @@ AND (uiDetailPayloadType <= Config.uiTypeCount) THEN
 		END_IF;
 	ELSIF uiActiveMagazine = UINT#2 THEN
 		IF (astMagazineStatus[2].stTypeStatus.aiFreeSlot[uiDetailPayloadType] = SINT#0)
+		AND NOT xMagazine2CanExchangeDetail
 		AND xMagazine1Available THEN
 			IF astMagazineStatus[1].stTypeStatus.aiFreeSlot[uiDetailPayloadType] > SINT#0 THEN
 				xUseAlternateMagazineForDetail := TRUE;
@@ -257,6 +317,88 @@ AND (uiDetailPayloadType <= Config.uiTypeCount) THEN
 		END_IF;
 	END_IF;
 END_IF;
+// На каждой границе планирования проверяем ОБА магазина. Готовность механики
+// сама по себе не означает наличие следующей операции: учитываем типы заготовок
+// и возможность вернуть изделие из включённого исправного станка.
+// Уже взятую заготовку сначала обслуживаем или возвращаем в исходный слот.
+xMagazineSelectionAllowed := NOT stRobotStatus.xBusy
+	AND NOT stRobotStatus.xBlankAvailable
+	AND ((eState = E_CELL_MANAGER_STATE.IDLE)
+		OR (eState = E_CELL_MANAGER_STATE.PLAN_TARGET)
+		OR (eState = E_CELL_MANAGER_STATE.WAIT_TARGET)
+		OR (eState = E_CELL_MANAGER_STATE.SELECT_FALLBACK)
+		OR (eState = E_CELL_MANAGER_STATE.WAIT_MAGAZINE));
+xMagazine1CanContinue := xMagazine1Available;
+xMagazine2CanContinue := xMagazine2Available;
+xMagazine1CanSupplyBlank := FALSE;
+xMagazine2CanSupplyBlank := FALSE;
+IF xRunning AND xMagazineSelectionAllowed THEN
+	xMagazine1CanContinue := FALSE;
+	xMagazine2CanContinue := FALSE;
+	IF stRobotStatus.xDetailAvailable THEN
+		IF (uiDetailPayloadType >= UINT#1)
+		AND (uiDetailPayloadType <= Config.uiTypeCount)
+		AND (uiDetailPayloadType <= UINT#3) THEN
+			xMagazine1CanContinue := xMagazine1Available
+				AND ((astMagazineStatus[1].stTypeStatus.aiFreeSlot[uiDetailPayloadType] > SINT#0)
+					OR xMagazine1CanExchangeDetail);
+			xMagazine2CanContinue := xMagazine2Available
+				AND ((astMagazineStatus[2].stTypeStatus.aiFreeSlot[uiDetailPayloadType] > SINT#0)
+					OR xMagazine2CanExchangeDetail);
+		END_IF;
+	ELSE
+		FOR uiMachine := FIRST_MACHINE TO LAST_MACHINE DO
+			IF IsMachineEligible(uiMachine := uiMachine) THEN
+				uiMagazineType := Config.auiMachineType[uiMachine];
+				IF (uiMagazineType >= UINT#1) AND (uiMagazineType <= UINT#3) THEN
+					xMagazineMachineWorkPending := astMachineStatus[uiMachine].xProcessing
+						OR axMachineStartPending[uiMachine]
+						OR ((astMachineStatus[uiMachine].ePartState = E_PART_STATE.LOADED)
+							AND ((astMachineStatus[uiMachine].ePartType = E_PART_TYPE.PART)
+								OR (astMachineStatus[uiMachine].ePartType = E_PART_TYPE.DETAIL)));
+					IF (astMagazineStatus[1].stTypeStatus.aiBlankSlot[uiMagazineType] > SINT#0)
+					AND (astMachineStatus[uiMachine].xCanAcceptService OR xMagazineMachineWorkPending) THEN
+						xMagazine1CanSupplyBlank := xMagazine1Available;
+					END_IF;
+					IF ((astMagazineStatus[1].stTypeStatus.aiBlankSlot[uiMagazineType] > SINT#0)
+						AND (astMachineStatus[uiMachine].xCanAcceptService OR xMagazineMachineWorkPending))
+					OR ((astMagazineStatus[1].stTypeStatus.aiFreeSlot[uiMagazineType] > SINT#0)
+						AND xMagazineMachineWorkPending) THEN
+						xMagazine1CanContinue := xMagazine1Available;
+					END_IF;
+					IF (astMagazineStatus[2].stTypeStatus.aiBlankSlot[uiMagazineType] > SINT#0)
+					AND (astMachineStatus[uiMachine].xCanAcceptService OR xMagazineMachineWorkPending) THEN
+						xMagazine2CanSupplyBlank := xMagazine2Available;
+					END_IF;
+					IF ((astMagazineStatus[2].stTypeStatus.aiBlankSlot[uiMagazineType] > SINT#0)
+						AND (astMachineStatus[uiMachine].xCanAcceptService OR xMagazineMachineWorkPending))
+					OR ((astMagazineStatus[2].stTypeStatus.aiFreeSlot[uiMagazineType] > SINT#0)
+						AND xMagazineMachineWorkPending) THEN
+						xMagazine2CanContinue := xMagazine2Available;
+					END_IF;
+				END_IF;
+			END_IF;
+		END_FOR;
+	END_IF;
+END_IF;
+// Как и штатный PLAN_TARGET, сначала ищем TAKE, затем отдельную выгрузку.
+// Пустой М1 не должен заставлять ждать обработку, если М2 позволяет загрузку.
+uiPreferredMagazine := UINT#0;
+IF xMagazine1CanSupplyBlank THEN
+	uiPreferredMagazine := UINT#1;
+ELSIF xMagazine2CanSupplyBlank THEN
+	uiPreferredMagazine := UINT#2;
+ELSIF xMagazine1CanContinue THEN
+	uiPreferredMagazine := UINT#1;
+ELSIF xMagazine2CanContinue THEN
+	uiPreferredMagazine := UINT#2;
+END_IF;
+xReselectMagazine := xMagazineSelectionAllowed
+	AND (uiPreferredMagazine > UINT#0)
+	AND (uiActiveMagazine <> uiPreferredMagazine)
+	AND NOT ((uiActiveMagazine = UINT#1) AND astMagazineStatus[1].xBusy)
+	AND NOT ((uiActiveMagazine = UINT#2) AND astMagazineStatus[2].xBusy);
+
 IF xRunning
 AND (eState <> E_CELL_MANAGER_STATE.GEOMETRY_WAIT_FREE)
 AND (eState <> E_CELL_MANAGER_STATE.GEOMETRY_DELIVER)
@@ -280,7 +422,8 @@ AND (uiActiveMagazine <= UINT#2) THEN
 				OR (eState = E_CELL_MANAGER_STATE.SELECT_FALLBACK)
 				OR (eState = E_CELL_MANAGER_STATE.WAIT_MAGAZINE))))
 		OR axMagazineExchangeInProgress[uiActiveMagazine]
-		OR xUseAlternateMagazineForDetail)
+		OR xUseAlternateMagazineForDetail
+		OR xReselectMagazine)
 	AND (NOT astMagazineStatus[uiActiveMagazine].xBusy
 		OR axMagazineExchangeInProgress[uiActiveMagazine])
 	AND NOT stRobotStatus.xBusy THEN
@@ -312,7 +455,9 @@ AND (uiActiveMagazine <= UINT#2) THEN
 END_IF;
 
 IF (uiActiveMagazine < UINT#1) OR (uiActiveMagazine > UINT#2) THEN
-	IF xMagazine1Available THEN
+	IF uiPreferredMagazine > UINT#0 THEN
+		uiActiveMagazine := uiPreferredMagazine;
+	ELSIF xMagazine1Available THEN
 		uiActiveMagazine := UINT#1;
 	ELSIF xMagazine2Available THEN
 		uiActiveMagazine := UINT#2;
@@ -322,7 +467,8 @@ IF (uiActiveMagazine < UINT#1) OR (uiActiveMagazine > UINT#2) THEN
 ELSIF NOT xRunning
 AND (astMagazineStatus[uiActiveMagazine].xFinished
 	OR astMagazineStatus[uiActiveMagazine].xError
-	OR NOT astMagazineStatus[uiActiveMagazine].xEnabled) THEN
+	OR NOT astMagazineStatus[uiActiveMagazine].xEnabled
+	OR xReselectMagazine) THEN
 	IF (uiActiveMagazine <> UINT#1) AND xMagazine1Available THEN
 		uiActiveMagazine := UINT#1;
 	ELSIF (uiActiveMagazine <> UINT#2) AND xMagazine2Available THEN
@@ -335,6 +481,9 @@ AND (astMagazineStatus[uiActiveMagazine].xFinished
 		uiActiveMagazine := UINT#0;
 	END_IF;
 END_IF;
+
+xActiveMagazineCanExchangeDetail := ((uiActiveMagazine = UINT#1) AND xMagazine1CanExchangeDetail)
+	OR ((uiActiveMagazine = UINT#2) AND xMagazine2CanExchangeDetail);
 
 IF (uiActiveMagazine >= UINT#1) AND (uiActiveMagazine <= UINT#2) THEN
 	stMagazineStatus := astMagazineStatus[uiActiveMagazine];
@@ -500,6 +649,7 @@ xMagazineReady := (uiActiveMagazine >= UINT#1)
 	AND stMagazineStatus.xReady
 	AND NOT stMagazineStatus.xBusy
 	AND NOT stMagazineStatus.xError
+	AND NOT stMagazineStatus.xFinished
 	AND NOT stMagazineStatus.xDisablePending;
 
 uiCandidateMachine := SelectMachineBeforeTake();
@@ -519,6 +669,7 @@ AND (uiDetailPayloadType <= Config.uiTypeCount) THEN
 		AND NOT axMagazineExchangeInProgress[uiMagazineIndex]
 		AND NOT astMagazineStatus[uiMagazineIndex].xBusy
 		AND NOT astMagazineStatus[uiMagazineIndex].xError
+		AND NOT astMagazineStatus[uiMagazineIndex].xFinished
 		AND NOT astMagazineStatus[uiMagazineIndex].xDisablePending THEN
 			IF astMagazineStatus[uiMagazineIndex].stTypeStatus.aiFreeSlot[uiDetailPayloadType] > SINT#0 THEN
 				xAnyMagazineDetailSlotAvailable := TRUE;
@@ -529,6 +680,7 @@ END_IF;
 
 // WARNING: место требуется только для готовой детали, уже находящейся у робота.
 // Деталь в станке и полная палета заготовок при пустом роботе не создают W29.
+// Взятие заготовки освобождает место; при двух грузах возможна загрузка станка.
 // Штатный Stop снимает потребность в новом маршруте. Фронт проверяем отдельно:
 // защёлка xStopRequested обновляется ниже, после регистрации предупреждений.
 xNoDetailDestinationCondition := (xRunning OR rtStart.Q)
@@ -540,6 +692,9 @@ xNoDetailDestinationCondition := (xRunning OR rtStart.Q)
 	AND (uiDetailPayloadType >= UINT#1)
 	AND (uiDetailPayloadType <= Config.uiTypeCount)
 	AND NOT xAnyMagazineDetailSlotAvailable
+	AND NOT xMagazine1CanExchangeDetail
+	AND NOT xMagazine2CanExchangeDetail
+	AND NOT xHeldBlankLoadAvailable
 	AND ((eState = E_CELL_MANAGER_STATE.PLAN_TARGET)
 		OR (eState = E_CELL_MANAGER_STATE.WAIT_TARGET)
 		OR (eState = E_CELL_MANAGER_STATE.SELECT_FALLBACK)
@@ -593,7 +748,7 @@ END_IF;
 // технологического решения, а HMI только объясняет его оператору.
 xStartCheckCellIdle := (eState = E_CELL_MANAGER_STATE.IDLE) AND NOT xRunning;
 xStartCheckAutomaticMode := NOT xManual;
-xStartCheckNoBlockingError := NOT xGlobalError AND (Error.dwErrorActive = DWORD#0);
+xStartCheckNoBlockingError := NOT xGlobalError AND NOT xIoManual AND (Error.dwErrorActive = DWORD#0);
 xStartCheckRobotInterfaceReady := xRobotInterfaceReady;
 xStartCheckConfigurationValid := xConfigurationValid;
 xStartCheckPointsConfigured := xPointsConfigured;
@@ -849,6 +1004,30 @@ END_IF;
 // команду, пока Motion фактически не закончил торможение.
 IF xTestAbort THEN
 	eState := E_CELL_MANAGER_STATE.TEST_ABORT_STOP;
+END_IF;
+
+// При передаче I/O оператору нельзя ждать программные Busy: именно зависший
+// владелец может требовать восстановления. Аварии и физический груз сохраняются.
+IF xIoManual THEN
+	xRunning := FALSE;
+	xStopRequested := FALSE;
+	xMachineServiceStarted := FALSE;
+	xReselectAfterRobotRelease := FALSE;
+	xSafetyHomeRequired := TRUE;
+	xStoppedPoseValid := FALSE;
+	uiSelectedMachine := UINT#0;
+	uiSelectedType := UINT#0;
+	eMachineOperation := E_MACHINE_OPERATION.NONE;
+	eMagazineOperation := E_MAGAZINE_OPERATION.NONE;
+	iTakeSlot := SINT#0;
+	iPutSlot := SINT#0;
+	iTakeOriginSlot := SINT#0;
+	FOR uiMachine := FIRST_MACHINE TO LAST_MACHINE DO
+		axMachineStartPending[uiMachine] := FALSE;
+	END_FOR;
+	IF eState <> E_CELL_MANAGER_STATE.ERROR THEN
+		eState := E_CELL_MANAGER_STATE.IDLE;
+	END_IF;
 END_IF;
 
 // ГК не зависит от готовности палет. Если магазин потерян после выгрузки,
@@ -1139,12 +1318,11 @@ CASE eState OF
 			OR (uiDetailPayloadType > Config.uiTypeCount) THEN
 				Error.dwErrorActive := Error.dwErrorActive OR ERR_MACHINE;
 				eState := E_CELL_MANAGER_STATE.ERROR;
-			ELSIF (stMagazineStatus.stTypeStatus.aiFreeSlot[uiDetailPayloadType] = SINT#0)
-			OR NOT xMagazineReady THEN
+			ELSIF NOT xMagazineReady THEN
 				eState := E_CELL_MANAGER_STATE.WAIT_MAGAZINE;
 			ELSE
-				// CHANGE применяется только тогда, когда готовая деталь может быть уложена,
-				// а взятая заготовка уже имеет исправный совместимый станок назначения.
+				// При полной палете CHANGE сначала освобождает слот взятием заготовки.
+				// Станок назначения может быть пустым, готовым к обмену или обрабатывать.
 				iPutSlot := stMagazineStatus.stTypeStatus.aiFreeSlot[uiDetailPayloadType];
 				uiCandidateMachine := SelectMachineBeforeTake();
 				uiSelectedMachine := UINT#0;
@@ -1168,17 +1346,20 @@ CASE eState OF
 
 				// Индексы проверяются до обращения к карте секций. Обычный AND в
 				// CODESYS не используется как защита динамического индекса массива.
+				IF iPutSlot = SINT#0 THEN
+					iPutSlot := iTakeSlot;
+				END_IF;
 				IF (iPutSlot >= SINT#1)
 				AND (SINT_TO_UINT(iPutSlot) <= SINT_TO_UINT(GVL_CELL_SETTINGS.NumberDetail))
 				AND (iTakeSlot >= SINT#1)
-				AND (SINT_TO_UINT(iTakeSlot) <= SINT_TO_UINT(GVL_CELL_SETTINGS.NumberDetail))
-				AND (iTakeSlot <> iPutSlot) THEN
+				AND (SINT_TO_UINT(iTakeSlot) <= SINT_TO_UINT(GVL_CELL_SETTINGS.NumberDetail)) THEN
 					xChangePrepared := TRUE;
 				END_IF;
 
 				IF xChangePrepared THEN
 					iTakeOriginSlot := iTakeSlot;
 					eMagazineOperation := E_MAGAZINE_OPERATION.CHANGE;
+					eState := E_CELL_MANAGER_STATE.MAGAZINE_EXECUTE;
 				ELSE
 					// Если следующую заготовку нельзя безопасно назначить, сначала
 					// освобождаем второй захват и пересчитываем маршрут после PUT.
@@ -1186,9 +1367,16 @@ CASE eState OF
 					uiSelectedType := UINT#0;
 					iTakeSlot := SINT#0;
 					iTakeOriginSlot := SINT#0;
-					eMagazineOperation := E_MAGAZINE_OPERATION.PUT;
+					IF stMagazineStatus.stTypeStatus.aiFreeSlot[uiDetailPayloadType] > SINT#0 THEN
+						iPutSlot := stMagazineStatus.stTypeStatus.aiFreeSlot[uiDetailPayloadType];
+						eMagazineOperation := E_MAGAZINE_OPERATION.PUT;
+						eState := E_CELL_MANAGER_STATE.MAGAZINE_EXECUTE;
+					ELSE
+						iPutSlot := SINT#0;
+						eMagazineOperation := E_MAGAZINE_OPERATION.NONE;
+						eState := E_CELL_MANAGER_STATE.WAIT_MAGAZINE;
+					END_IF;
 				END_IF;
-				eState := E_CELL_MANAGER_STATE.MAGAZINE_EXECUTE;
 			END_IF;
 
 		ELSE
@@ -1472,6 +1660,12 @@ CASE eState OF
 		OR (uiSelectedMachine > LAST_MACHINE) THEN
 			Error.dwErrorActive := Error.dwErrorActive OR ERR_MACHINE;
 			eState := E_CELL_MANAGER_STATE.ERROR;
+		ELSIF NOT xMachineServiceStarted AND NOT astMachineStatus[uiSelectedMachine].xBusy
+		AND (eMachineOperation <> E_MACHINE_OPERATION.LOAD)
+		AND axGeometryUnloadBlocked[uiSelectedMachine] THEN
+			// До запуска рецепта повторно проверяем свободный ГК и очередь вызовов.
+			// Деталь остаётся в патроне; ищем другую работу без команды станку.
+			eState := E_CELL_MANAGER_STATE.SELECT_FALLBACK;
 		ELSIF NOT xMachineServiceStarted
 		AND (eMachineOperation <> E_MACHINE_OPERATION.UNLOAD)
 		AND NOT IsMachineCompatible(
@@ -1523,6 +1717,17 @@ CASE eState OF
 				Error.dwErrorActive := Error.dwErrorActive OR ERR_ROBOT;
 				eState := E_CELL_MANAGER_STATE.ERROR;
 			ELSIF astMachineStatus[uiSelectedMachine].xRobotReleased THEN
+				// Вызов мог прийти после взятия детали, пока робот ещё менял заготовку.
+				// Последняя проверка — после подтверждённого выхода, до сброса станка.
+				// Только state 1: F_GEOMETRY_TAKE_DETAIL не считает выгрузку повторно
+				// и привязывает ожидающий вызов лишь при его первом месте в FIFO.
+				IF NOT xGeometryHeld AND stRobotStatus.xDetailAvailable
+				AND ((eMachineOperation = E_MACHINE_OPERATION.CHANGE)
+					OR (eMachineOperation = E_MACHINE_OPERATION.UNLOAD))
+				AND (GVL_GEOMETRY_CONTROL.astCalls[uiSelectedMachine].uiState = UINT#1) THEN
+					xGeometryHeld := F_GEOMETRY_TAKE_DETAIL(uiMachine := uiSelectedMachine, uiProductType := Config.auiMachineType[uiSelectedMachine]);
+					IF xGeometryHeld THEN uiGeometryMachine := uiSelectedMachine; uiGeometryBypassReason := UINT#0; END_IF;
+				END_IF;
 				IF (eMachineOperation = E_MACHINE_OPERATION.LOAD)
 				OR (eMachineOperation = E_MACHINE_OPERATION.CHANGE) THEN
 					axMachineStartPending[uiSelectedMachine] := TRUE;
@@ -1560,7 +1765,12 @@ CASE eState OF
 		END_IF;
 
 	E_CELL_MANAGER_STATE.SELECT_FALLBACK:
-		IF stRobotStatus.xDetailAvailable THEN
+		IF xStopRequested
+		AND NOT stRobotStatus.xBusy
+		AND NOT stMagazineStatus.xBusy THEN
+			xRunning := FALSE;
+			eState := E_CELL_MANAGER_STATE.IDLE;
+		ELSIF stRobotStatus.xDetailAvailable THEN
 			// RETURN_BLANK запрещён при занятом захвате 2. Общий план сначала
 			// попробует другой пустой станок, затем освободит готовую деталь через PUT.
 			eState := E_CELL_MANAGER_STATE.PLAN_TARGET;
@@ -1581,20 +1791,28 @@ CASE eState OF
 			eState := E_CELL_MANAGER_STATE.ROUTE_TO_TARGET;
 		ELSIF eState = E_CELL_MANAGER_STATE.SELECT_FALLBACK THEN
 			uiSelectedMachine := UINT#0;
+			eMachineOperation := E_MACHINE_OPERATION.NONE;
+			eMagazineOperation := E_MAGAZINE_OPERATION.NONE;
 			iPutSlot := SINT#0;
-			// Исходный слот гарантированно освободился после подтверждённой TAKE.
-			IF (iTakeOriginSlot >= SINT#1)
-			AND (SINT_TO_UINT(iTakeOriginSlot) <= SINT_TO_UINT(GVL_CELL_SETTINGS.NumberDetail)) THEN
-				iPutSlot := iTakeOriginSlot;
-			END_IF;
-			IF iPutSlot = SINT#0 THEN
-				iPutSlot := stMagazineStatus.stTypeStatus.aiFreeSlot[uiBlankPayloadType];
-			END_IF;
-			IF (iPutSlot > SINT#0) AND xMagazineReady THEN
-				eMagazineOperation := E_MAGAZINE_OPERATION.RETURN_BLANK;
-				eState := E_CELL_MANAGER_STATE.MAGAZINE_EXECUTE;
-			ELSE
+			IF NOT CanReturnHeldBlank() THEN
+				// Один тип либо нет полезной работы другого типа: сохраняем
+				// заготовку. WAIT_MAGAZINE заново проверяет маршруты без Start.
 				eState := E_CELL_MANAGER_STATE.WAIT_MAGAZINE;
+			ELSE
+				// Исходный слот гарантированно освободился после подтверждённой TAKE.
+				IF (iTakeOriginSlot >= SINT#1)
+				AND (SINT_TO_UINT(iTakeOriginSlot) <= SINT_TO_UINT(GVL_CELL_SETTINGS.NumberDetail)) THEN
+					iPutSlot := iTakeOriginSlot;
+				END_IF;
+				IF iPutSlot = SINT#0 THEN
+					iPutSlot := stMagazineStatus.stTypeStatus.aiFreeSlot[uiBlankPayloadType];
+				END_IF;
+				IF (iPutSlot > SINT#0) AND xMagazineReady THEN
+					eMagazineOperation := E_MAGAZINE_OPERATION.RETURN_BLANK;
+					eState := E_CELL_MANAGER_STATE.MAGAZINE_EXECUTE;
+				ELSE
+					eState := E_CELL_MANAGER_STATE.WAIT_MAGAZINE;
+				END_IF;
 			END_IF;
 		END_IF;
 
@@ -1637,7 +1855,7 @@ CASE eState OF
 					uiProductType := uiBlankPayloadType,
 					uiCurrentMachine := uiSelectedMachine
 				) > UINT#0)
-				OR (stMagazineStatus.stTypeStatus.aiFreeSlot[uiBlankPayloadType] > SINT#0) THEN
+				OR CanReturnHeldBlank() THEN
 					eState := E_CELL_MANAGER_STATE.SELECT_FALLBACK;
 				END_IF;
 			END_IF;
@@ -1647,7 +1865,8 @@ CASE eState OF
 				Error.dwErrorActive := Error.dwErrorActive OR ERR_MACHINE;
 				eState := E_CELL_MANAGER_STATE.ERROR;
 			ELSE
-				IF (stMagazineStatus.stTypeStatus.aiFreeSlot[uiDetailPayloadType] > SINT#0)
+				IF ((stMagazineStatus.stTypeStatus.aiFreeSlot[uiDetailPayloadType] > SINT#0)
+					OR xActiveMagazineCanExchangeDetail)
 				AND xMagazineReady THEN
 					eState := E_CELL_MANAGER_STATE.PLAN_TARGET;
 				END_IF;

@@ -6,6 +6,7 @@ import type { CellLayout, PartMaterialLayout } from '../model/types';
 import type { TwoPalletPose, TwoPalletPreviewController } from '../model/twoPalletPreview';
 import { INSPECTION_BELT_SPAN, INSPECTION_SAMPLE_SPAN } from '../model/twoPalletPreview';
 import { createCableChain, type CableChain } from './cableChain';
+import { createWarningGlow, updateWarningGlow, type WarningGlowRig } from './warningGlow';
 import { COLORS, mm } from './primitives';
 
 // Photo reconstruction, metres. Reference: all ten images in «2 итерация».
@@ -59,6 +60,8 @@ const slotPosition = (slot: number): [number, number] => {
 export interface TwoPalletMagazineRig {
   root: THREE.Group;
   conveyor: THREE.Group;
+  conveyorWarning: WarningGlowRig;
+  operatorConveyorGlow: WarningGlowRig;
   pallets: [THREE.Group, THREE.Group];
   carriage: THREE.Group;
   liftBase: THREE.Group;
@@ -498,7 +501,14 @@ export function createTwoPalletMagazine(layout: CellLayout, magazineIndex: numbe
   const sample = mesh(conveyor, 'Inspection_sample', partGeometry, m.chrome);
   sample.visible = false; sample.userData.animated = true;
   batchDetails(root);
-  return { root, conveyor, pallets, carriage, liftBase, liftRods: [piston], lock, stop, chain,
+  const conveyorWarning = createWarningGlow([INSPECTION_BELT_SPAN + BELT_RADIUS * 2, 0.10, 0.14], [m.blue, m.blueSteel]);
+  conveyorWarning.root.position.set(0, BELT_AXIS_Y, BELT_Z);
+  conveyor.add(conveyorWarning.root);
+  const operatorConveyorGlow = createWarningGlow([INSPECTION_BELT_SPAN + BELT_RADIUS * 2, 0.10, 0.14], [], 0.10,
+    [0x51a4ff, 0x0879ff]);
+  operatorConveyorGlow.root.position.set(0, BELT_AXIS_Y, BELT_Z);
+  conveyor.add(operatorConveyorGlow.root);
+  return { root, conveyor, conveyorWarning, operatorConveyorGlow, pallets, carriage, liftBase, liftRods: [piston], lock, stop, chain,
     beltMarks, driveTeeth, driveRollers, rollers, sample, sampleHeight: partHeight / 2,
     productMeshes, inventorySources: [undefined, undefined], inventorySignatures: ['', ''],
     lastDriveX: Number.NaN, lastP2X: Number.NaN, lastBeltPhase: Number.NaN };
@@ -560,6 +570,8 @@ export function updateTwoPalletMagazine(rig: TwoPalletMagazineRig, controller: T
     rig.lastDriveX = driveOffset;
   }
   const belt = geometry ?? controller;
+  updateWarningGlow(rig.conveyorWarning, geometry?.warningPulse ?? 0);
+  updateWarningGlow(rig.operatorConveyorGlow, geometry?.operatorPulse ?? 0);
   if (belt.beltPhase !== rig.lastBeltPhase) {
     for (let i = 0; i < rig.beltMarks.count; i++) {
       const phase = (i / rig.beltMarks.count + belt.beltPhase) % 1;

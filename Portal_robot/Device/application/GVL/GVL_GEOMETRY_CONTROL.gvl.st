@@ -36,4 +36,5 @@ VAR_GLOBAL PERSISTENT RETAIN
 	tTransportTimeout : TIME := T#10S;
 	tDriveFeedbackTimeout : TIME := T#3S;
 	tResetPulse : TIME := T#1S;
+	tWaitWarningTimeout : TIME := T#180S; // Ожидание готовой вызванной детали в станке до WARNING
 END_VAR

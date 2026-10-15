@@ -17,7 +17,7 @@ export function inspectionBounds(objects: THREE.Object3D[]): THREE.Box3 {
   for (const root of objects) {
     root.updateWorldMatrix(true, true);
     root.traverseVisible((object) => {
-      if (!(object instanceof THREE.Mesh) || object.userData.inspectionOverlay) return;
+      if (!(object instanceof THREE.Mesh) || object.userData.inspectionOverlay || object.userData.warningOverlay) return;
       if (object instanceof THREE.InstancedMesh) {
         object.computeBoundingBox();
         if (object.boundingBox) bounds.union(object.boundingBox.clone().applyMatrix4(object.matrixWorld));
@@ -93,7 +93,7 @@ export class EquipmentInspectionLayer {
           const meshes: THREE.Mesh[] = [];
           part.traverseVisible((object) => {
             if (object instanceof THREE.Mesh && !(object instanceof THREE.InstancedMesh)
-              && !object.userData.inspectionOverlay && !seen.has(object)) meshes.push(object);
+              && !object.userData.inspectionOverlay && !object.userData.warningOverlay && !seen.has(object)) meshes.push(object);
           });
           for (const mesh of meshes) {
             seen.add(mesh);

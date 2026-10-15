@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { CellEventClassifier, CellEventStore, describeOperatorCommand } from './cell-events.mjs';
+import { CellEventClassifier, CellEventStore, captureCellEventContext, describeOperatorCommand } from './cell-events.mjs';
 
 const snapshot = (overrides = {}) => ({
   'stCellStatus.xRunning': false,
@@ -275,4 +275,189 @@ test('does not report the current manual readiness reason as a rejected command'
   }), 2_000);
 
   assert.equal(events.some((event) => event.eventType === 'plc-rejection'), false);
+});
+
+const contextSnapshot = (overrides = {}) => snapshot({
+  uiMagazineMode: 1,
+  'stCellStatus.xRunning': true,
+  'stCellDiag.eState': 5,
+  'stCellStatus.uiSelectedMachine': 2,
+  'stMultiType.CycleStatus.uiSelectedType': 1,
+  'stCellStatus.uiActiveMagazine': 1,
+  'astTwinStatus[1].uiRobotPallet': 1,
+  'astTwinStatus[1].uiStep': 0,
+  'astTwinStatus[2].uiRobotPallet': 2,
+  ...Object.fromEntries([1, 2, 3].flatMap(machine => [
+    [`astMachineDiag[${machine}].eState`, 4],
+    [`astMachineStatus[${machine}].ePartState`, machine === 2 ? 1 : 2],
+    [`astMachineStatus[${machine}].ePartType`, machine === 2 ? 0 : machine === 1 ? 1 : 2],
+    [`astMachineStatus[${machine}].xBusy`, false],
+    [`astMachineStatus[${machine}].xProcessing`, machine === 3],
+    [`astGeometryCalls[${machine}].udiId`, 40 + machine],
+    [`astGeometryCalls[${machine}].uiState`, 1],
+    [`astGeometryCalls[${machine}].uiStation`, 0],
+  ])),
+  ...overrides,
+});
+
+test('GK call context belongs to the requested machine while preserving the different planner target', () => {
+  const values = contextSnapshot();
+  const description = describeOperatorCommand({ type: 'command', command: 'geometry.command', action: 8, machine: 1, magazine: 0 }, values);
+  const context = description.details.context;
+  assert.equal(context.selectedMachine, 2);
+  assert.equal(context.selectedType, 1);
+  assert.equal(context.partState, 2);
+  assert.equal(context.partType, 1);
+  assert.equal(context.busy, false);
+  assert.equal(context.processing, false);
+  assert.equal(context.callId, 41);
+  assert.equal(context.callState, 1);
+  assert.equal(context.station, 0);
+  assert.equal(context.activeMagazine, 1);
+  assert.equal(context.robotPallet, 1);
+  values['astGeometryCalls[1].udiId'] = 100;
+  values['astMachineStatus[1].ePartState'] = 1;
+  assert.equal(context.callId, 41);
+  assert.equal(context.partState, 2);
+  for (const message of [
+    { command: 'geometry.command', action: 12, machine: 1 },
+    { command: 'robot.action', action: 8 },
+    { command: 'hmi.heartbeat' },
+  ]) assert.equal(Object.hasOwn(describeOperatorCommand(message, values).details, 'context'), false);
+});
+
+test('service context enriches one existing state event per automatic service and persists in SQLite', () => {
+  const classifier = new CellEventClassifier();
+  const initial = contextSnapshot();
+  assert.deepEqual(classifier.process(initial, 1000), []);
+  const serving = { ...initial, 'stCellDiag.eState': 6,
+    'astMachineStatus[2].xBusy': true, 'astMachineDiag[2].eState': 11 };
+  const events = classifier.process(serving, 2000);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].eventType, 'state');
+  assert.equal(events[0].sourceId, 2);
+  assert.deepEqual([events[0].oldValue, events[0].newValue], [4, 11]);
+  assert.ok(events[0].operationId);
+  assert.deepEqual(events[0].details.context, {
+    cellState: 6, selectedMachine: 2, selectedType: 1, activeMagazine: 1, robotPallet: 1,
+    partState: 1, partType: 0, busy: true, processing: false, callId: 42, callState: 1, station: 0,
+  });
+  const store = new CellEventStore({ databasePath: ':memory:' });
+  try {
+    store.record(events[0]);
+    assert.deepEqual(store.recent()[0].details, events[0].details);
+    assert.equal(store.query({ eventTypes: ['state'] }).count, 1);
+  } finally { store.close(); }
+  assert.deepEqual(classifier.process(serving, 2100), []);
+  const moving = { ...serving, 'astMachineDiag[2].eState': 9 };
+  const later = classifier.process(moving, 2200);
+  assert.equal(later.length, 1);
+  assert.equal(later[0].details, undefined);
+  const released = { ...moving, 'stCellDiag.eState': 5,
+    'astMachineStatus[2].xBusy': false, 'astMachineDiag[2].eState': 4 };
+  classifier.process(released, 3000);
+  const next = classifier.process(serving, 4000);
+  assert.equal(next.length, 1);
+  assert.deepEqual(next[0].details.context, events[0].details.context);
+});
+
+test('service context waits for observed automatic service and does not relog a service on reconnect', () => {
+  const initial = contextSnapshot();
+  const serving = { ...initial, 'stCellDiag.eState': 6,
+    'astMachineStatus[2].xBusy': true, 'astMachineDiag[2].eState': 11 };
+  for (const overrides of [{ 'stCellStatus.xRunning': false }, { 'stCellDiag.eState': 5 }, { 'stCellStatus.uiSelectedMachine': 1 }]) {
+    const classifier = new CellEventClassifier();
+    classifier.process(initial, 1000);
+    const events = classifier.process({ ...serving, ...overrides }, 2000);
+    assert.equal(events.find(event => event.sourceId === 2 && event.eventType === 'state').details, undefined);
+  }
+  const reconnect = new CellEventClassifier();
+  assert.deepEqual(reconnect.process(serving, 1000), []);
+  assert.equal(reconnect.process({ ...serving, 'astMachineDiag[2].eState': 9 }, 2000)[0].details, undefined);
+
+  const delayed = new CellEventClassifier();
+  delayed.process(initial, 1000);
+  const pending = { ...serving, 'astMachineStatus[2].xBusy': false };
+  assert.equal(delayed.process(pending, 2000)[0].details, undefined);
+  assert.deepEqual(delayed.process(serving, 2100), []);
+  const later = delayed.process({ ...serving, 'astMachineDiag[2].eState': 9 }, 2200);
+  assert.equal(later.length, 1);
+  assert.equal(later[0].details.context.busy, true);
+  assert.equal(delayed.process({ ...serving, 'astMachineDiag[2].eState': 10 }, 2300)[0].details, undefined);
+});
+
+test('pallet change enriches only its existing event with all three machine contents', () => {
+  const classifier = new CellEventClassifier();
+  const initial = contextSnapshot();
+  classifier.process(initial, 1000);
+  const exchanged = { ...initial, 'astTwinStatus[1].uiRobotPallet': 2 };
+  const events = classifier.process(exchanged, 2000);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].eventType, 'pallet-state');
+  assert.deepEqual([events[0].oldValue, events[0].newValue], [1, 2]);
+  assert.equal(events[0].details.magazine, 1);
+  assert.equal(events[0].details.context.robotPallet, 2);
+  assert.deepEqual(events[0].details.context.machines, [
+    { machine: 1, partState: 2, partType: 1, busy: false, processing: false },
+    { machine: 2, partState: 1, partType: 0, busy: false, processing: false },
+    { machine: 3, partState: 2, partType: 2, busy: false, processing: true },
+  ]);
+  assert.deepEqual(classifier.process(exchanged, 2100), []);
+  const step = classifier.process({ ...exchanged, 'astTwinStatus[1].uiStep': 20 }, 2200);
+  assert.equal(step.length, 1);
+  assert.deepEqual(step[0].details, { magazine: 1 });
+  const other = classifier.process({ ...exchanged, 'astTwinStatus[1].uiStep': 20, 'astTwinStatus[2].uiRobotPallet': 1 }, 2300);
+  assert.equal(other.length, 1);
+  assert.equal(other[0].details.magazine, 2);
+  assert.equal(other[0].details.context.activeMagazine, 1);
+  assert.equal(other[0].details.context.robotPallet, 2);
+});
+
+test('missing or invalid context telemetry remains unknown and static magazines use pallet zero', () => {
+  const context = captureCellEventContext({
+    'stCellStatus.uiSelectedMachine': 1,
+    'astMachineStatus[1].ePartState': null,
+    'astMachineStatus[1].ePartType': '1',
+    'astMachineStatus[1].xBusy': 1,
+  });
+  assert.equal(context.selectedMachine, 1);
+  for (const key of ['cellState', 'selectedType', 'activeMagazine', 'robotPallet', 'partState', 'partType', 'busy', 'processing', 'callId', 'callState', 'station']) {
+    assert.equal(context[key], null, key);
+  }
+  assert.equal(captureCellEventContext(contextSnapshot({ uiMagazineMode: 0 })).robotPallet, 0);
+  assert.deepEqual(Object.keys(captureCellEventContext({}, 0)), ['cellState', 'selectedMachine', 'selectedType', 'activeMagazine', 'robotPallet']);
+});
+
+test('machine part state messages name empty, loaded and unknown without changing event values', () => {
+  const classifier = new CellEventClassifier();
+  const initial = snapshot({ 'astMachineStatus[1].ePartState': 0 });
+  classifier.process(initial, 1000);
+  let previous = 0;
+  for (const [state, label] of [[1, 'станок пуст'], [2, 'изделие загружено'], [0, 'состояние изделия неизвестно'], [99, 'состояние изделия 99']]) {
+    const events = classifier.process({ ...initial, 'astMachineStatus[1].ePartState': state }, 2000 + state);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].message, `Станок 1: ${label}`);
+    assert.deepEqual([events[0].oldValue, events[0].newValue], [previous, state]);
+    assert.deepEqual(classifier.process({ ...initial, 'astMachineStatus[1].ePartState': state }, 3000 + state), []);
+    previous = state;
+  }
+});
+
+test('event contexts have bounded size and exclude coordinates, slot maps and full telemetry', () => {
+  const values = contextSnapshot({
+    lrActualX: 1500, 'astGeometryCalls[2].udiId': 0xffffffff,
+    'astTwinStore[1].astPallet[1].aSlots': Array.from({ length: 96 }, () => ({ eDetailType: 1 })),
+    unrelated: 'x'.repeat(10000),
+  });
+  const context = captureCellEventContext(values);
+  assert.equal(Object.keys(context).length, 12);
+  assert.ok(Buffer.byteLength(JSON.stringify({ context }), 'utf8') <= 256);
+  assert.equal(context.callId, 0xffffffff);
+  assert.equal(Object.hasOwn(context, 'lrActualX'), false);
+  assert.equal(Object.hasOwn(context, 'unrelated'), false);
+  const classifier = new CellEventClassifier();
+  classifier.process(values, 1000);
+  const events = classifier.process({ ...values, 'astTwinStatus[1].uiRobotPallet': 2 }, 2000);
+  assert.equal(events.length, 1);
+  assert.ok(Buffer.byteLength(JSON.stringify(events[0].details), 'utf8') <= 512);
 });

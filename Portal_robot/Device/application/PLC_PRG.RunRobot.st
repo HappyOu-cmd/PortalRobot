@@ -112,6 +112,9 @@ xHmiRobotActionBaseAllowed := xRobotHmiPermit
 	AND NOT GVL_CELL_CONTROL.xGlobalError
 	AND NOT GVL_ROBOT.Status.xBusy
 	AND NOT GVL_ROBOT.Status.xError
+	AND (GVL_ROBOT.Diag.eState = E_ROBOT_STATE.IDLE)
+	AND (GVL_HMI.xModbusMode
+		OR (GVL_MOTION_MANAGER.stMotionManager.Diag.eState = E_MOTION_MANAGER_STATE.IDLE))
 	AND (
 		(GVL_HMI.xModbusMode AND GVL_ROBOT_MODBUS.Status.xReady)
 		OR (NOT GVL_HMI.xModbusMode
@@ -123,8 +126,9 @@ xHmiRobotActionBaseAllowed := xRobotHmiPermit
 			AND GVL_POINT_MANAGER.PointManager.Diag.xZLimitValid)
 	);
 
-// Входные точки станков разрешены только при подтверждённом открытом люке.
-// Проверка находится в PLC и действует одинаково для числового и legacy-канала.
+// Ручное движение не зависит от готовности оборудования назначения.
+// Единственное условие оборудования — подтверждённо открытый люк при входе
+// внутрь станка. Оно одинаково для числового и legacy-канала.
 xHmiRobotPointTargetAllowed := TRUE;
 CASE stRobotHmiCommand.eSetPoint OF
 	E_POINT_NAME.MACHINE_1_INSIDE,
@@ -142,22 +146,6 @@ CASE stRobotHmiCommand.eSetPoint OF
 	E_POINT_NAME.MACHINE_3_CHUCK_POSITION:
 		xHmiRobotPointTargetAllowed := GVL_MACHINE.Status[3].stIo.xDoorOpen
 			AND NOT GVL_MACHINE.Status[3].stIo.xDoorClosed;
-
-	E_POINT_NAME.GEOMETRY_1_SAFE, E_POINT_NAME.GEOMETRY_1_CHANGE, E_POINT_NAME.GEOMETRY_1_PLACE:
-		xHmiRobotPointTargetAllowed := GVL_GEOMETRY_CONTROL.xSupported
-			AND GVL_GEOMETRY_CONTROL.astStatus[1].xConfigured
-			AND NOT GVL_GEOMETRY_CONTROL.astStatus[1].xDriveRunning
-			AND NOT GVL_GEOMETRY_CONTROL.astStatus[1].xResetBusy
-			AND NOT GVL_GEOMETRY_CONTROL.astStatus[1].xError
-			AND NOT GEOMETRY[1].xRunOutput;
-
-	E_POINT_NAME.GEOMETRY_2_SAFE, E_POINT_NAME.GEOMETRY_2_CHANGE, E_POINT_NAME.GEOMETRY_2_PLACE:
-		xHmiRobotPointTargetAllowed := GVL_GEOMETRY_CONTROL.xSupported
-			AND GVL_GEOMETRY_CONTROL.astStatus[2].xConfigured
-			AND NOT GVL_GEOMETRY_CONTROL.astStatus[2].xDriveRunning
-			AND NOT GVL_GEOMETRY_CONTROL.astStatus[2].xResetBusy
-			AND NOT GVL_GEOMETRY_CONTROL.astStatus[2].xError
-			AND NOT GEOMETRY[2].xRunOutput;
 END_CASE;
 
 xHmiRobotPointAllowed := xHmiRobotActionBaseAllowed
@@ -176,18 +164,6 @@ xHmiRobotPointAllowed := xHmiRobotActionBaseAllowed
 		)
 	);
 
-// Вручную входить к палетам можно только после подтверждения рабочей конфигурации.
-IF (GVL_TWO_PALLET.uiMode = 1)
-AND ((stRobotHmiCommand.eSetPoint = E_POINT_NAME.MAGAZINE_SAFE)
-	OR (stRobotHmiCommand.eSetPoint = E_POINT_NAME.MAGAZINE_CHANGE)
-	OR (stRobotHmiCommand.eSetPoint = E_POINT_NAME.MAGAZINE_IN_SLOT)) THEN
-	IF (stRobotHmiCommand.uiMagazineId >= 1) AND (stRobotHmiCommand.uiMagazineId <= 2) THEN
-		xHmiRobotPointAllowed := xHmiRobotPointAllowed AND NOT GVL_HMI.xModbusMode
-			AND GVL_TWO_PALLET.astStatus[stRobotHmiCommand.uiMagazineId].xReady
-			AND NOT axTwinMagazineExchangeInProgress[stRobotHmiCommand.uiMagazineId];
-	ELSE xHmiRobotPointAllowed := FALSE; END_IF;
-END_IF;
-
 // Захваты не зависят от питания и состояния Motion-слоя. В ручном режиме ими
 // можно пользоваться при любой внешней аварии, пока исправен сам блок захвата
 // и он не выполняет предыдущее действие.
@@ -195,6 +171,8 @@ xHmiGripperActionBaseAllowed := xRobotHmiPermit
 	AND NOT xPointCheckActive
 	AND xHmiConnectionAlive
 	AND NOT GVL_ROBOT.Status.xBusy
+	AND ((GVL_ROBOT.Diag.eState = E_ROBOT_STATE.IDLE)
+		OR (NOT GVL_HMI.xModbusMode AND (GVL_ROBOT.Diag.eState = E_ROBOT_STATE.ERROR)))
 	AND (
 		(GVL_HMI.xModbusMode AND GVL_ROBOT_MODBUS.Status.xReady)
 		OR (NOT GVL_HMI.xModbusMode
@@ -328,9 +306,13 @@ FOR uiPointCheckLoop := UINT#1 TO INT_TO_UINT(GVL_POINT.iEditablePointCount) DO
 		uiPointCheckReason := UINT#6;
 	ELSIF GVL_CELL_CONTROL.xGlobalError THEN
 		uiPointCheckReason := UINT#7;
-	ELSIF xPointCheckActive OR GVL_ROBOT.Status.xBusy THEN
+	ELSIF xPointCheckActive OR GVL_ROBOT.Status.xBusy
+	OR ((GVL_ROBOT.Diag.eState <> E_ROBOT_STATE.IDLE)
+		AND (GVL_ROBOT.Diag.eState <> E_ROBOT_STATE.ERROR)) THEN
 		uiPointCheckReason := UINT#8;
-	ELSIF xMotionBusy THEN
+	ELSIF xMotionBusy
+	OR ((GVL_MOTION_MANAGER.stMotionManager.Diag.eState <> E_MOTION_MANAGER_STATE.IDLE)
+		AND (GVL_MOTION_MANAGER.stMotionManager.Diag.eState <> E_MOTION_MANAGER_STATE.ERROR)) THEN
 		uiPointCheckReason := UINT#9;
 	ELSIF xDriveError OR GVL_ROBOT.Status.xError OR GVL_MOTION_MANAGER.stMotionManager.Status.xError THEN
 		uiPointCheckReason := UINT#10;
@@ -374,11 +356,6 @@ FOR uiPointCheckLoop := UINT#1 TO INT_TO_UINT(GVL_POINT.iEditablePointCount) DO
 			uiPointCheckReason := UINT#18;
 		END_IF;
 	END_IF;
-	IF (uiPointCheckReason = UINT#0) AND (uiPointCheckLoop >= UINT#13) THEN
-		IF NOT GVL_GEOMETRY_CONTROL.astStatus[uiPointCheckLoop - UINT#12].xConfigAllowed THEN
-			uiPointCheckReason := UINT#23;
-		END_IF;
-	END_IF;
 	GVL_HMI.auiPointCheckRejectReason[uiPointCheckLoop] := uiPointCheckReason;
 	GVL_HMI.axPointCheckAllowed[uiPointCheckLoop] := uiPointCheckReason = UINT#0;
 END_FOR;
@@ -410,10 +387,6 @@ END_IF;
 // следующего старта. Торможение сохраняет обычные инженерные Deceleration/Jerk.
 IF xPointCheckActive THEN
 	uiPointCheckMachine := UINT#0;
-	uiPointCheckGeometryStation := UINT#0;
-	IF (GVL_HMI.uiPointCheckIndex >= UINT#13) AND (GVL_HMI.uiPointCheckIndex <= UINT#14) THEN
-		uiPointCheckGeometryStation := GVL_HMI.uiPointCheckIndex - UINT#12;
-	END_IF;
 	IF (GVL_HMI.uiPointCheckIndex <= UINT#9) AND ((GVL_HMI.uiPointCheckIndex MOD UINT#3) <> UINT#1) THEN
 		uiPointCheckMachine := (GVL_HMI.uiPointCheckIndex - UINT#1) / UINT#3 + UINT#1;
 	END_IF;
@@ -430,16 +403,6 @@ IF xPointCheckActive THEN
 	IF uiPointCheckMachine > UINT#0 THEN
 		IF NOT GVL_MACHINE.Status[uiPointCheckMachine].stIo.xDoorOpen
 		OR GVL_MACHINE.Status[uiPointCheckMachine].stIo.xDoorClosed THEN
-			xPointCheckStopRequest := TRUE;
-		END_IF;
-	END_IF;
-	IF uiPointCheckGeometryStation > UINT#0 THEN
-		IF xIoManualActive OR NOT GVL_GEOMETRY_CONTROL.xSupported
-		OR GVL_GEOMETRY_CONTROL.astStatus[uiPointCheckGeometryStation].xDriveRunning
-		OR GVL_GEOMETRY_CONTROL.astStatus[uiPointCheckGeometryStation].xError
-		OR GVL_GEOMETRY_CONTROL.astStatus[uiPointCheckGeometryStation].xEnabled
-		OR GVL_GEOMETRY_CONTROL.astStatus[uiPointCheckGeometryStation].xOccupied
-		OR GVL_GEOMETRY_CONTROL.astStatus[uiPointCheckGeometryStation].xReserved THEN
 			xPointCheckStopRequest := TRUE;
 		END_IF;
 	END_IF;
@@ -495,7 +458,7 @@ ROBOT(
 	xHmiStop := GVL_HMI.xRobotStop,
 	xHmiDrivesEnableAccepted := xHmiDrivesEnableAccepted,
 	xHmiDrivesDisableAccepted := xHmiDrivesDisableAccepted,
-	xHmiStopAccepted := xHmiStopAccepted OR GVL_HMI.xIoEmergencyStopActive,
+	xHmiStopAccepted := xHmiStopAccepted OR xIoManualActive OR GVL_HMI.xIoEmergencyStopActive,
 	xHmiDrivesEnableAllowed := GVL_HMI.stRobotHmiStatus.xDrivesEnableAllowed,
 	xHmiDrivesDisableAllowed := GVL_HMI.stRobotHmiStatus.xDrivesDisableAllowed,
 	xHmiStopAllowed := GVL_HMI.stRobotHmiStatus.xStopAllowed,
@@ -505,9 +468,12 @@ ROBOT(
 	xDrivesReady := xDrivesReady,
 	xDriveError := xDriveError,
 	xMotionBusy := xMotionBusy,
+	xMotionResetBusy := xMotionResetBusy,
+	tSoftMotionResetTimeout := GVL_CELL_SETTINGS.stAxisGroupTimeouts.tGroupTimeout * UINT#2
+		+ GVL_CELL_SETTINGS.stAxisTimeouts.tResetTimeout + T#2S,
 	xSingleAxisMotionBusy := uiManualAxisOwner > UINT#0,
 	xPointCheckActive := xPointCheckActive,
-	xTestAbort := xTestAbortActive,
+	xTestAbort := xTestAbortActive OR xIoManualActive,
 	rPointCheckSpeedPercent := rPointCheckLatchedSpeed,
 	lrGroupAccelerationFactor := REAL_TO_LREAL(MIN(
 		GVL_CELL_SETTINGS.rRobotAccelerationPercent,
@@ -596,21 +562,6 @@ CASE eHmiRobotStatusPoint OF
 	E_POINT_NAME.MACHINE_3_CHUCK_POSITION:
 		xHmiRobotStatusPointTargetAllowed := GVL_MACHINE.Status[3].stIo.xDoorOpen
 			AND NOT GVL_MACHINE.Status[3].stIo.xDoorClosed;
-	E_POINT_NAME.GEOMETRY_1_SAFE, E_POINT_NAME.GEOMETRY_1_CHANGE, E_POINT_NAME.GEOMETRY_1_PLACE:
-		xHmiRobotStatusPointTargetAllowed := GVL_GEOMETRY_CONTROL.xSupported
-			AND GVL_GEOMETRY_CONTROL.astStatus[1].xConfigured
-			AND NOT GVL_GEOMETRY_CONTROL.astStatus[1].xDriveRunning
-			AND NOT GVL_GEOMETRY_CONTROL.astStatus[1].xResetBusy
-			AND NOT GVL_GEOMETRY_CONTROL.astStatus[1].xError
-			AND NOT GEOMETRY[1].xRunOutput;
-
-	E_POINT_NAME.GEOMETRY_2_SAFE, E_POINT_NAME.GEOMETRY_2_CHANGE, E_POINT_NAME.GEOMETRY_2_PLACE:
-		xHmiRobotStatusPointTargetAllowed := GVL_GEOMETRY_CONTROL.xSupported
-			AND GVL_GEOMETRY_CONTROL.astStatus[2].xConfigured
-			AND NOT GVL_GEOMETRY_CONTROL.astStatus[2].xDriveRunning
-			AND NOT GVL_GEOMETRY_CONTROL.astStatus[2].xResetBusy
-			AND NOT GVL_GEOMETRY_CONTROL.astStatus[2].xError
-			AND NOT GEOMETRY[2].xRunOutput;
 END_CASE;
 xHmiRobotStatusPointAllowed := xHmiRobotActionBaseAllowed
 	AND (eHmiRobotStatusAction = E_ROBOT_ACTION.MOVE_TO_POINT)
@@ -627,13 +578,6 @@ xHmiRobotStatusPointAllowed := xHmiRobotActionBaseAllowed
 			AND (GVL_HMI.uiRobotManualMagazine <= UINT#2)
 		)
 	);
-IF (GVL_TWO_PALLET.uiMode = 1) AND ((eHmiRobotStatusPoint = E_POINT_NAME.MAGAZINE_SAFE)
-	OR (eHmiRobotStatusPoint = E_POINT_NAME.MAGAZINE_CHANGE) OR (eHmiRobotStatusPoint = E_POINT_NAME.MAGAZINE_IN_SLOT)) THEN
-	IF (GVL_HMI.uiRobotManualMagazine >= 1) AND (GVL_HMI.uiRobotManualMagazine <= 2) THEN
-		xHmiRobotStatusPointAllowed := xHmiRobotStatusPointAllowed AND NOT GVL_HMI.xModbusMode
-			AND GVL_TWO_PALLET.astStatus[GVL_HMI.uiRobotManualMagazine].xReady;
-	ELSE xHmiRobotStatusPointAllowed := FALSE; END_IF;
-END_IF;
 IF xHmiRobotActionAttempt AND (eHmiRobotStatusAction = E_ROBOT_ACTION.MOVE_TO_POINT) THEN
 	GVL_HMI.stRobotHmiStatus.xPointsAllowed := xHmiRobotStatusPointAllowed;
 ELSE
@@ -655,6 +599,8 @@ GVL_HMI.stRobotHmiStatus.xRotateToBlankAllowed := xHmiGripperActionBaseAllowed
 GVL_HMI.stRobotHmiStatus.xRotateToDetailAllowed := xHmiGripperActionBaseAllowed
 	AND NOT GVL_ROBOT.Status.xRotatedToDetail;
 GVL_HMI.stRobotHmiStatus.xCommandBusy := GVL_ROBOT.Status.xBusy
+	OR ((GVL_ROBOT.Diag.eState <> E_ROBOT_STATE.IDLE)
+		AND (GVL_ROBOT.Diag.eState <> E_ROBOT_STATE.ERROR))
 	OR (GVL_ROBOT.GripperDiag.eState = E_GRIPPER_STATE.EXECUTE);
 GVL_HMI.stRobotHmiStatus.uiActiveAction := TO_UINT(GVL_ROBOT.Diag.eActiveAction);
 GVL_HMI.stRobotHmiStatus.uiActivePoint := TO_UINT(GVL_ROBOT.Diag.eActivePoint);
@@ -671,7 +617,9 @@ ELSIF NOT GVL_HMI.xModbusMode AND xDriveError THEN
 	GVL_HMI.stRobotHmiStatus.eRejectReason := E_HMI_MANUAL_REJECT.DRIVE_ERROR;
 ELSIF NOT GVL_HMI.xModbusMode AND NOT xDrivesPowered THEN
 	GVL_HMI.stRobotHmiStatus.eRejectReason := E_HMI_MANUAL_REJECT.DRIVES_DISABLED;
-ELSIF GVL_ROBOT.Status.xBusy THEN
+ELSIF GVL_ROBOT.Status.xBusy
+	OR ((GVL_ROBOT.Diag.eState <> E_ROBOT_STATE.IDLE)
+		AND (GVL_ROBOT.Diag.eState <> E_ROBOT_STATE.ERROR)) THEN
 	GVL_HMI.stRobotHmiStatus.eRejectReason := E_HMI_MANUAL_REJECT.ROBOT_BUSY;
 ELSIF xHmiRobotActionAttempt AND (eHmiRobotStatusAction = E_ROBOT_ACTION.MOVE_TO_POINT)
 	AND NOT xHmiRobotStatusPointTargetAllowed THEN

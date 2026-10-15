@@ -31,6 +31,9 @@ VAR
 	xPlcHeartbeatDue : BOOL;
 	xStopPending   : BOOL;
 	xResetPending  : BOOL;
+	xResetInProgress : BOOL;
+	xResetWriteDone : BOOL; // FC16 с Reset=1 подтверждена сервером
+	tonResetAttempt : TON;
 	xControlClearPending : BOOL;
 	rtStop         : R_TRIG;
 	rtReset        : R_TRIG;
@@ -64,6 +67,7 @@ VAR CONSTANT
 	COMMAND_QUANTITY   : UINT := UINT#9;
 	STATUS_QUANTITY    : UINT := UINT#17;
 	PROTOCOL_VERSION   : UINT := UINT#3;
+	RESET_ATTEMPT_TIMEOUT : TIME := T#10S; // Полная попытка: запись, feedback, снятие
 	STATUS_CONTROLLER_ON  : UINT := UINT#16#0001;
 	STATUS_AUTOMATIC_MODE : UINT := UINT#16#0002;
 	STATUS_REMOTE_ENABLED : UINT := UINT#16#0004;
@@ -94,8 +98,12 @@ Status.xConfigValid := (Config.aIpAddress[0] > BYTE#0)
 	IF rtStop.Q THEN
 		xStopPending := TRUE;
 	END_IF;
-	IF rtReset.Q THEN
+	IF rtReset.Q AND NOT xResetInProgress THEN
 		xResetPending := TRUE;
+		xResetInProgress := TRUE;
+		xResetWriteDone := FALSE;
+		Status.xResetDone := FALSE;
+		Status.xResetFailed := FALSE;
 	END_IF;
 xReadExecute := FALSE;
 xWriteExecute := FALSE;
@@ -117,6 +125,10 @@ IF NOT xEnable OR NOT Status.xConfigValid THEN
 	xWritePending := FALSE;
 	xStopPending := FALSE;
 	xResetPending := FALSE;
+	xResetInProgress := FALSE;
+	xResetWriteDone := FALSE;
+	Status.xResetDone := FALSE;
+	Status.xResetFailed := FALSE;
 	xControlClearPending := FALSE;
 	xHeartbeatSeen := FALSE;
 	xPlcHeartbeatDue := FALSE;
@@ -201,6 +213,10 @@ CASE eState OF
 			xConnect := FALSE;
 			eState := E_ROBOT_MODBUS_CLIENT_STATE.RECONNECT_WAIT;
 		ELSIF xStopPending THEN
+			// Stop отменяет текущую попытку сброса; он не может быть проглочен Reset.
+			IF xResetInProgress THEN Status.xResetFailed := TRUE; END_IF;
+			xResetInProgress := FALSE;
+			xResetWriteDone := FALSE;
 			// Stop always preempts Reset and normal commands.
 			// Execute снимается сразу: после принятого CommandSeq это не отменяет
 			// команду, зато позволяет роботу выйти из DONE/ERROR/STOPPED в IDLE.
@@ -241,6 +257,7 @@ CASE eState OF
 				AND ((Status.uiExecutionState = TO_UINT(E_ROBOT_MODBUS_EXECUTION_STATE.STOPPED))
 					OR (Status.uiExecutionState = TO_UINT(E_ROBOT_MODBUS_EXECUTION_STATE.IDLE))))
 			OR ((auiWriteRegisters[3] = UINT#1)
+				AND xResetWriteDone
 				AND NOT Status.xRobotAlarm
 				AND (Status.uiExecutionState =
 					TO_UINT(E_ROBOT_MODBUS_EXECUTION_STATE.IDLE))) THEN
@@ -338,6 +355,16 @@ CASE eState OF
 	E_ROBOT_MODBUS_CLIENT_STATE.WRITE_COMMAND:
 		xWriteExecute := TRUE;
 		IF fbWrite.xDone THEN
+			IF xResetInProgress THEN
+				IF auiWriteRegisters[3] = UINT#1 THEN
+					xResetWriteDone := TRUE;
+				ELSIF xResetWriteDone AND NOT xControlClearPending THEN
+					// Успех только после FC03 без аварии/с IDLE и последующей
+					// подтверждённой записи Reset=0. Один локальный скан не Ack.
+					xResetInProgress := FALSE;
+					Status.xResetDone := TRUE;
+				END_IF;
+			END_IF;
 			xWritePending := FALSE;
 			eState := E_ROBOT_MODBUS_CLIENT_STATE.WRITE_COMMAND_RELEASE;
 		ELSIF fbWrite.xError THEN
@@ -375,6 +402,30 @@ CASE eState OF
 			eState := E_ROBOT_MODBUS_CLIENT_STATE.CONNECTING;
 		END_IF;
 END_CASE;
+
+tonResetAttempt(IN := xResetInProgress, PT := RESET_ATTEMPT_TIMEOUT);
+IF xResetInProgress
+AND ((eState = E_ROBOT_MODBUS_CLIENT_STATE.RECONNECT_WAIT)
+	OR rtReconnect.Q OR tonResetAttempt.Q OR NOT Command.xReset) THEN
+	// Не повторяем неоднозначную запись после обрыва. Reconnect сначала
+	// прочитает состояние и очистит блок; новый Reset требует нового фронта.
+	xResetInProgress := FALSE;
+	xResetPending := FALSE;
+	xResetWriteDone := FALSE;
+	Status.xResetDone := FALSE;
+	Status.xResetFailed := TRUE;
+	xConnect := FALSE;
+	xStatusFresh := FALSE;
+	eState := E_ROBOT_MODBUS_CLIENT_STATE.RECONNECT_WAIT;
+END_IF;
+IF eState = E_ROBOT_MODBUS_CLIENT_STATE.RECONNECT_WAIT THEN
+	xReadExecute := FALSE;
+	xWriteExecute := FALSE;
+	xControlClearPending := FALSE;
+	xWritePending := FALSE;
+	xCommandArmed := FALSE;
+END_IF;
+Status.xResetBusy := xResetInProgress;
 
 fbRead(
 	xExecute := xReadExecute,
@@ -499,6 +550,7 @@ tonCommandTimeout(
 );
 Status.xCommandTimeout := tonCommandTimeout.Q;
 Status.xError := tonCommunicationGrace.Q
+	OR Status.xResetFailed
 	OR Status.xRobotAlarm
 	OR Status.xCommandTimeout
 	OR ((uiActiveSeq <> UINT#0)

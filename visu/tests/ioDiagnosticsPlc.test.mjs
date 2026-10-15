@@ -429,24 +429,32 @@ function stoppedManual() {
       ...Object.fromEntries(['axMachineManualHatchOpen', 'axMachineManualHatchClose', 'axMachineManualHatchUnlock', 'axMachineManualHatchLock', 'axMachineManualChuckOpen', 'axMachineManualChuckClose'].map((name) => [name, [false, false, false, false]])) } };
 }
 
-test('actual PLC entry permits only Manual and stopped, while unrelated alarms, test mode and mapping do not gate it', () => {
+test('actual PLC entry requires Manual and a live explicit request but never waits on stuck owners', () => {
   const allowed = outputRuntime(); outputScan(allowed);
   assert.equal(allowed.GVL_HMI.xIoManualStartAllowed, true);
   assert.equal(allowed.GVL_HMI.xIoOverrideAllowed, false);
   for (const change of [
     (s) => { s.GVL_CELL_CONTROL.xManual = false; },
-    (s) => { s.GVL_CELL_MANAGER.Status.xRunning = true; }, (s) => { s.GVL_CELL_MANAGER.Status.xStopPending = true; },
-    (s) => { s.GVL_ROBOT.Status.xBusy = true; }, (s) => { s.xMotionBusy = true; },
-    (s) => { s.GVL_MACHINE.Status[3].xProcessing = true; }, (s) => { s.GVL_TWO_PALLET.astStatus[2].xBusy = true; },
-    (s) => { s.GVL_HMI.astAxisHmiCommand[3].xJogPositive = true; }, (s) => { s.GVL_HMI.axMachineManualChuckClose[1] = true; },
-    (s) => { s.GVL_HMI.udiTwinCommandSeq = 1; }, (s) => { s.xPointCheckRequest = true; },
-    (s) => { s.GVL_PHYSICAL_IO.xDiMachine3CycleActive = true; },
     (s) => { s.GVL_HMI.udiCellModeCommandSeq = 1; s.GVL_HMI.xCellManualRequest = false; },
   ]) {
     const s = outputRuntime(); change(s); outputRequest(s, 0, false, 8);
     assert.equal(s.GVL_HMI.xIoManualStartAllowed, false);
     assert.equal(s.GVL_HMI.xIoManualControlActive, false);
     assert.equal(s.GVL_HMI.uiIoOverrideResult, 2);
+    assert.equal(s.GVL_HMI.udiIoOverrideAckSeq, s.GVL_HMI.udiIoOverrideCommandSeq);
+  }
+  for (const change of [
+    (s) => { s.GVL_CELL_MANAGER.Status.xRunning = true; }, (s) => { s.GVL_CELL_MANAGER.Status.xStopPending = true; },
+    (s) => { s.GVL_ROBOT.Status.xBusy = true; }, (s) => { s.xMotionBusy = true; },
+    (s) => { s.GVL_MACHINE.Status[3].xProcessing = true; }, (s) => { s.GVL_TWO_PALLET.astStatus[2].xBusy = true; },
+    (s) => { s.GVL_HMI.astAxisHmiCommand[3].xJogPositive = true; }, (s) => { s.GVL_HMI.axMachineManualChuckClose[1] = true; },
+    (s) => { s.GVL_HMI.udiTwinCommandSeq = 1; }, (s) => { s.xPointCheckRequest = true; },
+    (s) => { s.GVL_PHYSICAL_IO.xDiMachine3CycleActive = true; },
+  ]) {
+    const s = outputRuntime(); change(s); outputRequest(s, 0, false, 8);
+    assert.equal(s.GVL_HMI.xIoManualStartAllowed, false);
+    assert.equal(s.GVL_HMI.xIoManualControlActive, true);
+    assert.equal(s.GVL_HMI.uiIoOverrideResult, 1);
     assert.equal(s.GVL_HMI.udiIoOverrideAckSeq, s.GVL_HMI.udiIoOverrideCommandSeq);
   }
   for (const change of [

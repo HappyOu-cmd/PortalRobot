@@ -4,10 +4,10 @@ import { DatabaseSync } from 'node:sqlite';
 
 export const geometryCallFields = ['udiId', 'uiMachine', 'uiProductType', 'uiStation', 'xForced', 'uiState', 'uiReason', 'uiMagazine', 'uiPallet', 'uiSlot'];
 export const geometryConfigFields = ['xConfigured', 'lrX', 'lrY', 'lrZ', 'lrSafeZ', 'lrChangeZ', 'lrSpeedFactor'];
-export const geometryStatusFields = ['uiState', 'xEnabled', 'xReady', 'xOccupied', 'xReserved', 'xPartStored', 'xPartAtEnd', 'xDriveRunning', 'xDriveAlarm', 'xError', 'xRobotStopRequired', 'xEnableAllowed', 'xDisableAllowed', 'xConfirmAllowed', 'xConfirmationActive', 'xRecoveryRequired', 'xManualStartAllowed', 'xResetAllowed', 'xResetBusy', 'xConfigAllowed', 'xPointWriteAllowed', 'xSimulationRemoveAllowed', 'xSimulationAlarmAllowed', 'xConfigured', 'udiProducedPartsTotal', 'udiPartId', 'uiMachine', 'uiProductType', 'rTravel'];
+export const geometryStatusFields = ['uiState', 'xEnabled', 'xReady', 'xOccupied', 'xReserved', 'xPartStored', 'xPartAtEnd', 'xDriveRunning', 'xDriveAlarm', 'xError', 'xRobotStopRequired', 'xEnableAllowed', 'xDisableAllowed', 'xConfirmAllowed', 'xConfirmationActive', 'xRecoveryRequired', 'xManualStartAllowed', 'xResetAllowed', 'xResetBusy', 'xConfigAllowed', 'xPointWriteAllowed', 'xSimulationRemoveAllowed', 'xSimulationAlarmAllowed', 'xConfigured', 'udiProducedPartsTotal', 'udiPartId', 'uiMachine', 'uiProductType', 'rTravel', 'dwEnableBlockers', 'dwConfirmBlockers', 'xCallWaitWarning'];
 export const geometryEventSymbols = Array.from({ length: 100 }, (_, i) => [`astGeometryEvents[${i + 1}].udiSequence`, `astGeometryEvents[${i + 1}].udiTimeMs`, `astGeometryEvents[${i + 1}].uiEnvironment`, ...geometryCallFields.map(f => `astGeometryEvents[${i + 1}].Call.${f}`)]).flat();
 export const geometryEventSymbolSet = new Set(geometryEventSymbols);
-export const geometrySymbols = ['udiGeometryCommandSeq', 'udiGeometryIssuedAtMs', 'udiGeometryAckSeq', 'uiGeometryResult', 'udiGeometryEventSequence', 'xGeometryAutoEnabled', 'xGeometryAutoChangeAllowed', 'xGeometrySupported', 'xGeometryWaitWhenOccupied', 'xGeometrySettingsAllowed', 'tGeometryTransportTimeout', 'tGeometryFeedbackTimeout', 'tGeometryResetPulse',
+export const geometrySymbols = ['udiGeometryCommandSeq', 'udiGeometryIssuedAtMs', 'udiGeometryAckSeq', 'uiGeometryResult', 'udiGeometryEventSequence', 'xGeometryAutoEnabled', 'xGeometryAutoChangeAllowed', 'xGeometrySupported', 'xGeometryWaitWhenOccupied', 'xGeometrySettingsAllowed', 'tGeometryTransportTimeout', 'tGeometryFeedbackTimeout', 'tGeometryResetPulse', 'tGeometryWaitWarningTimeout',
   ...['uiAction', 'uiStation', 'uiMachine', 'udiValue'].map(f => `stGeometryRequest.${f}`),
   ...geometryConfigFields.flatMap(f => [`stGeometryRequest.Config.${f}`, `stGeometryCapture.${f}`]),
   ...[1, 2].flatMap(i => [...geometryStatusFields.map(f => `astGeometryStatus[${i}].${f}`), ...geometryConfigFields.map(f => `astGeometryConfig[${i}].${f}`), `audiGeometryStopSeq[${i}]`, `audiGeometryStopAck[${i}]`, `audiGeometryProducedNormal[${i}]`, `audiGeometryProducedSimulation[${i}]`]),
@@ -16,12 +16,12 @@ export const geometrySymbols = ['udiGeometryCommandSeq', 'udiGeometryIssuedAtMs'
 const integer = (value, min, max) => Number.isInteger(value) && value >= min && value <= max;
 export async function executeGeometryCommand(message, { channel, write, types }) {
   const station = message.magazine ?? 0, machine = message.machine ?? 0, action = message.action;
-  if (!integer(action, 1, 16) || !integer(station, 0, 2) || !integer(machine, 0, 4)) throw new Error('Неверная команда ГК');
+  if (!integer(action, 1, 16) || !integer(station, 0, 2) || !integer(machine, 0, 5)) throw new Error('Неверная команда ГК');
   if ([1, 2, 3, 4, 5, 6, 7, 11, 13, 14, 15].includes(action) && ![1, 2].includes(station)) throw new Error('Выберите ГК 1 или 2');
   if ([8, 12].includes(action) && ![1, 2, 3].includes(machine)) throw new Error('Выберите станок 1–3');
   const value = Number(message.value ?? 0);
-  if (!integer(value, 0, 600000) || (action === 9 && value > 1) || (action === 10 && (!integer(value, 1, 10000) || machine > 3))
-    || (action === 16 && (!integer(machine, 1, 4) || (machine === 1 && value > 1) || (machine > 1 && value < 100) || (machine === 3 && value > 60000) || (machine === 4 && value > 10000)))) throw new Error('Неверная настройка ГК');
+  if (!integer(value, 0, action === 16 && machine === 5 ? 3600000 : 600000) || (action === 9 && value > 1) || (action === 10 && (!integer(value, 1, 10000) || machine > 3))
+    || (action === 16 && (!integer(machine, 1, 5) || (machine === 1 && value > 1) || (machine > 1 && value < (machine === 5 ? 1000 : 100)) || (machine === 3 && value > 60000) || (machine === 4 && value > 10000)))) throw new Error('Неверная настройка ГК');
   // Stop has its own counter and never waits for the configuration payload.
   if (action === 6) return { path: `audiGeometryStopSeq[${station}]`, sequence: await channel.run({ request: `audiGeometryStopSeq[${station}]`, ack: `audiGeometryStopAck[${station}]` }) };
   // CHANGE остаётся в OPC UA-контракте, но отдельной высоты больше нет.

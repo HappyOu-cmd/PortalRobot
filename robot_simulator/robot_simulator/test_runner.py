@@ -800,6 +800,18 @@ class GatewayRunner:
             return magazine_operation == 1
         if expected == "return-blank":
             return magazine_operation == 4
+        if expected == "held-blank-wait":
+            return (
+                bool(values.get("stCellStatus.xRunning", False))
+                and int(values.get("stTestObservability.uiCellState", -1)) == 9  # WAIT_MAGAZINE
+                and int(values.get("stTestObservability.uiSelectedMachine", -1)) == 0
+                and bool(values.get("stRobotStatus.xBlankAvailable", False))
+                and not bool(values.get("stRobotStatus.xDetailAvailable", False))
+                and not bool(values.get("stRobotStatus.xBusy", False))
+                and int(values.get("stTestObservability.uiRobotAction", 0)) == 0
+                and magazine_operation == 0
+                and not any(machine_operations)
+            )
         if expected == "machine-change":
             return 3 in machine_operations
         if expected == "machine-unload":
@@ -1571,7 +1583,8 @@ class GatewayRunner:
                 )
             return
         expected_magazine = int(case.get("expectations", {}).get("expectedMagazine", 0))
-        await self.wait_value(
+        wait_for_decision = self.wait_stable_value if expected == "held-blank-wait" else self.wait_value
+        await wait_for_decision(
             socket,
             lambda values: bool(values.get("stCellStatus.xRunning", False))
             and self.decision_matches(expected, values)
@@ -1591,7 +1604,7 @@ class GatewayRunner:
             )
         elif case.get("expectations", {}).get("testKind") == "general-four-batches":
             await self.run_general_cycle(socket, case, index, total, initial_counts)
-        elif bool(case.get("expectations", {}).get("fullCycle", True)):
+        elif expected != "held-blank-wait" and bool(case.get("expectations", {}).get("fullCycle", True)):
             await self.wait_value(
                 socket, lambda values: not bool(values.get("stCellStatus.xRunning", True)),
                 180.0 if self.speed_profile == "realtime" else 60.0,

@@ -2,16 +2,16 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { createServer as createTcpServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer as createViteServer } from 'vite';
 import WebSocket from 'ws';
 import { AuthStore } from './auth-store.mjs';
 
-test('real gateway + Vite: mobile login survives HMI account switches with another admin tab open', { timeout: 30_000 }, async () => {
+test('real gateway + Vite: mobile login survives HMI account switches with another admin tab open', { timeout: 60_000 }, async (t) => {
   const root = fileURLToPath(new URL('..', import.meta.url));
   const temporary = mkdtempSync(join(tmpdir(), 'portal-mobile-login-test-'));
   const sockets = [];
@@ -33,12 +33,14 @@ test('real gateway + Vite: mobile login survives HMI account switches with anoth
     // its startup banner into the test protocol instead of ordinary stdout.
     const serviceEnvironment = { ...process.env };
     delete serviceEnvironment.NODE_TEST_CONTEXT;
+    const gatewayStartedAt = performance.now();
     gateway = spawn(process.execPath, ['gateway/server.mjs'], {
       cwd: root, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
       env: {
         ...serviceEnvironment, GATEWAY_HOST: '127.0.0.1', GATEWAY_PORT: String(gatewayPort),
         // No connection to the live PLC; every database belongs to this test.
         OPCUA_ENDPOINT: 'opc.tcp://127.0.0.1:1',
+        OPCUA_PKI_DIR: join(temporary, 'opcua-pki'),
         AUTH_DB_PATH: authPath, CELL_EVENTS_DB_PATH: join(temporary, 'events.sqlite'),
         GEOMETRY_DB_PATH: join(temporary, 'geometry.sqlite'),
         CYCLOGRAM_DB_PATH: join(temporary, 'cyclogram.sqlite'),
@@ -48,15 +50,33 @@ test('real gateway + Vite: mobile login survives HMI account switches with anoth
       },
     });
     gatewayExit = once(gateway, 'exit');
-    let gatewayStderr = '';
+    let gatewayStdout = '', gatewayStderr = '';
+    gateway.stdout.on('data', (data) => { gatewayStdout = `${gatewayStdout}${data}`.slice(-4000); });
     gateway.stderr.on('data', (data) => { gatewayStderr = `${gatewayStderr}${data}`.slice(-4000); });
+    const gatewayOutput = () => `\nstdout:\n${gatewayStdout || '(empty)'}\nstderr:\n${gatewayStderr || '(empty)'}`;
     await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error(`Test gateway did not start${gatewayStderr ? `:\n${gatewayStderr}` : ''}`)), 10_000);
-      const finish = (error) => { clearTimeout(timeout); error ? reject(error) : resolve(); };
-      gateway.once('error', finish);
-      gateway.stdout.on('data', (data) => { if (data.toString().includes('[Gateway]')) finish(); });
-      gatewayExit.then(([code, signal]) => finish(new Error(`Test gateway exited (${code ?? signal})${gatewayStderr ? `:\n${gatewayStderr}` : ''}`)));
+      let settled = false;
+      const finish = (error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        gateway.off('error', onError);
+        gateway.stdout.off('data', onOutput);
+        error ? reject(error) : resolve();
+      };
+      const onError = (error) => finish(new Error(`Test gateway spawn failed: ${error.message}${gatewayOutput()}`));
+      // The server emits this address only after HTTP listening. Accumulating
+      // output also handles a readiness line split across stdout chunks.
+      const onOutput = () => { if (gatewayStdout.includes(`[Gateway] ${target}`)) finish(); };
+      // Parallel tests import node-opcua and generate certificates on Windows;
+      // allow startup time without sleeps or retries that hide an early crash.
+      const timeout = setTimeout(() => finish(new Error(`Test gateway did not start within 25 s${gatewayOutput()}`)), 25_000);
+      gateway.once('error', onError);
+      gateway.stdout.on('data', onOutput);
+      gatewayExit.then(([code, signal]) => finish(new Error(`Test gateway exited (${code ?? signal})${gatewayOutput()}`)), onError);
     });
+    t.diagnostic(`Test gateway ready after ${Math.round(performance.now() - gatewayStartedAt)} ms`);
+    assert.ok(existsSync(join(temporary, 'opcua-pki', 'own', 'private', 'private_key.pem')), 'Test gateway must use its isolated PKI');
     vite = await createViteServer({
       root, configFile: join(root, 'vite.config.ts'), logLevel: 'silent',
       server: {
@@ -125,6 +145,7 @@ test('real gateway + Vite: mobile login survives HMI account switches with anoth
     if (gateway && gateway.exitCode === null) gateway.kill();
     if (gatewayExit) await gatewayExit;
     // Exact directory returned by mkdtempSync above; contains only test fixtures.
+    assert.equal(dirname(resolve(temporary)), resolve(tmpdir()));
     rmSync(temporary, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });

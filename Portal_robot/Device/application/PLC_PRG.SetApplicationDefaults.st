@@ -82,3 +82,17 @@ FOR uiPointEditorIndex := UINT#1 TO INT_TO_UINT(GVL_POINT.iRequiredPointCount) D
 		xPointTableReady := FALSE;
 	END_IF;
 END_FOR;
+
+// Полнота таблицы остаётся диагностикой редактора. Включение оборудования
+// проверяет только собственные точки; HOME_SAFETY отдельно нужен автоциклу.
+axMachinePointsReady[1] := GVL_POINT.Points[E_POINT_NAME.MACHINE_1_ABOVE].xConfigured
+	AND GVL_POINT.Points[E_POINT_NAME.MACHINE_1_CHUCK_APROACH].xConfigured
+	AND GVL_POINT.Points[E_POINT_NAME.MACHINE_1_CHUCK_POSITION].xConfigured;
+axMachinePointsReady[2] := GVL_POINT.Points[E_POINT_NAME.MACHINE_2_ABOVE].xConfigured
+	AND GVL_POINT.Points[E_POINT_NAME.MACHINE_2_CHUCK_APROACH].xConfigured
+	AND GVL_POINT.Points[E_POINT_NAME.MACHINE_2_CHUCK_POSITION].xConfigured;
+axMachinePointsReady[3] := GVL_POINT.Points[E_POINT_NAME.MACHINE_3_ABOVE].xConfigured
+	AND GVL_POINT.Points[E_POINT_NAME.MACHINE_3_CHUCK_APROACH].xConfigured
+	AND GVL_POINT.Points[E_POINT_NAME.MACHINE_3_CHUCK_POSITION].xConfigured;
+axMagazinePointsReady[1] := GVL_POINT.Points[E_POINT_NAME.MAGAZINE_1_DETAIL].xConfigured;
+axMagazinePointsReady[2] := GVL_POINT.Points[E_POINT_NAME.MAGAZINE_2_DETAIL].xConfigured;

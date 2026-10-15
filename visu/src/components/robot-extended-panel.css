@@ -84,9 +84,9 @@
 .robot-redesign .rx-footer { flex-shrink: 0; padding: 12px 22px 16px; background: rgb(248 251 255 / 92%); border-top: 1px solid #dce7f1; }
 .robot-redesign .robot-extended-command-deck { padding: 0; grid-template-columns: 1.35fr .85fr 1fr; gap: 8px; }
 .robot-redesign .robot-extended-command-deck.modbus { grid-template-columns: 1fr 1fr; }
-.robot-redesign .robot-extended-command-deck > button { min-height: 48px; padding: 10px 8px; border: 1px solid rgb(179 197 218 / 65%); border-radius: 25px; color: var(--rx-accent); background: #fff; box-shadow: 0 12px 28px rgb(38 64 96 / 14%), 0 2px 5px rgb(38 64 96 / 7%), 0 1px 0 rgb(255 255 255 / 96%) inset, 0 -1px 0 rgb(120 142 166 / 14%) inset; -webkit-backdrop-filter: blur(18px) saturate(120%); backdrop-filter: blur(18px) saturate(120%); font: inherit; font-size: 12px; transition: transform 140ms cubic-bezier(.16, 1, .3, 1), border-color 180ms, background 180ms, color 180ms, box-shadow 180ms; }
+.robot-redesign .robot-extended-command-deck > button { min-height: 48px; padding: 10px 8px; border: 1px solid rgb(179 197 218 / 65%); border-radius: 25px; color: var(--rx-accent); background: #fff; box-shadow: 0 12px 28px rgb(38 64 96 / 14%), 0 2px 5px rgb(38 64 96 / 7%), 0 -1px 0 rgb(120 142 166 / 14%) inset; -webkit-backdrop-filter: blur(18px) saturate(120%); backdrop-filter: blur(18px) saturate(120%); font: inherit; font-size: 12px; transition: transform 140ms cubic-bezier(.16, 1, .3, 1), border-color 180ms, background 180ms, color 180ms, box-shadow 180ms; }
 .robot-redesign .robot-extended-command-deck > button.danger { background: #fff; border-color: rgb(179 197 218 / 65%); color: var(--rx-accent); font-weight: 650; }
-.robot-redesign .robot-extended-command-deck > button:hover:not(:disabled) { background: #f7faff; border-color: var(--rx-accent); box-shadow: 0 8px 18px rgb(38 64 96 / 12%), 0 1px 0 rgb(255 255 255 / 96%) inset; }
+.robot-redesign .robot-extended-command-deck > button:hover:not(:disabled) { background: #f7faff; border-color: var(--rx-accent); box-shadow: 0 8px 18px rgb(38 64 96 / 12%); }
 .robot-redesign .robot-extended-command-deck > button:active:not(:disabled) { transform: scale(.97); }
 .robot-redesign .robot-extended-command-deck > button:disabled { opacity: .48; cursor: default; }
 .robot-redesign .robot-extended-command-deck > button.drive-toggle[data-drive-state=on] { border-color: #d4676d; color: #c04d57; }
@@ -142,11 +142,11 @@
 .robot-redesign .rj-mode-selector .ui-segmented__option.is-active { color: var(--rx-accent); }
 .robot-redesign .rj-mode-selector svg { width: 18px; height: 18px; flex-shrink: 0; }
 .robot-redesign .rj-pad { display: grid; grid-template-columns: minmax(0, 1fr) 150px minmax(0, 1fr); align-items: center; gap: 12px; padding: 24px 0 20px; }
-.robot-redesign .rj-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-width: 0; min-height: 44px; padding: 10px 14px; border: 1px solid var(--rx-glass-border); border-radius: 22px; background: var(--rx-glass); color: var(--rx-accent); box-shadow: 0 4px 12px rgb(38 64 96 / 7%), 0 1px 0 rgb(255 255 255 / 86%) inset; -webkit-backdrop-filter: blur(16px) saturate(120%); backdrop-filter: blur(16px) saturate(120%); font: inherit; font-size: 12px; cursor: pointer; transition: transform 140ms cubic-bezier(.16, 1, .3, 1), background 180ms, color 180ms; }
+.robot-redesign .rj-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-width: 0; min-height: 44px; padding: 10px 14px; border: 1px solid transparent; border-radius: 22px; background: var(--rx-glass); color: var(--rx-accent); box-shadow: 0 4px 12px rgb(38 64 96 / 7%); -webkit-backdrop-filter: blur(16px) saturate(120%); backdrop-filter: blur(16px) saturate(120%); font: inherit; font-size: 12px; cursor: pointer; transition: transform 140ms cubic-bezier(.16, 1, .3, 1), background 180ms, color 180ms; }
 .robot-redesign .rj-button > svg { width: 20px; height: 20px; flex-shrink: 0; }
 .robot-redesign .rj-button:hover:not(:disabled) { background: #f1f6ff; }
 .robot-redesign .rj-button:active:not(:disabled) { transform: scale(.965); }
-.robot-redesign .rj-key { position: relative; display: flex; flex-direction: column; justify-content: center; gap: 8px; min-height: 142px; overflow: hidden; border: 1px solid rgb(179 197 218 / 65%); border-radius: 25px; background: var(--rx-control-glass); box-shadow: 0 12px 28px rgb(38 64 96 / 14%), 0 2px 5px rgb(38 64 96 / 7%), 0 1px 0 rgb(255 255 255 / 96%) inset, 0 -1px 0 rgb(120 142 166 / 14%) inset; -webkit-backdrop-filter: blur(18px) saturate(120%); backdrop-filter: blur(18px) saturate(120%); touch-action: none; user-select: none; -webkit-user-select: none; isolation: isolate; }
+.robot-redesign .rj-key { position: relative; display: flex; flex-direction: column; justify-content: center; gap: 8px; min-height: 142px; overflow: hidden; border: 1px solid rgb(179 197 218 / 65%); border-radius: 25px; background: var(--rx-control-glass); box-shadow: 0 12px 28px rgb(38 64 96 / 14%), 0 2px 5px rgb(38 64 96 / 7%), 0 -1px 0 rgb(120 142 166 / 14%) inset; -webkit-backdrop-filter: blur(18px) saturate(120%); backdrop-filter: blur(18px) saturate(120%); touch-action: none; user-select: none; -webkit-user-select: none; isolation: isolate; }
 .robot-redesign .rj-key:hover:not(:disabled):not([data-pressed=true]) { background: rgb(255 255 255 / 54%); }
 .robot-redesign .rj-key > svg { width: 23px; height: 23px; color: #6f96c8; }
 .robot-redesign .rj-key[data-direction=negative] > svg { transform: rotate(180deg); }
@@ -154,7 +154,7 @@
 .robot-redesign .rj-key > strong > span { font-weight: 400; }
 .robot-redesign .rj-key > small { font-size: 10px; color: var(--rx-muted); }
 .robot-redesign .rj-key-wave { position: absolute; top: 50%; left: 50%; z-index: -1; width: 140px; height: 140px; border: 1px solid rgb(255 255 255 / 65%); border-radius: 50%; opacity: 0; pointer-events: none; }
-.robot-redesign .rj-key[data-pressed=true]:not(:disabled) { transform: translateY(3px) scale(.975); background: rgb(23 105 232 / 94%); border-color: var(--rx-accent); color: #fff; box-shadow: 0 0 0 1px rgb(255 255 255 / 28%) inset, 0 5px 14px rgb(23 105 232 / 20%); }
+.robot-redesign .rj-key[data-pressed=true]:not(:disabled) { transform: translateY(3px) scale(.975); background: rgb(23 105 232 / 94%); border-color: var(--rx-accent); color: #fff; box-shadow: 0 5px 14px rgb(23 105 232 / 20%); }
 .robot-redesign .rj-key[data-pressed=true] > :is(svg, small) { color: rgb(255 255 255 / 80%); }
 .robot-redesign .rj-key[data-pressed=true] .rj-key-wave { animation: rj-press-wave 700ms cubic-bezier(.16, 1, .3, 1); }
 .robot-redesign .rj-dial { --dial-color: #88acd8; --dial-ink: #254c7e; position: relative; display: grid; place-items: center; width: 150px; aspect-ratio: 1; border-radius: 50%; isolation: isolate; pointer-events: none; }
@@ -217,14 +217,14 @@
 .robot-redesign .rj-speed .robot-speed-editor-head label:focus-within { border-color: var(--rx-accent); box-shadow: 0 0 0 3px rgb(23 105 232 / 12%), 0 8px 20px rgb(38 64 96 / 12%); }
 .robot-redesign .rj-speed .robot-speed-editor-head input { font-size: 19px; font-weight: 500; }
 .robot-redesign .rj-speed .robot-speed-editor-adjust { grid-template-columns: 44px minmax(0, 1fr) 44px; gap: 12px; }
-.robot-redesign .rj-speed .robot-speed-editor-adjust > button { min-height: 44px; border: 1px solid rgb(179 197 218 / 65%); border-radius: 50%; color: var(--rx-accent); background: #fff; box-shadow: 0 12px 28px rgb(38 64 96 / 14%), 0 2px 5px rgb(38 64 96 / 7%), 0 1px 0 rgb(255 255 255 / 96%) inset, 0 -1px 0 rgb(120 142 166 / 14%) inset; -webkit-backdrop-filter: blur(18px) saturate(120%); backdrop-filter: blur(18px) saturate(120%); transition: transform 140ms cubic-bezier(.16, 1, .3, 1), border-color 180ms, background 180ms, box-shadow 180ms; }
-.robot-redesign .rj-speed .robot-speed-editor-adjust > button:hover:not(:disabled) { border-color: var(--rx-accent); background: #f7faff; box-shadow: 0 8px 18px rgb(38 64 96 / 12%), 0 1px 0 rgb(255 255 255 / 96%) inset; }
+.robot-redesign .rj-speed .robot-speed-editor-adjust > button { min-height: 44px; border: 1px solid rgb(179 197 218 / 65%); border-radius: 50%; color: var(--rx-accent); background: #fff; box-shadow: 0 12px 28px rgb(38 64 96 / 14%), 0 2px 5px rgb(38 64 96 / 7%), 0 -1px 0 rgb(120 142 166 / 14%) inset; -webkit-backdrop-filter: blur(18px) saturate(120%); backdrop-filter: blur(18px) saturate(120%); transition: transform 140ms cubic-bezier(.16, 1, .3, 1), border-color 180ms, background 180ms, box-shadow 180ms; }
+.robot-redesign .rj-speed .robot-speed-editor-adjust > button:hover:not(:disabled) { border-color: var(--rx-accent); background: #f7faff; box-shadow: 0 8px 18px rgb(38 64 96 / 12%); }
 .robot-redesign .rj-speed .robot-speed-editor-adjust > button:active:not(:disabled) { transform: scale(.965); }
 .robot-redesign .rj-speed .robot-speed-editor-adjust > button:disabled { opacity: .48; }
 .robot-redesign .rj-speed .robot-speed-editor-adjust input { min-width: 0; height: 32px; accent-color: var(--rx-accent); }
 .robot-redesign .rj-speed .robot-speed-presets { gap: 5px; }
-.robot-redesign .rj-speed .robot-speed-presets button { min-height: 36px; border: 1px solid var(--rx-glass-border); border-radius: 18px; background: var(--rx-glass); box-shadow: 0 3px 9px rgb(38 64 96 / 5%), 0 1px 0 rgb(255 255 255 / 84%) inset; -webkit-backdrop-filter: blur(14px) saturate(118%); backdrop-filter: blur(14px) saturate(118%); color: var(--rx-muted); font-size: 10px; font-weight: 500; }
-.robot-redesign .rj-speed .robot-speed-presets button.active { background: #e7f0ff; color: var(--rx-accent); }
+.robot-redesign .rj-speed .robot-speed-presets button { min-height: 36px; border: 1px solid transparent; border-radius: 18px; background: var(--rx-glass); box-shadow: 0 3px 9px rgb(38 64 96 / 5%); -webkit-backdrop-filter: blur(14px) saturate(118%); backdrop-filter: blur(14px) saturate(118%); color: var(--rx-muted); font-size: 10px; font-weight: 500; }
+.robot-redesign .rj-speed .robot-speed-presets button.active { border-color: #e7f0ff; background: #e7f0ff; color: var(--rx-accent); }
 .robot-redesign .rj-speed .robot-speed-editor-details { justify-content: space-between; padding-top: 12px; border-top: 1px solid var(--rx-line); color: var(--rx-muted); font-size: 9px; }
 .robot-redesign .rj-speed .robot-speed-editor-details b { color: #4e6077; font-weight: 500; }
 .robot-redesign .rj-motion-settings { display: grid; gap: 16px; }

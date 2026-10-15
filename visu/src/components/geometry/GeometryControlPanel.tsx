@@ -2,20 +2,21 @@ import { useEffect, useRef, useState, type ReactNode, type MouseEvent } from 're
 import * as Dialog from '@radix-ui/react-dialog';
 import { Icon } from '@iconify/react';
 import conveyorIcon from '@iconify-icons/material-symbols/conveyor-belt-outline';
-import { X, Settings, CheckCircle2, TriangleAlert, PackageOpen, Power, Gauge, ClipboardList, ScanLine } from 'lucide-react';
-import { createGeometrySnapshot, GEOMETRY_STATES, type GeometrySnapshot } from '../../model/geometryControl';
+import { X, Settings, CheckCircle2, ChevronDown, TriangleAlert, PackageOpen, Power, Gauge, ClipboardList, ScanLine } from 'lucide-react';
+import { createGeometrySnapshot, GEOMETRY_STATES, geometryReadinessConditions, type GeometrySnapshot } from '../../model/geometryControl';
 import { ConfirmationChoice, OperatorConfirmationLayout } from '../ui/OperatorConfirmationLayout';
 import { cn } from '../../lib/utils';
 import { QuickStatusCard, type QuickStatusTone } from '../ui/QuickStatusCard';
 import { Indicator } from '../ui/Indicator';
 import { geometryCommand, GeometryCallsMenu, GeometryConnectionNotice, GeometryDriveMenu, GeometryJournalMenu, GeometryPartMenu, NumberDraft, type GeometryCommand } from './GeometryControlMenus';
+import { GeometryReadinessMenu } from './GeometryReadinessMenu';
 import './geometry-control.css';
 
 type Command = GeometryCommand;
-type GeometryMenu = 'drive' | 'part' | 'calls' | 'journal';
+type GeometryMenu = 'readiness' | 'drive' | 'part' | 'calls' | 'journal';
 const EMPTY_GEOMETRY_SNAPSHOT = createGeometrySnapshot();
 const MENU_TITLES = { drive: 'Конвейер', part: 'Деталь на ГК', calls: 'Вызов деталей', journal: 'Журнал ГК' };
-const MENU_ICONS = { drive: Gauge, part: ScanLine, calls: PackageOpen, journal: ClipboardList };
+const MENU_ICONS = { readiness: CheckCircle2, drive: Gauge, part: ScanLine, calls: PackageOpen, journal: ClipboardList };
 
 export function GeometryControlPanel({ snapshot = EMPTY_GEOMETRY_SNAPSHOT, online, authorized, simulation, onCommand, onRequestState, onExtended, onClose, dragHandle, className, selectedStation, onStationChange }: {
   snapshot?: GeometrySnapshot; online: boolean; authorized: boolean; simulation: boolean; onCommand: Command; onExtended: () => void;
@@ -51,7 +52,14 @@ export function GeometryControlPanel({ snapshot = EMPTY_GEOMETRY_SNAPSHOT, onlin
     <section className={cn('machine-quick-panel geometry-quick-panel', `tone-${tone}`, className)} aria-label="Геометрический контроль" onPointerDown={event => event.stopPropagation()}>
       {dragHandle}
       <header className="machine-quick-header geometry-quick-header">
-        <div className="machine-quick-summary"><h2>Геометрический контроль {stationId}</h2><div className="machine-state-label geometry-quick-state"><Indicator active={online && tone !== 'gray'} tone={tone === 'gray' ? 'blue' : tone} />{!online ? 'Нет связи' : GEOMETRY_STATES[station.state]}</div></div>
+        <div className="machine-quick-summary"><h2>Геометрический контроль {stationId}</h2>
+          <button className={cn('cell-readiness-trigger geometry-control-trigger geometry-quick-state', menuOpen && menu === 'readiness' && 'active')}
+            type="button" aria-expanded={menuOpen && menu === 'readiness'} aria-controls="geometry-quick-control-menu"
+            aria-label={`Состояние и условия включения ГК ${stationId}`} onClick={event => toggle('readiness', event.currentTarget)}>
+            <Indicator active={online && tone !== 'gray'} tone={tone === 'gray' ? 'blue' : tone} />
+            <span>{!online ? 'Нет связи' : GEOMETRY_STATES[station.state]}</span><ChevronDown aria-hidden="true" />
+          </button>
+        </div>
         <nav className="machine-quick-tabs geometry-station-tabs" aria-label="Выбор геометрического контроля">{[0, 1].map(index => <button key={index} className={selected === index ? 'active' : ''} type="button" onClick={() => setSelected(index)}>ГК {index + 1}</button>)}</nav>
         <div className="quick-panel-header-actions"><button className="extended-control extended-control--icon" type="button" onClick={extended} title="Расширенное управление ГК" aria-label="Расширенное управление ГК"><Settings /></button><button className="panel-close-button" type="button" onClick={onClose} aria-label="Закрыть"><X /></button></div>
       </header>
@@ -64,10 +72,11 @@ export function GeometryControlPanel({ snapshot = EMPTY_GEOMETRY_SNAPSHOT, onlin
           <QuickStatusCard icon={ClipboardList} title="Журнал контроля" status="Вызовы и результаты" detail="Все ГК" tone="gray" interactive {...triggerProps('journal')} />
         </div>
       </div>
-      <Dialog.Content id="geometry-quick-control-menu" className="machine-mechanism-card geometry-context-menu" data-menu={menu} aria-describedby={undefined}
+      <Dialog.Content id="geometry-quick-control-menu" className={menu === 'readiness' ? 'cell-start-readiness geometry-context-menu geometry-readiness-menu' : 'machine-mechanism-card geometry-context-menu'} data-menu={menu} aria-describedby={undefined}
         onInteractOutside={event => { if ((event.target as HTMLElement).closest('.geometry-control-trigger')) event.preventDefault(); }}
         onOpenAutoFocus={event => event.preventDefault()}
         onCloseAutoFocus={event => { event.preventDefault(); if (triggerRef.current?.isConnected) triggerRef.current.focus({ preventScroll: true }); }}>
+        {menu === 'readiness' ? <GeometryReadinessMenu key={stationId} station={station} stationId={stationId} online={online} /> : <>
         <header><span className="machine-mechanism-icon">{menu === 'drive' ? <Icon icon={conveyorIcon} /> : <MenuIcon aria-hidden="true" />}</span>
           <div><small>ГЕОМЕТРИЧЕСКИЙ КОНТРОЛЬ {stationId}</small><Dialog.Title asChild><h3>{MENU_TITLES[menu]}</h3></Dialog.Title></div>
           <button type="button" onClick={extended} aria-label="Расширенное управление ГК" title="Расширенное управление ГК"><Settings /></button>
@@ -78,6 +87,7 @@ export function GeometryControlPanel({ snapshot = EMPTY_GEOMETRY_SNAPSHOT, onlin
         {menu === 'calls' && <GeometryCallsMenu snapshot={snapshot} online={online} onCommand={onCommand} onJournal={() => { setJournalView('calls'); setMenu('journal'); }} />}
         {menu === 'journal' && <GeometryJournalMenu authorized={authorized} view={journalView} onViewChange={setJournalView} />}
         <GeometryConnectionNotice online={online} supported={snapshot.supported} />
+        </>}
       </Dialog.Content>
     </section>
   </Dialog.Root>;
@@ -85,7 +95,22 @@ export function GeometryControlPanel({ snapshot = EMPTY_GEOMETRY_SNAPSHOT, onlin
 
 export function GeometryCellSettings({ snapshot = EMPTY_GEOMETRY_SNAPSHOT, online, onCommand, timeouts = false }: { snapshot?: GeometrySnapshot; online: boolean; onCommand: Command; timeouts?: boolean }) {
   const setting = (index: number, value: number) => onCommand(geometryCommand(16, 0, index, value));
-  return <section className="geometry-cell-settings"><h3>{timeouts ? 'Геометрический контроль' : 'Занятая станция геометрического контроля'}</h3>{timeouts ? <div className="cell-settings-grid">{[[2, snapshot.transportSeconds, 'Доставка детали до датчика, с'], [3, snapshot.feedbackSeconds, 'Подтверждение пуска / останова, с'], [4, snapshot.resetSeconds, 'Импульс сброса аварии, с']].map(([id, value, label]) => <NumberDraft online={online} allowed={snapshot.settingsAllowed} step={0.1} key={id} label={String(label)} min={id === 2 ? 1 : 0.1} max={id === 2 ? 600 : id === 3 ? 60 : 10} value={Number(value)} onApply={v => setting(Number(id), Math.round(v * 1000))} />)}</div> : <select disabled={!online} aria-disabled={!snapshot.settingsAllowed} value={snapshot.waitWhenOccupied ? 1 : 0} onChange={e => setting(1, Number(e.target.value))}><option value={1}>Ждать освобождения любого ГК</option><option value={0}>Уложить в магазин с предупреждением</option></select>}<p className="panel-note">{snapshot.settingsAllowed ? 'Настройка применяется в PLC.' : 'Остановите ячейку и приводы ГК для изменения настройки.'}</p></section>;
+  const timings = [
+    { id: 2, value: snapshot.transportSeconds, label: 'Доставка детали до датчика, с', min: 1, max: 600, step: 0.1 },
+    { id: 3, value: snapshot.feedbackSeconds, label: 'Подтверждение пуска / останова, с', min: 0.1, max: 60, step: 0.1 },
+    { id: 4, value: snapshot.resetSeconds, label: 'Импульс сброса аварии, с', min: 0.1, max: 10, step: 0.1 },
+    { id: 5, value: snapshot.waitWarningSeconds, label: 'Ожидание свободного ГК до предупреждения, с', min: 1, max: 3600, step: 1 },
+  ];
+  return <section className="geometry-cell-settings">
+    <h3>{timeouts ? 'Геометрический контроль' : 'Если ГК недоступен после взятия детали'}</h3>
+    {timeouts ? <div className="cell-settings-grid">{timings.map(({ id, value, label, min, max, step }) =>
+      <NumberDraft online={online} allowed={snapshot.settingsAllowed} key={id} label={label} min={min} max={max} step={step} value={value}
+        onApply={v => setting(id, Math.round(v * 1000))} />)}</div>
+      : <><select disabled={!online} aria-disabled={!snapshot.settingsAllowed} value={snapshot.waitWhenOccupied ? 1 : 0} onChange={e => setting(1, Number(e.target.value))}>
+        <option value={1}>Ждать освобождения любого ГК</option><option value={0}>Уложить в магазин с предупреждением</option>
+      </select><p className="panel-note">До взятия вызванная деталь остаётся в станке, пока не появится свободный ГК.</p></>}
+    <p className="panel-note">{snapshot.settingsAllowed ? 'Настройка применяется в PLC.' : 'Остановите ячейку и приводы ГК для изменения настройки.'}</p>
+  </section>;
 }
 
 export function GeometryRecoveryPrompt({ snapshot, online, onCommand, requestedStation = null, onClose }: {
@@ -100,7 +125,11 @@ export function GeometryRecoveryPrompt({ snapshot, online, onCommand, requestedS
   if (!snapshot || index < 0) return null;
   const station = snapshot.stations[index];
   const reject = () => { onCommand(geometryCommand(4, index + 1)); onClose(); };
-  return <OperatorConfirmationLayout title={`ГК ${index + 1}`} context={station.confirmationActive ? 'Включение геометрического контроля' : 'Состояние геометрического контроля'} description="После выключения, аварии или перезапуска нужно вручную проверить всю ленту." icon={<Icon icon={conveyorIcon} />} steps={['Проверить станцию', 'Указать состояние']} step={2} cancelLabel={station.confirmationActive ? 'Не включать' : 'Закрыть'} status={station.partAtEnd ? 'Уберите деталь из станции ГК: конечный датчик включён.' : 'Подтверждение относится ко всей ленте, включая участок до датчика.'} cancelDisabled={!online} onCancel={station.confirmationActive ? reject : onClose}>
+  const confirmBlocker = geometryReadinessConditions(station, online, 'confirm').find(condition => !condition.ready);
+  const confirmationStatus = !online ? 'Нет связи с PLC.'
+    : !station.confirmAllowed && confirmBlocker ? `Подтверждение недоступно: ${confirmBlocker.blocked}`
+      : 'Подтверждение относится ко всей ленте, включая участок до датчика.';
+  return <OperatorConfirmationLayout title={`ГК ${index + 1}`} context={station.confirmationActive ? 'Включение геометрического контроля' : 'Состояние геометрического контроля'} description="После выключения, аварии или перезапуска нужно вручную проверить всю ленту." icon={<Icon icon={conveyorIcon} />} steps={['Проверить станцию', 'Указать состояние']} step={2} cancelLabel={station.confirmationActive ? 'Не включать' : 'Закрыть'} status={confirmationStatus} cancelDisabled={!online} onCancel={station.confirmationActive ? reject : onClose}>
     <h3>Укажите состояние станции ГК</h3><div className="confirmation-choices"><ConfirmationChoice icon={<CheckCircle2 />} title="Станция свободна" description={station.confirmationActive ? 'Станция проверена; включить ГК' : 'Вся лента проверена; ГК останется выключенным'} className={!station.confirmAllowed ? 'geometry-muted' : ''} disabled={!online} onClick={() => onCommand(geometryCommand(3, index + 1))} /><ConfirmationChoice icon={<PackageOpen />} title="Деталь ещё в ГК" description="Оставить ГК выключенным; убрать деталь вручную" disabled={!online} onClick={reject} /></div>{station.partAtEnd && <p><TriangleAlert size={18} /> Уберите деталь из станции ГК.</p>}
   </OperatorConfirmationLayout>;
 }

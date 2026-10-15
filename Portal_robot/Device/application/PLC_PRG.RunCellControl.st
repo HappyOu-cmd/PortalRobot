@@ -2,6 +2,24 @@ METHOD PRIVATE RunCellControl
 
 // --- BEGIN IMPLEMENTATION ---
 
+// Выключенные станки, магазины и ГК не требуют настройки своих точек.
+// Общая безопасная точка обязательна при любом составе автоцикла.
+xCellPointsReady := GVL_POINT.Points[E_POINT_NAME.HOME_SAFETY].xConfigured;
+FOR uiMachine := UINT#1 TO UINT#3 DO
+	IF GVL_MACHINE.Status[uiMachine].xEnabled THEN
+		xCellPointsReady := xCellPointsReady AND axMachinePointsReady[uiMachine];
+	END_IF;
+END_FOR;
+FOR uiMagazine := UINT#1 TO UINT#2 DO
+	IF GVL_MAGAZINE.astStatus[uiMagazine].xEnabled THEN
+		xCellPointsReady := xCellPointsReady AND axMagazinePointsReady[uiMagazine];
+	END_IF;
+	IF GVL_GEOMETRY_CONTROL.astStatus[uiMagazine].xEnabled THEN
+		xCellPointsReady := xCellPointsReady
+			AND GVL_GEOMETRY_CONTROL.astStatus[uiMagazine].xConfigured;
+	END_IF;
+END_FOR;
+
 uiMagazine := GVL_CELL_MANAGER.Status.uiActiveMagazine;
 IF (uiMagazine < UINT#1) OR (uiMagazine > UINT#2) THEN
 	uiMagazine := UINT#1;
@@ -37,6 +55,7 @@ CELL_MANAGER(
 	xOperatorCancel := GVL_HMI.xCellOperatorCancel,
 	uiOperatorChoice := GVL_HMI.uiCellOperatorChoice,
 	xManual := GVL_CELL_CONTROL.xManual,
+	xIoManual := xIoManualActive,
 	uiModeRejectReason := uiCellModeRejectReason,
 	xSettingsRejected := xCellSettingRejected,
 	xIoOverrideRejected := xIoOverrideRejected,
@@ -58,7 +77,7 @@ CELL_MANAGER(
 	lrStoppedPoseTolerance := GVL_CELL_SETTINGS.lrStoppedPoseTolerance,
 	Config := GVL_MULTI_TYPE.Config,
 	xConfigurationValid := GVL_MULTI_TYPE.ConfigStatus.xConfigurationValid,
-	xPointsConfigured := xPointTableReady,
+	xPointsConfigured := xCellPointsReady,
 	stRobotStatus := GVL_ROBOT.Status,
 	astMagazineStatus := GVL_MAGAZINE.astStatus,
 	astMachineStatus := GVL_MACHINE.Status,
@@ -71,17 +90,12 @@ CELL_MANAGER(
 	CycleStatus => GVL_MULTI_TYPE.CycleStatus
 );
 
-IF GVL_MULTI_TYPE.ConfigStatus.stWarning.udiSequence
-<> udiLastTypeConfigWarningSequence THEN
-	GVL_CELL_MANAGER.Diag.stWarning := GVL_MULTI_TYPE.ConfigStatus.stWarning;
-	udiLastTypeConfigWarningSequence := GVL_MULTI_TYPE.ConfigStatus.stWarning.udiSequence;
-END_IF;
-
 // Сначала снимаем команды обоих владельцев, затем маршрутизируем единственную
 // команду менеджера выбранному магазину.
+// Общий Disable ячейки не отключает независимо включённые магазины.
 FOR uiMagazine := UINT#1 TO UINT#2 DO
 	GVL_MAGAZINE.astAutoCommand[uiMagazine].xEnable := FALSE;
-	GVL_MAGAZINE.astAutoCommand[uiMagazine].xDisable := GVL_CELL_CONTROL.xDisable;
+	GVL_MAGAZINE.astAutoCommand[uiMagazine].xDisable := FALSE;
 	GVL_MAGAZINE.astAutoCommand[uiMagazine].xExecute := FALSE;
 	GVL_MAGAZINE.astAutoCommand[uiMagazine].xStop := FALSE;
 	GVL_MAGAZINE.astAutoCommand[uiMagazine].eOperation := E_MAGAZINE_OPERATION.NONE;
@@ -93,6 +107,4 @@ AND (GVL_CELL_MANAGER.Status.uiActiveMagazine <= UINT#2) THEN
 	GVL_MAGAZINE.astAutoCommand[GVL_CELL_MANAGER.Status.uiActiveMagazine] :=
 		GVL_CELL_MANAGER.Command.stMagazine;
 	GVL_MAGAZINE.astAutoCommand[GVL_CELL_MANAGER.Status.uiActiveMagazine].xEnable := FALSE;
-	GVL_MAGAZINE.astAutoCommand[GVL_CELL_MANAGER.Status.uiActiveMagazine].xDisable :=
-		GVL_CELL_CONTROL.xDisable;
 END_IF;

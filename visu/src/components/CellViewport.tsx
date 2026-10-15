@@ -195,12 +195,14 @@ export function CellViewport({
       (stationId) => geometrySelectRef.current?.(stationId),
     );
     sceneRef.current = scene;
+    const unsubscribeZoomLevel = scene.subscribeZoomLevel(setZoomLevel);
     scene.setDriftSettings(driftSettings);
     scene.setVisualEffects(visualEffects);
     scene.setSceneActivity(sceneActivity);
     scene.setFocusTarget(focusTarget);
     scene.setEasterEgg(easterEggMode, easterEggRevision);
     return () => {
+      unsubscribeZoomLevel();
       scene.dispose();
       sceneRef.current = undefined;
     };
@@ -210,7 +212,7 @@ export function CellViewport({
     // A frozen green lamp must not imply that the disconnected PLC is still running.
     const sceneState = inspectionDataMode === 'stale' ? {
       ...state,
-      geometryControl: state.geometryControl ? { ...state.geometryControl, stations: state.geometryControl.stations.map(station => ({ ...station, running: false })) } : undefined,
+      geometryControl: state.geometryControl ? { ...state.geometryControl, stations: state.geometryControl.stations.map(station => ({ ...station, running: false, callWaitWarning: false })) } : undefined,
       controlCabinets: {
         ...state.controlCabinets,
         signalTower: DEFAULT_CONTROL_CABINETS.signalTower,
@@ -218,6 +220,9 @@ export function CellViewport({
     } : state;
     sceneRef.current?.setState(sceneState);
   }, [state, inspectionDataMode]);
+  useEffect(() => {
+    sceneRef.current?.setWarningEvents(inspectionEvents, inspectionDataMode === 'live');
+  }, [inspectionEvents, inspectionDataMode]);
   useEffect(() => sceneRef.current?.setRenderingEnabled(renderingEnabled), [renderingEnabled]);
   useEffect(() => {
     if (twoPalletControllers) sceneRef.current?.setTwoPalletControllers(twoPalletControllers);

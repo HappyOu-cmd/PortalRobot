@@ -8,8 +8,8 @@ END_VAR
 
 PlanGeometry := FALSE;
 IF xGeometryHeld AND stRobotStatus.xDetailAvailable AND (uiGeometryMachine >= UINT#1) AND (uiGeometryMachine <= UINT#3) THEN
-	uiFree := F_GEOMETRY_SELECT_STATION(xRequireFree := TRUE);
-	uiAvailable := F_GEOMETRY_SELECT_STATION(xRequireFree := FALSE);
+	uiFree := F_GEOMETRY_SELECT_STATION(xRequireFree := TRUE, uiMachine := uiGeometryMachine);
+	uiAvailable := F_GEOMETRY_SELECT_STATION(xRequireFree := FALSE, uiMachine := uiGeometryMachine);
 	IF uiFree > UINT#0 THEN
 		uiGeometryStation := uiFree; uiGeometryStep := UINT#0;
 		GVL_GEOMETRY_CONTROL.astCalls[uiGeometryMachine].uiStation := uiFree;

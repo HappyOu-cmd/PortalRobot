@@ -1,16 +1,24 @@
 import * as Dialog from '@radix-ui/react-dialog';
-import { Activity, AlertCircle, Box, LockKeyhole, RotateCcw, UnlockKeyhole, X } from 'lucide-react';
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
+import { Activity, AlertCircle, Box, Crosshair, LockKeyhole, RotateCcw, Save, UnlockKeyhole, X } from 'lucide-react';
+import { Icon as ControlIcon } from '@iconify/react';
+import homeIcon from '@iconify-icons/material-symbols/home-outline';
+import touchIcon from '@iconify-icons/material-symbols/touch-app-outline';
+import targetIcon from '@iconify-icons/material-symbols/my-location';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { cn } from '../lib/utils';
 import type { CellState } from '../model/types';
 import type { PlcCommand, PlcRuntimeInfo } from '../plc/client';
 import { RangeInput, SegmentedControl } from './ui/ControlPrimitives';
 import { Indicator } from './ui/Indicator';
+import { RobotJogKey } from './RobotJogKey';
+import { AXIS_HOMING_STATE, RobotAxisHomeButton } from './RobotAxisHomeButton';
 import { currentRobotPointLabel, MANUAL_POINT_OPTIONS, robotActionCommand, type RobotManualAction } from './robotManualControl';
 import './ui/control-primitives.css';
+import './robot-extended-panel.css';
+import './robot-quick-control-menu.css';
 
 export type RobotQuickControl = 'position' | 'gripper1' | 'gripper2' | 'rotation';
-type PositionView = 'points' | 'remote';
+type PositionView = 'points' | 'remote' | 'home';
 type JogDirection = 'positive' | 'negative';
 type ActiveJog = { axis: number; direction: JogDirection } | null;
 
@@ -21,88 +29,6 @@ const TITLES: Record<RobotQuickControl, string> = {
   position: 'Переход к точке', gripper1: 'Захват 1 — заготовка',
   gripper2: 'Захват 2 — деталь', rotation: 'Поворот двойного захвата',
 };
-
-function JogHoldButton({ axis, direction, allowed, online, className, label, arrow, onJog }: {
-  axis: number;
-  direction: JogDirection;
-  allowed: boolean;
-  online: boolean;
-  className: string;
-  label: string;
-  arrow: string;
-  onJog: (axis: number, direction: JogDirection, active: boolean) => void;
-}) {
-  const pressedRef = useRef(false);
-  const [pressed, setPressed] = useState(false);
-  const finish = (event?: ReactPointerEvent<HTMLButtonElement>) => {
-    if (!pressedRef.current) return;
-    pressedRef.current = false;
-    setPressed(false);
-    if (event && event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-    onJog(axis, direction, false);
-  };
-
-  return <button
-    type="button"
-    className={cn('robot-mini-direction', className, pressed && allowed && 'is-pressed', !allowed && 'command-unavailable')}
-    disabled={!online}
-    aria-disabled={!allowed}
-    aria-label={`${AXES[axis - 1]} ${direction === 'positive' ? 'в плюс' : 'в минус'}, удерживать для движения`}
-    onPointerDown={(event) => {
-      event.preventDefault();
-      pressedRef.current = true;
-      setPressed(allowed);
-      event.currentTarget.setPointerCapture(event.pointerId);
-      onJog(axis, direction, true);
-    }}
-    onPointerUp={finish}
-    onPointerCancel={finish}
-    onLostPointerCapture={() => finish()}
-    onBlur={() => finish()}
-  ><strong>{label}</strong><span>{arrow}</span></button>;
-}
-
-function StepButton({ axis, direction, allowed, online, className, label, arrow, step, onStep }: {
-  axis: number;
-  direction: JogDirection;
-  allowed: boolean;
-  online: boolean;
-  className: string;
-  label: string;
-  arrow: string;
-  step: number;
-  onStep: (axis: number, direction: JogDirection) => void;
-}) {
-  const [pressed, setPressed] = useState(false);
-  const [pulsing, setPulsing] = useState(false);
-  const pulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const triggerPulse = () => {
-    if (!allowed) return;
-    setPulsing(false);
-    if (pulseTimerRef.current) clearTimeout(pulseTimerRef.current);
-    requestAnimationFrame(() => setPulsing(true));
-    pulseTimerRef.current = setTimeout(() => {
-      setPulsing(false);
-      pulseTimerRef.current = null;
-    }, 620);
-  };
-  useEffect(() => () => {
-    if (pulseTimerRef.current) clearTimeout(pulseTimerRef.current);
-  }, []);
-
-  return <button
-    type="button"
-    className={cn('robot-mini-direction', className, pressed && allowed && 'is-pressed', pulsing && 'is-pulsing', !allowed && 'command-unavailable')}
-    disabled={!online}
-    aria-disabled={!allowed}
-    aria-label={`${AXES[axis - 1]} ${direction === 'positive' ? 'в плюс' : 'в минус'} на ${step} мм`}
-    onPointerDown={() => setPressed(allowed)}
-    onPointerUp={() => setPressed(false)}
-    onPointerCancel={() => setPressed(false)}
-    onBlur={() => setPressed(false)}
-    onClick={() => { triggerPulse(); onStep(axis, direction); }}
-  ><strong>{label}</strong><span>{arrow}</span></button>;
-}
 
 export function RobotQuickControlMenu({
   control, open, robot, coordinates, magazines, manual, axisManual, continuousMode, manualStep,
@@ -154,10 +80,11 @@ export function RobotQuickControlMenu({
   const jogReady = modeReady && manual.drivesPowered && !manual.commandBusy && axisManual.some((axis) => continuousMode
     ? axis.jogPositiveAllowed || axis.jogNegativeAllowed
     : axis.moveRelativePositiveAllowed || axis.moveRelativeNegativeAllowed);
-  const headerReady = positionView === 'points' ? online && manual.pointsAllowed : jogReady;
+  const headerReady = positionView === 'points' ? online && manual.pointsAllowed
+    : positionView === 'home' ? modeReady && axisManual.some((axis) => axis.homeAllowed) : jogReady;
   const warning = !online ? 'Нет связи с PLC. Управление недоступно.'
-    : modbusMode && control === 'position' && positionView === 'remote' ? 'Мини-пульт доступен только в режиме SoftMotion.'
-      : control === 'position' && positionView === 'remote' ? ''
+    : modbusMode && control === 'position' && positionView !== 'points' ? 'Мини-пульт доступен только в режиме SoftMotion.'
+      : control === 'position' && positionView !== 'points' ? ''
         : unavailable ? manual.rejectReason : '';
 
   const send = (action: RobotManualAction) => {
@@ -195,36 +122,28 @@ export function RobotQuickControlMenu({
   }, []);
 
   const directionProps = (axis: number, direction: JogDirection) => ({
-    axis, direction, online: modeReady,
+    axis: AXES[axis - 1], direction, online: modeReady, continuous: continuousMode, step: manualStep,
+    onJog: (active: boolean) => handleJog(axis, direction, active),
+    onStep: () => handleStep(axis, direction),
     allowed: continuousMode
       ? direction === 'positive' ? axisManual[axis - 1].jogPositiveAllowed : axisManual[axis - 1].jogNegativeAllowed
       : direction === 'positive' ? axisManual[axis - 1].moveRelativePositiveAllowed : axisManual[axis - 1].moveRelativeNegativeAllowed,
   });
-  const continuousPad = <div className="robot-mini-pad-body is-continuous">
+  const jogPad = <div key={continuousMode ? 'continuous' : 'step'} className="robot-mini-pad-body">
     <section className="robot-mini-xy"><span>XY</span><div className="robot-mini-xy-pad">
-      <JogHoldButton {...directionProps(2, 'positive')} className="y-positive" label="Y+" arrow="⌃" onJog={handleJog} />
-      <JogHoldButton {...directionProps(1, 'negative')} className="x-negative" label="X−" arrow="‹" onJog={handleJog} />
+      <RobotJogKey {...directionProps(2, 'positive')} className="robot-mini-jog-key y-positive" arrow="up" />
+      <RobotJogKey {...directionProps(1, 'negative')} className="robot-mini-jog-key x-negative" arrow="left" />
       <div className="robot-mini-pad-center" aria-hidden="true" />
-      <JogHoldButton {...directionProps(1, 'positive')} className="x-positive" label="X+" arrow="›" onJog={handleJog} />
-      <JogHoldButton {...directionProps(2, 'negative')} className="y-negative" label="Y−" arrow="⌄" onJog={handleJog} />
+      <RobotJogKey {...directionProps(1, 'positive')} className="robot-mini-jog-key x-positive" arrow="right" />
+      <RobotJogKey {...directionProps(2, 'negative')} className="robot-mini-jog-key y-negative" arrow="down" />
     </div></section>
-    <section className="robot-mini-z"><span>Z</span><JogHoldButton {...directionProps(3, 'negative')} className="z-negative" label="Z−" arrow="↑" onJog={handleJog} /><JogHoldButton {...directionProps(3, 'positive')} className="z-positive" label="Z+" arrow="↓" onJog={handleJog} /></section>
-  </div>;
-  const stepPad = <div className="robot-mini-pad-body is-step">
-    <section className="robot-mini-xy"><span>XY</span><div className="robot-mini-xy-pad">
-      <StepButton {...directionProps(2, 'positive')} className="y-positive" label="Y+" arrow="⌃" step={manualStep} onStep={handleStep} />
-      <StepButton {...directionProps(1, 'negative')} className="x-negative" label="X−" arrow="‹" step={manualStep} onStep={handleStep} />
-      <div className="robot-mini-pad-center" aria-hidden="true" />
-      <StepButton {...directionProps(1, 'positive')} className="x-positive" label="X+" arrow="›" step={manualStep} onStep={handleStep} />
-      <StepButton {...directionProps(2, 'negative')} className="y-negative" label="Y−" arrow="⌄" step={manualStep} onStep={handleStep} />
-    </div></section>
-    <section className="robot-mini-z"><span>Z</span><StepButton {...directionProps(3, 'negative')} className="z-negative" label="Z−" arrow="↑" step={manualStep} onStep={handleStep} /><StepButton {...directionProps(3, 'positive')} className="z-positive" label="Z+" arrow="↓" step={manualStep} onStep={handleStep} /></section>
+    <section className="robot-mini-z"><span>Z</span><RobotJogKey {...directionProps(3, 'negative')} className="robot-mini-jog-key z-negative" arrow="up" /><RobotJogKey {...directionProps(3, 'positive')} className="robot-mini-jog-key z-positive" arrow="down" /></section>
   </div>;
 
   return <Dialog.Root open={open} onOpenChange={(next) => { if (!next) stopActiveJog(); onOpenChange(next); }} modal={false}>
     <Dialog.Content
       id="robot-quick-control-menu"
-      className={cn('machine-mechanism-card robot-control-menu', control === 'position' && 'robot-position-control-menu')}
+      className={cn('machine-mechanism-card robot-control-menu', control === 'position' && 'robot-position-control-menu robot-redesign')}
       aria-describedby={undefined}
       onInteractOutside={(event) => {
         if ((event.target as HTMLElement).closest('.robot-control-trigger')) event.preventDefault();
@@ -235,7 +154,7 @@ export function RobotQuickControlMenu({
       }}
     >
       {control === 'position' ? <header className="robot-mini-header">
-        <div><Dialog.Title asChild><h3>Мини-пульт робота</h3></Dialog.Title><span>Режим {positionView === 'points' ? 'ТОЧКИ' : continuousMode ? 'JOG' : 'ШАГОВЫЙ JOG'} <Indicator active={headerReady} tone={headerReady ? 'green' : 'blue'} /> {headerReady ? 'Готов' : 'Не готов'}</span></div>
+        <div><Dialog.Title asChild><h3>Мини-пульт робота</h3></Dialog.Title><span>Режим {positionView === 'points' ? 'ТОЧКИ' : positionView === 'home' ? 'HOME' : continuousMode ? 'JOG' : 'ШАГОВЫЙ JOG'} <Indicator active={headerReady} tone={headerReady ? 'green' : 'blue'} /> {headerReady ? 'Готов' : 'Не готов'}</span></div>
         <Dialog.Close asChild><button type="button" title="Свернуть" aria-label="Закрыть управление роботом">−</button></Dialog.Close>
       </header> : <header>
         <span className="machine-mechanism-icon"><Icon aria-hidden="true" /></span>
@@ -245,11 +164,16 @@ export function RobotQuickControlMenu({
 
       {control === 'position' ? <>
         <SegmentedControl
-          className="robot-position-view-control"
+          className="robot-mini-pill-selector robot-mini-view-selector"
           value={positionView}
-          options={[{ value: 'points', label: 'Точки' }, { value: 'remote', label: 'Пульт JOG' }]}
+          thumbFullHeight
+          options={[
+            { value: 'points', label: <><Save aria-hidden="true" />Точки</> },
+            { value: 'remote', label: <><Crosshair aria-hidden="true" />Пульт JOG</> },
+            { value: 'home', label: <><ControlIcon icon={homeIcon} aria-hidden="true" />HOME</> },
+          ]}
           onChange={(nextValue) => {
-            if (nextValue === 'points') stopActiveJog();
+            stopActiveJog();
             setPositionView(nextValue as PositionView);
           }}
           ariaLabel="Режим управления позицией"
@@ -269,40 +193,60 @@ export function RobotQuickControlMenu({
             {magazinePoint && !slotValid && <small className="robot-control-input-error">Введите целый номер слота от 1 до {maxSlot}.</small>}
           </div>
           <div className="machine-mechanism-actions robot-control-point-action">
-            <button type="button" disabled={!online || (magazinePoint && !slotValid)} className={cn('primary', !manual.pointsAllowed && 'command-unavailable')} aria-disabled={!online || !manual.pointsAllowed || (magazinePoint && !slotValid)} onClick={() => send(1)}><span>Перейти к точке</span></button>
+            <button type="button" disabled={!online || (magazinePoint && !slotValid)} className={cn('rj-button rj-primary', !manual.pointsAllowed && 'command-unavailable')} aria-disabled={!online || !manual.pointsAllowed || (magazinePoint && !slotValid)} onClick={() => send(1)}><span>Перейти к точке</span></button>
           </div>
         </> : <div className="robot-mini-remote">
-          <SegmentedControl
-            className="robot-mini-jog-control"
-            value={continuousMode ? 'continuous' : 'step'}
-            options={[{ value: 'continuous', label: 'Непрерывный' }, { value: 'step', label: 'Шаговый' }]}
-            disabled={!modeReady}
-            onChange={(nextValue) => setJogMode(nextValue === 'continuous')}
-            ariaLabel="Тип JOG"
-          />
-          {continuousMode ? continuousPad : stepPad}
-          {continuousMode ? <div className="robot-mini-adjust">
-            <div className="robot-mini-adjust-head"><strong>Скорость</strong><RangeInput min={0.1} max={100} step={0.1} value={speed} disabled={!modeReady} ariaLabel="Скорость JOG" onChange={(value) => onSend({ command: 'robot.speedOverride', value })} /><b>{speed.toFixed(speed % 1 ? 1 : 0)} %</b></div>
+          {positionView === 'home' ? <div className="robot-mini-home">
+            <p>Поиск домашней позиции каждой оси</p>
+            {AXES.map((name, index) => {
+              const axis = axisManual[index];
+              const homeState = !modeReady ? modbusMode ? 'Недоступно в Modbus' : 'Нет связи'
+                : axis.stateCode === AXIS_HOMING_STATE ? 'Поиск HOME…' : axis.homed ? 'HOME найден' : 'HOME не найден';
+              return <section key={name} className="robot-mini-home-axis">
+                <div><strong>Ось {name}</strong><span>{homeState}</span></div>
+                <RobotAxisHomeButton axis={index + 1} status={axis} online={modeReady} onSend={(command) => { stopActiveJog(); onSend(command); }} />
+                {modeReady && !axis.homeAllowed && axis.rejectReason && <p role="status">{axis.rejectReason}</p>}
+              </section>;
+            })}
+          </div> : <>
             <SegmentedControl
-              className="robot-mini-speed-presets-control"
-              value={SPEED_PRESETS.find((value) => Math.abs(speed - value) < 0.05)?.toString() ?? ''}
-              options={SPEED_PRESETS.map((value) => ({ value: value.toString(), label: `${value}%` }))}
+              className="robot-mini-pill-selector robot-mini-mode-selector"
+              value={continuousMode ? 'continuous' : 'step'}
+              thumbFullHeight
+              options={[
+                { value: 'continuous', label: <><ControlIcon icon={touchIcon} aria-hidden="true" />Непрерывный</> },
+                { value: 'step', label: <><ControlIcon icon={targetIcon} aria-hidden="true" />Шаговый</> },
+              ]}
               disabled={!modeReady}
-              onChange={(nextValue) => onSend({ command: 'robot.speedOverride', value: Number(nextValue) })}
-              ariaLabel="Предустановки скорости JOG"
+              onChange={(nextValue) => setJogMode(nextValue === 'continuous')}
+              ariaLabel="Тип JOG"
             />
-          </div> : <div className="robot-mini-adjust">
-            <div className="robot-mini-step-label"><strong>Шаг перемещения</strong><b>{manualStep} мм</b></div>
-            <SegmentedControl
-              className="robot-mini-step-presets-control"
-              value={manualStep.toString()}
-              options={STEP_VALUES.map((value) => ({ value: value.toString(), label: `${value} мм` }))}
-              disabled={!modeReady}
-              onChange={(nextValue) => onSend({ command: 'robot.manualStep', value: Number(nextValue) })}
-              ariaLabel="Предустановки шага перемещения"
-            />
-          </div>}
-          <footer className="robot-mini-footer"><div><span>X</span><strong>{coordinates.x.toFixed(1)}</strong><span>Y</span><strong>{coordinates.y.toFixed(1)}</strong><span>Z</span><strong>{coordinates.z.toFixed(1)}</strong></div><button type="button" disabled={!online} className={!manual.stopAllowed ? 'command-unavailable' : ''} aria-disabled={!manual.stopAllowed} onClick={() => { stopActiveJog(); onSend({ command: 'robot.stop' }); }}>Стоп</button></footer>
+            {jogPad}
+            {continuousMode ? <div className="robot-mini-adjust">
+              <div className="robot-mini-adjust-head"><strong>Скорость</strong><RangeInput min={0.1} max={100} step={0.1} value={speed} disabled={!modeReady} ariaLabel="Скорость JOG" onChange={(value) => onSend({ command: 'robot.speedOverride', value })} /><b>{speed.toFixed(speed % 1 ? 1 : 0)} %</b></div>
+              <SegmentedControl
+                className="robot-mini-pill-selector robot-mini-presets-selector"
+                thumbFullHeight
+                value={SPEED_PRESETS.find((value) => Math.abs(speed - value) < 0.05)?.toString() ?? ''}
+                options={SPEED_PRESETS.map((value) => ({ value: value.toString(), label: `${value}%` }))}
+                disabled={!modeReady}
+                onChange={(nextValue) => onSend({ command: 'robot.speedOverride', value: Number(nextValue) })}
+                ariaLabel="Предустановки скорости JOG"
+              />
+            </div> : <div className="robot-mini-adjust">
+              <div className="robot-mini-step-label"><strong>Шаг перемещения</strong><b>{manualStep} мм</b></div>
+              <SegmentedControl
+                className="robot-mini-pill-selector robot-mini-presets-selector"
+                thumbFullHeight
+                value={manualStep.toString()}
+                options={STEP_VALUES.map((value) => ({ value: value.toString(), label: `${value} мм` }))}
+                disabled={!modeReady}
+                onChange={(nextValue) => onSend({ command: 'robot.manualStep', value: Number(nextValue) })}
+                ariaLabel="Предустановки шага перемещения"
+              />
+            </div>}
+          </>}
+          <footer className="robot-mini-footer"><div><span>X</span><strong>{coordinates.x.toFixed(1)}</strong><span>Y</span><strong>{coordinates.y.toFixed(1)}</strong><span>Z</span><strong>{coordinates.z.toFixed(1)}</strong></div><button type="button" disabled={!online} className={cn('rj-button', !manual.stopAllowed && 'command-unavailable')} aria-disabled={!manual.stopAllowed} onClick={() => { stopActiveJog(); onSend({ command: 'robot.stop' }); }}>Стоп</button></footer>
         </div>}
       </> : <>
         <div className="machine-mechanism-state"><span><Indicator active={online} tone="blue" />Текущее состояние</span><strong>{state}</strong></div>

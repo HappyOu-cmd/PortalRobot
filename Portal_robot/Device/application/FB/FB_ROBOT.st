@@ -46,6 +46,8 @@ VAR_INPUT
 	xDrivesReady        : BOOL; // Все приводы готовы к движению
 	xDriveError         : BOOL; // Активна ошибка оси или группы осей
 	xMotionBusy         : BOOL; // Одна из осей выполняет движение
+	xMotionResetBusy : BOOL; // Последовательность сброса группы и осей ещё выполняется
+	tSoftMotionResetTimeout : TIME := T#30S; // Предел одной принятой попытки сброса
 	xSingleAxisMotionBusy : BOOL; // Один из FB_AXIS владеет осью; групповое движение запускать нельзя
 	xPointCheckActive : BOOL; // Текущая команда принадлежит проверке сохранённой точки
 	xTestAbort : BOOL; // Немедленная отмена активной команды виртуального теста
@@ -107,7 +109,8 @@ VAR
 	xResetAccepted        : BOOL; // Общий сброс принят владельцем робота
 	xExternalResetPending : BOOL; // Удерживает асинхронный Reset до подтверждения SC-500
 	xExternalResetIssued  : BOOL; // Reset хотя бы один цикл был передан Modbus-адаптеру
-	xSoftMotionResetPending : BOOL; // Запрос сброса робота ждёт завершения MC_GroupReset
+	xSoftMotionResetPending : BOOL; // Один Reset ждёт группу, Motion и захват
+	tonSoftMotionReset : TON; // Принятая попытка не может оставаться вечной
 	xModbusCommandStarted : BOOL; // Текущая команда получила собственную активную транзакцию
 	tonModbusStartTimeout : TON; // Защита от вечного ожидания приёма команды адаптером
 	fbRobotFaultInjector  : FB_ROBOT_FAULT_INJECTOR; // Безопасная недопустимая команда робота
@@ -227,9 +230,10 @@ ELSE
 	END_IF;
 END_IF;
 
-// Смена палет блокирует только вход робота в конкретный магазин. Движение к
-// станкам и к другому магазину остаётся доступным.
-IF (Command.uiMagazineId >= UINT#1) AND (Command.uiMagazineId <= UINT#2) THEN
+// Смена палет блокирует автоматические команды и операции FB_MAGAZINE
+// с этим магазином. Ручная точка HMI не зависит от состояния магазина.
+IF (NOT xManual OR xMagazineCommandActive)
+AND (Command.uiMagazineId >= UINT#1) AND (Command.uiMagazineId <= UINT#2) THEN
 	IF axMagazineExchangeInProgress[Command.uiMagazineId] THEN
 		IF (Command.eSetPoint = E_POINT_NAME.MAGAZINE_SAFE)
 		OR (Command.eSetPoint = E_POINT_NAME.MAGAZINE_CHANGE)
@@ -300,7 +304,11 @@ END_IF;
 // Готовность сброса рассчитывается после выбора актуального владельца команды.
 // Ошибки вложенных FB считаются сбрасываемыми только после снятия удерживаемого
 // источника и публикации их собственного xResetAllowed.
+rtReset(CLK := xReset);
 xResetAllowed := xHmiPermit
+	AND NOT xSoftMotionResetPending
+	AND NOT xExternalResetPending
+	AND (NOT xMode OR NOT stModbusStatus.xResetBusy)
 	AND (NOT xGlobalError OR xManualRecoveryAllowed)
 	AND NOT Command.xExecute
 	AND NOT Command.xStop
@@ -315,15 +323,14 @@ xResetAllowed := xHmiPermit
 		OR FaultStatus.stPoint.xResetAllowed)
 	AND (xMode OR NOT fbGripper.Status.xError
 		OR FaultStatus.stGripper.xResetAllowed);
-xResetAccepted := xReset AND xResetAllowed;
+xResetAccepted := rtReset.Q AND xResetAllowed;
 // Общий Reset запускает Motion-сброс раньше FB_ROBOT. Если группа была в
 // ErrorStop, одноцикловый импульс уже закончится к моменту её восстановления;
 // защёлкиваем намерение оператора до исчезновения первичной Motion-ошибки.
 IF xMode THEN
 	xSoftMotionResetPending := FALSE;
 ELSIF xResetAccepted
-AND (eState = E_ROBOT_STATE.ERROR)
-AND (xDriveError OR stMotionManager.Status.xError) THEN
+AND (eState = E_ROBOT_STATE.ERROR) THEN
 	xSoftMotionResetPending := TRUE;
 END_IF;
 IF xMode AND xResetAccepted THEN
@@ -332,6 +339,37 @@ IF xMode AND xResetAccepted THEN
 ELSIF NOT xMode THEN
 	xExternalResetPending := FALSE;
 	xExternalResetIssued := FALSE;
+END_IF;
+
+tonSoftMotionReset(IN := xSoftMotionResetPending, PT := tSoftMotionResetTimeout);
+IF xSoftMotionResetPending AND NOT xResetAccepted
+AND (tonSoftMotionReset.Q
+	OR xTestAbort OR NOT xHmiPermit OR Command.xExecute OR Command.xStop
+	OR (xGlobalError AND NOT xManualRecoveryAllowed)
+	OR (xDriveError AND NOT xMotionResetBusy)
+	OR (fbGripper.Status.xError AND NOT FaultStatus.stGripper.xResetAllowed)
+	OR (stMotionManager.Status.xError AND NOT FaultStatus.stPoint.xResetAllowed)) THEN
+	xSoftMotionResetPending := FALSE;
+	IF fbGripper.Status.xError THEN
+		Diag.stWarning.uiCode := WRN_RESET_GRIPPER_ERROR;
+	ELSE
+		Diag.stWarning.uiCode := WRN_RESET_MOTION_ERROR;
+	END_IF;
+	Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
+	IF Diag.stWarning.udiSequence = UDINT#0 THEN Diag.stWarning.udiSequence := UDINT#1; END_IF;
+END_IF;
+
+// После неуспешной попытки адаптер публикует явный результат. Снимаем уровень,
+// чтобы следующее осознанное нажатие Reset снова дошло до его R_TRIG.
+IF xExternalResetPending AND xExternalResetIssued AND NOT xResetAccepted
+AND (stModbusStatus.xResetFailed OR NOT stModbusStatus.xCommunicationAlive
+	OR xTestAbort OR Command.xStop OR NOT xHmiPermit
+	OR (xGlobalError AND NOT xManualRecoveryAllowed)) THEN
+	xExternalResetPending := FALSE;
+	xExternalResetIssued := FALSE;
+	Diag.stWarning.uiCode := WRN_RESET_MODBUS_ERROR;
+	Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
+	IF Diag.stWarning.udiSequence = UDINT#0 THEN Diag.stWarning.udiSequence := UDINT#1; END_IF;
 END_IF;
 
 // Недопустимое действие проверяется в IDLE до запуска Motion или захвата.
@@ -367,8 +405,6 @@ IF fbRobotFaultInjector.xWrongAction THEN
 END_IF;
 
 Command.xReset := xResetAccepted;
-
-rtReset(CLK := xReset);
 
 IF rtReset.Q
 AND ((eState = E_ROBOT_STATE.ERROR) OR xDriveError)
@@ -420,6 +456,13 @@ tonModbusStartTimeout(
 // каскадной ошибкой робота для его публичного статуса и журнала.
 IF NOT xMode AND xDriveError THEN
 	Error.dwErrorActive := Error.dwErrorActive OR ERR_ROBOT_MOTION;
+	eState := E_ROBOT_STATE.ERROR;
+ELSIF NOT xMode AND stMotionManager.Status.xError THEN
+	// Отмена задания при ручном I/O не скрывает аварию вложенного владельца.
+	Error.dwErrorActive := Error.dwErrorActive OR ERR_ROBOT_MOTION;
+	eState := E_ROBOT_STATE.ERROR;
+ELSIF NOT xMode AND fbGripper.Status.xError THEN
+	Error.dwErrorActive := Error.dwErrorActive OR ERR_ROBOT_GRIPPER;
 	eState := E_ROBOT_STATE.ERROR;
 ELSIF xMode AND xModbusError THEN
 	IF stModbusStatus.xRobotAlarm THEN
@@ -668,6 +711,7 @@ CASE eState OF
 			OR (xMode
 				AND xExternalResetPending
 				AND xExternalResetIssued
+				AND stModbusStatus.xResetDone
 				AND NOT xModbusError
 				AND NOT stModbusStatus.xBusy
 				AND (stModbusStatus.uiExecutionState =

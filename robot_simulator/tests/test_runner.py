@@ -50,6 +50,25 @@ def test_inventory_oracle_counts_all_resource_owners() -> None:
     assert GatewayRunner.initial_inventory(initial) == {1: 2, 2: 2, 3: 1}
 
 
+@pytest.mark.parametrize("override,expected", [
+    ({}, True),
+    ({"stCellStatus.xRunning": False}, False),
+    ({"stTestObservability.uiCellState": 8}, False),
+    ({"stTestObservability.uiSelectedMachine": 1}, False),
+    ({"stRobotStatus.xBlankAvailable": False}, False),
+    ({"stRobotStatus.xDetailAvailable": True}, False),
+    ({"stRobotStatus.xBusy": True}, False),
+    ({"stTestObservability.uiRobotAction": 1}, False),
+    ({"stTestObservability.uiMagazineOperation": 4}, False),
+    ({"stTestObservability.auiMachineOperation[2]": 3}, False),
+])
+def test_held_blank_wait_decision_requires_running_idle_robot(override: dict, expected: bool) -> None:
+    values = {"stCellStatus.xRunning": True, "stTestObservability.uiCellState": 9,
+              "stTestObservability.uiSelectedMachine": 0, "stRobotStatus.xBlankAvailable": True}
+    values.update(override)
+    assert GatewayRunner.decision_matches("held-blank-wait", values) is expected
+
+
 def test_observed_inventory_reads_current_two_magazine_slot_contract() -> None:
     values = {
         "astMagazineInventory[1].aSlots[1].xInPosition": True,

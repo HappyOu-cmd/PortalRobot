@@ -47,6 +47,7 @@ VAR
 	xConfigurationValid : BOOL;
 	xManualBase : BOOL;
 	xCommandRejected : BOOL;
+	dwControlBlockers : DWORD;
 	tTransportScaled : TIME;
 	tFeedbackScaled : TIME;
 	tonTransport : TON;
@@ -115,17 +116,32 @@ xManualBase := xSupported AND xManual AND NOT xCellRunning AND NOT xRobotBusy
 Status.xConfigAllowed := xManualBase AND NOT xEnabled AND NOT xDriveRunning AND NOT Memory.xOccupied;
 // Допуск записи данных публикует RunGeometryControl независимо от состояния ГК.
 // xConfigAllowed остаётся строгим допуском проверки с движением к базе.
-Status.xEnableAllowed := xSupported AND xHmiAlive AND NOT xGlobalError AND NOT xIoManual
-	AND NOT xEnabled AND NOT Signals.xRobotInteraction AND NOT xRobotBusy
-	AND NOT xMotionBusy AND NOT xResetBusy AND NOT xDriveRunning AND NOT xManualRun
-	AND NOT xReserved AND NOT xDisablePending AND xConfigurationValid
-	AND (Memory.dwAlarm = DWORD#0);
+// Включение и подтверждение пустоты зависят от выбранного ГК.
+// Движение робота вне этой станции и работа ячейки не запрещают эти команды.
+// Биты причин в astGeometryStatus: контракт описан в DOKS/24-geometry-control.md.
+dwControlBlockers := DWORD#0;
+IF NOT xSupported THEN dwControlBlockers := dwControlBlockers OR DWORD#1; END_IF;
+IF NOT xHmiAlive THEN dwControlBlockers := dwControlBlockers OR DWORD#2; END_IF;
+IF xGlobalError THEN dwControlBlockers := dwControlBlockers OR DWORD#4; END_IF;
+IF xIoManual THEN dwControlBlockers := dwControlBlockers OR DWORD#8; END_IF;
+IF Memory.dwAlarm <> DWORD#0 THEN dwControlBlockers := dwControlBlockers OR DWORD#16; END_IF;
+IF Signals.xRobotInteraction THEN dwControlBlockers := dwControlBlockers OR DWORD#64; END_IF;
+IF xReserved THEN dwControlBlockers := dwControlBlockers OR DWORD#128; END_IF;
+IF xDriveRunning THEN dwControlBlockers := dwControlBlockers OR DWORD#256; END_IF;
+IF xManualRun THEN dwControlBlockers := dwControlBlockers OR DWORD#512; END_IF;
+IF xResetBusy THEN dwControlBlockers := dwControlBlockers OR DWORD#1024; END_IF;
+IF xDisablePending THEN dwControlBlockers := dwControlBlockers OR DWORD#2048; END_IF;
+IF xTransport THEN dwControlBlockers := dwControlBlockers OR DWORD#8192; END_IF;
+Status.dwEnableBlockers := dwControlBlockers;
+IF NOT xConfigurationValid THEN Status.dwEnableBlockers := Status.dwEnableBlockers OR DWORD#32; END_IF;
+IF xEnabled THEN Status.dwEnableBlockers := Status.dwEnableBlockers OR DWORD#4096; END_IF;
+Status.xEnableAllowed := Status.dwEnableBlockers = DWORD#0;
 Status.xDisableAllowed := xSupported AND (xEnabled OR xEnableWanted OR xDisablePending);
-Status.xConfirmAllowed := (xEnableWanted OR Memory.xRecoveryRequired) AND NOT xPartAtEnd AND NOT xDriveRunning
-	AND NOT xRobotBusy AND NOT xMotionBusy AND NOT Signals.xRobotInteraction
-	AND NOT xReserved AND NOT xTransport AND NOT xManualRun AND NOT xResetBusy AND NOT xDisablePending
-	AND xSupported AND xHmiAlive AND NOT xGlobalError AND NOT xIoManual
-	AND (NOT xEnableWanted OR xConfigurationValid) AND (Memory.dwAlarm = DWORD#0);
+Status.dwConfirmBlockers := dwControlBlockers;
+IF xEnableWanted AND NOT xConfigurationValid THEN Status.dwConfirmBlockers := Status.dwConfirmBlockers OR DWORD#32; END_IF;
+IF NOT xEnableWanted AND NOT Memory.xRecoveryRequired THEN Status.dwConfirmBlockers := Status.dwConfirmBlockers OR DWORD#16384; END_IF;
+IF xPartAtEnd THEN Status.dwConfirmBlockers := Status.dwConfirmBlockers OR DWORD#32768; END_IF;
+Status.xConfirmAllowed := Status.dwConfirmBlockers = DWORD#0;
 Status.xManualStartAllowed := xManualBase AND NOT xDriveAlarm AND (Memory.dwAlarm = DWORD#0) AND NOT xManualRun;
 Status.xResetAllowed := (Memory.dwAlarm <> DWORD#0) AND NOT xResetBusy AND xSupported
 	AND NOT xGlobalError AND NOT xIoManual

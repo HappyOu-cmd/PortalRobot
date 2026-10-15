@@ -58,7 +58,7 @@ test('scan order reserves before robot and publishes after handoff; all edited S
   assert.ok(main.indexOf('RunGeometryControl();') < main.indexOf('RunCellControl();'));
   assert.ok(main.indexOf('RunCellControl();') < main.indexOf('RunRobot();'));
   assert.ok(main.indexOf('PublishGeometryControl();') > main.indexOf('RunRobot();'));
-  for (const file of ['FB/FB_GEOMETRY_CONTROL.st', 'FB/FB_GEOMETRY_CONTROL_SIMULATION.st', 'FB/F_GEOMETRY_EVENT.st', 'FB/F_GEOMETRY_SELECT_STATION.st', 'FB/F_GEOMETRY_TAKE_DETAIL.st', 'FB/FB_CELL_MANAGER/FB_CELL_MANAGER.st', 'FB/FB_CELL_MANAGER/FB_CELL_MANAGER.PlanGeometry.st', 'FB/FB_CELL_MANAGER/FB_CELL_MANAGER.RunGeometryRoute.st', 'PLC_PRG.RunGeometryControl.st', 'PLC_PRG.PublishGeometryControl.st', 'PLC_PRG.RunRobot.st', 'PLC_PRG.RunAlarms.st']) {
+  for (const file of ['FB/FB_GEOMETRY_CONTROL.st', 'FB/FB_GEOMETRY_CONTROL_SIMULATION.st', 'FB/F_GEOMETRY_EVENT.st', 'FB/F_GEOMETRY_FIRST_CALL.st', 'FB/F_GEOMETRY_SELECT_STATION.st', 'FB/F_GEOMETRY_TAKE_DETAIL.st', 'FB/FB_CELL_MANAGER/FB_CELL_MANAGER.st', 'FB/FB_CELL_MANAGER/FB_CELL_MANAGER.UpdateGeometryWait.st', 'FB/FB_CELL_MANAGER/FB_CELL_MANAGER.IsMachineEligible.st', 'FB/FB_CELL_MANAGER/FB_CELL_MANAGER.PlanGeometry.st', 'FB/FB_CELL_MANAGER/FB_CELL_MANAGER.RunGeometryRoute.st', 'PLC_PRG.RunGeometryControl.st', 'PLC_PRG.PublishGeometryControl.st', 'PLC_PRG.RunRobot.st', 'PLC_PRG.RunAlarms.st']) {
     const stack = [];
     for (const [, token] of strip(readPlc(file)).matchAll(/\b(IF|FOR|CASE|WHILE|REPEAT|END_IF|END_FOR|END_CASE|END_WHILE|END_REPEAT)\b/g)) {
       if (token.startsWith('END_')) assert.equal(stack.pop(), token.slice(4), `${file}: ${token}`);
@@ -80,11 +80,17 @@ test('changing GK timings uses one PLC permission and cannot shorten an active r
   assert.match(readPlc('PLC_PRG.PublishGeometryControl.st'), /GVL_HMI\.xGeometrySettingsAllowed := GVL_GEOMETRY_CONTROL\.xSettingsAllowed/);
 });
 
-test('manual GK target permissions match execution and feedback; error text agrees with both registries', () => {
+test('manual target permissions check machine hatches only; error text agrees with both registries', () => {
+  assert.match(readPlc('FB/FB_ALARM_MANAGER.st'), /eEffect := E_ALARM_EFFECT\.WARNING/);
   const source = readPlc('PLC_PRG.RunRobot.st');
-  for (const n of [1, 2]) {
-    const matches = [...source.matchAll(new RegExp(`xHmiRobot(?:Status)?PointTargetAllowed := GVL_GEOMETRY_CONTROL\\.xSupported([\\s\\S]*?);`, 'g'))].filter(m => m[1].includes(`astStatus[${n}].xConfigured`));
-    assert.equal(matches.length, 2); assert.equal(matches[0][1], matches[1][1]);
+  for (const selector of ['stRobotHmiCommand.eSetPoint', 'eHmiRobotStatusPoint']) {
+    const first = source.indexOf(`CASE ${selector} OF`);
+    const targets = source.slice(first, source.indexOf('END_CASE;', first));
+    assert.doesNotMatch(targets, /GVL_GEOMETRY_CONTROL|GVL_TWO_PALLET|GEOMETRY\[/);
+    for (const machine of [1, 2, 3]) {
+      assert.ok(targets.includes(`GVL_MACHINE.Status[${machine}].stIo.xDoorOpen`));
+      assert.ok(targets.includes(`NOT GVL_MACHINE.Status[${machine}].stIo.xDoorClosed`));
+    }
   }
   const catalog = JSON.parse(readFileSync(new URL('../alarm-catalog.json', import.meta.url), 'utf8'));
   const errors = readFileSync(new URL('../../DOKS/15-equipment-error-reset-table.md', import.meta.url), 'utf8');

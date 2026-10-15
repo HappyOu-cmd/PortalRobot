@@ -13,9 +13,9 @@ CASE eState OF
 			IF stRobotStatus.xDone THEN eGeometryReturnState := E_CELL_MANAGER_STATE.GEOMETRY_WAIT_FREE; eState := E_CELL_MANAGER_STATE.GEOMETRY_RELEASE_COMMAND; END_IF;
 		ELSIF xStopRequested THEN
 			xRunning := FALSE; eState := E_CELL_MANAGER_STATE.IDLE;
-		ELSIF F_GEOMETRY_SELECT_STATION(xRequireFree := TRUE) > UINT#0 THEN
+		ELSIF F_GEOMETRY_SELECT_STATION(xRequireFree := TRUE, uiMachine := uiGeometryMachine) > UINT#0 THEN
 			eState := E_CELL_MANAGER_STATE.PLAN_TARGET;
-		ELSIF (F_GEOMETRY_SELECT_STATION(xRequireFree := FALSE) = UINT#0) OR NOT GVL_GEOMETRY_CONTROL.xWaitWhenOccupied THEN
+		ELSIF (F_GEOMETRY_SELECT_STATION(xRequireFree := FALSE, uiMachine := uiGeometryMachine) = UINT#0) OR NOT GVL_GEOMETRY_CONTROL.xWaitWhenOccupied THEN
 			eState := E_CELL_MANAGER_STATE.PLAN_TARGET;
 		ELSE
 			// Ожидаем с деталью в захвате на безопасной высоте; конвейер может работать.

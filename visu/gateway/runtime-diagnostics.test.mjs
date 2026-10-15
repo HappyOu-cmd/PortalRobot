@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { RuntimeHeartbeat } from './runtime-diagnostics.mjs';
 
-test('STOP is suspected only after a readable counter fails to advance', () => {
+test('missing PLC cycles are reported only after a readable counter fails to advance', () => {
   const heartbeat = new RuntimeHeartbeat(4_000);
   assert.equal(heartbeat.snapshot(0).mode, 'unknown');
   assert.equal(heartbeat.observe(4334, 1_000).mode, 'verifying');

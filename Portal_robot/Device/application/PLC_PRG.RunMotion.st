@@ -21,6 +21,10 @@ GVL_AXIS.arrAxis[3].Command.xPowerPermit := NOT GVL_AXIS.arrAxis[3].Command.xGlo
 GVL_AXIS_GROUP.AxisGroup.Command.xPowerPermit := NOT GVL_AXIS_GROUP.AxisGroup.Command.xGlobalError;
 
 // Текущие состояния нужны для единого расчёта разрешений силовых команд.
+xRobotMotionCommandActive := (GVL_ROBOT.Diag.eState = E_ROBOT_STATE.MOTION)
+	OR (GVL_MOTION_MANAGER.stMotionManager.Diag.eState = E_MOTION_MANAGER_STATE.VALIDATE)
+	OR (GVL_MOTION_MANAGER.stMotionManager.Diag.eState = E_MOTION_MANAGER_STATE.MOTION_SIM)
+	OR (GVL_MOTION_MANAGER.stMotionManager.Diag.eState = E_MOTION_MANAGER_STATE.DONE);
 xDrivesPowered := GVL_AXIS.arrAxis[1].Status.xPowered
 	AND GVL_AXIS.arrAxis[2].Status.xPowered
 	AND GVL_AXIS.arrAxis[3].Status.xPowered;
@@ -131,6 +135,7 @@ GVL_HMI.stRobotHmiStatus.xDrivesEnableAllowed := xRobotHmiPermit
 	AND (NOT GVL_CELL_CONTROL.xGlobalError OR xManualRecoveryActive)
 	AND xDrivesOff
 	AND NOT xAxisDriveError
+	AND NOT xRobotMotionCommandActive
 	AND NOT xMotionBusy
 	AND NOT xMotionResetBusy;
 GVL_HMI.stRobotHmiStatus.xDrivesDisableAllowed := xRobotHmiPermit
@@ -139,6 +144,7 @@ GVL_HMI.stRobotHmiStatus.xDrivesDisableAllowed := xRobotHmiPermit
 	AND (xAnyDrivePowered
 		OR (GVL_AXIS_GROUP.AxisGroup.Diag.iStep = E_AXIS_GROUP_STATE.READY))
 	AND NOT xPowerTransitionActive
+	AND NOT xRobotMotionCommandActive
 	AND NOT xMotionBusy
 	AND NOT xMotionResetBusy;
 GVL_HMI.stRobotHmiStatus.xResetAllowed := xRobotHmiPermit
@@ -150,7 +156,7 @@ GVL_HMI.stRobotHmiStatus.xResetAllowed := xRobotHmiPermit
 GVL_HMI.stRobotHmiStatus.xStopAllowed := xRobotHmiPermit
 	AND xHmiConnectionAlive
 	AND NOT GVL_HMI.xModbusMode
-	AND xMotionBusy;
+	AND (xMotionBusy OR xRobotMotionCommandActive);
 
 // Решение о приёме фиксируется до вызова Motion FB. Позднее фактический статус
 // может измениться в том же цикле и не должен превращать принятую команду в отказ.
@@ -254,20 +260,20 @@ GVL_AXIS.arrAxis[3].Command.xDisable := GVL_AXIS.arrAxis[1].Command.xDisable;
 // Stop получает только текущий владелец движения: одна ось либо координатная группа.
 GVL_AXIS.arrAxis[1].Command.xStop := ((xHmiStopAccepted AND NOT GVL_HMI.xModbusMode)
 	OR xMobileMotionStopRequest
-	OR SIMULATION_DYNAMICS.xMotionStopRequest OR GVL_HMI.xIoEmergencyStopActive)
+	OR SIMULATION_DYNAMICS.xMotionStopRequest OR xIoManualActive OR GVL_HMI.xIoEmergencyStopActive)
 	AND NOT xGroupMotionBusy AND (uiManualAxisOwner = UINT#1);
 GVL_AXIS.arrAxis[2].Command.xStop := ((xHmiStopAccepted AND NOT GVL_HMI.xModbusMode)
 	OR xMobileMotionStopRequest
-	OR SIMULATION_DYNAMICS.xMotionStopRequest OR GVL_HMI.xIoEmergencyStopActive)
+	OR SIMULATION_DYNAMICS.xMotionStopRequest OR xIoManualActive OR GVL_HMI.xIoEmergencyStopActive)
 	AND NOT xGroupMotionBusy AND (uiManualAxisOwner = UINT#2);
 GVL_AXIS.arrAxis[3].Command.xStop := ((xHmiStopAccepted AND NOT GVL_HMI.xModbusMode)
 	OR xMobileMotionStopRequest
-	OR SIMULATION_DYNAMICS.xMotionStopRequest OR GVL_HMI.xIoEmergencyStopActive)
+	OR SIMULATION_DYNAMICS.xMotionStopRequest OR xIoManualActive OR GVL_HMI.xIoEmergencyStopActive)
 	AND NOT xGroupMotionBusy AND (uiManualAxisOwner = UINT#3);
 GVL_AXIS_GROUP.AxisGroup.Command.xStopCmd :=
 	NOT GVL_HMI.xModbusMode
 	AND (xHmiStopAccepted OR xRobotProgramStopRequest OR xPointCheckStopRequest
-		OR xPointCheckStopping OR SIMULATION_DYNAMICS.xMotionStopRequest OR GVL_HMI.xIoEmergencyStopActive)
+		OR xPointCheckStopping OR SIMULATION_DYNAMICS.xMotionStopRequest OR xIoManualActive OR GVL_HMI.xIoEmergencyStopActive)
 	AND xGroupMotionBusy;
 
 // Из новых запросов также выбирается только одна ось. Если движение уже идёт,
@@ -687,6 +693,7 @@ GVL_HMI.stRobotHmiStatus.xDrivesEnableAllowed := xRobotHmiPermit
 	AND (NOT GVL_CELL_CONTROL.xGlobalError OR xManualRecoveryActive)
 	AND xDrivesOff
 	AND NOT xAxisDriveError
+	AND NOT xRobotMotionCommandActive
 	AND NOT xMotionBusy
 	AND NOT xMotionResetBusy;
 GVL_HMI.stRobotHmiStatus.xDrivesDisableAllowed := xRobotHmiPermit
@@ -695,6 +702,7 @@ GVL_HMI.stRobotHmiStatus.xDrivesDisableAllowed := xRobotHmiPermit
 	AND (xAnyDrivePowered
 		OR (GVL_AXIS_GROUP.AxisGroup.Diag.iStep = E_AXIS_GROUP_STATE.READY))
 	AND NOT xPowerTransitionActive
+	AND NOT xRobotMotionCommandActive
 	AND NOT xMotionBusy
 	AND NOT xMotionResetBusy;
 GVL_HMI.stRobotHmiStatus.xResetAllowed := xRobotHmiPermit
@@ -706,7 +714,7 @@ GVL_HMI.stRobotHmiStatus.xResetAllowed := xRobotHmiPermit
 GVL_HMI.stRobotHmiStatus.xStopAllowed := xRobotHmiPermit
 	AND xHmiConnectionAlive
 	AND NOT GVL_HMI.xModbusMode
-	AND xMotionBusy;
+	AND (xMotionBusy OR xRobotMotionCommandActive);
 
 // Финальная публикация разрешений выполняется после всех Motion FB. HMI получает
 // актуальные статусы текущего цикла и не дублирует технологические условия.

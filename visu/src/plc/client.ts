@@ -2,6 +2,7 @@ import { mapTwinSnapshot } from './twoPalletMapping';
 import { PointEditorRequests, type PlcPointEditorCommand, type PlcPointEditorReply } from './pointEditorRequests';
 import { mapGeometrySnapshot } from '../model/geometryControl';
 import type { PhysicalIoState } from './physicalIo';
+import type { ControllerDiagnostics } from './controllerDiagnostics';
 import alarmCatalog from '../../alarm-catalog.json';
 import { BUTTON_STATIONS, DEFAULT_BUTTON_STATIONS } from '../model/buttonStations';
 import { DEFAULT_CONTROL_CABINETS } from '../model/controlCabinets';
@@ -41,6 +42,7 @@ export interface PlcConnectionInfo {
 }
 
 export interface RuntimeDiagnostics {
+  controller?: ControllerDiagnostics;
   endpoint: string;
   transport: 'connecting' | 'online' | 'offline';
   observedAt: number | null;

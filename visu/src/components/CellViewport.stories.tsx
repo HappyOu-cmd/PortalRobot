@@ -65,6 +65,7 @@ function EffectsPreview({ alarm = false }: { alarm?: boolean }) {
       visualEffects={{
         geometryConveyorSpeed: 0.24,
         workshopEnabled: true,
+        inspectionWorkerEnabled: false,
         cameraFocus: false,
         alarmBeacons: true,
         enclosureOpacity: 1,

@@ -200,6 +200,7 @@ export function createPortalMechanics(layout: CellLayout) {
   const yHeight = railTop + beamHeight * 0.72;
   const xAssembly = new THREE.Group();
   xAssembly.name = 'Axis_X';
+  xAssembly.userData.warningGlowDynamicBounds = true;
   root.add(xAssembly);
   const yBridge = new THREE.Group();
   yBridge.name = 'Y_bridge';
@@ -266,6 +267,8 @@ export function createPortalMechanics(layout: CellLayout) {
   block(zRam, 'axis_z_tool_flange', [columnWidth * 1.6, 0.055, columnWidth * 1.45], [0, -baseLength + 0.105, 0]);
   const gripperMount = new THREE.Group();
   gripperMount.name = 'gripper_mount';
+  // The operator-selected indication area ends at the Z ram, above the tool heads.
+  gripperMount.userData.warningGlowExcluded = true;
   gripperMount.position.y = -baseLength;
   zRam.add(gripperMount);
 
@@ -324,7 +327,7 @@ export function createPortalMechanics(layout: CellLayout) {
   };
   updateMechanics(0, 0, 0);
   return {
-    root, xAssembly, yCarriage, zRam, gripperMount, mastLength, zHomeDrop: baseLength,
+    root, xAssembly, indicationRoot: xAssembly, yCarriage, zRam, gripperMount, mastLength, zHomeDrop: baseLength,
     chains: { x: xChain, y: yChain, z: zChain }, updateMechanics,
   };
 }

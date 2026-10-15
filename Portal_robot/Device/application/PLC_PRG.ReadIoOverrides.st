@@ -63,7 +63,10 @@ IF xIoManualActive AND (NOT GVL_CELL_CONTROL.xManual OR NOT xHmiConnectionAlive
     OR ((GVL_HMI.udiCellModeCommandSeq <> GVL_HMI.udiCellModeAckSeq) AND NOT GVL_HMI.xCellManualRequest)) THEN
     xIoManualActive := FALSE;
 END_IF;
-GVL_HMI.xIoManualStartAllowed := GVL_CELL_CONTROL.xManual AND NOT xIoBusy AND NOT xIoManualActive
+// Прямой ручной слой доступен и при зависших Busy/Processing владельцев.
+// Их задания отменяются при передаче управления; xIoBusy остаётся диагностикой
+// и условием снятия отдельного программного аварийного останова.
+GVL_HMI.xIoManualStartAllowed := GVL_CELL_CONTROL.xManual AND NOT xIoManualActive
     AND NOT ((GVL_HMI.udiCellModeCommandSeq <> GVL_HMI.udiCellModeAckSeq) AND NOT GVL_HMI.xCellManualRequest);
 xIoOverrideRejected := FALSE;
 udiIoRequestSeq := GVL_HMI.udiIoOverrideCommandSeq;
@@ -104,7 +107,6 @@ GVL_HMI.xIoManualStartAllowed := GVL_HMI.xIoManualStartAllowed AND NOT xIoManual
 GVL_HMI.xIoOverrideAllowed := xIoManualActive AND GVL_CELL_CONTROL.xManual;
 IF GVL_HMI.xIoOverrideAllowed THEN GVL_HMI.uiIoOverrideBlockReason := UINT#0;
 ELSIF NOT GVL_CELL_CONTROL.xManual THEN GVL_HMI.uiIoOverrideBlockReason := UINT#2;
-ELSIF xIoBusy THEN GVL_HMI.uiIoOverrideBlockReason := UINT#3;
 ELSE GVL_HMI.uiIoOverrideBlockReason := UINT#7;
 END_IF;
 

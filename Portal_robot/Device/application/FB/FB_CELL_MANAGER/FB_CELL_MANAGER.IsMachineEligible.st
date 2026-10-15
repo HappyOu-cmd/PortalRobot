@@ -12,6 +12,7 @@ IF IsMachineEligible THEN
 	IsMachineEligible := astMachineStatus[uiMachine].xEnabled
 		AND NOT astMachineStatus[uiMachine].xError
 		AND NOT astMachineStatus[uiMachine].xDisablePending
+		AND NOT axGeometryUnloadBlocked[uiMachine]
 		AND (Config.auiMachineType[uiMachine] >= UINT#1)
 		AND (Config.auiMachineType[uiMachine] <= Config.uiTypeCount);
 END_IF;

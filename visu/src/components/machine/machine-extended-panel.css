@@ -182,9 +182,9 @@
 .machine-extended-panel .mx-button { display: inline-flex; justify-content: center; align-items: center; gap: 7px; min-height: 44px; min-width: 0; padding: 10px; border: 1px solid transparent; border-radius: 24px; background: var(--mx-surface); color: #536277; box-shadow: 0 3px 12px rgb(38 64 96 / 5%); font: inherit; font-size: 12px; font-weight: 500; line-height: 1.3; cursor: pointer; touch-action: manipulation; transition: background 140ms, border-color 140ms, color 140ms; }
 .machine-extended-panel .mx-button > svg { width: 19px; height: 19px; flex-shrink: 0; }
 .machine-extended-panel .mx-button:hover:not(:disabled):not(.command-unavailable) { border-color: rgb(23 105 232 / 15%); background: #fff; }
-.machine-extended-panel .mx-button.mx-power { border-color: #35a56f; background: #fff; color: #218653; box-shadow: 0 12px 28px rgb(38 64 96 / 14%), 0 2px 5px rgb(38 64 96 / 7%), 0 1px 0 rgb(255 255 255 / 96%) inset, 0 -1px 0 rgb(120 142 166 / 14%) inset; }
+.machine-extended-panel .mx-button.mx-power { border-color: #35a56f; background: #fff; color: #218653; box-shadow: 0 12px 28px rgb(38 64 96 / 14%), 0 2px 5px rgb(38 64 96 / 7%), 0 -1px 0 rgb(120 142 166 / 14%) inset; }
 .machine-extended-panel .mx-button.mx-power:hover:not(:disabled):not(.command-unavailable) { border-color: #218653; background: #f4fcf7; }
-.machine-extended-panel .mx-button.mx-power.is-enabled { border-color: #d4676d; background: #fff; color: #c04d57; box-shadow: 0 12px 28px rgb(38 64 96 / 14%), 0 2px 5px rgb(38 64 96 / 7%), 0 1px 0 rgb(255 255 255 / 96%) inset, 0 -1px 0 rgb(120 142 166 / 14%) inset; }
+.machine-extended-panel .mx-button.mx-power.is-enabled { border-color: #d4676d; background: #fff; color: #c04d57; box-shadow: 0 12px 28px rgb(38 64 96 / 14%), 0 2px 5px rgb(38 64 96 / 7%), 0 -1px 0 rgb(120 142 166 / 14%) inset; }
 .machine-extended-panel .mx-button.mx-power.is-enabled:hover:not(:disabled):not(.command-unavailable) { border-color: #c04d57; background: #fff7f7; }
 .machine-extended-panel .mx-button.mx-primary { border-color: var(--mx-accent); background: var(--mx-accent); color: #fff; }
 .machine-extended-panel .mx-button.mx-primary:hover:not(:disabled) { background: #1259b4; }

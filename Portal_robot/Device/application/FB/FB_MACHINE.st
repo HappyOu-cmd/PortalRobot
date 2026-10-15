@@ -1,5 +1,6 @@
 FUNCTION_BLOCK FB_MACHINE
 VAR_INPUT
+	xIoManual : BOOL; // Прямое ручное I/O отменяет рецепт и сохраняет аварии
 	xTestInitialize : BOOL;
 	uiTestInitialState : UINT;
 	uiTestProductType : UINT;
@@ -9,6 +10,7 @@ VAR_INPUT
 	xGlobalError      : BOOL; // Глобальная ошибка ячейки
 	xManualMode       : BOOL; // Ручной режим: открытая операторская дверь не формирует аварию обслуживания
 	xAutomaticUseEnabled : BOOL; // Станок выбран для автоматической обработки
+	xPointsConfigured : BOOL; // Настроены ABOVE, CHUCK_APROACH и CHUCK_POSITION этого станка
 	xRobotMotionBusy   : BOOL; // Группа/ось робота ещё движется или тормозит
 	xSafetyDoorControlEnabled : BOOL := TRUE; // Модель двери; FALSE для ручной двери в NORMAL
 	xHmiOpenSafetyDoor  : BOOL; // Импульс ручного открытия операторской двери
@@ -195,6 +197,7 @@ VAR CONSTANT
 	WRN_RESET_ROBOT_ERROR  : UINT := 8; // Каскадная ошибка робота ещё не готова к сбросу
 	WRN_ENABLE_SAFETY_DOOR_OPEN : UINT := 9; // Включение отклонено: операторская дверь не закрыта
 	WRN_MANUAL_CONTROL_REJECTED : UINT := 10; // Ручная команда механизма отклонена PLC
+	WRN_ENABLE_POINTS : UINT := 11; // Не настроены рабочие точки этого станка
 							
 	
 END_VAR
@@ -247,6 +250,7 @@ xRobotInsideMachine := (eState = E_MACHINE_STATE.ROBOT_ACTION)
 // Конкретные xAllowed дополнительно не дают отправлять бессмысленную команду
 // уже достигнутого положения.
 xManualControlAllowed := xManualMode
+	AND NOT xIoManual
 	AND (eState = E_MACHINE_STATE.DISABLED)
 	AND NOT xGlobalError
 	AND NOT stMachineStatus.xAlarm
@@ -258,11 +262,13 @@ xManualControlAllowed := xManualMode
 xDoorRobotRecoveryReady := (stMachineStatus.xDoorOpen AND NOT stMachineStatus.xDoorClosed)
 	OR NOT xRobotInsideMachine;
 xManualHatchRecoveryOpenAllowed := xManualMode
+	AND NOT xIoManual
 	AND (eState = E_MACHINE_STATE.ERROR)
 	AND ((Error.dwErrorActive AND ERR_DOOR_ROBOT) <> DWORD#0)
 	AND stMachineStatus.xDoorClosed
 	AND NOT stMachineStatus.xDoorOpen
 	AND NOT stMachineStatus.xAlarm
+	AND NOT stMachineStatus.xCycleActive
 	AND xSafetyDoorSafe
 	AND NOT xGlobalError
 	AND NOT xRobotMotionBusy
@@ -334,8 +340,11 @@ AND (eState = E_MACHINE_STATE.DISABLED)
 AND (stMachineStatus.xAlarm
 	OR stMachineStatus.xCycleActive
 	OR NOT xSafetyDoorSafe
+	OR NOT xPointsConfigured
 	OR (ePartState = E_PART_STATE.UNKNOWN)) THEN
-	IF stMachineStatus.xAlarm THEN
+	IF NOT xPointsConfigured THEN
+		Diag.stWarning.uiCode := WRN_ENABLE_POINTS;
+	ELSIF stMachineStatus.xAlarm THEN
 		Diag.stWarning.uiCode := WRN_ENABLE_ALARM_ACTIVE;
 	ELSIF stMachineStatus.xCycleActive THEN
 		Diag.stWarning.uiCode := WRN_ENABLE_PROCESSING;
@@ -538,7 +547,7 @@ IF xTestInitialize THEN
 	xRobotCommandStarted := FALSE;
 	eGrantedOperation := E_MACHINE_OPERATION.NONE;
 	eActualOperation := E_MACHINE_OPERATION.NONE;
-	IF uiTestInitialState = UINT#0 THEN
+	IF (uiTestInitialState = UINT#0) OR NOT xPointsConfigured THEN
 		eState := E_MACHINE_STATE.DISABLED;
 		ePartType := E_PART_TYPE.UNKNOWN;
 	ELSE
@@ -614,10 +623,12 @@ AND ((eState = E_MACHINE_STATE.IDLE)
 	OR (eState = E_MACHINE_STATE.OPERATOR_CHOICE_RUN)) THEN
     eState := E_MACHINE_STATE.DISABLED;
 ELSIF rtEnabledMachine.Q
+AND NOT rtDisabledMachine.Q
 AND (eState = E_MACHINE_STATE.DISABLED) THEN
 	IF NOT stMachineStatus.xAlarm
 	AND NOT stMachineStatus.xCycleActive
-	AND xSafetyDoorSafe THEN
+	AND xSafetyDoorSafe
+	AND xPointsConfigured THEN
 		IF ePartState = E_PART_STATE.EMPTY THEN
 			eState := E_MACHINE_STATE.IDLE;
 		ELSIF ePartState = E_PART_STATE.LOADED THEN
@@ -693,6 +704,24 @@ AND (eState <> E_MACHINE_STATE.ERROR) THEN
 	Command.stRobot.xStop := stRobotStatus.xBusy;
 	Error.dwErrorActive := Error.dwErrorActive OR ERR_SAFETY_DOOR_OPEN;
 	eState := E_MACHINE_STATE.ERROR;
+END_IF;
+
+// Старый рецепт и удерживаемые запросы не возобновляются после ручного I/O.
+// Состояние патрона будет повторно определено при отдельном включении станка.
+IF xIoManual THEN
+	uiIndex := UINT#0;
+	eActualOperation := E_MACHINE_OPERATION.NONE;
+	eGrantedOperation := E_MACHINE_OPERATION.NONE;
+	xRobotDone := FALSE;
+	xRobotCommandStarted := FALSE;
+	xManualHatchUnlockDemand := FALSE;
+	xManualHatchOpenDemand := FALSE;
+	xAutoDoorOpenLatched := FALSE;
+	xOperatorRunningCNC := FALSE;
+	xOperatorClosingDoor := FALSE;
+	IF eState <> E_MACHINE_STATE.ERROR THEN
+		eState := E_MACHINE_STATE.DISABLED;
+	END_IF;
 END_IF;
 
 CASE eState OF
@@ -969,19 +998,19 @@ CASE eState OF
 			END_IF;
 		END_IF;
 
-	    IF stMachineStatus.xDoorClosed
-		AND NOT stMachineStatus.xAlarm THEN
-			// После закрытия двери снимаем xHatchUnLock и ждём
-			// подтверждение xHatchLocked=TRUE.
+		IF stMachineStatus.xDoorClosed THEN
 			xServiceHatchUnlockDemand := FALSE;
-			IF stMachineStatus.xHatchLocked THEN
-				xServiceDoorCloseDemand := FALSE;
+		END_IF;
+		IF (eState = E_MACHINE_STATE.DOOR_CLOSE)
+		AND stMachineStatus.xDoorClosed
+		AND stMachineStatus.xHatchLocked
+		AND NOT stMachineStatus.xAlarm THEN
+			xServiceDoorCloseDemand := FALSE;
 			IF NOT xOperatorClosingDoor THEN
-        		eState := E_MACHINE_STATE.NEXT;
+				eState := E_MACHINE_STATE.NEXT;
 			ELSIF xOperatorClosingDoor THEN
 				eState := E_MACHINE_STATE.OPERATOR_CHOICE_RUN;
-					xOperatorClosingDoor := FALSE;
-				END_IF;
+				xOperatorClosingDoor := FALSE;
 			END_IF;
 		ELSIF stMachineStatus.xAlarm THEN
 			Error.dwErrorActive := Error.dwErrorActive OR ERR_DOOR_CLOSE;
@@ -1081,6 +1110,7 @@ CASE eState OF
 		END_IF;
 
 		IF (xReset OR xResetGlobal)
+		AND NOT xIoManual
 		AND NOT xGlobalError
 		AND NOT xExecute
 		AND NOT stMachineStatus.xAlarm
@@ -1145,8 +1175,8 @@ AND xDoorRobotRecoveryReady THEN
 	xDoorRobotStopLatched := FALSE;
 END_IF;
 
-IF (eState <> E_MACHINE_STATE.ERROR)
-AND NOT xGlobalError THEN
+IF ((eState <> E_MACHINE_STATE.ERROR) OR xManualHatchRecoveryOpenAllowed)
+AND NOT xGlobalError AND NOT xIoManual THEN
 	Command.stIo.xHatchUnLock := xManualHatchUnlockDemand OR xServiceHatchUnlockDemand;
 	IF xManualHatchOpenDemand
 	AND NOT stMachineStatus.xHatchLocked
@@ -1155,14 +1185,14 @@ AND NOT xGlobalError THEN
 	AND NOT stMachineStatus.xAlarm THEN
 		Command.stIo.xOpenDoor := TRUE;
 	END_IF;
-    IF xServiceDoorCloseDemand 
+    IF (eState <> E_MACHINE_STATE.ERROR) AND xServiceDoorCloseDemand
 	AND NOT (xAutoDoorOpenLatched OR xServiceDoorOpenDemand)
 	AND NOT xRobotInsideMachine
 	AND (xOperatorClosingDoor OR xRobotDone)
 	AND NOT stMachineStatus.xAlarm THEN
         Command.stIo.xCloseDoor := TRUE;
 
-    ELSIF (xAutoDoorOpenLatched OR xServiceDoorOpenDemand)
+    ELSIF (eState <> E_MACHINE_STATE.ERROR) AND (xAutoDoorOpenLatched OR xServiceDoorOpenDemand)
 	AND NOT xServiceDoorCloseDemand
 	AND NOT stMachineStatus.xHatchLocked
     AND NOT stMachineStatus.xCycleActive
@@ -1198,11 +1228,13 @@ Status.xPowerAllowed := (eState <> E_MACHINE_STATE.ERROR)
 	AND (xDisableRequest
 		OR (eState <> E_MACHINE_STATE.DISABLED)
 		OR ((eState = E_MACHINE_STATE.DISABLED)
+			AND xPointsConfigured
 			AND NOT stMachineStatus.xAlarm
 			AND NOT stMachineStatus.xCycleActive
 			AND xSafetyDoorSafe
 			AND (ePartState <> E_PART_STATE.UNKNOWN)));
 Status.xResetAllowed := (eState = E_MACHINE_STATE.ERROR)
+	AND NOT xIoManual
 	AND (Error.dwErrorActive <> DWORD#0)
 	AND NOT stMachineStatus.xAlarm
 	AND xSafetyDoorSafe

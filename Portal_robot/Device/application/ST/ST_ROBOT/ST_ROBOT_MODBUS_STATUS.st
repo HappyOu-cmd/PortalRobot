@@ -18,6 +18,9 @@ STRUCT
 	xDone              : BOOL;
 	xError             : BOOL; // Ошибка исполнения, робота или транспорта
 	xCommandTimeout    : BOOL; // Робот не завершил принятую команду за лимит
+	xResetBusy         : BOOL; // Передача Reset и подтверждение его снятия ещё выполняются
+	xResetDone         : BOOL; // Reset подтверждён обратной связью и очищенной FC16
+	xResetFailed       : BOOL; // Попытка сорвана/истекла; повтор только новым запросом
 	uiAckSeq           : UINT;
 	uiExecutionState   : UINT;
 	uiResultCode       : UINT;

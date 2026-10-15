@@ -48,6 +48,8 @@ VAR_GLOBAL
 	tGeometryFeedbackTimeout : TIME;
 	{attribute 'symbol' := 'read'}
 	tGeometryResetPulse : TIME;
+	{attribute 'symbol' := 'read'}
+	tGeometryWaitWarningTimeout : TIME;
 	{attribute 'symbol' := 'readwrite'}
 	stTwinRequest : ST_TWO_PALLET_REQUEST;
 	{attribute 'symbol' := 'readwrite'}

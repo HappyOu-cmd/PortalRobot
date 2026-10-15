@@ -1,4 +1,5 @@
-.robot-telemetry-panel {
+.robot-telemetry-panel.robot-redesign {
+  --rx-accent: #0057ff;
   position: absolute;
   z-index: 12;
   top: calc(var(--panel-top, 14px) + 18px);
@@ -11,11 +12,20 @@
   font-family: var(--font-ui, Inter, sans-serif);
   font-variant-numeric: tabular-nums;
 }
-.robot-telemetry-coordinates { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; overflow: hidden; border: 1px solid #d6e3ef; border-radius: 18px; background: #eaf2fa; }
+.robot-telemetry-coordinates { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; overflow: hidden; border: 1px solid #d6e3ef; border-radius: 18px; background: #f7faff; }
 .robot-telemetry-coordinates > div { min-width: 0; padding: 16px 14px; color: var(--rx-muted); }
 .robot-telemetry-coordinates > div + div { border-left: 1px solid var(--rx-line); }
 .robot-telemetry-coordinates dd { margin: 0; color: var(--rx-accent); }
+.robot-telemetry-panel .robot-telemetry-coordinates b { font-size: 16px; font-weight: 700; }
+.robot-telemetry-panel .robot-telemetry-coordinates strong { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; color: var(--rx-accent); font-size: clamp(22px, 1.6vw, 26px); font-weight: 700; line-height: 1.15; }
+.robot-telemetry-panel .robot-telemetry-coordinates small { margin-left: 0; color: #8292a6; font-size: 11px; font-weight: 600; opacity: 1; }
 .robot-telemetry-panel .rj-status[data-online=true] i { background: #30a674; }
+.robot-telemetry-panel.robot-redesign .rj-speed :is(.robot-speed-editor-head label, .robot-speed-editor-adjust > button, .robot-speed-presets button) { border: 2px solid #aeb7c2; background: #fff; -webkit-backdrop-filter: none; backdrop-filter: none; }
+.robot-telemetry-panel.robot-redesign .rj-speed .robot-speed-editor-head label:focus-within { border-color: var(--rx-accent); }
+.robot-telemetry-panel.robot-redesign .rj-speed .robot-speed-editor-head input { color: var(--rx-accent); font-weight: 700; }
+.robot-telemetry-panel.robot-redesign .rj-speed .robot-speed-presets button { color: #4d5e74; font-weight: 600; }
+.robot-telemetry-panel.robot-redesign .rj-speed :is(.robot-speed-editor-adjust > button, .robot-speed-presets button):hover:not(:disabled):not(.active) { border-color: #8d98a7; background: #fff; color: var(--rx-accent); }
+.robot-telemetry-panel.robot-redesign .rj-speed .robot-speed-presets button.active { border-color: #98a5b6; background: #eaf2ff; color: var(--rx-accent); font-weight: 700; }
 .robot-telemetry-panel .robot-speed-editor :is(button, input):disabled { opacity: .48; cursor: default; }
 .robot-telemetry-speed-note { display: grid; gap: 8px; }
 .robot-telemetry-speed-note > span { font-size: 14px; font-weight: 550; }
@@ -25,11 +35,12 @@
 @keyframes robot-telemetry-in { from { opacity: 0; transform: translateX(-18px); } to { opacity: 1; transform: translateX(0); } }
 @keyframes robot-telemetry-out { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(-14px); } }
 @media (max-width: 1120px) {
-  .robot-telemetry-panel { top: var(--panel-top, 14px); left: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); width: calc(100% - 28px); max-width: none; }
+  .robot-telemetry-panel.robot-redesign { top: var(--panel-top, 14px); left: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); width: calc(100% - 28px); max-width: none; }
+  .robot-telemetry-coordinates > div { padding: 16px 10px; }
   .robot-telemetry-panel + .side-panel.robot-extended-panel.robot-redesign { top: calc(var(--panel-top, 14px) + 276px); }
 }
 @media (max-width: 720px) {
-  .robot-telemetry-panel { grid-template-columns: minmax(0, 1fr); }
+  .robot-telemetry-panel.robot-redesign { grid-template-columns: minmax(0, 1fr); }
   .robot-telemetry-coordinates > div { padding: 14px 10px; }
   .robot-telemetry-panel + .side-panel.robot-extended-panel.robot-redesign { top: calc(var(--panel-top, 14px) + 436px); }
 }
