@@ -13,7 +13,7 @@ END_VAR
 F_GEOMETRY_TAKE_DETAIL := FALSE;
 IF (uiMachine >= UINT#1) AND (uiMachine <= UINT#3) THEN
 	// Считаем подтверждённую выгрузку ровно один раз, а не уровень Ready каждый скан.
-	// Ожидающая выборка сохраняет счётчик до фактического взятия по FIFO.
+	// Ожидающая выборка сохраняет счётчик до фактического взятия своей детали.
 	IF (GVL_GEOMETRY_CONTROL.astCalls[uiMachine].uiState <> UINT#1)
 	AND GVL_GEOMETRY_CONTROL.xSupported AND GVL_GEOMETRY_CONTROL.xAutoEnabled
 	AND (GVL_GEOMETRY_CONTROL.astStatus[1].xEnabled OR GVL_GEOMETRY_CONTROL.astStatus[2].xEnabled) THEN
@@ -31,10 +31,9 @@ IF (uiMachine >= UINT#1) AND (uiMachine <= UINT#3) THEN
 			END_IF;
 		END_IF;
 	END_IF;
-	// Вызов мог прийти уже после запуска рецепта. Завершаем рецепт, но более
-	// поздний вызов оставляем ожидающим следующую деталь, не обгоняя голову FIFO.
-	IF (GVL_GEOMETRY_CONTROL.astCalls[uiMachine].uiState = UINT#1)
-	AND (F_GEOMETRY_FIRST_CALL() = uiMachine) THEN
+	// Подхватываем вызов обслуживаемого станка независимо от вызовов других станков.
+	// Повторная проверка после выезда также допускает поздний вызов своей детали.
+	IF GVL_GEOMETRY_CONTROL.astCalls[uiMachine].uiState = UINT#1 THEN
 		GVL_GEOMETRY_CONTROL.auiActiveCount[uiMachine] := UINT#0;
 		GVL_GEOMETRY_CONTROL.astCalls[uiMachine].uiProductType := uiProductType;
 		GVL_GEOMETRY_CONTROL.astCalls[uiMachine].uiState := UINT#2;

@@ -50,7 +50,7 @@ VAR_OUTPUT
 	FaultStatus        : ST_FAULT_INJECTION_STATUS; // Инъекция логической ошибки ячейки
 END_VAR
 VAR
-	axGeometryUnloadBlocked : ARRAY [1..3] OF BOOL; // Вызванная деталь ждёт свободного ГК или своей очереди FIFO
+	axGeometryUnloadBlocked : ARRAY [1..3] OF BOOL; // Вызванная деталь ждёт доступного свободного ГК
 	atonGeometryWait : ARRAY [1..3] OF TON;
 	audiGeometryWaitCallId : ARRAY [1..3] OF UDINT;
 	axGeometryWaitWarned : ARRAY [1..3] OF BOOL;
@@ -1663,7 +1663,7 @@ CASE eState OF
 		ELSIF NOT xMachineServiceStarted AND NOT astMachineStatus[uiSelectedMachine].xBusy
 		AND (eMachineOperation <> E_MACHINE_OPERATION.LOAD)
 		AND axGeometryUnloadBlocked[uiSelectedMachine] THEN
-			// До запуска рецепта повторно проверяем свободный ГК и очередь вызовов.
+			// До запуска рецепта повторно проверяем наличие доступного свободного ГК.
 			// Деталь остаётся в патроне; ищем другую работу без команды станку.
 			eState := E_CELL_MANAGER_STATE.SELECT_FALLBACK;
 		ELSIF NOT xMachineServiceStarted
@@ -1720,7 +1720,7 @@ CASE eState OF
 				// Вызов мог прийти после взятия детали, пока робот ещё менял заготовку.
 				// Последняя проверка — после подтверждённого выхода, до сброса станка.
 				// Только state 1: F_GEOMETRY_TAKE_DETAIL не считает выгрузку повторно
-				// и привязывает ожидающий вызов лишь при его первом месте в FIFO.
+				// и привязывает вызов своей детали независимо от вызовов других станков.
 				IF NOT xGeometryHeld AND stRobotStatus.xDetailAvailable
 				AND ((eMachineOperation = E_MACHINE_OPERATION.CHANGE)
 					OR (eMachineOperation = E_MACHINE_OPERATION.UNLOAD))

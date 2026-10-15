@@ -884,31 +884,33 @@ CODESYS и рабочий PLC не запускаются; база журнал
 пути и баланс изменённых ST. Регрессии выбора магазинов получают нейтральный
 `axGeometryUnloadBlocked=FALSE`, сохраняя свои исходные условия без вызова ГК.
 
-## FIFO вызовов ГК — локальная регрессия PLC, 13.10.2026
+## Обслуживание станков без FIFO — локальная регрессия PLC, 15.10.2026
 
-Запуск из `visu`: `npm run test:geometry`. Новые сценарии в
-`tests/geometryWaitPlc.test.mjs` исполняют действующие `F_GEOMETRY_FIRST_CALL`,
-`UpdateGeometryWait`, три выборщика станка, `F_GEOMETRY_TAKE_DETAIL`, обработку
-Call/Cancel из `RunGeometryControl` и повторную проверку SERVICE_TARGET.
-Обвязка читает голову FIFO из ST, без отдельной JavaScript-модели очереди.
-Существующий тест периода/принудительной выборки подключает ту же функцию,
-а проверка баланса ST включает её новый исходник. Рабочий PLC, CODESYS и
-базы SQLite не изменяются и не запускаются этими тестами.
+Запуск из `visu`: `npm run test:geometry`. Сценарии в
+`tests/geometryWaitPlc.test.mjs` исполняют действующие `UpdateGeometryWait`,
+три выборщика станка, `F_GEOMETRY_TAKE_DETAIL`, обработку Call/Cancel из
+`RunGeometryControl` и повторную проверку SERVICE_TARGET. Возраст ID больше
+не ограничивает выбор и привязку вызовов. Проверяются доступность ГК,
+готовность, оставшееся время, совместимость типов и сохранение запросов.
+Рабочий PLC и CODESYS не запускаются, базы SQLite не изменяются этими тестами.
 
 | Фиксированный тест | Входное состояние | Ожидаемый результат |
 | --- | --- | --- |
-| `FIFO dispatch follows call arrival in every machine permutation despite the current target` | Все шесть порядков вызова С1–С3, ID101–103; все детали готовы, текущая цель — последний вызванный станок | TAKE/held-blank/UNLOAD выбирают первый ожидающий вызов; после его фактического взятия и снятия готовности выбирается следующий. События взятия идут ID101 → 102 → 103 |
-| `a ready newer call cannot overtake an older call that is still processing` | Первым вызван С3 и обрабатывает ещё 60 с; С1/С2 вызваны позже и готовы; ГК свободен | Более поздние детали остаются в патронах; все выборщики сохраняют С3, новых событий взятия нет |
-| `FIFO waiting permits ordinary machine work and does not raise a no-free-GK warning when GK is free` | С1 — первый вызов в обработке, С3 — поздний готовый вызов; С2 готов без вызова; ГК свободен, проходит 600 с | Обычное обслуживание С2 продолжается, С3 ждёт очереди; W52 и таймер отсутствия свободного ГК не запускаются |
-| `an empty FIFO head can be loaded while newer called details stay in their chucks` | Первым вызван пустой С2; поздний вызов С1 уже имеет готовую деталь; С3 выключен | TAKE/held-blank могут загрузить С2, UNLOAD не выбирает позднюю деталь С1; FIFO сохраняется |
-| `an unavailable FIFO head keeps its place until cancellation while ordinary work continues` | Первый вызов С2, отдельно Disabled/Error/DisablePending; поздний С1 и обычный С3 готовы; затем отмена первого вызова | С1 не обгоняет С2; обслуживается обычный С3. После отмены С2 следующий вызов С1 становится доступен |
-| `repeated forcing preserves FIFO place and a cancelled call rejoins at the tail` | Очередь С2 → С3 → С1; С2 автоматически вызван, затем два реальных Call, Cancel, обычная обработка С2 и новый Call | Повторные Call сохраняют ID101/место С2; отмена освобождает голову С3; новый ID104 у С2 остаётся после С3 и С1 |
-| `automatic calls created in one scan queue behind the earlier forced call` | Принудительный С3/ID101, готовые С1/С2 со счётчиками 19/20 | Автовызовы получают ID102/103 в том же скане; первым выбирается С3; до взятия счётчики С1/С2 остаются 19 |
-| `FIFO call age survives UDINT rollover and the skipped zero identifier` | Очередь С3/ID4294967294 → С1/ID4294967295 → С2/ID1 | Все выборщики и события взятия сохраняют этот порядок, несмотря на малый числовой ID нового вызова |
-| `FIFO never sends an incompatible held blank to its head or uses a later compatible call instead` | Первая деталь С3 имеет тип T2, в захвате заготовка T1; поздние вызовы С1/С2 имеют T1 | held-blank не выбирает несовместимый С3 и не обходит FIFO через С1/С2; TAKE/UNLOAD выбирают С3 по его типу |
-| `a newer call arriving during issued service cannot be consumed ahead of the FIFO head` | Ранний С1, более поздний С2 уже Busy; для С2 принудительный/автоматический вызов, счётчик 19/20 | Начатое обслуживание не блокируется, но вызов С2 остаётся state1, ID и счётчик сохраняются; переход С2 в state2 только после С1 |
-| `cadence reached during issued service creates a pending call behind the older request` | С1 уже вызван, С2 Busy без вызова со счётчиком 19/20; подтверждённая выгрузка С2 | Автовызов С2 создаётся с новым ID/state1, счётчик 20 до выборки; С2 не получает маршрут ГК впереди С1; последующее взятие сохраняет этот ID и обнуляет счётчик |
-| `FIFO is rechecked before CHANGE and UNLOAD without interrupting issued service` | Очередь С1 → С2 → С3, выбран поздний С3; CHANGE/UNLOAD до запуска, отдельно LOAD и уже выданный рецепт | Поздний CHANGE/UNLOAD уходит в SELECT_FALLBACK без запуска; LOAD и уже выданное обслуживание сохраняются |
+| `ready machines are selected in numeric order regardless of call creation order` | Один тип, все шесть порядков вызова С1–С3, ID101–103; все детали готовы, новая цель | TAKE/held-blank/UNLOAD выбирают С1 → С2 → С3 по мере взятия; возраст вызовов не влияет, исходные ID сохраняются в событиях |
+| `a ready newer call overtakes an older processing call without changing either ID` | С3 вызван первым и обрабатывает ещё 60 с; С1/С2 вызваны позже и готовы; текущая цель С3, ГК свободен | Все вызванные станки доступны, выбирается готовый С1. Его ID102 переходит в state2; вызов С3 полностью сохранён |
+| `processing machines use remaining time and numeric ties regardless of call creation order` | Один тип, шесть порядков вызова; все обрабатывают, остатки С1/С2/С3 60/25/40 с, текущая цель С3; затем новая цель и всем по 30 с | Все выборщики выбирают С2; при равном времени нового задания — С1. События вызовов не создаются и не потребляются |
+| `two called processing machines keep the faster target and resume when any GK becomes free` | Один тип, вызваны С1/С2, остатки 57/25/40 с, свободны оба ГК; затем оба заняты, затем свободен только ГК2 | Выбирается С2; при занятых ГК доступны только обычные работы С3; освобождение ГК2 возвращает С2 без нового Call/Start, ID и состояния запросов сохранены |
+| `all called machines wait only for GK availability and resume without new requests` | Все станки готовы, вызовы С3 → С2 → С1, оба ГК заняты; затем свободен ГК2 | Все вызванные станки исключены до освобождения ГК; после освобождения выбирается С1, все исходные запросы сохранены |
+| `ordinary and called ready machines share eligibility without a wait warning when GK is free` | С1 вызван и обрабатывает; С2 готов без вызова, С3 готов с поздним вызовом; ГК свободен, проходит 600 с; затем выключен С2 | С2 и С3 доступны на равных; новое задание выбирает С2, после его выключения С3. W52 и таймер отсутствия свободного ГК не запускаются |
+| `an empty called machine remains loadable while occupied calls wait for a free GK` | Вызваны пустой С2 и готовый С1; С3 выключен, свободного ГК нет | TAKE/held-blank могут загрузить С2; UNLOAD не выбирает вызванную деталь С1, которая остаётся в патроне |
+| `an unavailable older call does not block other called machines` | Ранний вызов С2, отдельно Disabled/Error/DisablePending; поздний С1 и обычный С3 готовы; затем отмена С2 | До и после отмены выбирается готовый С1; неисправный/выключенный С2 не блокирует чужие вызовы, до отмены его запрос сохранён |
+| `repeated forcing preserves call ID and cancellation does not reorder machine selection` | Вызовы С2 → С3 → С1; С2 автоматически вызван, затем два реальных Call, Cancel, обработка С2 и новый Call | Повторные Call сохраняют ID101 и делают вызов принудительным; новый Call после отмены получает ID104. Готовый С1 остаётся первым независимо от возраста ID |
+| `automatic calls do not prioritize an older forced call` | Принудительный С3/ID101, готовые С1/С2 со счётчиками 19/20 | Автовызовы получают ID102/103 в том же скане; новое задание выбирает С1. До взятия счётчики С1/С2 остаются 19 |
+| `call ID rollover preserves requests without affecting machine priority` | С3/ID4294967294, С1/ID4294967295, С2/ID1; все готовы, новая цель | Выбор и взятие идут С1 → С2 → С3; события сохраняют ID4294967295 → 1 → 4294967294 без приоритета возраста |
+| `held blank compatibility is preserved without blocking later compatible calls` | Ранний вызов С3/T2, поздние С1/С2/T1, в захвате заготовка T1; затем С1/С2 выключены | При доступных С1/С2 выбирается С1; после их выключения held-blank не выбирает несовместимый С3, TAKE/UNLOAD могут выбрать С3 |
+| `issued service binds its own call even when another machine was called earlier` | Ранний С1, поздний С2 уже Busy; у С2 принудительный/автоматический вызов и счётчик 19/20 | Взятая деталь С2 немедленно получает свой ID102/state2, счётчик обнуляется; С1 остаётся state1 до собственного взятия |
+| `cadence reached during issued service binds the current detail despite an older call` | С1 уже вызван, С2 Busy без вызова со счётчиком 19/20; подтверждённая выгрузка С2 | Автовызов С2 получает ID102, затем сразу state2 и нулевой счётчик; С1 остаётся ожидающим, события С2 идут state1 → state2 |
+| `older calls do not reject CHANGE or UNLOAD while a GK is free` | Вызовы С1 → С2 → С3, выбран поздний С3, свободный ГК; CHANGE/UNLOAD до запуска, отдельно LOAD и уже выданный рецепт | Возраст вызова не переводит обслуживание в SELECT_FALLBACK; прежние допуски LOAD и уже начатой операции сохранены |
 
 ## Приоритет ГК по станку-источнику — локальная регрессия PLC, 14.10.2026
 
@@ -938,7 +940,7 @@ CODESYS, рабочий PLC и рабочие базы SQLite эти прове�
 
 Запуск из `visu`: `npm run test:geometry`. Сценарии в
 `tests/geometryWaitPlc.test.mjs` исполняют целую ветвь SERVICE_TARGET из
-`FB_CELL_MANAGER`, реальные Call/Cancel, `F_GEOMETRY_TAKE_DETAIL`, FIFO и
+`FB_CELL_MANAGER`, реальные Call/Cancel, `F_GEOMETRY_TAKE_DETAIL` и
 `PlanGeometry`. Обвязка заменяет только предупреждение о несовпадении типов;
 маршрутизация выполняется из ST. CODESYS и рабочий PLC не запускаются,
 журнал SQLite не изменяется.
@@ -947,7 +949,7 @@ CODESYS, рабочий PLC и рабочие базы SQLite эти прове�
 | --- | --- | --- |
 | `late forced call during CHANGE or UNLOAD routes the current detail after machine release` | CHANGE и отдельно UNLOAD С1; деталь уже взята и учтена, затем Call во время оставшегося обслуживания; свободный ГК1 | До выезда вызов state1; после xRobotReleased тот же ID привязан к текущей детали/state2. Станок-источник сохранён до сброса выбора; PlanGeometry резервирует ГК1/state3; счётчик не увеличивается повторно |
 | `a pending call arriving in the release scan is bound before target selection` | Деталь уже в захвате; Call обработан перед SERVICE_TARGET в том же скане, где xRobotReleased=TRUE | Вызов привязывается до перехода PLAN_TARGET; текущая деталь получает маршрут ГК |
-| `release recheck preserves FIFO and leaves a newer call for the next detail` | Деталь С1 уже взята; первым вызван С2, затем С1; ГК свободен; робот освобождён С1 | Вызов С1 остаётся state1 для следующей детали; С2 сохраняет голову FIFO; текущая деталь не получает маршрут ГК, ID и счётчики не переписываются |
+| `release recheck binds its own late call despite an older call from another machine` | CHANGE и отдельно UNLOAD С1; деталь уже взята, первым вызван С2, затем С1; ГК свободен; робот освобождён С1 | Поздний вызов С1 с прежним ID привязывается к текущей детали/state2 и получает ГК1/state3; запрос С2 сохранён, счётчик С1 не увеличивается повторно |
 | `absent cancelled or other-machine calls do not recount the unload on release` | После взятия С1 вызова нет, поздний вызов С1 отменён либо вызван только С2; несколько сканов и успешный выезд | Текущая деталь не привязывается; счётчик выгрузок, вызовы и события не меняются при выезде |
 | `a call accepted after machine release waits for the following detail` | Выезд С1 уже обработан и менеджер в PLAN_TARGET; затем Call С1 | Запрос остаётся state1 для следующей детали; завершившийся маршрут не пересматривается |
 | `a previously bound call is not taken or counted again on release` | Call С1 до взятия; вызов уже state2, затем несколько сканов и выезд | Привязка и ID сохранены; повторного события state2 и увеличения счётчика нет |

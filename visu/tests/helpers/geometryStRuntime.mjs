@@ -55,12 +55,6 @@ export function defaultsFromSt(source, block = 'VAR') {
   return Object.fromEntries([...declarations.matchAll(/(\w+)\s*:\s*(BOOL|UDINT|UINT|REAL|TIME|DWORD|ST_GEOMETRY_CALL)\b/g)].map(([, name, type]) => [name, type === 'BOOL' ? false : type === 'ST_GEOMETRY_CALL' ? emptyCall() : 0]));
 }
 export const emptyCall = () => ({ udiId: 0, uiMachine: 0, uiProductType: 0, uiStation: 0, xForced: false, uiState: 0, uiReason: 0, uiMagazine: 0, uiPallet: 0, uiSlot: 0 });
-const firstCallSource = readPlc('FB/F_GEOMETRY_FIRST_CALL.st');
-const selectFirstCall = compileSt(firstCallSource);
-export function firstGeometryCall(gvl) {
-  const s = { ...defaultsFromSt(firstCallSource), GVL_GEOMETRY_CONTROL: gvl, F_GEOMETRY_FIRST_CALL: 0 };
-  selectFirstCall(s); return s.F_GEOMETRY_FIRST_CALL;
-}
 export const conversions = { MAX: Math.max, MIN: Math.min, SEL: (condition, a, b) => condition ? b : a,
   TO_UINT: Number, UINT_TO_UDINT: Number, UINT_TO_REAL: Number, UDINT_TO_UINT: Number,
   UDINT_TO_TIME: Number, TIME_TO_UDINT: Number, TIME_TO_REAL: Number, UDINT_TO_REAL: Number, SINT_TO_UINT: Number };

@@ -2,7 +2,6 @@ METHOD PRIVATE UpdateGeometryWait
 VAR
 	uiMachine : UINT;
 	uiFreeStation : UINT;
-	uiFirstCallMachine : UINT;
 	uiCallState : UINT;
 	xCalled : BOOL;
 	xReadyDetail : BOOL;
@@ -46,23 +45,15 @@ FOR uiMachine := FIRST_MACHINE TO LAST_MACHINE DO
 		AND NOT astMachineStatus[uiMachine].xBusy;
 END_FOR;
 
-// Выбираем голову после создания всех автовызовов этого скана.
-uiFirstCallMachine := F_GEOMETRY_FIRST_CALL();
+// Возраст вызова не ограничивает обслуживание; ждём только свободного ГК.
 FOR uiMachine := FIRST_MACHINE TO LAST_MACHINE DO
-	IF (GVL_GEOMETRY_CONTROL.astCalls[uiMachine].uiState = UINT#1)
-	AND (uiMachine <> uiFirstCallMachine)
-	AND (astMachineStatus[uiMachine].ePartState = E_PART_STATE.LOADED)
-	AND NOT astMachineStatus[uiMachine].xBusy THEN
-		// Более поздний вызов не обгоняет первый, даже если его деталь уже готова.
-		axGeometryUnloadBlocked[uiMachine] := TRUE;
-	END_IF;
 	xReadyDetail := astMachineStatus[uiMachine].xEnabled
 		AND NOT astMachineStatus[uiMachine].xError AND NOT astMachineStatus[uiMachine].xDisablePending
 		AND NOT astMachineStatus[uiMachine].xBusy AND NOT astMachineStatus[uiMachine].xProcessing
 		AND astMachineStatus[uiMachine].xCanAcceptService AND astMachineStatus[uiMachine].xServiceRequired
 		AND (astMachineStatus[uiMachine].ePartState = E_PART_STATE.LOADED)
 		AND (astMachineStatus[uiMachine].ePartType = E_PART_TYPE.DETAIL);
-	// Ожидание своей очереди при свободном ГК не является причиной W52.
+	// W52 относится только к готовой детали без доступного свободного ГК.
 	xWaiting := xRunning AND NOT xManual AND NOT xGlobalError
 		AND xReadyDetail AND axGeometryUnloadBlocked[uiMachine] AND (uiFreeStation = UINT#0);
 	// Отдельный TON для каждого вызова; реальное время, без ускорения симуляции.

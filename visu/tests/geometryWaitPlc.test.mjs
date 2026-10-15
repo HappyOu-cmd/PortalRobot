@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { compileSt, conversions, defaultsFromSt, emptyCall, firstGeometryCall, readPlc, ton } from './helpers/geometryStRuntime.mjs';
+import { compileSt, conversions, defaultsFromSt, emptyCall, readPlc, ton } from './helpers/geometryStRuntime.mjs';
 
 const update = compileSt(readPlc('FB/FB_CELL_MANAGER/FB_CELL_MANAGER.UpdateGeometryWait.st'));
 const selectStation = compileSt(readPlc('FB/F_GEOMETRY_SELECT_STATION.st'));
@@ -49,7 +49,6 @@ function fixture() {
   };
   s.atonGeometryWait = [null, ...[1, 2, 3].map(() => ton(s))];
   s.F_GEOMETRY_EVENT = ({ Call }) => { s.events.push(structuredClone(Call)); return true; };
-  s.F_GEOMETRY_FIRST_CALL = () => firstGeometryCall(s.GVL_GEOMETRY_CONTROL);
   s.F_GEOMETRY_SELECT_STATION = args => { const local = { ...s, ...args, uiTry: 0, uiStation: 0, F_GEOMETRY_SELECT_STATION: 0 }; selectStation(local); return local.F_GEOMETRY_SELECT_STATION; };
   s.IsMachineEligible = args => { const local = { ...s, ...args, IsMachineEligible: false }; eligible(local); return local.IsMachineEligible; };
   s.IsMachineCompatible = args => { const local = { ...s, ...args, IsMachineCompatible: false }; compatible(local); return local.IsMachineCompatible; };
@@ -63,7 +62,7 @@ function selected(run, name, s, currentMachine = 1) {
 }
 
 const selectors = [[selectBeforeTake, 'SelectMachineBeforeTake'], [selectHeldBlank, 'SelectMachineForHeldBlank'], [selectUnload, 'SelectMachineForUnload']];
-function queue(s, order, firstId = 101) {
+function pendingCalls(s, order, firstId = 101) {
   const g = s.GVL_GEOMETRY_CONTROL;
   g.astCalls = [null, emptyCall(), emptyCall(), emptyCall()];
   Object.assign(g.astStatus[1], { xEnabled: true, xConfigured: true, xReady: true, xError: false, uiState: 1 });
@@ -143,13 +142,17 @@ test('a pending call arriving in the release scan is bound before target selecti
   assert.equal(s.plan(), true);
 });
 
-test('release recheck preserves FIFO and leaves a newer call for the next detail', () => {
-  const s = serviceFixture(), g = s.GVL_GEOMETRY_CONTROL;
-  s.grip(); s.call(2); s.call(1); const calls = structuredClone(g.astCalls);
-  s.release();
-  assert.equal(s.xGeometryHeld, false); assert.equal(s.plan(), false);
-  assert.deepEqual(g.astCalls, calls); assert.equal(g.auiActiveCount[1], 0);
-  assert.deepEqual(s.events.map(call => call.uiState), [1, 1]);
+test('release recheck binds its own late call despite an older call from another machine', () => {
+  for (const operation of ['CHANGE', 'UNLOAD']) {
+    const s = serviceFixture(operation), g = s.GVL_GEOMETRY_CONTROL;
+    s.grip(); s.call(2); s.call(1); const calls = structuredClone(g.astCalls);
+    s.release();
+    assert.equal(s.xGeometryHeld, true); assert.equal(s.uiGeometryMachine, 1);
+    assert.equal(g.astCalls[1].udiId, calls[1].udiId); assert.equal(g.astCalls[1].uiState, 2);
+    assert.deepEqual(g.astCalls[2], calls[2]); assert.equal(g.auiActiveCount[1], 0);
+    assert.equal(s.plan(), true); assert.equal(g.astCalls[1].uiStation, 1);
+    assert.deepEqual(s.events.map(call => [call.uiMachine, call.uiState]), [[2, 1], [1, 1], [1, 2], [1, 3]]);
+  }
 });
 
 test('absent cancelled or other-machine calls do not recount the unload on release', () => {
@@ -325,42 +328,97 @@ test('station priority preserves replanning before entry and recovery after robo
   }
 });
 
-test('FIFO dispatch follows call arrival in every machine permutation despite the current target', () => {
+test('ready machines are selected in numeric order regardless of call creation order', () => {
   for (const order of [[1, 2, 3], [1, 3, 2], [2, 1, 3], [2, 3, 1], [3, 1, 2], [3, 2, 1]]) {
-    const s = fixture(); queue(s, order);
-    for (const machine of order) {
+    const s = fixture(); pendingCalls(s, order); s.Config.uiTypeCount = 1;
+    const ids = s.GVL_GEOMETRY_CONTROL.astCalls.map(call => call?.udiId);
+    for (const machine of [1, 2, 3]) {
       s.scan();
-      for (const [run, name] of selectors) assert.equal(selected(run, name, s, order.at(-1)), machine, `${name}: ${order}`);
+      for (const [run, name] of selectors) assert.equal(selected(run, name, s, 0), machine, `${name}: ${order}`);
       assert.equal(take(s, machine), true);
       Object.assign(s.astMachineStatus[machine], { ePartState: 0, ePartType: 0, xCanAcceptService: false, xServiceRequired: false });
     }
-    assert.deepEqual(s.events.map(call => call.uiMachine), order);
-    assert.deepEqual(s.events.map(call => call.udiId), [101, 102, 103]);
+    assert.deepEqual(s.events.map(call => call.uiMachine), [1, 2, 3]);
+    assert.deepEqual(s.events.map(call => call.udiId), ids.slice(1));
   }
 });
 
-test('a ready newer call cannot overtake an older call that is still processing', () => {
-  const s = fixture(); queue(s, [3, 1, 2]);
+test('a ready newer call overtakes an older processing call without changing either ID', () => {
+  const s = fixture(); pendingCalls(s, [3, 1, 2]);
   Object.assign(s.astMachineStatus[3], { xProcessing: true, xCanAcceptService: false, xServiceRequired: false,
     ePartType: 1, tRemaining: 60000 });
+  const older = structuredClone(s.GVL_GEOMETRY_CONTROL.astCalls[3]);
   s.scan();
-  assert.deepEqual(s.axGeometryUnloadBlocked.slice(1), [true, true, false]);
-  for (const [run, name] of selectors) assert.equal(selected(run, name, s, 1), 3, name);
-  assert.equal(s.events.length, 0);
+  assert.deepEqual(s.axGeometryUnloadBlocked.slice(1), [false, false, false]);
+  for (const [run, name] of selectors) assert.equal(selected(run, name, s, 3), 1, name);
+  assert.equal(take(s, 1), true); assert.equal(s.GVL_GEOMETRY_CONTROL.astCalls[1].udiId, 102);
+  assert.deepEqual(s.GVL_GEOMETRY_CONTROL.astCalls[3], older);
+  assert.deepEqual(s.events.map(call => [call.uiMachine, call.uiState]), [[1, 2]]);
 });
 
-test('FIFO waiting permits ordinary machine work and does not raise a no-free-GK warning when GK is free', () => {
-  const s = fixture(); queue(s, [1, 3]);
+test('processing machines use remaining time and numeric ties regardless of call creation order', () => {
+  for (const order of [[1, 2, 3], [1, 3, 2], [2, 1, 3], [2, 3, 1], [3, 1, 2], [3, 2, 1]]) {
+    const s = fixture(); pendingCalls(s, order); s.Config.uiTypeCount = 1;
+    for (const machine of [1, 2, 3]) Object.assign(s.astMachineStatus[machine], {
+      xProcessing: true, xCanAcceptService: false, xServiceRequired: false,
+      ePartType: 1, tRemaining: [0, 60000, 25000, 40000][machine],
+    });
+    s.scan();
+    for (const [run, name] of selectors) assert.equal(selected(run, name, s, 3), 2, `${name}: ${order}`);
+    for (const machine of [1, 2, 3]) s.astMachineStatus[machine].tRemaining = 30000;
+    for (const [run, name] of selectors) assert.equal(selected(run, name, s, 0), 1, `${name}: equal remaining time`);
+    assert.equal(s.events.length, 0);
+  }
+});
+
+test('two called processing machines keep the faster target and resume when any GK becomes free', () => {
+  const s = fixture(); pendingCalls(s, [1, 2]); s.Config.uiTypeCount = 1;
+  const g = s.GVL_GEOMETRY_CONTROL, calls = structuredClone(g.astCalls);
+  Object.assign(g.astStatus[2], { xEnabled: true, xReady: true, uiState: 1 });
+  for (const machine of [1, 2, 3]) Object.assign(s.astMachineStatus[machine], {
+    xProcessing: true, xCanAcceptService: false, xServiceRequired: false,
+    ePartType: 1, tRemaining: [0, 57000, 25000, 40000][machine],
+  });
+  s.scan();
+  for (const [run, name] of selectors) assert.equal(selected(run, name, s, 3), 2, name);
+  g.astStatus[1].xReady = false; g.astStatus[2].xReady = false; s.scan();
+  assert.deepEqual(s.axGeometryUnloadBlocked.slice(1), [true, true, false]);
+  for (const [run, name] of selectors) assert.equal(selected(run, name, s, 0), 3, name);
+  g.astStatus[2].xReady = true; s.scan();
+  for (const [run, name] of selectors) assert.equal(selected(run, name, s, 3), 2, name);
+  assert.deepEqual(g.astCalls, calls); assert.equal(s.events.length, 0);
+});
+
+test('all called machines wait only for GK availability and resume without new requests', () => {
+  const s = fixture(); pendingCalls(s, [3, 2, 1]);
+  const g = s.GVL_GEOMETRY_CONTROL, calls = structuredClone(g.astCalls);
+  g.astStatus[1].xReady = false;
+  Object.assign(g.astStatus[2], { xEnabled: true, xReady: false, uiState: 4 }); s.scan();
+  assert.deepEqual(s.axGeometryUnloadBlocked.slice(1), [true, true, true]);
+  for (const [run, name] of selectors) assert.equal(selected(run, name, s, 0), 0, name);
+  g.astStatus[2].xReady = true; s.scan();
+  assert.deepEqual(s.axGeometryUnloadBlocked.slice(1), [false, false, false]);
+  for (const [run, name] of selectors) assert.equal(selected(run, name, s, 0), 1, name);
+  assert.deepEqual(g.astCalls, calls); assert.equal(s.events.length, 0);
+});
+
+test('ordinary and called ready machines share eligibility without a wait warning when GK is free', () => {
+  const s = fixture(); pendingCalls(s, [1, 3]);
   Object.assign(s.astMachineStatus[1], { xProcessing: true, xCanAcceptService: false, xServiceRequired: false, ePartType: 1 });
   s.scan(); s.scan(600000);
-  for (const [run, name] of selectors) assert.equal(selected(run, name, s, 3), 2, name);
-  assert.equal(s.axGeometryUnloadBlocked[3], true);
+  for (const [run, name] of selectors) assert.equal(selected(run, name, s, 0), 2, name);
+  assert.equal(s.IsMachineEligible({ uiMachine: 2 }), true);
+  assert.equal(s.IsMachineEligible({ uiMachine: 3 }), true);
+  assert.equal(s.axGeometryUnloadBlocked[3], false);
   assert.equal(s.GVL_GEOMETRY_CONTROL.stCellWarning.udiSequence, 0);
   assert.equal(s.atonGeometryWait[3].ET, 0);
+  s.astMachineStatus[2].xEnabled = false;
+  for (const [run, name] of selectors) assert.equal(selected(run, name, s, 0), 3, name);
 });
 
-test('an empty FIFO head can be loaded while newer called details stay in their chucks', () => {
-  const s = fixture(); queue(s, [2, 1]);
+test('an empty called machine remains loadable while occupied calls wait for a free GK', () => {
+  const s = fixture(); pendingCalls(s, [2, 1]);
+  s.GVL_GEOMETRY_CONTROL.astStatus[1].xReady = false;
   Object.assign(s.astMachineStatus[2], { ePartState: 0, ePartType: 0, xServiceRequired: false });
   s.astMachineStatus[3].xEnabled = false; s.scan();
   assert.equal(selected(selectBeforeTake, 'SelectMachineBeforeTake', s), 2);
@@ -369,21 +427,21 @@ test('an empty FIFO head can be loaded while newer called details stay in their 
   assert.equal(s.axGeometryUnloadBlocked[1], true); assert.equal(s.axGeometryUnloadBlocked[2], false);
 });
 
-test('an unavailable FIFO head keeps its place until cancellation while ordinary work continues', () => {
+test('an unavailable older call does not block other called machines', () => {
   for (const patch of [{ xEnabled: false }, { xError: true }, { xDisablePending: true }]) {
-    const s = fixture(); queue(s, [2, 1]); Object.assign(s.astMachineStatus[2], patch); s.scan();
-    for (const [run, name] of selectors) assert.equal(selected(run, name, s), 3, name);
+    const s = fixture(); pendingCalls(s, [2, 1]); Object.assign(s.astMachineStatus[2], patch); s.scan();
+    for (const [run, name] of selectors) assert.equal(selected(run, name, s, 0), 1, name);
     assert.equal(s.GVL_GEOMETRY_CONTROL.astCalls[2].uiState, 1);
     s.GVL_GEOMETRY_CONTROL.astCalls[2].uiState = 6; s.scan();
     for (const [run, name] of selectors) assert.equal(selected(run, name, s), 1, name);
   }
 });
 
-test('repeated forcing preserves FIFO place and a cancelled call rejoins at the tail', () => {
+test('repeated forcing preserves call ID and cancellation does not reorder machine selection', () => {
   const source = readPlc('PLC_PRG.RunGeometryControl.st');
   const start = source.indexOf('IF (stGeometryRequest.uiAction = UINT#8)');
   const command = compileSt(source.slice(start, source.indexOf('ELSIF (stGeometryRequest.uiAction = UINT#9)', start)) + '\nEND_IF;');
-  const s = fixture(); queue(s, [2, 3, 1]);
+  const s = fixture(); pendingCalls(s, [2, 3, 1]);
   const g = s.GVL_GEOMETRY_CONTROL; g.astCalls[2].xForced = false;
   g.axCallAllowed = [null, true, true, true]; g.axCancelAllowed = [null, true, true, true];
   Object.assign(s, { stGeometryRequest: { uiAction: 8, uiMachine: 2 }, uiGeometryMachine: 0,
@@ -392,81 +450,85 @@ test('repeated forcing preserves FIFO place and a cancelled call rejoins at the 
   command(s); command(s); s.scan();
   assert.equal(g.astCalls[2].udiId, 101); assert.equal(g.udiNextCallId, 103);
   assert.equal(g.astCalls[2].xForced, true);
-  for (const [run, name] of selectors) assert.equal(selected(run, name, s), 2, name);
+  for (const [run, name] of selectors) assert.equal(selected(run, name, s, 0), 1, name);
   s.stGeometryRequest.uiAction = 12; command(s); s.scan();
   assert.equal(g.astCalls[2].uiState, 6);
   Object.assign(s.astMachineStatus[2], { xProcessing: true, xCanAcceptService: false, xServiceRequired: false, ePartType: 1 });
   s.scan();
-  for (const [run, name] of selectors) assert.equal(selected(run, name, s), 3, name);
+  for (const [run, name] of selectors) assert.equal(selected(run, name, s, 0), 1, name);
   s.stGeometryRequest.uiAction = 8; command(s); s.scan();
   assert.equal(g.astCalls[2].udiId, 104);
-  for (const [run, name] of selectors) assert.equal(selected(run, name, s, 2), 3, name);
+  for (const [run, name] of selectors) assert.equal(selected(run, name, s, 2), 1, name);
 });
 
-test('automatic calls created in one scan queue behind the earlier forced call', () => {
-  const s = fixture(); queue(s, [3]);
+test('automatic calls do not prioritize an older forced call', () => {
+  const s = fixture(); pendingCalls(s, [3]);
   const g = s.GVL_GEOMETRY_CONTROL; g.xAutoEnabled = true; g.auiActiveCount[1] = 19; g.auiActiveCount[2] = 19;
   s.scan();
   assert.deepEqual(g.astCalls.slice(1).map(call => call.udiId), [102, 103, 101]);
   assert.deepEqual(g.auiActiveCount.slice(1), [19, 19, 0]);
-  for (const [run, name] of selectors) assert.equal(selected(run, name, s), 3, name);
+  for (const [run, name] of selectors) assert.equal(selected(run, name, s, 0), 1, name);
   assert.deepEqual(s.events.map(call => call.uiMachine), [1, 2]);
 });
 
-test('FIFO call age survives UDINT rollover and the skipped zero identifier', () => {
-  const s = fixture(); queue(s, [3, 1, 2], 0xfffffffe);
+test('call ID rollover preserves requests without affecting machine priority', () => {
+  const s = fixture(); pendingCalls(s, [3, 1, 2], 0xfffffffe);
   assert.deepEqual(s.GVL_GEOMETRY_CONTROL.astCalls.slice(1).map(call => call.udiId), [0xffffffff, 1, 0xfffffffe]);
-  for (const machine of [3, 1, 2]) {
+  for (const machine of [1, 2, 3]) {
     s.scan();
-    for (const [run, name] of selectors) assert.equal(selected(run, name, s, 2), machine, name);
+    for (const [run, name] of selectors) assert.equal(selected(run, name, s, 0), machine, name);
     assert.equal(take(s, machine), true);
     Object.assign(s.astMachineStatus[machine], { ePartState: 0, ePartType: 0, xCanAcceptService: false, xServiceRequired: false });
   }
-  assert.deepEqual(s.events.map(call => call.udiId), [0xfffffffe, 0xffffffff, 1]);
+  assert.deepEqual(s.events.map(call => call.udiId), [0xffffffff, 1, 0xfffffffe]);
 });
 
-test('FIFO never sends an incompatible held blank to its head or uses a later compatible call instead', () => {
-  const s = fixture(); queue(s, [3, 1, 2]);
+test('held blank compatibility is preserved without blocking later compatible calls', () => {
+  const s = fixture(); pendingCalls(s, [3, 1, 2]);
   s.Config.auiMachineType[3] = 2; s.GVL_GEOMETRY_CONTROL.astCalls[3].uiProductType = 2;
   s.scan();
-  assert.equal(selected(selectHeldBlank, 'SelectMachineForHeldBlank', s), 0);
+  assert.equal(selected(selectHeldBlank, 'SelectMachineForHeldBlank', s, 0), 1);
+  assert.equal(selected(selectBeforeTake, 'SelectMachineBeforeTake', s), 1);
+  assert.equal(selected(selectUnload, 'SelectMachineForUnload', s, 0), 1);
+  s.astMachineStatus[1].xEnabled = false; s.astMachineStatus[2].xEnabled = false;
+  assert.equal(selected(selectHeldBlank, 'SelectMachineForHeldBlank', s, 0), 0);
   assert.equal(selected(selectBeforeTake, 'SelectMachineBeforeTake', s), 3);
-  assert.equal(selected(selectUnload, 'SelectMachineForUnload', s), 3);
+  assert.equal(selected(selectUnload, 'SelectMachineForUnload', s, 0), 3);
 });
 
-test('a newer call arriving during issued service cannot be consumed ahead of the FIFO head', () => {
+test('issued service binds its own call even when another machine was called earlier', () => {
   for (const forced of [true, false]) {
-    const s = fixture(); queue(s, [1, 2]);
+    const s = fixture(); pendingCalls(s, [1, 2]);
     const g = s.GVL_GEOMETRY_CONTROL; g.xAutoEnabled = true; g.astCalls[2].xForced = forced; g.auiActiveCount[2] = 19;
     s.astMachineStatus[2].xBusy = true; s.scan();
     assert.equal(s.axGeometryUnloadBlocked[2], false);
-    assert.equal(take(s, 2), false); assert.equal(g.astCalls[2].uiState, 1);
-    assert.equal(g.auiActiveCount[2], 19); assert.equal(s.events.length, 0);
-    assert.equal(take(s, 1), true); s.scan(); assert.equal(take(s, 2), true);
+    assert.equal(take(s, 2), true); assert.equal(g.astCalls[2].uiState, 2);
+    assert.equal(g.astCalls[2].udiId, 102); assert.equal(g.astCalls[1].uiState, 1);
     assert.equal(g.auiActiveCount[2], 0);
-    assert.deepEqual(s.events.map(call => call.udiId), [101, 102]);
+    assert.equal(take(s, 1), true);
+    assert.deepEqual(s.events.map(call => call.udiId), [102, 101]);
   }
 });
 
-test('cadence reached during issued service creates a pending call behind the older request', () => {
-  const s = fixture(); queue(s, [1]);
+test('cadence reached during issued service binds the current detail despite an older call', () => {
+  const s = fixture(); pendingCalls(s, [1]);
   const g = s.GVL_GEOMETRY_CONTROL; g.xAutoEnabled = true; g.auiActiveCount[2] = 19;
   s.astMachineStatus[2].xBusy = true; s.scan();
   assert.equal(g.astCalls[2].uiState, 0);
-  assert.equal(take(s, 2), false); assert.equal(g.astCalls[2].udiId, 102); assert.equal(g.astCalls[2].uiState, 1);
-  assert.equal(g.auiActiveCount[2], 20);
-  assert.equal(take(s, 1), true); assert.equal(take(s, 2), true);
-  assert.deepEqual(s.events.map(call => [call.udiId, call.uiState]), [[102, 1], [101, 2], [102, 2]]);
+  assert.equal(take(s, 2), true); assert.equal(g.astCalls[2].udiId, 102); assert.equal(g.astCalls[2].uiState, 2);
+  assert.equal(g.auiActiveCount[2], 0); assert.equal(g.astCalls[1].uiState, 1);
+  assert.equal(take(s, 1), true);
+  assert.deepEqual(s.events.map(call => [call.udiId, call.uiState]), [[102, 1], [102, 2], [101, 2]]);
 });
 
-test('FIFO is rechecked before CHANGE and UNLOAD without interrupting issued service', () => {
+test('older calls do not reject CHANGE or UNLOAD while a GK is free', () => {
   const source = readPlc('FB/FB_CELL_MANAGER/FB_CELL_MANAGER.st');
   const start = source.indexOf('ELSIF NOT xMachineServiceStarted AND NOT astMachineStatus[uiSelectedMachine].xBusy');
   const guard = compileSt(source.slice(start, source.indexOf('ELSIF NOT xMachineServiceStarted\n', start)).replace(/^ELSIF/, 'IF') + '\nEND_IF;');
-  const s = fixture(); queue(s, [1, 2, 3]); s.scan();
+  const s = fixture(); pendingCalls(s, [1, 2, 3]); s.scan();
   Object.assign(s, { uiSelectedMachine: 3, xMachineServiceStarted: false, eState: 9,
     E_MACHINE_OPERATION: { LOAD: 1, CHANGE: 2, UNLOAD: 3 }, E_CELL_MANAGER_STATE: { SELECT_FALLBACK: 8 } });
-  for (const operation of [2, 3]) { s.eMachineOperation = operation; s.eState = 9; guard(s); assert.equal(s.eState, 8); }
+  for (const operation of [2, 3]) { s.eMachineOperation = operation; s.eState = 9; guard(s); assert.equal(s.eState, 9); }
   s.eMachineOperation = 1; s.eState = 9; guard(s); assert.equal(s.eState, 9);
   s.eMachineOperation = 2; s.xMachineServiceStarted = true; guard(s); assert.equal(s.eState, 9);
 });

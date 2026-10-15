@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { compileSt, conversions, defaultsFromSt, emptyCall, firstGeometryCall, readPlc, ton } from './helpers/geometryStRuntime.mjs';
+import { compileSt, conversions, defaultsFromSt, emptyCall, readPlc, ton } from './helpers/geometryStRuntime.mjs';
 import { GeometryBeltAnimation, mapGeometrySnapshot } from '../src/model/geometryControl.ts';
 
 const source = readPlc('FB/FB_GEOMETRY_CONTROL.st');
@@ -353,7 +353,6 @@ test('automatic cadence uses confirmed taken parts; forced sample restarts its o
   const run = compileSt(readPlc('FB/F_GEOMETRY_TAKE_DETAIL.st'));
   const s = { ...conversions, uiMachine: 2, uiProductType: 3, F_GEOMETRY_TAKE_DETAIL: false, Call: emptyCall(), EmptyCall: emptyCall(), events: [],
     GVL_GEOMETRY_CONTROL: { xSupported: true, xAutoEnabled: true, udiNextCallId: 0, astStatus: [null, { xEnabled: true }, { xEnabled: true }], auiActiveCount: [0, 0, 0, 0], auiPeriod: [0, 3, 3, 3], astCalls: [null, emptyCall(), emptyCall(), emptyCall()] } };
-  s.F_GEOMETRY_FIRST_CALL = () => firstGeometryCall(s.GVL_GEOMETRY_CONTROL);
   s.F_GEOMETRY_EVENT = ({ Call }) => { s.events.push(structuredClone(Call)); return true; };
   run(s); run(s); assert.equal(s.F_GEOMETRY_TAKE_DETAIL, false); assert.equal(s.GVL_GEOMETRY_CONTROL.auiActiveCount[2], 2);
   run(s); assert.equal(s.F_GEOMETRY_TAKE_DETAIL, true); assert.equal(s.GVL_GEOMETRY_CONTROL.astCalls[2].uiProductType, 3);
