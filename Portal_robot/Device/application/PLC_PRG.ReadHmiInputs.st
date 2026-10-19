@@ -552,7 +552,7 @@ AND (GVL_HMI.udiPointEditorCommandSeq <> udiLastPointEditorCommandSeq) THEN
 				stGeometryConfig.lrSpeedFactor := GVL_HMI.lrPointEditorDraftSpeedFactor;
 				stGeometryConfig.xConfigured := TRUE;
 				IF GVL_CELL_SETTINGS.eTestEnvironment = E_CELL_TEST_ENVIRONMENT.NORMAL THEN
-					GVL_GEOMETRY_CONTROL.astConfig[uiPointEditorGeometryStation] := stGeometryConfig;
+					Persistent_Value.astConfig[uiPointEditorGeometryStation] := stGeometryConfig;
 				ELSE
 					GVL_GEOMETRY_CONTROL.astSimulationConfig[uiPointEditorGeometryStation] := stGeometryConfig;
 				END_IF;
@@ -567,30 +567,30 @@ AND (GVL_HMI.udiPointEditorCommandSeq <> udiLastPointEditorCommandSeq) THEN
 				GVL_HMI.stPointEditorResultPoint.xConfigured := TRUE;
 				GVL_HMI.uiPointEditorResult := UINT#1;
 			ELSE
-				GVL_POINT.astRetainPoints[uiPointStorageIndex].Name := '';
-				GVL_POINT.astRetainPoints[uiPointStorageIndex].X :=
+				Persistent_Value.astRetainPoints[uiPointStorageIndex].Name := '';
+				Persistent_Value.astRetainPoints[uiPointStorageIndex].X :=
 					GVL_HMI.alrPointEditorDraftXYZ[1];
-				GVL_POINT.astRetainPoints[uiPointStorageIndex].Y :=
+				Persistent_Value.astRetainPoints[uiPointStorageIndex].Y :=
 					GVL_HMI.alrPointEditorDraftXYZ[2];
-				GVL_POINT.astRetainPoints[uiPointStorageIndex].Z :=
+				Persistent_Value.astRetainPoints[uiPointStorageIndex].Z :=
 					GVL_HMI.alrPointEditorDraftXYZ[3];
 				IF xPointEditorMagazinePoint THEN
-					GVL_POINT.astRetainPoints[uiPointStorageIndex].MagazineSafeZ :=
+					Persistent_Value.astRetainPoints[uiPointStorageIndex].MagazineSafeZ :=
 						GVL_HMI.lrPointEditorDraftMagazineSafeZ;
-					GVL_POINT.astRetainPoints[uiPointStorageIndex].MagazineChangeZ :=
+					Persistent_Value.astRetainPoints[uiPointStorageIndex].MagazineChangeZ :=
 						GVL_HMI.lrPointEditorDraftMagazineChangeZ;
 				ELSE
-					GVL_POINT.astRetainPoints[uiPointStorageIndex].MagazineSafeZ := LREAL#0.0;
-					GVL_POINT.astRetainPoints[uiPointStorageIndex].MagazineChangeZ := LREAL#0.0;
+					Persistent_Value.astRetainPoints[uiPointStorageIndex].MagazineSafeZ := LREAL#0.0;
+					Persistent_Value.astRetainPoints[uiPointStorageIndex].MagazineChangeZ := LREAL#0.0;
 				END_IF;
-				GVL_POINT.astRetainPoints[uiPointStorageIndex].SpeedFactor :=
+				Persistent_Value.astRetainPoints[uiPointStorageIndex].SpeedFactor :=
 					GVL_HMI.lrPointEditorDraftSpeedFactor;
-				GVL_POINT.astRetainPoints[uiPointStorageIndex].xConfigured :=
+				Persistent_Value.astRetainPoints[uiPointStorageIndex].xConfigured :=
 					NOT xPointEditorMagazinePoint
 					OR ((GVL_HMI.lrPointEditorDraftMagazineSafeZ <> LREAL#0.0)
 						AND (GVL_HMI.lrPointEditorDraftMagazineChangeZ <> LREAL#0.0));
 				GVL_POINT.Points[ePointEditorName] :=
-					GVL_POINT.astRetainPoints[uiPointStorageIndex];
+					Persistent_Value.astRetainPoints[uiPointStorageIndex];
 				GVL_HMI.stPointEditorResultPoint := GVL_POINT.Points[ePointEditorName];
 				GVL_HMI.uiPointEditorResult := UINT#1;
 			END_IF;

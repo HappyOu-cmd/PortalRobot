@@ -20,9 +20,9 @@ FOR uiMachine := FIRST_MACHINE TO LAST_MACHINE DO
 	xCalled := uiCallState = UINT#1;
 	// Автовызов известен до выгрузки; счётчик меняется только при фактическом взятии.
 	IF ((uiCallState = UINT#0) OR (uiCallState > UINT#3))
-	AND GVL_GEOMETRY_CONTROL.xSupported AND GVL_GEOMETRY_CONTROL.xAutoEnabled
+	AND GVL_GEOMETRY_CONTROL.xSupported AND Persistent_Value.xAutoEnabled
 	AND (GVL_GEOMETRY_CONTROL.astStatus[1].xEnabled OR GVL_GEOMETRY_CONTROL.astStatus[2].xEnabled)
-	AND (GVL_GEOMETRY_CONTROL.auiActiveCount[uiMachine] >= (MAX(UINT#1, GVL_GEOMETRY_CONTROL.auiPeriod[uiMachine]) - UINT#1)) THEN
+	AND (GVL_GEOMETRY_CONTROL.auiActiveCount[uiMachine] >= (MAX(UINT#1, Persistent_Value.auiPeriod[uiMachine]) - UINT#1)) THEN
 		xCalled := TRUE;
 	END_IF;
 	xReadyDetail := astMachineStatus[uiMachine].xEnabled
@@ -32,9 +32,9 @@ FOR uiMachine := FIRST_MACHINE TO LAST_MACHINE DO
 		AND (astMachineStatus[uiMachine].ePartState = E_PART_STATE.LOADED)
 		AND (astMachineStatus[uiMachine].ePartType = E_PART_TYPE.DETAIL);
 	IF xRunning AND NOT xManual AND xCalled AND xReadyDetail AND (uiCallState <> UINT#1) THEN
-		GVL_GEOMETRY_CONTROL.udiNextCallId := GVL_GEOMETRY_CONTROL.udiNextCallId + UDINT#1;
-		IF GVL_GEOMETRY_CONTROL.udiNextCallId = UDINT#0 THEN GVL_GEOMETRY_CONTROL.udiNextCallId := UDINT#1; END_IF;
-		Call := EmptyCall; Call.udiId := GVL_GEOMETRY_CONTROL.udiNextCallId;
+		Persistent_Value.udiNextCallId := Persistent_Value.udiNextCallId + UDINT#1;
+		IF Persistent_Value.udiNextCallId = UDINT#0 THEN Persistent_Value.udiNextCallId := UDINT#1; END_IF;
+		Call := EmptyCall; Call.udiId := Persistent_Value.udiNextCallId;
 		Call.uiMachine := uiMachine; Call.uiProductType := Config.auiMachineType[uiMachine]; Call.uiState := UINT#1;
 		GVL_GEOMETRY_CONTROL.astCalls[uiMachine] := Call;
 		F_GEOMETRY_EVENT(Call := Call);
@@ -59,7 +59,7 @@ FOR uiMachine := FIRST_MACHINE TO LAST_MACHINE DO
 	// Отдельный TON для каждого вызова; реальное время, без ускорения симуляции.
 	atonGeometryWait[uiMachine](IN := xWaiting AND NOT GVL_ALARM.Command.xResetWarnings
 		AND (audiGeometryWaitCallId[uiMachine] = GVL_GEOMETRY_CONTROL.astCalls[uiMachine].udiId),
-		PT := GVL_GEOMETRY_CONTROL.tWaitWarningTimeout);
+		PT := Persistent_Value.tWaitWarningTimeout);
 	IF NOT xWaiting OR GVL_ALARM.Command.xResetWarnings
 	OR (audiGeometryWaitCallId[uiMachine] <> GVL_GEOMETRY_CONTROL.astCalls[uiMachine].udiId) THEN
 		axGeometryWaitWarned[uiMachine] := FALSE;

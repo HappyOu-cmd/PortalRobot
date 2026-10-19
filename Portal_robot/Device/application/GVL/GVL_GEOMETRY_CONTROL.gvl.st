@@ -23,18 +23,3 @@ VAR_GLOBAL
 	auiActiveCount : ARRAY [1..3] OF UINT;
 	auiSimulationCount : ARRAY [1..3] OF UINT;
 END_VAR
-VAR_GLOBAL PERSISTENT RETAIN
-	astConfig : ARRAY [1..2] OF ST_GEOMETRY_CONFIG;
-	astMemory : ARRAY [1..2] OF ST_GEOMETRY_MEMORY;
-	astRetainCalls : ARRAY [1..3] OF ST_GEOMETRY_CALL;
-	udiNextCallId : UDINT;
-	udiEventSequence : UDINT;
-	xAutoEnabled : BOOL := FALSE;
-	auiPeriod : ARRAY [1..3] OF UINT := [20, 20, 20];
-	auiCount : ARRAY [1..3] OF UINT;
-	xWaitWhenOccupied : BOOL := TRUE;
-	tTransportTimeout : TIME := T#10S;
-	tDriveFeedbackTimeout : TIME := T#3S;
-	tResetPulse : TIME := T#1S;
-	tWaitWarningTimeout : TIME := T#180S; // Ожидание готовой вызванной детали в станке до WARNING
-END_VAR

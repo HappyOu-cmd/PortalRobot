@@ -1232,3 +1232,20 @@ Node: `tests/magazineDetailExchangePlc.test.mjs`.
 W30 сохраняет эффект WARNING; условия, сброс и сообщение синхронизированы с
 документами 15/16 и alarm-catalog.json. Причины готовности 21/23 не являются новыми
 авариями или предупреждениями. OPC UA-структуры не расширялись.
+
+## Владелец постоянных данных — 19.10.2026
+
+В существующих `geometryPlc.test.mjs`, `geometryWaitPlc.test.mjs`,
+`geometryPointsPlc.test.mjs`, `partialPointsPlc.test.mjs` и
+`twoPalletPlcContract.test.mjs` входные сохранённые точки, версия хранилища,
+реальная конфигурация ГК, идентификаторы вызовов, периоды и политика ожидания
+теперь задаются через `Persistent_Value`. Активные вызовы, счётчики и состояния,
+а также конфигурация SIMULATION по-прежнему задаются через рабочие GVL.
+Описанные выше входные состояния и ожидаемые результаты сохраняются:
+NORMAL записывает реальную конфигурацию, SIMULATION — только свою; сохранение
+баз ГК не меняет 15 слотов прежних точек; готовность зависит от включённого
+оборудования; принятая смена магазина снимает настройку точек 14/15;
+автоматические и принудительные вызовы, маршрутизация и W52 работают с теми же
+периодами и таймаутами.
+
+Запуск из `visu`: `node --test tests/geometryPlc.test.mjs tests/geometryWaitPlc.test.mjs tests/geometryPointsPlc.test.mjs tests/partialPointsPlc.test.mjs tests/twoPalletPlcContract.test.mjs`.

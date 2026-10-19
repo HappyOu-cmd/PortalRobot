@@ -35,8 +35,9 @@ function fixture() {
       ePartState: i === 1 ? 1 : 0, ePartType: i === 1 ? 2 : 0, xCycleTimeValid: false }))],
     axMachineStartPending: [null, false, false, false],
     stMagazineStatus: { stTypeStatus: { aiBlankSlot: [null, 1, 1, 1], aiFreeSlot: [null, 2, 2, 2] } },
-    GVL_GEOMETRY_CONTROL: { xSupported: true, xAutoEnabled: false, xWaitWhenOccupied: true, uiLastStation: 0,
-      udiNextCallId: 44, auiActiveCount: [null, 0, 0, 0], auiPeriod: [null, 20, 20, 20], tWaitWarningTimeout: 180000,
+    Persistent_Value: { xAutoEnabled: false, xWaitWhenOccupied: true, udiNextCallId: 44,
+      auiPeriod: [null, 20, 20, 20], tWaitWarningTimeout: 180000 },
+    GVL_GEOMETRY_CONTROL: { xSupported: true, uiLastStation: 0, auiActiveCount: [null, 0, 0, 0],
       astCalls: [null, { ...emptyCall(), udiId: 44, uiMachine: 1, uiProductType: 1, uiState: 1, xForced: true }, emptyCall(), emptyCall()],
       astStatus: [null, { xEnabled: true, xConfigured: true, xReady: false, xError: false, uiState: 4 },
         { xEnabled: false, xConfigured: true, xReady: false, xError: false, uiState: 0 }],
@@ -72,7 +73,7 @@ function pendingCalls(s, order, firstId = 101) {
   let id = firstId;
   for (const machine of order) {
     g.astCalls[machine] = { ...emptyCall(), udiId: id, uiMachine: machine, uiProductType: 1, uiState: 1, xForced: true };
-    g.udiNextCallId = id;
+    s.Persistent_Value.udiNextCallId = id;
     id = id === 0xffffffff ? 1 : id + 1;
   }
 }
@@ -83,7 +84,7 @@ function take(s, machine) {
 
 function serviceFixture(operation = 'CHANGE') {
   const s = fixture(), g = s.GVL_GEOMETRY_CONTROL;
-  g.astCalls[1] = emptyCall(); g.xAutoEnabled = true; g.auiActiveCount[1] = 4;
+  g.astCalls[1] = emptyCall(); s.Persistent_Value.xAutoEnabled = true; g.auiActiveCount[1] = 4;
   Object.assign(g.astStatus[1], { xReady: true, uiState: 1 });
   g.astSignals = [null, { xReserve: false }, { xReserve: false }];
   g.axCallAllowed = [null, true, true, true]; g.axCancelAllowed = [null, true, true, true];
@@ -185,7 +186,7 @@ test('a previously bound call is not taken or counted again on release', () => {
 test('late calls retain occupied and unavailable GK recovery policies', () => {
   for (const wait of [true, false]) for (const available of [true, false]) {
     const s = serviceFixture(), g = s.GVL_GEOMETRY_CONTROL;
-    s.grip(); s.call(); g.xWaitWhenOccupied = wait;
+    s.grip(); s.call(); s.Persistent_Value.xWaitWhenOccupied = wait;
     Object.assign(g.astStatus[1], { xReady: false, xEnabled: available, uiState: available ? 4 : 0 });
     s.release(); assert.equal(g.astCalls[1].uiState, 2); assert.equal(s.xGeometryHeld, true);
     assert.equal(s.plan(), wait && available);
@@ -448,7 +449,7 @@ test('repeated forcing preserves call ID and cancellation does not reorder machi
     stGeometryCall: emptyCall(), stGeometryEmptyCall: emptyCall(), GVL_HMI: { uiGeometryResult: 0 },
     GVL_MULTI_TYPE: { Config: s.Config } });
   command(s); command(s); s.scan();
-  assert.equal(g.astCalls[2].udiId, 101); assert.equal(g.udiNextCallId, 103);
+  assert.equal(g.astCalls[2].udiId, 101); assert.equal(s.Persistent_Value.udiNextCallId, 103);
   assert.equal(g.astCalls[2].xForced, true);
   for (const [run, name] of selectors) assert.equal(selected(run, name, s, 0), 1, name);
   s.stGeometryRequest.uiAction = 12; command(s); s.scan();
@@ -463,7 +464,7 @@ test('repeated forcing preserves call ID and cancellation does not reorder machi
 
 test('automatic calls do not prioritize an older forced call', () => {
   const s = fixture(); pendingCalls(s, [3]);
-  const g = s.GVL_GEOMETRY_CONTROL; g.xAutoEnabled = true; g.auiActiveCount[1] = 19; g.auiActiveCount[2] = 19;
+  const g = s.GVL_GEOMETRY_CONTROL; s.Persistent_Value.xAutoEnabled = true; g.auiActiveCount[1] = 19; g.auiActiveCount[2] = 19;
   s.scan();
   assert.deepEqual(g.astCalls.slice(1).map(call => call.udiId), [102, 103, 101]);
   assert.deepEqual(g.auiActiveCount.slice(1), [19, 19, 0]);
@@ -499,7 +500,7 @@ test('held blank compatibility is preserved without blocking later compatible ca
 test('issued service binds its own call even when another machine was called earlier', () => {
   for (const forced of [true, false]) {
     const s = fixture(); pendingCalls(s, [1, 2]);
-    const g = s.GVL_GEOMETRY_CONTROL; g.xAutoEnabled = true; g.astCalls[2].xForced = forced; g.auiActiveCount[2] = 19;
+    const g = s.GVL_GEOMETRY_CONTROL; s.Persistent_Value.xAutoEnabled = true; g.astCalls[2].xForced = forced; g.auiActiveCount[2] = 19;
     s.astMachineStatus[2].xBusy = true; s.scan();
     assert.equal(s.axGeometryUnloadBlocked[2], false);
     assert.equal(take(s, 2), true); assert.equal(g.astCalls[2].uiState, 2);
@@ -512,7 +513,7 @@ test('issued service binds its own call even when another machine was called ear
 
 test('cadence reached during issued service binds the current detail despite an older call', () => {
   const s = fixture(); pendingCalls(s, [1]);
-  const g = s.GVL_GEOMETRY_CONTROL; g.xAutoEnabled = true; g.auiActiveCount[2] = 19;
+  const g = s.GVL_GEOMETRY_CONTROL; s.Persistent_Value.xAutoEnabled = true; g.auiActiveCount[2] = 19;
   s.astMachineStatus[2].xBusy = true; s.scan();
   assert.equal(g.astCalls[2].uiState, 0);
   assert.equal(take(s, 2), true); assert.equal(g.astCalls[2].udiId, 102); assert.equal(g.astCalls[2].uiState, 2);
@@ -535,7 +536,7 @@ test('older calls do not reject CHANGE or UNLOAD while a GK is free', () => {
 
 test('called detail stays in its machine and every selector can continue with another machine', () => {
   for (const waitWhenOccupied of [true, false]) {
-    const s = fixture(); s.GVL_GEOMETRY_CONTROL.xWaitWhenOccupied = waitWhenOccupied;
+    const s = fixture(); s.Persistent_Value.xWaitWhenOccupied = waitWhenOccupied;
     Object.assign(s.astMachineStatus[2], { xServiceRequired: true, ePartState: 1, ePartType: 2 });
     s.scan();
     assert.equal(s.axGeometryUnloadBlocked[1], true); assert.equal(s.IsMachineEligible({ uiMachine: 1 }), false);
@@ -552,7 +553,7 @@ test('called detail stays in its machine and every selector can continue with an
 
 test('automatic cadence creates one waiting call before unload without counting an unremoved detail', () => {
   const s = fixture(), g = s.GVL_GEOMETRY_CONTROL;
-  g.astCalls[1] = emptyCall(); g.xAutoEnabled = true; g.auiActiveCount[1] = 19;
+  g.astCalls[1] = emptyCall(); s.Persistent_Value.xAutoEnabled = true; g.auiActiveCount[1] = 19;
   s.scan(); s.scan(20);
   assert.equal(g.astCalls[1].uiState, 1); assert.equal(g.astCalls[1].xForced, false);
   assert.equal(g.auiActiveCount[1], 19); assert.equal(s.events.length, 1); assert.equal(s.axGeometryUnloadBlocked[1], true);
@@ -574,7 +575,7 @@ test('pending calls wait for enabled configured healthy GK while empty machines 
   }
   const s = fixture(); s.GVL_GEOMETRY_CONTROL.astCalls[1].uiState = 6; s.scan();
   assert.equal(s.axGeometryUnloadBlocked[1], false);
-  s.GVL_GEOMETRY_CONTROL.xAutoEnabled = true; s.GVL_GEOMETRY_CONTROL.auiActiveCount[1] = 18; s.scan();
+  s.Persistent_Value.xAutoEnabled = true; s.GVL_GEOMETRY_CONTROL.auiActiveCount[1] = 18; s.scan();
   assert.equal(s.axGeometryUnloadBlocked[1], false); assert.equal(s.events.length, 0);
 });
 
@@ -648,9 +649,10 @@ test('PLC timer setting accepts 1..3600 seconds only when cell settings are allo
   const run = compileSt(source.slice(start, source.indexOf('ELSIF (stGeometryRequest.uiStation', start)).replace(/^ELSIF/, 'IF') + '\nEND_IF;');
   for (const value of [999, 1000, 180000, 3600000, 3600001]) for (const allowed of [true, false]) {
     const s = { ...conversions, stGeometryRequest: { uiAction: 16, uiMachine: 5, udiValue: value },
-      GVL_GEOMETRY_CONTROL: { xSettingsAllowed: allowed, tWaitWarningTimeout: 180000 }, GVL_HMI: { uiGeometryResult: 2 } };
+      Persistent_Value: { tWaitWarningTimeout: 180000 },
+      GVL_GEOMETRY_CONTROL: { xSettingsAllowed: allowed }, GVL_HMI: { uiGeometryResult: 2 } };
     run(s); const accepted = allowed && value >= 1000 && value <= 3600000;
     assert.equal(s.GVL_HMI.uiGeometryResult, accepted ? 1 : 2);
-    assert.equal(s.GVL_GEOMETRY_CONTROL.tWaitWarningTimeout, accepted ? value : 180000);
+    assert.equal(s.Persistent_Value.tWaitWarningTimeout, accepted ? value : 180000);
   }
 });

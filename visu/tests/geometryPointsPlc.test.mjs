@@ -17,8 +17,9 @@ function state(index = 13, environment = 0) {
     GVL_CELL_CONTROL: { xManual: true, xGlobalError: false }, GVL_CELL_MANAGER: { Status: { xRunning: false } },
     GVL_ROBOT: { Status: { xBusy: false } }, GVL_MOTION_MANAGER: { stMotionManager: { Status: { xError: false } } },
     GVL_POINT_MANAGER: { PointManager: { Diag: { xXLimitValid: true, xYLimitValid: true, xZLimitValid: true } } },
-    GVL_POINT: { astRetainPoints: [null, ...Array.from({ length: 15 }, () => ({ ...point, X: 42 }))], Points: Array.from({ length: 100 }, () => ({ ...point })) },
-    GVL_GEOMETRY_CONTROL: { astStatus: [null, { xConfigAllowed: true, xPointWriteAllowed: true }, { xConfigAllowed: true, xPointWriteAllowed: true }], astConfig: [null, { ...config }, { ...config }], astSimulationConfig: [null, { ...config }, { ...config }], astActiveConfig: [null, { ...config }, { ...config }] },
+    Persistent_Value: { astRetainPoints: [null, ...Array.from({ length: 15 }, () => ({ ...point, X: 42 }))], astConfig: [null, { ...config }, { ...config }] },
+    GVL_POINT: { Points: Array.from({ length: 100 }, () => ({ ...point })) },
+    GVL_GEOMETRY_CONTROL: { astStatus: [null, { xConfigAllowed: true, xPointWriteAllowed: true }, { xConfigAllowed: true, xPointWriteAllowed: true }], astSimulationConfig: [null, { ...config }, { ...config }], astActiveConfig: [null, { ...config }, { ...config }] },
     GVL_HMI: { udiPointEditorCommandSeq: 8, uiPointEditorCommand: 2, uiPointEditorIndex: index, xModbusMode: false,
       alrPointEditorDraftXYZ: [null, 100, 200, 500], lrPointEditorDraftMagazineSafeZ: -300, lrPointEditorDraftMagazineChangeZ: 0,
       lrPointEditorDraftSpeedFactor: .1, stPointEditorResultPoint: { ...point } },
@@ -27,15 +28,15 @@ function state(index = 13, environment = 0) {
 
 test('PLC saves both GK bases in their environment owner and preserves old Persistent storage', () => {
   for (const environment of [0, 1]) for (const index of [13, 14]) {
-    const s = state(index, environment), before = structuredClone(s.GVL_POINT.astRetainPoints);
+    const s = state(index, environment), before = structuredClone(s.Persistent_Value.astRetainPoints);
     execute(s);
     assert.equal(s.GVL_HMI.uiPointEditorResult, 1);
     assert.equal(s.GVL_HMI.udiPointEditorAckSeq, 8);
-    const current = environment === 0 ? s.GVL_GEOMETRY_CONTROL.astConfig : s.GVL_GEOMETRY_CONTROL.astSimulationConfig;
-    const other = environment === 0 ? s.GVL_GEOMETRY_CONTROL.astSimulationConfig : s.GVL_GEOMETRY_CONTROL.astConfig;
+    const current = environment === 0 ? s.Persistent_Value.astConfig : s.GVL_GEOMETRY_CONTROL.astSimulationConfig;
+    const other = environment === 0 ? s.GVL_GEOMETRY_CONTROL.astSimulationConfig : s.Persistent_Value.astConfig;
     assert.deepEqual([current[index - 12].lrX, current[index - 12].lrSafeZ, current[index - 12].xConfigured], [100, -300, true]);
     assert.equal(other[index - 12].xConfigured, false);
-    assert.deepEqual(s.GVL_POINT.astRetainPoints, before);
+    assert.deepEqual(s.Persistent_Value.astRetainPoints, before);
     assert.equal(s.GVL_HMI.stPointEditorResultPoint.MagazineSafeZ, -300);
   }
 });
@@ -44,7 +45,7 @@ test('PLC rejects unsafe SAFE_Z without changing coordinates', () => {
   for (const offset of [0, 100, -2000, Number.NaN]) {
     const s = state(); s.GVL_HMI.lrPointEditorDraftMagazineSafeZ = offset;
     execute(s); assert.equal(s.GVL_HMI.uiPointEditorRejectReason, 22);
-    assert.equal(s.GVL_GEOMETRY_CONTROL.astConfig[1].xConfigured, false);
+    assert.equal(s.Persistent_Value.astConfig[1].xConfigured, false);
   }
 });
 
@@ -68,7 +69,7 @@ test('GK SAVE and published permission ignore all technological blocks in both e
     assert.equal(s.GVL_HMI.uiPointEditorResult, 1);
     assert.equal(s.GVL_HMI.uiPointEditorRejectReason, 0);
     assert.equal(s.GVL_HMI.udiPointEditorAckSeq, 8);
-    const owner = environment === 0 ? s.GVL_GEOMETRY_CONTROL.astConfig : s.GVL_GEOMETRY_CONTROL.astSimulationConfig;
+    const owner = environment === 0 ? s.Persistent_Value.astConfig : s.GVL_GEOMETRY_CONTROL.astSimulationConfig;
     assert.equal(owner[index - 12].lrX, 100);
     assert.deepEqual(s.GVL_GEOMETRY_CONTROL.astStatus, before);
     s.uiGeometry = index - 12; s.GVL_GEOMETRY_CONTROL.xSupported = true;
@@ -89,12 +90,12 @@ test('GK SAVE still rejects lost connection, unsupported interface, missing limi
     [s => { s.GVL_HMI.lrPointEditorDraftSpeedFactor = Number.NaN; }, 15],
   ];
   for (const [configure, reason] of cases) {
-    const s = state(); configure(s); const before = structuredClone(s.GVL_GEOMETRY_CONTROL.astConfig);
+    const s = state(); configure(s); const before = structuredClone(s.Persistent_Value.astConfig);
     execute(s);
     assert.equal(s.GVL_HMI.uiPointEditorResult, 2);
     assert.equal(s.GVL_HMI.uiPointEditorRejectReason, reason);
     assert.equal(s.GVL_HMI.udiPointEditorAckSeq, 8);
-    assert.deepEqual(s.GVL_GEOMETRY_CONTROL.astConfig, before);
+    assert.deepEqual(s.Persistent_Value.astConfig, before);
     assert.equal(s.uiRobotInterfaceWarningCode, s.WRN_POINT_EDIT_REJECTED);
   }
 });
@@ -132,7 +133,7 @@ test('legacy geometry Config command also ignores station and robot blocks and v
     const before = structuredClone(s.GVL_GEOMETRY_CONTROL.astStatus);
     save(s);
     assert.equal(s.GVL_HMI.uiGeometryResult, 1);
-    const owner = environment === 0 ? s.GVL_GEOMETRY_CONTROL.astConfig : s.GVL_GEOMETRY_CONTROL.astSimulationConfig;
+    const owner = environment === 0 ? s.Persistent_Value.astConfig : s.GVL_GEOMETRY_CONTROL.astSimulationConfig;
     assert.equal(owner[station].lrX, 100);
     assert.equal(owner[station].lrChangeZ, -300);
     assert.equal(owner[station].xConfigured, true);
@@ -173,7 +174,7 @@ test('PLC records a GK base while the station and conveyor are enabled and occup
     execute(s);
     assert.equal(s.GVL_HMI.uiPointEditorResult, 1);
     assert.equal(s.GVL_HMI.stPointEditorResultPoint.X, 8381.10999995771);
-    assert.equal(s.GVL_GEOMETRY_CONTROL.astConfig[index - 12].lrX, 8381.10999995771);
+    assert.equal(s.Persistent_Value.astConfig[index - 12].lrX, 8381.10999995771);
     assert.equal(s.GVL_GEOMETRY_CONTROL.astStatus[index - 12].xDriveRunning, true);
   }
 });
@@ -183,7 +184,7 @@ test('PLC repeated CAPTURE returns the complete current XYZ without altering sto
   s.GVL_HMI.lrPointEditorDraftMagazineSafeZ = 0;
   execute(s);
   assert.equal(s.GVL_HMI.uiPointEditorResult, 2);
-  const saved = structuredClone(s.GVL_GEOMETRY_CONTROL.astConfig);
+  const saved = structuredClone(s.Persistent_Value.astConfig);
   Object.assign(s.GVL_AXIS_GROUP.AxisGroup.Status, { ActualX: 8381.10999995771, ActualY: -76.90319995594032, ActualZ: 1234.830799988001 });
   Object.assign(s.GVL_HMI.stPointEditorResultPoint, { X: 3030.9016, Y: 471.7284, Z: 1280.804 });
   s.GVL_HMI.uiPointEditorCommand = 1;
@@ -194,7 +195,7 @@ test('PLC repeated CAPTURE returns the complete current XYZ without altering sto
     assert.equal(s.GVL_HMI.udiPointEditorAckSeq, sequence);
     const p = s.GVL_HMI.stPointEditorResultPoint;
     assert.deepEqual([p.X, p.Y, p.Z], [8381.10999995771, -76.90319995594032, 1234.830799988001]);
-    assert.deepEqual(s.GVL_GEOMETRY_CONTROL.astConfig, saved);
+    assert.deepEqual(s.Persistent_Value.astConfig, saved);
   }
 });
 

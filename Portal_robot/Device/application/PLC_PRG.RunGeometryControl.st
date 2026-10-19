@@ -10,7 +10,7 @@ GVL_GEOMETRY_CONTROL.xSupported := NOT GVL_HMI.xModbusMode
 IF xGeometryEnvironmentChanged THEN
 	FOR uiGeometry := UINT#1 TO UINT#2 DO
 		IF GVL_CELL_SETTINGS.eTestEnvironment = E_CELL_TEST_ENVIRONMENT.NORMAL THEN
-			GVL_GEOMETRY_CONTROL.astActiveMemory[uiGeometry] := GVL_GEOMETRY_CONTROL.astMemory[uiGeometry];
+			GVL_GEOMETRY_CONTROL.astActiveMemory[uiGeometry] := Persistent_Value.astMemory[uiGeometry];
 		ELSE GVL_GEOMETRY_CONTROL.astActiveMemory[uiGeometry] := GVL_GEOMETRY_CONTROL.astSimulationMemory[uiGeometry]; END_IF;
 		GVL_GEOMETRY_CONTROL.astSignals[uiGeometry].xReserve := FALSE;
 		GVL_GEOMETRY_CONTROL.astSignals[uiGeometry].xDeposited := FALSE;
@@ -19,8 +19,8 @@ IF xGeometryEnvironmentChanged THEN
 	END_FOR;
 	FOR uiGeometryMachine := UINT#1 TO UINT#3 DO
 		IF GVL_CELL_SETTINGS.eTestEnvironment = E_CELL_TEST_ENVIRONMENT.NORMAL THEN
-			GVL_GEOMETRY_CONTROL.astCalls[uiGeometryMachine] := GVL_GEOMETRY_CONTROL.astRetainCalls[uiGeometryMachine];
-			GVL_GEOMETRY_CONTROL.auiActiveCount[uiGeometryMachine] := GVL_GEOMETRY_CONTROL.auiCount[uiGeometryMachine];
+			GVL_GEOMETRY_CONTROL.astCalls[uiGeometryMachine] := Persistent_Value.astRetainCalls[uiGeometryMachine];
+			GVL_GEOMETRY_CONTROL.auiActiveCount[uiGeometryMachine] := Persistent_Value.auiCount[uiGeometryMachine];
 		ELSE
 			GVL_GEOMETRY_CONTROL.astCalls[uiGeometryMachine] := GVL_GEOMETRY_CONTROL.astSimulationCalls[uiGeometryMachine];
 			GVL_GEOMETRY_CONTROL.auiActiveCount[uiGeometryMachine] := GVL_GEOMETRY_CONTROL.auiSimulationCount[uiGeometryMachine];
@@ -38,7 +38,7 @@ END_IF;
 FOR uiGeometry := UINT#1 TO UINT#2 DO
 	GVL_GEOMETRY_CONTROL.auiAction[uiGeometry] := UINT#0;
 	IF GVL_CELL_SETTINGS.eTestEnvironment = E_CELL_TEST_ENVIRONMENT.NORMAL THEN
-		GVL_GEOMETRY_CONTROL.astActiveConfig[uiGeometry] := GVL_GEOMETRY_CONTROL.astConfig[uiGeometry];
+		GVL_GEOMETRY_CONTROL.astActiveConfig[uiGeometry] := Persistent_Value.astConfig[uiGeometry];
 	ELSE GVL_GEOMETRY_CONTROL.astActiveConfig[uiGeometry] := GVL_GEOMETRY_CONTROL.astSimulationConfig[uiGeometry]; END_IF;
 END_FOR;
 GVL_GEOMETRY_CONTROL.xAutoChangeAllowed := GVL_GEOMETRY_CONTROL.xSupported
@@ -77,10 +77,10 @@ IF (udiGeometryRequest <> UDINT#0) AND (udiGeometryRequest <> GVL_HMI.udiGeometr
 				IF GVL_GEOMETRY_CONTROL.astCalls[uiGeometryMachine].uiState = UINT#1 THEN
 					stGeometryCall := GVL_GEOMETRY_CONTROL.astCalls[uiGeometryMachine];
 				ELSE
-					GVL_GEOMETRY_CONTROL.udiNextCallId := GVL_GEOMETRY_CONTROL.udiNextCallId + UDINT#1;
-					IF GVL_GEOMETRY_CONTROL.udiNextCallId = UDINT#0 THEN GVL_GEOMETRY_CONTROL.udiNextCallId := UDINT#1; END_IF;
+					Persistent_Value.udiNextCallId := Persistent_Value.udiNextCallId + UDINT#1;
+					IF Persistent_Value.udiNextCallId = UDINT#0 THEN Persistent_Value.udiNextCallId := UDINT#1; END_IF;
 					stGeometryCall := stGeometryEmptyCall;
-					stGeometryCall.udiId := GVL_GEOMETRY_CONTROL.udiNextCallId;
+					stGeometryCall.udiId := Persistent_Value.udiNextCallId;
 					stGeometryCall.uiMachine := uiGeometryMachine;
 					stGeometryCall.uiProductType := GVL_MULTI_TYPE.Config.auiMachineType[uiGeometryMachine];
 				END_IF;
@@ -98,24 +98,24 @@ IF (udiGeometryRequest <> UDINT#0) AND (udiGeometryRequest <> GVL_HMI.udiGeometr
 			END_IF;
 		ELSIF (stGeometryRequest.uiAction = UINT#9) AND GVL_GEOMETRY_CONTROL.xAutoChangeAllowed
 		AND (stGeometryRequest.udiValue <= UDINT#1) THEN
-			GVL_GEOMETRY_CONTROL.xAutoEnabled := stGeometryRequest.udiValue = UDINT#1;
+			Persistent_Value.xAutoEnabled := stGeometryRequest.udiValue = UDINT#1;
 			GVL_HMI.uiGeometryResult := UINT#1;
 		ELSIF (stGeometryRequest.uiAction = UINT#10) AND GVL_GEOMETRY_CONTROL.xAutoChangeAllowed
 		AND (stGeometryRequest.uiMachine <= UINT#3) AND (stGeometryRequest.udiValue >= UDINT#1)
 		AND (stGeometryRequest.udiValue <= UDINT#10000) THEN
 			FOR uiGeometryMachine := UINT#1 TO UINT#3 DO
 				IF (stGeometryRequest.uiMachine = UINT#0) OR (stGeometryRequest.uiMachine = uiGeometryMachine) THEN
-					GVL_GEOMETRY_CONTROL.auiPeriod[uiGeometryMachine] := UDINT_TO_UINT(stGeometryRequest.udiValue);
+					Persistent_Value.auiPeriod[uiGeometryMachine] := UDINT_TO_UINT(stGeometryRequest.udiValue);
 				END_IF;
 			END_FOR;
 			GVL_HMI.uiGeometryResult := UINT#1;
 		ELSIF (stGeometryRequest.uiAction = UINT#16) AND GVL_GEOMETRY_CONTROL.xSettingsAllowed THEN
 			CASE stGeometryRequest.uiMachine OF
-				UINT#1: IF stGeometryRequest.udiValue <= UDINT#1 THEN GVL_GEOMETRY_CONTROL.xWaitWhenOccupied := stGeometryRequest.udiValue = UDINT#1; GVL_HMI.uiGeometryResult := UINT#1; END_IF;
-				UINT#2: IF (stGeometryRequest.udiValue >= UDINT#100) AND (stGeometryRequest.udiValue <= UDINT#600000) THEN GVL_GEOMETRY_CONTROL.tTransportTimeout := UDINT_TO_TIME(stGeometryRequest.udiValue); GVL_HMI.uiGeometryResult := UINT#1; END_IF;
-				UINT#3: IF (stGeometryRequest.udiValue >= UDINT#100) AND (stGeometryRequest.udiValue <= UDINT#60000) THEN GVL_GEOMETRY_CONTROL.tDriveFeedbackTimeout := UDINT_TO_TIME(stGeometryRequest.udiValue); GVL_HMI.uiGeometryResult := UINT#1; END_IF;
-				UINT#4: IF (stGeometryRequest.udiValue >= UDINT#100) AND (stGeometryRequest.udiValue <= UDINT#10000) THEN GVL_GEOMETRY_CONTROL.tResetPulse := UDINT_TO_TIME(stGeometryRequest.udiValue); GVL_HMI.uiGeometryResult := UINT#1; END_IF;
-				UINT#5: IF (stGeometryRequest.udiValue >= UDINT#1000) AND (stGeometryRequest.udiValue <= UDINT#3600000) THEN GVL_GEOMETRY_CONTROL.tWaitWarningTimeout := UDINT_TO_TIME(stGeometryRequest.udiValue); GVL_HMI.uiGeometryResult := UINT#1; END_IF;
+				UINT#1: IF stGeometryRequest.udiValue <= UDINT#1 THEN Persistent_Value.xWaitWhenOccupied := stGeometryRequest.udiValue = UDINT#1; GVL_HMI.uiGeometryResult := UINT#1; END_IF;
+				UINT#2: IF (stGeometryRequest.udiValue >= UDINT#100) AND (stGeometryRequest.udiValue <= UDINT#600000) THEN Persistent_Value.tTransportTimeout := UDINT_TO_TIME(stGeometryRequest.udiValue); GVL_HMI.uiGeometryResult := UINT#1; END_IF;
+				UINT#3: IF (stGeometryRequest.udiValue >= UDINT#100) AND (stGeometryRequest.udiValue <= UDINT#60000) THEN Persistent_Value.tDriveFeedbackTimeout := UDINT_TO_TIME(stGeometryRequest.udiValue); GVL_HMI.uiGeometryResult := UINT#1; END_IF;
+				UINT#4: IF (stGeometryRequest.udiValue >= UDINT#100) AND (stGeometryRequest.udiValue <= UDINT#10000) THEN Persistent_Value.tResetPulse := UDINT_TO_TIME(stGeometryRequest.udiValue); GVL_HMI.uiGeometryResult := UINT#1; END_IF;
+				UINT#5: IF (stGeometryRequest.udiValue >= UDINT#1000) AND (stGeometryRequest.udiValue <= UDINT#3600000) THEN Persistent_Value.tWaitWarningTimeout := UDINT_TO_TIME(stGeometryRequest.udiValue); GVL_HMI.uiGeometryResult := UINT#1; END_IF;
 			END_CASE;
 		ELSIF (stGeometryRequest.uiStation >= UINT#1) AND (stGeometryRequest.uiStation <= UINT#2) THEN
 			uiGeometry := stGeometryRequest.uiStation;
@@ -138,7 +138,7 @@ IF (udiGeometryRequest <> UDINT#0) AND (udiGeometryRequest <> GVL_HMI.udiGeometr
 					AND ((stGeometryConfig.lrZ + stGeometryConfig.lrSafeZ) >= GVL_POINT_MANAGER.PointManager.Diag.lrZ_MinLimit);
 				IF xGeometryConfigValid THEN
 					stGeometryConfig.xConfigured := TRUE;
-					IF GVL_CELL_SETTINGS.eTestEnvironment = E_CELL_TEST_ENVIRONMENT.NORMAL THEN GVL_GEOMETRY_CONTROL.astConfig[uiGeometry] := stGeometryConfig;
+					IF GVL_CELL_SETTINGS.eTestEnvironment = E_CELL_TEST_ENVIRONMENT.NORMAL THEN Persistent_Value.astConfig[uiGeometry] := stGeometryConfig;
 					ELSE GVL_GEOMETRY_CONTROL.astSimulationConfig[uiGeometry] := stGeometryConfig; END_IF;
 					GVL_GEOMETRY_CONTROL.astActiveConfig[uiGeometry] := stGeometryConfig; GVL_HMI.uiGeometryResult := UINT#1;
 				END_IF;
@@ -209,8 +209,8 @@ FOR uiGeometry := UINT#1 TO UINT#2 DO
 		xDriveRunning := xGeometryDriveRunning, xPartAtEnd := xGeometryPartAtEnd,
 		rSimulationTravel := GEOMETRY_SIM[uiGeometry].rTravel,
 		Signals := stGeometrySignals, Config := GVL_GEOMETRY_CONTROL.astActiveConfig[uiGeometry],
-		tTransport := GVL_GEOMETRY_CONTROL.tTransportTimeout, tFeedback := GVL_GEOMETRY_CONTROL.tDriveFeedbackTimeout,
-		tResetPulse := GVL_GEOMETRY_CONTROL.tResetPulse,
+		tTransport := Persistent_Value.tTransportTimeout, tFeedback := Persistent_Value.tDriveFeedbackTimeout,
+		tResetPulse := Persistent_Value.tResetPulse,
 		uiTimeFactor := SEL(GVL_CELL_SETTINGS.xSimulationAccelerationActive, UINT#1, GVL_CELL_SETTINGS.uiSimulationTimeFactorApplied),
 		Memory := GVL_GEOMETRY_CONTROL.astActiveMemory[uiGeometry], Status => GVL_GEOMETRY_CONTROL.astStatus[uiGeometry],
 		Warning => GVL_GEOMETRY_CONTROL.astWarning[uiGeometry]);

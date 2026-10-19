@@ -480,7 +480,8 @@ test('routing excludes pending GK from free selection and availability without b
 test('automatic cadence uses confirmed taken parts; forced sample restarts its own machine counter', () => {
   const run = compileSt(readPlc('FB/F_GEOMETRY_TAKE_DETAIL.st'));
   const s = { ...conversions, uiMachine: 2, uiProductType: 3, F_GEOMETRY_TAKE_DETAIL: false, Call: emptyCall(), EmptyCall: emptyCall(), events: [],
-    GVL_GEOMETRY_CONTROL: { xSupported: true, xAutoEnabled: true, udiNextCallId: 0, astStatus: [null, { xEnabled: true }, { xEnabled: true }], auiActiveCount: [0, 0, 0, 0], auiPeriod: [0, 3, 3, 3], astCalls: [null, emptyCall(), emptyCall(), emptyCall()] } };
+    Persistent_Value: { xAutoEnabled: true, udiNextCallId: 0, auiPeriod: [0, 3, 3, 3] },
+    GVL_GEOMETRY_CONTROL: { xSupported: true, astStatus: [null, { xEnabled: true }, { xEnabled: true }], auiActiveCount: [0, 0, 0, 0], astCalls: [null, emptyCall(), emptyCall(), emptyCall()] } };
   s.F_GEOMETRY_EVENT = ({ Call }) => { s.events.push(structuredClone(Call)); return true; };
   run(s); run(s); assert.equal(s.F_GEOMETRY_TAKE_DETAIL, false); assert.equal(s.GVL_GEOMETRY_CONTROL.auiActiveCount[2], 2);
   run(s); assert.equal(s.F_GEOMETRY_TAKE_DETAIL, true); assert.equal(s.GVL_GEOMETRY_CONTROL.astCalls[2].uiProductType, 3);
@@ -494,10 +495,11 @@ test('planner waits when both GK are occupied and otherwise bypasses with a reco
   const plan = compileSt(readPlc('FB/FB_CELL_MANAGER/FB_CELL_MANAGER.PlanGeometry.st'));
   const E_CELL_MANAGER_STATE = { GEOMETRY_DELIVER: 20, GEOMETRY_WAIT_FREE: 19 };
   const s = { E_CELL_MANAGER_STATE, PlanGeometry: false, uiFree: 0, uiAvailable: 0, xGeometryHeld: true, stRobotStatus: { xDetailAvailable: true }, uiGeometryMachine: 2, uiGeometryStation: 0, uiGeometryStep: 0, uiGeometryParkStation: 0, uiGeometryBypassReason: 0, udiGeometryMagazineCounter: 0, stMagazineStatus: { udiProducedPartsTotal: 7 }, eState: 1,
-    GVL_GEOMETRY_CONTROL: { xWaitWhenOccupied: true, astCalls: [null, emptyCall(), callFor(10), emptyCall()], astSignals: [null, {}, {}] },
+    Persistent_Value: { xWaitWhenOccupied: true },
+    GVL_GEOMETRY_CONTROL: { astCalls: [null, emptyCall(), callFor(10), emptyCall()], astSignals: [null, {}, {}] },
     F_GEOMETRY_SELECT_STATION: ({ xRequireFree }) => xRequireFree ? 0 : 2, F_GEOMETRY_EVENT: () => true };
   plan(s); assert.equal(s.PlanGeometry, true); assert.equal(s.eState, 19); assert.equal(s.uiGeometryParkStation, 2);
-  s.GVL_GEOMETRY_CONTROL.xWaitWhenOccupied = false; plan(s); assert.equal(s.PlanGeometry, false); assert.equal(s.uiGeometryBypassReason, 1); assert.equal(s.udiGeometryMagazineCounter, 7);
+  s.Persistent_Value.xWaitWhenOccupied = false; plan(s); assert.equal(s.PlanGeometry, false); assert.equal(s.uiGeometryBypassReason, 1); assert.equal(s.udiGeometryMagazineCounter, 7);
   s.F_GEOMETRY_SELECT_STATION = () => 0; plan(s); assert.equal(s.uiGeometryBypassReason, 2);
   s.F_GEOMETRY_SELECT_STATION = () => 1; plan(s); assert.equal(s.eState, 20); assert.equal(s.GVL_GEOMETRY_CONTROL.astCalls[2].uiStation, 1); assert.equal(s.GVL_GEOMETRY_CONTROL.astSignals[1].xReserve, true);
 });
@@ -509,7 +511,8 @@ function geometryRoute(stationId = 1) {
   const s = { E_CELL_MANAGER_STATE, E_POINT_NAME, E_ROBOT_ACTION: { MOVE_TO_POINT: 1, UNCLAMP_2: 4, ROTATE_TO_BLANK: 6, ROTATE_TO_DETAIL: 7 }, xStopRequested: false, xGlobalError: false, xMotionBusy: false, xRunning: true,
     uiGeometryStation: stationId, uiGeometryMachine: 2, uiGeometryParkStation: stationId, uiGeometryStep: 0, eState: E_CELL_MANAGER_STATE.GEOMETRY_DELIVER, eGeometryReturnState: 0, eGeometrySafePoint: 0, eGeometryChangePoint: 0, eGeometryPlacePoint: 0,
     stRobotStatus: { xBusy: false, xDone: false, xError: false, xGripper2Open: false, xDetailAvailable: true, eCurrentPoint: 0 }, Command: { stRobot: {} }, Error: { dwErrorActive: 0 }, ERR_ROBOT: 2, xSafetyHomeRequired: false, xStoppedPoseValid: false, xGeometryHeld: true, uiDetailPayloadType: 3,
-    GVL_GEOMETRY_CONTROL: { xWaitWhenOccupied: true, uiLastStation: 0, astCalls: [null, emptyCall(), { ...callFor(42), uiStation: stationId, uiState: 3 }, emptyCall()],
+    Persistent_Value: { xWaitWhenOccupied: true },
+    GVL_GEOMETRY_CONTROL: { uiLastStation: 0, astCalls: [null, emptyCall(), { ...callFor(42), uiStation: stationId, uiState: 3 }, emptyCall()],
       astStatus: [null, ...[1, 2].map(id => ({ xError: false, xEnabled: true, xReady: id !== stationId, xReserved: id === stationId }))],
       astSignals: [null, ...[1, 2].map(id => ({ xReserve: id === stationId, xRobotInteraction: false, xDeposited: false, xReleased: false }))] },
     F_GEOMETRY_SELECT_STATION: () => 0, F_GEOMETRY_EVENT: () => true,

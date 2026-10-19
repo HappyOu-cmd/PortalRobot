@@ -190,7 +190,7 @@ test('v2 test buffer is static-only and mode changes invalidate magazine bases',
   assert.match(globals, /uiMode : UINT := UINT#1/);
   assert.match(control, /xTestScenarioApplyAllowed := xTestStable\s+AND \(GVL_TWO_PALLET\.uiMode = 0\)\s*\/\/[^\r\n]*\s+AND GVL_HMI\.xTestSessionActive/);
   assert.match(mode, /xModeChangeAllowed :=[\s\S]*?NOT GVL_HMI\.xTestSessionActive/);
-  assert.match(mode, /GVL_TWO_PALLET\.uiMode := stTwinRequest\.uiValue;[\s\S]*?GVL_POINT\.astRetainPoints\[13 \+ uiTwin\]\.xConfigured := FALSE/);
+  assert.match(mode, /GVL_TWO_PALLET\.uiMode := stTwinRequest\.uiValue;[\s\S]*?Persistent_Value\.astRetainPoints\[13 \+ uiTwin\]\.xConfigured := FALSE/);
   assert.match(mode, /xPointTableReady := FALSE/);
 });
 

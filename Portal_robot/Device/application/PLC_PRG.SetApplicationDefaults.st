@@ -16,8 +16,8 @@ IF NOT xApplicationStartupInitialized THEN
 	// тип на старте. При реальной смене типа старые базы магазинов недействительны.
 	IF GVL_TWO_PALLET.uiMode <> UINT#1 THEN
 		GVL_TWO_PALLET.uiMode := UINT#1;
-		GVL_POINT.astRetainPoints[UINT#14].xConfigured := FALSE;
-		GVL_POINT.astRetainPoints[UINT#15].xConfigured := FALSE;
+		Persistent_Value.astRetainPoints[UINT#14].xConfigured := FALSE;
+		Persistent_Value.astRetainPoints[UINT#15].xConfigured := FALSE;
 		xPointTableReady := FALSE;
 	END_IF;
 	GVL_CELL_SETTINGS.eTestEnvironment := E_CELL_TEST_ENVIRONMENT.SIMULATION;
@@ -27,18 +27,18 @@ END_IF;
 // При первом запуске этой схемы намеренно отбрасываем прежние инженерные
 // координаты. Нулевая скорость и xConfigured=FALSE не позволяют принять
 // нулевую точку за пригодную для движения.
-IF GVL_POINT.udiPointStorageVersion <> GVL_POINT.udiExpectedPointStorageVersion THEN
+IF Persistent_Value.udiPointStorageVersion <> GVL_POINT.udiExpectedPointStorageVersion THEN
 	FOR uiPointEditorIndex := UINT#1 TO INT_TO_UINT(GVL_POINT.iPersistentPointCapacity) DO
-		GVL_POINT.astRetainPoints[uiPointEditorIndex].Name := '';
-		GVL_POINT.astRetainPoints[uiPointEditorIndex].X := 0.0;
-		GVL_POINT.astRetainPoints[uiPointEditorIndex].Y := 0.0;
-		GVL_POINT.astRetainPoints[uiPointEditorIndex].Z := 0.0;
-		GVL_POINT.astRetainPoints[uiPointEditorIndex].MagazineSafeZ := 0.0;
-		GVL_POINT.astRetainPoints[uiPointEditorIndex].MagazineChangeZ := 0.0;
-		GVL_POINT.astRetainPoints[uiPointEditorIndex].SpeedFactor := 0.0;
-		GVL_POINT.astRetainPoints[uiPointEditorIndex].xConfigured := FALSE;
+		Persistent_Value.astRetainPoints[uiPointEditorIndex].Name := '';
+		Persistent_Value.astRetainPoints[uiPointEditorIndex].X := 0.0;
+		Persistent_Value.astRetainPoints[uiPointEditorIndex].Y := 0.0;
+		Persistent_Value.astRetainPoints[uiPointEditorIndex].Z := 0.0;
+		Persistent_Value.astRetainPoints[uiPointEditorIndex].MagazineSafeZ := 0.0;
+		Persistent_Value.astRetainPoints[uiPointEditorIndex].MagazineChangeZ := 0.0;
+		Persistent_Value.astRetainPoints[uiPointEditorIndex].SpeedFactor := 0.0;
+		Persistent_Value.astRetainPoints[uiPointEditorIndex].xConfigured := FALSE;
 	END_FOR;
-	GVL_POINT.udiPointStorageVersion := GVL_POINT.udiExpectedPointStorageVersion;
+	Persistent_Value.udiPointStorageVersion := GVL_POINT.udiExpectedPointStorageVersion;
 END_IF;
 
 // Единственное соответствие компактного редакторского индекса, стабильного
@@ -67,13 +67,13 @@ FOR uiPointEditorIndex := UINT#1 TO INT_TO_UINT(GVL_POINT.iRequiredPointCount) D
 	END_CASE;
 
 	IF (ePointEditorName <> E_POINT_NAME.NONE) AND (uiPointStorageIndex <> UINT#0) THEN
-		GVL_POINT.Points[ePointEditorName] := GVL_POINT.astRetainPoints[uiPointStorageIndex];
+		GVL_POINT.Points[ePointEditorName] := Persistent_Value.astRetainPoints[uiPointStorageIndex];
 		IF (ePointEditorName = E_POINT_NAME.MAGAZINE_1_DETAIL)
 		OR (ePointEditorName = E_POINT_NAME.MAGAZINE_2_DETAIL) THEN
 			GVL_POINT.Points[ePointEditorName].xConfigured :=
-				GVL_POINT.astRetainPoints[uiPointStorageIndex].xConfigured
-				AND (GVL_POINT.astRetainPoints[uiPointStorageIndex].MagazineSafeZ <> LREAL#0.0)
-				AND (GVL_POINT.astRetainPoints[uiPointStorageIndex].MagazineChangeZ <> LREAL#0.0);
+				Persistent_Value.astRetainPoints[uiPointStorageIndex].xConfigured
+				AND (Persistent_Value.astRetainPoints[uiPointStorageIndex].MagazineSafeZ <> LREAL#0.0)
+				AND (Persistent_Value.astRetainPoints[uiPointStorageIndex].MagazineChangeZ <> LREAL#0.0);
 		END_IF;
 		IF NOT GVL_POINT.Points[ePointEditorName].xConfigured THEN
 			xPointTableReady := FALSE;

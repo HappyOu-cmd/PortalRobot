@@ -25,11 +25,3 @@ VAR_GLOBAL RETAIN
 	axAutoSwapEnabled : ARRAY [1..2] OF BOOL := [TRUE, TRUE];
 	xAutoSwapDefaultsApplied : BOOL; // Однократная инициализация новой RETAIN-настройки
 END_VAR
-
-VAR_GLOBAL PERSISTENT RETAIN
-	// Постоянный шаг сетки для расчёта координат робота, отдельно по типам магазинов.
-	lrStaticPitchX : LREAL := 60.0;
-	lrStaticPitchY : LREAL := 60.0;
-	lrTwinPitchX : LREAL := 70.0;
-	lrTwinPitchY : LREAL := 70.0;
-END_VAR

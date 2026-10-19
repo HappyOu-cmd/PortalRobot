@@ -37,11 +37,11 @@ FOR uiTwin := 1 TO 2 DO
 END_FOR;
 IF NOT xTwinStartup THEN
 	IF GVL_TWO_PALLET.uiMode = 0 THEN
-		GVL_HMI.MagazinePitchX := GVL_TWO_PALLET.lrStaticPitchX;
-		GVL_HMI.MagazinePitchY := GVL_TWO_PALLET.lrStaticPitchY;
+		GVL_HMI.MagazinePitchX := Persistent_Value.lrStaticPitchX;
+		GVL_HMI.MagazinePitchY := Persistent_Value.lrStaticPitchY;
 	ELSE
-		GVL_HMI.MagazinePitchX := GVL_TWO_PALLET.lrTwinPitchX;
-		GVL_HMI.MagazinePitchY := GVL_TWO_PALLET.lrTwinPitchY;
+		GVL_HMI.MagazinePitchX := Persistent_Value.lrTwinPitchX;
+		GVL_HMI.MagazinePitchY := Persistent_Value.lrTwinPitchY;
 	END_IF;
 	FOR uiTwin := 1 TO 2 DO
 		// После перезапуска содержимое сохранено, готовность загрузки подтверждается заново.
@@ -75,11 +75,11 @@ IF (udiTwinSnapshot <> 0) AND (udiTwinSnapshot <> GVL_HMI.udiTwinAckSeq) THEN
 		IF GVL_TWO_PALLET.xModeChangeAllowed AND (stTwinRequest.uiValue <= 1) AND xHmiConnectionAlive THEN
 			IF GVL_TWO_PALLET.uiMode <> stTwinRequest.uiValue THEN
 				IF GVL_TWO_PALLET.uiMode = 0 THEN
-					GVL_TWO_PALLET.lrStaticPitchX := GVL_HMI.MagazinePitchX;
-					GVL_TWO_PALLET.lrStaticPitchY := GVL_HMI.MagazinePitchY;
+					Persistent_Value.lrStaticPitchX := GVL_HMI.MagazinePitchX;
+					Persistent_Value.lrStaticPitchY := GVL_HMI.MagazinePitchY;
 				ELSE
-					GVL_TWO_PALLET.lrTwinPitchX := GVL_HMI.MagazinePitchX;
-					GVL_TWO_PALLET.lrTwinPitchY := GVL_HMI.MagazinePitchY;
+					Persistent_Value.lrTwinPitchX := GVL_HMI.MagazinePitchX;
+					Persistent_Value.lrTwinPitchY := GVL_HMI.MagazinePitchY;
 				END_IF;
 				GVL_TWO_PALLET.uiMode := stTwinRequest.uiValue;
 				GVL_TWO_PALLET.xModeChanged := TRUE;
@@ -87,15 +87,15 @@ IF (udiTwinSnapshot <> 0) AND (udiTwinSnapshot <> GVL_HMI.udiTwinAckSeq) THEN
 					axMagazineInventoryChanged[uiTwin] := TRUE;
 					IF GVL_TWO_PALLET.uiMode = 0 THEN GVL_DETAIL.astMagazine[uiTwin] := GVL_TWO_PALLET.astStatic[uiTwin]; END_IF;
 					// Базы меняются вместе с механикой: старые координаты нельзя молча использовать.
-					GVL_POINT.astRetainPoints[13 + uiTwin].xConfigured := FALSE;
+					Persistent_Value.astRetainPoints[13 + uiTwin].xConfigured := FALSE;
 					axMagazinePointsReady[uiTwin] := FALSE;
 				END_FOR;
 				GVL_POINT.Points[E_POINT_NAME.MAGAZINE_1_DETAIL].xConfigured := FALSE;
 				GVL_POINT.Points[E_POINT_NAME.MAGAZINE_2_DETAIL].xConfigured := FALSE;
 				IF GVL_TWO_PALLET.uiMode = 0 THEN
-					GVL_HMI.MagazinePitchX := GVL_TWO_PALLET.lrStaticPitchX; GVL_HMI.MagazinePitchY := GVL_TWO_PALLET.lrStaticPitchY;
+					GVL_HMI.MagazinePitchX := Persistent_Value.lrStaticPitchX; GVL_HMI.MagazinePitchY := Persistent_Value.lrStaticPitchY;
 				ELSE
-					GVL_HMI.MagazinePitchX := GVL_TWO_PALLET.lrTwinPitchX; GVL_HMI.MagazinePitchY := GVL_TWO_PALLET.lrTwinPitchY;
+					GVL_HMI.MagazinePitchX := Persistent_Value.lrTwinPitchX; GVL_HMI.MagazinePitchY := Persistent_Value.lrTwinPitchY;
 				END_IF;
 				xPointTableReady := FALSE;
 			END_IF;

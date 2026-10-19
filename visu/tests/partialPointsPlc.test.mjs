@@ -52,9 +52,9 @@ function storage(mask = 1 | 8, home = true) {
     ...defaultsFromSt(readPlc('PLC_PRG.st')), E_POINT_NAME, ePointEditorName: E_POINT_NAME.NONE,
     xApplicationStartupInitialized: true, INT_TO_UINT: Number,
     axMachinePointsReady: [null, false, false, false], axMagazinePointsReady: [null, false, false],
-    GVL_POINT: { astRetainPoints: retained, Points: Array.from({ length: 101 }, () => ({ ...point })),
-      iPersistentPointCapacity: 15, iRequiredPointCount: 12,
-      udiPointStorageVersion: 1, udiExpectedPointStorageVersion: 1 },
+    Persistent_Value: { astRetainPoints: retained, udiPointStorageVersion: 1 },
+    GVL_POINT: { Points: Array.from({ length: 101 }, () => ({ ...point })),
+      iPersistentPointCapacity: 15, iRequiredPointCount: 12, udiExpectedPointStorageVersion: 1 },
     GVL_MACHINE: { Status: [null, ...Array.from({ length: 3 }, () => ({ xEnabled: false }))] },
     GVL_MAGAZINE: { astStatus: [null, { xEnabled: false }, { xEnabled: false }] },
     GVL_GEOMETRY_CONTROL: { astStatus: [null, { xEnabled: false, xConfigured: Boolean(mask & 32) },
@@ -106,14 +106,14 @@ test('all equipment subsets require HOME_SAFETY and only the enabled equipment p
 test('each machine needs all three own points; magazine bases need both nonzero Z offsets', () => {
   for (let machine = 0; machine < 3; machine++) for (const point of [1, 3, 4]) {
     const state = storage(31);
-    state.GVL_POINT.astRetainPoints[machine * 4 + point].xConfigured = false;
+    state.Persistent_Value.astRetainPoints[machine * 4 + point].xConfigured = false;
     loadPoints(state);
     assert.equal(state.axMachinePointsReady[machine + 1], false);
     for (let other = 1; other <= 3; other++) if (other !== machine + 1) assert.equal(state.axMachinePointsReady[other], true);
   }
   for (let magazine = 1; magazine <= 2; magazine++) for (const field of ['MagazineSafeZ', 'MagazineChangeZ']) {
     const state = storage(31);
-    state.GVL_POINT.astRetainPoints[13 + magazine][field] = 0;
+    state.Persistent_Value.astRetainPoints[13 + magazine][field] = 0;
     loadPoints(state);
     assert.equal(state.axMagazinePointsReady[magazine], false);
     assert.equal(state.axMagazinePointsReady[3 - magazine], true);

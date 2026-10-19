@@ -19,7 +19,7 @@ IF xGeometryHeld AND stRobotStatus.xDetailAvailable AND (uiGeometryMachine >= UI
 		GVL_GEOMETRY_CONTROL.astSignals[uiFree].Call := GVL_GEOMETRY_CONTROL.astCalls[uiGeometryMachine];
 		GVL_GEOMETRY_CONTROL.astSignals[uiFree].xReserve := TRUE;
 		eState := E_CELL_MANAGER_STATE.GEOMETRY_DELIVER; PlanGeometry := TRUE;
-	ELSIF (uiAvailable > UINT#0) AND GVL_GEOMETRY_CONTROL.xWaitWhenOccupied THEN
+	ELSIF (uiAvailable > UINT#0) AND Persistent_Value.xWaitWhenOccupied THEN
 		uiGeometryParkStation := uiAvailable;
 		eState := E_CELL_MANAGER_STATE.GEOMETRY_WAIT_FREE; PlanGeometry := TRUE;
 	ELSE

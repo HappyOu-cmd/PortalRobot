@@ -156,9 +156,9 @@ FOR uiTwin := 1 TO 2 DO
 END_FOR;
 
 IF GVL_TWO_PALLET.uiMode = 0 THEN
-	GVL_TWO_PALLET.lrStaticPitchX := GVL_HMI.MagazinePitchX;
-	GVL_TWO_PALLET.lrStaticPitchY := GVL_HMI.MagazinePitchY;
+	Persistent_Value.lrStaticPitchX := GVL_HMI.MagazinePitchX;
+	Persistent_Value.lrStaticPitchY := GVL_HMI.MagazinePitchY;
 ELSE
-	GVL_TWO_PALLET.lrTwinPitchX := GVL_HMI.MagazinePitchX;
-	GVL_TWO_PALLET.lrTwinPitchY := GVL_HMI.MagazinePitchY;
+	Persistent_Value.lrTwinPitchX := GVL_HMI.MagazinePitchX;
+	Persistent_Value.lrTwinPitchY := GVL_HMI.MagazinePitchY;
 END_IF;
