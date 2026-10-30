@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtempSync, mkdirSync, statSync, unlinkSync, rmdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, statSync, unlinkSync, rmdirSync, existsSync, readFileSync, writeFileSync, utimesSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ControllerPlcBridge, controllerPlcPayload, controllerHardwareKey } from './controller-plc.mjs';
@@ -138,7 +140,12 @@ test('an unacknowledged frame left by a previous writer and a damaged outbox can
   await broken.bridge.flush(0);
   assert.equal(broken.writes.length, 0);
   assert.equal(broken.bridge.status.status, 'error');
+  assert.match(broken.bridge.status.error, /validate: INVALID_OUTBOX/);
+  broken.bridge.observe(state('5B', [], 6_000));
+  await broken.bridge.flush(6_000);
+  assert.equal(broken.writes.length, 0);
   assert.equal(readFileSync(statePath, 'utf8'), '{broken');
+  assert.equal(existsSync(`${statePath}.tmp`), false);
 });
 
 test('a faulty module disappearing after gateway restart cannot confirm recovery even after its alarm Ack', async (t) => {
@@ -156,14 +163,118 @@ test('a faulty module disappearing after gateway restart cannot confirm recovery
   assert.equal(restarted.moduleFaults.size, 0);
 });
 
-test('a frame whose outbox save failed cannot be written on a later retry without a persisted commit', async (t) => {
+test('a failed frame save blocks PLC writes and recovers only after the identical frame is persisted', async (t) => {
   const statePath = join(outboxDirectory(t), 'queue.json');
   const f = transport({ statePath }); f.bridge.observe(state('5B'));
   mkdirSync(`${statePath}.tmp`); // Simulate a filesystem failure at frame persistence.
   await f.bridge.flush(0);
   assert.equal(f.bridge.status.status, 'error');
+  assert.match(f.bridge.status.error, /write: E[A-Z]+/);
+  assert.equal(f.writes.length, 0);
+  const frame = structuredClone(f.bridge.frame);
+  const write = f.bridge.write;
+  f.bridge.write = async (...args) => {
+    assert.deepEqual(JSON.parse(readFileSync(statePath, 'utf8')).frame, frame);
+    return write(...args);
+  };
+  f.bridge.observe(state('25', [], 500));
+  await f.bridge.flush(500);
   assert.equal(f.writes.length, 0);
   rmdirSync(`${statePath}.tmp`);
+  await f.bridge.flush(999);
+  assert.equal(f.writes.length, 0, 'a retry waits for its deadline');
   await f.bridge.flush(1_000);
-  assert.equal(f.writes.length, 0, 'the unpersisted in-memory frame cannot slip through the next flush');
+  assert.equal(f.writes.length, 12);
+  assert.deepEqual(f.bridge.frame, frame);
+  assert.equal(f.bridge.storageError, null);
+  assert.equal(f.bridge.pending.size, 2, 'new observations survive a blocked frame');
+  f.ack(); f.bridge.write = write;
+  await f.bridge.flush(2_000);
+  assert.equal(f.bridge.pending.size, 1);
+  assert.equal(f.bridge.frame.sequence, frame.sequence + 1);
+  assert.ok(f.bridge.frame.payload.dwCpuObserved1 || f.bridge.frame.payload.dwCpuObserved2);
+});
+
+test('persistent save failures remain blocked and retries do not postpone their own deadline', async (t) => {
+  const statePath = join(outboxDirectory(t), 'queue.json');
+  const f = transport({ statePath }); f.bridge.observe(state('5B'));
+  mkdirSync(`${statePath}.tmp`);
+  await f.bridge.flush(0);
+  await f.bridge.flush(1_000);
+  assert.equal(f.bridge.nextStorageRetryAt, 2_000);
+  rmdirSync(`${statePath}.tmp`);
+  await f.bridge.flush(1_500);
+  assert.equal(f.writes.length, 0);
+  await f.bridge.flush(2_000);
+  assert.equal(f.writes.length, 12);
+  assert.equal(f.bridge.status.error, null);
+});
+
+test('a save failure during observation is retried without dropping detected faults', async (t) => {
+  const statePath = join(outboxDirectory(t), 'queue.json');
+  const f = transport({ statePath });
+  mkdirSync(`${statePath}.tmp`);
+  f.bridge.observe(state('5B'));
+  await f.bridge.flush(0);
+  assert.equal(f.writes.length, 0);
+  f.bridge.observe(state('00', [], 500));
+  rmdirSync(`${statePath}.tmp`);
+  await f.bridge.flush(1_000);
+  assert.ok(f.bridge.frame.payload.dwCpuObserved1 || f.bridge.frame.payload.dwCpuObserved2);
+  assert.equal(f.bridge.frame.payload.dwCpuCurrent1 | f.bridge.frame.payload.dwCpuCurrent2, 0);
+  assert.equal(f.bridge.status.error, null);
+});
+
+test('an Ack save failure recovers while idle without replaying the acknowledged fault', async (t) => {
+  const statePath = join(outboxDirectory(t), 'queue.json');
+  const f = transport({ statePath }); f.bridge.observe(state('5B'));
+  await f.bridge.flush(0); f.ack();
+  mkdirSync(`${statePath}.tmp`);
+  await f.bridge.flush(500);
+  assert.equal(f.bridge.status.status, 'error');
+  assert.equal(f.bridge.frame, null);
+  assert.ok(JSON.parse(readFileSync(statePath, 'utf8')).frame);
+  rmdirSync(`${statePath}.tmp`);
+  await f.bridge.flush(1_500);
+  assert.equal(f.writes.length, 12);
+  assert.equal(JSON.parse(readFileSync(statePath, 'utf8')).frame, null);
+  assert.equal(f.bridge.pending.size, 0);
+  assert.equal(f.bridge.status.status, 'synchronized');
+  assert.equal(f.bridge.status.error, null);
+});
+
+test('unchanged observations do not rewrite the outbox but changed module identities are saved', (t) => {
+  const statePath = join(outboxDirectory(t), 'queue.json');
+  const f = transport({ statePath }); f.bridge.observe(state());
+  utimesSync(statePath, 1, 1);
+  const modified = statSync(statePath).mtimeMs;
+  f.bridge.observe(state('00', [], 3_000));
+  assert.equal(statSync(statePath).mtimeMs, modified);
+  f.bridge.observe(state('00', [{ slot: 7, errorCode: 2 }], 6_000));
+  assert.deepEqual(JSON.parse(readFileSync(statePath, 'utf8')).moduleFaults, [[7, 2]]);
+});
+
+test('a Windows reader temporarily blocking replacement cannot permanently disable delivery', { skip: process.platform !== 'win32' }, async (t) => {
+  const statePath = join(outboxDirectory(t), 'queue.json');
+  const f = transport({ statePath }); f.bridge.observe(state('5B'));
+  const escaped = statePath.replaceAll("'", "''");
+  const locker = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+    `$stream = [IO.File]::Open('${escaped}', [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read); try { [Console]::WriteLine('locked'); [Console]::ReadLine() | Out-Null } finally { $stream.Dispose() }`],
+  { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  const exited = once(locker, 'exit');
+  try {
+    const [ready] = await once(locker.stdout, 'data', { signal: AbortSignal.timeout(8_000) });
+    assert.match(ready.toString(), /locked/);
+    await f.bridge.flush(0);
+    assert.match(f.bridge.status.error, /rename: (EPERM|EACCES|EBUSY)/);
+    assert.equal(f.writes.length, 0);
+  } finally {
+    locker.stdin.end('\n');
+    await exited;
+  }
+  const frame = structuredClone(f.bridge.frame);
+  await f.bridge.flush(1_000);
+  assert.equal(f.writes.length, 12);
+  assert.deepEqual(JSON.parse(readFileSync(statePath, 'utf8')).frame, frame);
+  assert.equal(f.bridge.status.error, null);
 });

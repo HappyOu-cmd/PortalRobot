@@ -6,6 +6,11 @@ const mapping = alarmCatalog.controllerDiagnostics;
 const REQUEST = 'stControllerWebRequest';
 const ACK = 'stControllerWebStatus.udiAckSeq';
 const CLOCK = 'udiHmiCommandClockMs';
+const STORAGE_RETRY_MS = 1_000;
+function storageMessage(action, operation, error) {
+  const code = error?.code ?? (operation === 'validate' ? 'INVALID_OUTBOX' : error?.name ?? 'UNKNOWN_ERROR');
+  return `Не удалось ${action} очередь системных аварий для PLC (${operation}: ${code})`;
+}
 const FIELDS = {
   udiIssuedAtMs: 'UInt32', xCpuValid: 'Boolean', xModulesValid: 'Boolean',
   dwCpuCurrent1: 'UInt32', dwCpuCurrent2: 'UInt32', dwModuleCurrent: 'UInt32', xMemoryCurrent: 'Boolean',
@@ -76,10 +81,17 @@ export class ControllerPlcBridge {
     this.dirty = false;
     this.busy = false;
     this.lastSentAt = -Infinity;
+    this.storageError = null;
+    this.storageFailure = null;
+    this.nextStorageRetryAt = 0;
+    this.lastPersisted = null;
     this.status = { status: 'waiting', error: null, ackSeq: null };
+    let operation = 'read';
     try {
       if (statePath && existsSync(statePath)) {
-        const saved = JSON.parse(readFileSync(statePath, 'utf8'));
+        const serialized = readFileSync(statePath, 'utf8');
+        operation = 'validate';
+        const saved = JSON.parse(serialized);
         if (saved.version !== 1 || !Array.isArray(saved.pending) || !Array.isArray(saved.seen)) throw new Error();
         if (!saved.pending.every(([id, code]) => typeof id === 'string' && typeof code === 'string' && controllerHardwareKey(code))) throw new Error();
         if (saved.frame && (!Number.isInteger(saved.frame.sequence) || saved.frame.sequence < 1 || saved.frame.sequence > 0xffffffff
@@ -92,19 +104,37 @@ export class ControllerPlcBridge {
         this.moduleFaults = new Map(saved.moduleFaults ?? []);
         this.seen = new Set(saved.seen);
         this.frame = saved.frame;
+        this.lastPersisted = serialized;
       }
-    } catch { this.storageError = 'Не удалось прочитать очередь системных аварий для PLC'; }
+    } catch (error) {
+      this.storageFailure = 'read';
+      this.storageError = storageMessage('прочитать', operation, error);
+    }
   }
 
   persist() {
     if (!this.statePath) return;
+    // An unreadable or invalid startup queue may contain undelivered faults.
+    // Only a failed write of our validated in-memory state can be retried.
+    if (this.storageFailure === 'read') throw new Error(this.storageError);
+    let operation = 'serialize';
     try {
+      const serialized = JSON.stringify({ version: 1, pending: [...this.pending], moduleFaults: [...this.moduleFaults], seen: [...this.seen], frame: this.frame });
+      if (!this.storageError && serialized === this.lastPersisted) return;
+      operation = 'mkdir';
       mkdirSync(dirname(this.statePath), { recursive: true });
       const temporary = `${this.statePath}.tmp`;
-      writeFileSync(temporary, JSON.stringify({ version: 1, pending: [...this.pending], moduleFaults: [...this.moduleFaults], seen: [...this.seen], frame: this.frame }), 'utf8');
+      operation = 'write';
+      writeFileSync(temporary, serialized, 'utf8');
+      operation = 'rename';
       renameSync(temporary, this.statePath);
-    } catch {
-      this.storageError = 'Не удалось сохранить очередь системных аварий для PLC';
+      this.lastPersisted = serialized;
+      this.storageError = null;
+      this.storageFailure = null;
+      this.nextStorageRetryAt = 0;
+    } catch (error) {
+      this.storageFailure = 'write';
+      this.storageError = storageMessage('сохранить', operation, error);
       throw new Error(this.storageError);
     }
   }
@@ -125,20 +155,24 @@ export class ControllerPlcBridge {
     }
     this.seen = new Set([...this.seen].slice(-1024));
     try { if (!this.storageError) this.persist(); }
-    catch { this.storageError = 'Не удалось сохранить очередь системных аварий для PLC'; }
+    catch { /* flush retries failed writes before any PLC exchange. */ }
   }
 
   async flush(now = Date.now()) {
     if (this.busy || !this.state) return this.status;
     this.busy = true;
     try {
-      if (this.storageError) throw new Error(this.storageError);
+      if (this.storageError) {
+        if (this.storageFailure !== 'write' || now < this.nextStorageRetryAt) throw new Error(this.storageError);
+        this.persist();
+      }
       if (!this.available()) { this.status = { ...this.status, status: 'waiting', error: 'Ожидается связь с работающим PLC' }; return this.status; }
       const values = await this.read([ACK, CLOCK, `${REQUEST}.udiSequence`]);
       const ack = Number(values[ACK]);
       const clock = Number(values[CLOCK]);
       const request = Number(values[`${REQUEST}.udiSequence`]);
       if (![ack, clock, request].every((value) => Number.isInteger(value) && value >= 0 && value <= 0xffffffff)) throw new Error('Некорректный ответ канала диагностики PLC');
+      if (!this.frame && request === ack) this.status = { status: 'synchronized', error: null, ackSeq: ack };
       if (this.frame && ack === this.frame.sequence) {
         for (const id of this.frame.ids) this.pending.delete(id);
         this.frame = null;
@@ -165,11 +199,18 @@ export class ControllerPlcBridge {
         this.persist();
       }
       if (now - this.lastSentAt < 1_000) return this.status;
-      for (const [field, type] of Object.entries(FIELDS)) await this.write(`${REQUEST}.${field}`, type, this.frame.payload[field]);
+      for (const [field, type] of Object.entries(FIELDS)) {
+        if (this.storageError) throw new Error(this.storageError);
+        await this.write(`${REQUEST}.${field}`, type, this.frame.payload[field]);
+      }
+      if (this.storageError) throw new Error(this.storageError);
       await this.write(`${REQUEST}.udiSequence`, 'UInt32', this.frame.sequence);
       this.lastSentAt = now;
       this.status = { status: 'pending', error: null, ackSeq: ack };
-    } catch (error) { this.status = { ...this.status, status: 'error', error: error instanceof Error ? error.message : String(error) }; }
+    } catch (error) {
+      if (this.storageFailure === 'write' && now >= this.nextStorageRetryAt) this.nextStorageRetryAt = now + STORAGE_RETRY_MS;
+      this.status = { ...this.status, status: 'error', error: error instanceof Error ? error.message : String(error) };
+    }
     finally { this.busy = false; }
     return this.status;
   }
