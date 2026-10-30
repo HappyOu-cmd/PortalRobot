@@ -35,11 +35,38 @@ IF xGeometryEnvironmentChanged THEN
 	xGeometryInitialized := TRUE;
 	eGeometryPreviousEnvironment := GVL_CELL_SETTINGS.eTestEnvironment;
 END_IF;
+// Only the accepted simulation buffer can reset virtual station inventory.
+IF xTestInitializePulse AND (GVL_CELL_SETTINGS.eTestEnvironment = E_CELL_TEST_ENVIRONMENT.SIMULATION) THEN
+	FOR uiGeometry := UINT#1 TO UINT#2 DO
+		udiTestGeometryProduced := GVL_GEOMETRY_CONTROL.astActiveMemory[uiGeometry].udiProducedPartsTotal;
+		GVL_GEOMETRY_CONTROL.astActiveMemory[uiGeometry] := stTestEmptyGeometryMemory;
+		GVL_GEOMETRY_CONTROL.astActiveMemory[uiGeometry].udiProducedPartsTotal := udiTestGeometryProduced;
+		GVL_GEOMETRY_CONTROL.astSimulationMemory[uiGeometry] := GVL_GEOMETRY_CONTROL.astActiveMemory[uiGeometry];
+		GVL_GEOMETRY_CONTROL.astSignals[uiGeometry].xReserve := FALSE;
+		GVL_GEOMETRY_CONTROL.astSignals[uiGeometry].xDeposited := FALSE;
+		GVL_GEOMETRY_CONTROL.astSignals[uiGeometry].xReleased := FALSE;
+		GVL_GEOMETRY_CONTROL.astSignals[uiGeometry].xRobotInteraction := FALSE;
+		GVL_GEOMETRY_CONTROL.axSimulationAlarm[uiGeometry] := FALSE;
+	END_FOR;
+	FOR uiGeometryMachine := UINT#1 TO UINT#3 DO
+		GVL_GEOMETRY_CONTROL.astCalls[uiGeometryMachine] := stTestEmptyGeometryCall;
+		GVL_GEOMETRY_CONTROL.auiActiveCount[uiGeometryMachine] := UINT#0;
+		IF GVL_HMI.stTestScenario.axGeometryCall[uiGeometryMachine] THEN
+			Persistent_Value.udiNextCallId := Persistent_Value.udiNextCallId + UDINT#1;
+			IF Persistent_Value.udiNextCallId = UDINT#0 THEN Persistent_Value.udiNextCallId := UDINT#1; END_IF;
+			GVL_GEOMETRY_CONTROL.astCalls[uiGeometryMachine].udiId := Persistent_Value.udiNextCallId;
+			GVL_GEOMETRY_CONTROL.astCalls[uiGeometryMachine].uiMachine := uiGeometryMachine;
+			GVL_GEOMETRY_CONTROL.astCalls[uiGeometryMachine].uiProductType := GVL_HMI.stTestScenario.auiMachineType[uiGeometryMachine];
+			GVL_GEOMETRY_CONTROL.astCalls[uiGeometryMachine].uiState := UINT#1;
+			GVL_GEOMETRY_CONTROL.astCalls[uiGeometryMachine].xForced := TRUE;
+		END_IF;
+	END_FOR;
+END_IF;
 FOR uiGeometry := UINT#1 TO UINT#2 DO
 	GVL_GEOMETRY_CONTROL.auiAction[uiGeometry] := UINT#0;
 	IF GVL_CELL_SETTINGS.eTestEnvironment = E_CELL_TEST_ENVIRONMENT.NORMAL THEN
 		GVL_GEOMETRY_CONTROL.astActiveConfig[uiGeometry] := Persistent_Value.astConfig[uiGeometry];
-	ELSE GVL_GEOMETRY_CONTROL.astActiveConfig[uiGeometry] := GVL_GEOMETRY_CONTROL.astSimulationConfig[uiGeometry]; END_IF;
+	ELSE GVL_GEOMETRY_CONTROL.astActiveConfig[uiGeometry] := Persistent_Value.astSimulationConfig[uiGeometry]; END_IF;
 END_FOR;
 GVL_GEOMETRY_CONTROL.xAutoChangeAllowed := GVL_GEOMETRY_CONTROL.xSupported
 	AND xHmiConnectionAlive AND NOT GVL_HMI.xTestSessionActive AND NOT GVL_CELL_CONTROL.xGlobalError;
@@ -139,7 +166,7 @@ IF (udiGeometryRequest <> UDINT#0) AND (udiGeometryRequest <> GVL_HMI.udiGeometr
 				IF xGeometryConfigValid THEN
 					stGeometryConfig.xConfigured := TRUE;
 					IF GVL_CELL_SETTINGS.eTestEnvironment = E_CELL_TEST_ENVIRONMENT.NORMAL THEN Persistent_Value.astConfig[uiGeometry] := stGeometryConfig;
-					ELSE GVL_GEOMETRY_CONTROL.astSimulationConfig[uiGeometry] := stGeometryConfig; END_IF;
+					ELSE Persistent_Value.astSimulationConfig[uiGeometry] := stGeometryConfig; END_IF;
 					GVL_GEOMETRY_CONTROL.astActiveConfig[uiGeometry] := stGeometryConfig; GVL_HMI.uiGeometryResult := UINT#1;
 				END_IF;
 			ELSIF (stGeometryRequest.uiAction = UINT#13) AND GVL_GEOMETRY_CONTROL.astStatus[uiGeometry].xPointWriteAllowed
@@ -199,7 +226,7 @@ FOR uiGeometry := UINT#1 TO UINT#2 DO
 			OR (GVL_ROBOT.Status.xBusy AND ((GVL_ROBOT.Command.eSetPoint = E_POINT_NAME.GEOMETRY_2_PLACE)
 				OR (GVL_ROBOT.Command.eSetPoint = E_POINT_NAME.GEOMETRY_2_CHANGE)));
 	END_IF;
-	GEOMETRY[uiGeometry](xInitialize := xGeometryEnvironmentChanged, uiAction := GVL_GEOMETRY_CONTROL.auiAction[uiGeometry],
+	GEOMETRY[uiGeometry](xInitialize := xGeometryEnvironmentChanged OR xTestInitializePulse, uiAction := GVL_GEOMETRY_CONTROL.auiAction[uiGeometry],
 		xSupported := GVL_GEOMETRY_CONTROL.xSupported AND ((GVL_CELL_SETTINGS.eTestEnvironment <> E_CELL_TEST_ENVIRONMENT.NORMAL) OR GVL_PHYSICAL_IO.xMappingVerified),
 		xSimulation := GVL_CELL_SETTINGS.eTestEnvironment <> E_CELL_TEST_ENVIRONMENT.NORMAL,
 		xGlobalError := GVL_CELL_CONTROL.xGlobalError, xManual := GVL_CELL_CONTROL.xManual,

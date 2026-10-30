@@ -1,10 +1,11 @@
 FUNCTION_BLOCK FB_ALARM_MANAGER
 VAR_INPUT
 	xResetWarnings : BOOL; // Сброс накопленных предупреждений
+    xControllerWarningResetAllowed : BOOL; // 5C нельзя подтвердить до исчезновения свежей причины.
 	astAdditionalCellWarning : ARRAY [1..2] OF ST_WARNING_EVENT; // Конфигуратор и ГК: независимые события источника CELL
 END_VAR
 VAR_IN_OUT
-	Sources : ARRAY [1..19] OF ST_ALARM_SOURCE_DATA; // Старые источники и два ГК
+	Sources : ARRAY [1..22] OF ST_ALARM_SOURCE_DATA;
 END_VAR
 VAR_OUTPUT
 	Status : ST_ALARM_STATUS; // Сводный статус журнала
@@ -13,8 +14,8 @@ END_VAR
 VAR
 	uiWriteIndex : UINT := 1; // Следующая ячейка кольцевого журнала
 	udiSequence  : UDINT; // Общий порядковый номер события
-	adwPreviousAlarm : ARRAY [1..19] OF DWORD;
-	audiPreviousWarning : ARRAY [1..19] OF UDINT;
+	adwPreviousAlarm : ARRAY [1..22] OF DWORD;
+	audiPreviousWarning : ARRAY [1..22] OF UDINT;
 	audiPreviousAdditionalCellWarning : ARRAY [1..2] OF UDINT;
 	uiIndex : UINT; // Индекс источника или события
 END_VAR
@@ -26,14 +27,16 @@ END_VAR
 IF xResetWarnings THEN
 	FOR uiIndex := 1 TO 100 DO
 		IF Events[uiIndex].xActive
-		AND (Events[uiIndex].eSeverity = E_ALARM_SEVERITY.WARNING) THEN
+		AND (Events[uiIndex].eSeverity = E_ALARM_SEVERITY.WARNING)
+        AND ((Events[uiIndex].eSource <> E_ALARM_SOURCE.CONTROLLER_CPU_1)
+            OR xControllerWarningResetAllowed) THEN
 			Events[uiIndex].xActive := FALSE;
 		END_IF;
 	END_FOR;
 END_IF;
 
 // Менеджер не определяет причины: он регистрирует подготовленные данные владельцев блоков.
-FOR uiIndex := 1 TO 19 DO
+FOR uiIndex := 1 TO 22 DO
 	UpdateSource(
 		eSource := Sources[uiIndex].eSource,
 		dwCurrent := Sources[uiIndex].dwAlarmActive,

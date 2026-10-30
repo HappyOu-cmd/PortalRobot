@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { compileSt, defaultsFromSt, readPlc } from './helpers/geometryStRuntime.mjs';
+import { compileSt, conversions, defaultsFromSt, emptyCall, readPlc } from './helpers/geometryStRuntime.mjs';
 
 const editor = readPlc('PLC_PRG.ReadHmiInputs.st').split('xPointEditorAllHomed :=')[1].split('// Плоский OPC UA-интерфейс')[0];
 const execute = compileSt('xPointEditorAllHomed :=' + editor);
@@ -17,9 +17,10 @@ function state(index = 13, environment = 0) {
     GVL_CELL_CONTROL: { xManual: true, xGlobalError: false }, GVL_CELL_MANAGER: { Status: { xRunning: false } },
     GVL_ROBOT: { Status: { xBusy: false } }, GVL_MOTION_MANAGER: { stMotionManager: { Status: { xError: false } } },
     GVL_POINT_MANAGER: { PointManager: { Diag: { xXLimitValid: true, xYLimitValid: true, xZLimitValid: true } } },
-    Persistent_Value: { astRetainPoints: [null, ...Array.from({ length: 15 }, () => ({ ...point, X: 42 }))], astConfig: [null, { ...config }, { ...config }] },
+    Persistent_Value: { astRetainPoints: [null, ...Array.from({ length: 15 }, () => ({ ...point, X: 42 }))],
+      astConfig: [null, { ...config }, { ...config }], astSimulationConfig: [null, { ...config }, { ...config }] },
     GVL_POINT: { Points: Array.from({ length: 100 }, () => ({ ...point })) },
-    GVL_GEOMETRY_CONTROL: { astStatus: [null, { xConfigAllowed: true, xPointWriteAllowed: true }, { xConfigAllowed: true, xPointWriteAllowed: true }], astSimulationConfig: [null, { ...config }, { ...config }], astActiveConfig: [null, { ...config }, { ...config }] },
+    GVL_GEOMETRY_CONTROL: { astStatus: [null, { xConfigAllowed: true, xPointWriteAllowed: true }, { xConfigAllowed: true, xPointWriteAllowed: true }], astActiveConfig: [null, { ...config }, { ...config }] },
     GVL_HMI: { udiPointEditorCommandSeq: 8, uiPointEditorCommand: 2, uiPointEditorIndex: index, xModbusMode: false,
       alrPointEditorDraftXYZ: [null, 100, 200, 500], lrPointEditorDraftMagazineSafeZ: -300, lrPointEditorDraftMagazineChangeZ: 0,
       lrPointEditorDraftSpeedFactor: .1, stPointEditorResultPoint: { ...point } },
@@ -32,12 +33,54 @@ test('PLC saves both GK bases in their environment owner and preserves old Persi
     execute(s);
     assert.equal(s.GVL_HMI.uiPointEditorResult, 1);
     assert.equal(s.GVL_HMI.udiPointEditorAckSeq, 8);
-    const current = environment === 0 ? s.Persistent_Value.astConfig : s.GVL_GEOMETRY_CONTROL.astSimulationConfig;
-    const other = environment === 0 ? s.GVL_GEOMETRY_CONTROL.astSimulationConfig : s.Persistent_Value.astConfig;
+    const current = environment === 0 ? s.Persistent_Value.astConfig : s.Persistent_Value.astSimulationConfig;
+    const other = environment === 0 ? s.Persistent_Value.astSimulationConfig : s.Persistent_Value.astConfig;
     assert.deepEqual([current[index - 12].lrX, current[index - 12].lrSafeZ, current[index - 12].xConfigured], [100, -300, true]);
     assert.equal(other[index - 12].xConfigured, false);
     assert.deepEqual(s.Persistent_Value.astRetainPoints, before);
     assert.equal(s.GVL_HMI.stPointEditorResultPoint.MagazineSafeZ, -300);
+  }
+});
+
+test('both GK bases restore from persistent storage after restart and environment switches', () => {
+  const source = readPlc('PLC_PRG.RunGeometryControl.st');
+  const restore = compileSt(source.slice(source.indexOf('xGeometryEnvironmentChanged :='),
+    source.indexOf('GVL_GEOMETRY_CONTROL.xAutoChangeAllowed :=')));
+  const publish = compileSt(readPlc('PLC_PRG.PublishGeometryControl.st').match(/GVL_HMI\.astGeometryConfig :=[^;]+;/)[0]);
+  const saved = state().Persistent_Value;
+  Object.assign(saved, { astMemory: [null, { xOccupied: false }, { xOccupied: false }],
+    astRetainCalls: [null, emptyCall(), emptyCall(), emptyCall()], auiCount: [null, 0, 0, 0] });
+  for (const environment of [0, 1]) for (const index of [13, 14]) {
+    const s = state(index, environment);
+    s.Persistent_Value = saved;
+    s.GVL_HMI.alrPointEditorDraftXYZ = [null, index * 10 + environment * 300, 200, 500 + environment * 100];
+    execute(s);
+    assert.equal(s.GVL_HMI.uiPointEditorResult, 1);
+  }
+  for (const bootEnvironment of [0, 1]) {
+    // Fresh RAM with only the persistent payload restored; no CODESYS runtime.
+    const s = state(13, bootEnvironment);
+    s.Persistent_Value = structuredClone(saved);
+    Object.assign(s, conversions, { eGeometryPreviousEnvironment: -1 });
+    Object.assign(s.GVL_GEOMETRY_CONTROL, {
+      astSignals: [null, {}, {}], astActiveMemory: [null, {}, {}],
+      astSimulationMemory: [null, { xOccupied: false }, { xOccupied: false }],
+      astCalls: [null, emptyCall(), emptyCall(), emptyCall()],
+      astSimulationCalls: [null, emptyCall(), emptyCall(), emptyCall()],
+      auiActiveCount: [null, 0, 0, 0], auiSimulationCount: [null, 0, 0, 0], auiAction: [null, 0, 0],
+    });
+    for (const environment of [bootEnvironment, 1 - bootEnvironment, bootEnvironment]) {
+      s.GVL_CELL_SETTINGS.eTestEnvironment = environment;
+      restore(s); publish(s);
+      const expected = environment === 0 ? saved.astConfig : saved.astSimulationConfig;
+      assert.deepEqual(s.GVL_GEOMETRY_CONTROL.astActiveConfig, expected);
+      assert.deepEqual(s.GVL_HMI.astGeometryConfig, expected);
+      assert.equal(s.xGeometryInitialized, true);
+      assert.equal(s.eGeometryPreviousEnvironment, environment);
+      assert.deepEqual(s.Persistent_Value, saved);
+      assert.equal(s.GVL_GEOMETRY_CONTROL.astSimulationMemory[1].xOccupied, false);
+      assert.equal(s.GVL_GEOMETRY_CONTROL.astSimulationCalls[1].uiState, 0);
+    }
   }
 });
 
@@ -69,7 +112,7 @@ test('GK SAVE and published permission ignore all technological blocks in both e
     assert.equal(s.GVL_HMI.uiPointEditorResult, 1);
     assert.equal(s.GVL_HMI.uiPointEditorRejectReason, 0);
     assert.equal(s.GVL_HMI.udiPointEditorAckSeq, 8);
-    const owner = environment === 0 ? s.Persistent_Value.astConfig : s.GVL_GEOMETRY_CONTROL.astSimulationConfig;
+    const owner = environment === 0 ? s.Persistent_Value.astConfig : s.Persistent_Value.astSimulationConfig;
     assert.equal(owner[index - 12].lrX, 100);
     assert.deepEqual(s.GVL_GEOMETRY_CONTROL.astStatus, before);
     s.uiGeometry = index - 12; s.GVL_GEOMETRY_CONTROL.xSupported = true;
@@ -89,13 +132,13 @@ test('GK SAVE still rejects lost connection, unsupported interface, missing limi
     [s => { s.GVL_HMI.lrPointEditorDraftSpeedFactor = 0.09; }, 15],
     [s => { s.GVL_HMI.lrPointEditorDraftSpeedFactor = Number.NaN; }, 15],
   ];
-  for (const [configure, reason] of cases) {
-    const s = state(); configure(s); const before = structuredClone(s.Persistent_Value.astConfig);
+  for (const environment of [0, 1]) for (const [configure, reason] of cases) {
+    const s = state(13, environment); configure(s); const before = structuredClone(s.Persistent_Value);
     execute(s);
     assert.equal(s.GVL_HMI.uiPointEditorResult, 2);
     assert.equal(s.GVL_HMI.uiPointEditorRejectReason, reason);
     assert.equal(s.GVL_HMI.udiPointEditorAckSeq, 8);
-    assert.deepEqual(s.Persistent_Value.astConfig, before);
+    assert.deepEqual(s.Persistent_Value, before);
     assert.equal(s.uiRobotInterfaceWarningCode, s.WRN_POINT_EDIT_REJECTED);
   }
 });
@@ -133,7 +176,7 @@ test('legacy geometry Config command also ignores station and robot blocks and v
     const before = structuredClone(s.GVL_GEOMETRY_CONTROL.astStatus);
     save(s);
     assert.equal(s.GVL_HMI.uiGeometryResult, 1);
-    const owner = environment === 0 ? s.Persistent_Value.astConfig : s.GVL_GEOMETRY_CONTROL.astSimulationConfig;
+    const owner = environment === 0 ? s.Persistent_Value.astConfig : s.Persistent_Value.astSimulationConfig;
     assert.equal(owner[station].lrX, 100);
     assert.equal(owner[station].lrChangeZ, -300);
     assert.equal(owner[station].xConfigured, true);

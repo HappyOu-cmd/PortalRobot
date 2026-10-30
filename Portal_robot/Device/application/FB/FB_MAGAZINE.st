@@ -14,6 +14,8 @@ VAR_INPUT
 	stHmiCommand      : ST_ROBOT_COMMAND; // Ручная команда магазина с HMI
 	xManual           : BOOL; // Разрешение ручного управления
 	xReset            : BOOL; // Сброс ошибок магазина
+	xResetCancel      : BOOL; // Отмена согласованного сброса по Stop/Disable
+	RobotResetRecovery : ST_ROBOT_RESET_RECOVERY; // Внутреннее подтверждение принятого Reset робота
 	xGlobalError      : BOOL; // Глобальная ошибка ячейки
 	xHmiEnable        : BOOL; // Импульс включения магазина с HMI
 	xHmiDisable       : BOOL; // Импульс отключения магазина с HMI
@@ -74,6 +76,10 @@ VAR
 	xRobotInMagazineAtFault : BOOL; // Робот был в рабочей зоне этого магазина при ошибке
 	xRobotStopRequired : BOOL; // Итоговая реакция ROBOT_STOP, сформированная магазином
 	xRobotResetDependencyReady : BOOL; // Каскадная ошибка робота может быть сброшена тем же импульсом
+	xRobotResetDependencyRequired : BOOL; // Только ошибка с участием робота зависит от его восстановления
+	xRobotResetCoordinated : BOOL; // Магазин присоединился к одному явно запрошенному сбросу
+	udiRobotResetAttempt : UDINT; // Ожидаемый номер принятой попытки FB_ROBOT
+	xRobotResetAttemptReady : BOOL; // Первичная зависимость восстановлена в той же попытке
 
 	iActiveSlotCount   : SINT; // Число активных слотов выбранной матрицы
 	iInventoryIndex    : SINT; // Индекс изменения содержимого магазина
@@ -447,10 +453,30 @@ END_IF;
 xResetRequest := xReset;
 rtReset(CLK := xResetRequest);
 
-xRobotResetDependencyReady := (((Error.dwErrorActive AND ERR_ROBOT) = DWORD#0)
-		AND NOT xRobotInMagazineAtFault)
+// RunMagazine предшествует RunRobot. В скане нажатия ожидаем следующий номер;
+// на следующем скане уже требуется подтверждённая, всё ещё активная попытка.
+IF xRobotResetCoordinated
+AND (NOT RobotResetRecovery.xActive
+	OR (RobotResetRecovery.udiAttempt <> udiRobotResetAttempt)
+	OR xGlobalError OR xIoManual OR xStopRequest OR xExecuteRequest OR xResetCancel) THEN
+	xRobotResetCoordinated := FALSE;
+	IF (Diag.eState = E_MAGAZINE_STATE.ERROR) AND stRobotStatus.xError THEN
+		Diag.stWarning.uiCode := WRN_RESET_ROBOT_ERROR;
+		Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
+		IF Diag.stWarning.udiSequence = UDINT#0 THEN Diag.stWarning.udiSequence := UDINT#1; END_IF;
+	END_IF;
+END_IF;
+xRobotResetAttemptReady := xRobotResetCoordinated
+	AND RobotResetRecovery.xActive
+	AND (RobotResetRecovery.udiAttempt = udiRobotResetAttempt)
+	AND RobotResetRecovery.xDependenciesReady;
+
+xRobotResetDependencyRequired := ((Error.dwErrorActive AND ERR_ROBOT) <> DWORD#0)
+	OR xRobotInMagazineAtFault;
+xRobotResetDependencyReady := NOT xRobotResetDependencyRequired
 	OR NOT stRobotStatus.xError
-	OR stRobotStatus.xResetAllowed;
+	OR stRobotStatus.xResetAllowed
+	OR xRobotResetAttemptReady;
 
 IF rtReset.Q
 AND (Diag.eState = E_MAGAZINE_STATE.ERROR) THEN
@@ -602,6 +628,7 @@ Command.uiMagazineId := UINT#0;
 // Ошибка робота в рабочей зоне принадлежит одновременно роботу и магазину.
 IF xRobotInMagazineContext
 AND stRobotStatus.xError
+AND NOT xRobotResetAttemptReady
 AND (Diag.eState <> E_MAGAZINE_STATE.ERROR) THEN
 	Error.dwErrorActive := Error.dwErrorActive OR ERR_ROBOT;
 	Diag.eState := E_MAGAZINE_STATE.ERROR;
@@ -1136,17 +1163,26 @@ CASE Diag.eState OF
 		END_IF;
 
 	E_MAGAZINE_STATE.ERROR:
-		IF xResetRequest
+		IF (rtReset.Q OR xRobotResetAttemptReady)
+		AND NOT xResetCancel
 		AND NOT xIoManual
 		AND NOT xExecuteRequest
 		AND NOT xStopRequest
 		AND NOT FaultStatus.xBusy
 		AND NOT xGlobalError
 		AND xRobotResetDependencyReady THEN
-			Error.dwErrorLast := Error.dwErrorActive;
-			Error.dwErrorActive := DWORD#0;
-			eActualOperation := E_MAGAZINE_OPERATION.NONE;
-			Diag.eState := E_MAGAZINE_STATE.DISABLED;
+			IF xRobotResetDependencyRequired AND stRobotStatus.xError AND NOT xRobotResetAttemptReady THEN
+				// Не очищаем каскад заранее: робот ещё восстанавливает Motion.
+				// Без его принятой попытки местный Reset ничего не повторяет.
+				xRobotResetCoordinated := TRUE;
+				udiRobotResetAttempt := RobotResetRecovery.udiAttempt + UDINT#1;
+				IF udiRobotResetAttempt = UDINT#0 THEN udiRobotResetAttempt := UDINT#1; END_IF;
+			ELSE
+				Error.dwErrorLast := Error.dwErrorActive;
+				Error.dwErrorActive := DWORD#0;
+				eActualOperation := E_MAGAZINE_OPERATION.NONE;
+				Diag.eState := E_MAGAZINE_STATE.DISABLED;
+			END_IF;
 		END_IF;
 END_CASE;
 
@@ -1215,6 +1251,8 @@ END_IF;
 Error.stErrorActive := UpdateErrorView(dwError := Error.dwErrorActive);
 Error.stErrorLast := UpdateErrorView(dwError := Error.dwErrorLast);
 FaultStatus.xResetAllowed := Status.xError
+	AND NOT xRobotResetCoordinated
+	AND NOT xResetCancel
 	AND NOT xIoManual
 	AND NOT FaultStatus.xBusy
 	AND NOT xExecuteRequest

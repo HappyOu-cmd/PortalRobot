@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { createConnection } from 'node:net';
+import { ControllerAlarmTracker } from './controller-alarms.mjs';
 
 // Read operations observed in the MC522 PLC-Web frontend (firmware V1.2.0.2).
 // Keep an allowlist: other CGI GET endpoints can reboot or reset the controller.
@@ -169,17 +170,18 @@ function normalizeModules(raw) {
 }
 
 export class ControllerDiagnostics {
-  constructor(options, read = readControllerCgi) {
+  constructor(options, read = readControllerCgi, recordEvent = () => {}) {
     this.options = options;
     this.read = read;
     this.state = {
       url: options.url, status: options.enabled ? 'connecting' : 'disabled', observedAt: null,
-      error: options.error, resources: null,
+      error: options.error, resources: null, alarms: [],
       identity: { observedAt: null, error: null, data: null },
       modules: { observedAt: null, error: null, data: null },
     };
     this.lastIdentityAttempt = null;
     this.lastModulesAttempt = null;
+    this.alarms = new ControllerAlarmTracker(recordEvent);
   }
 
   async poll(now = Date.now()) {
@@ -209,6 +211,7 @@ export class ControllerDiagnostics {
         };
       }
     });
+    state.alarms = this.alarms.update(state, now);
     this.state = state;
     return state;
   }

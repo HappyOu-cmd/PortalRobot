@@ -93,17 +93,20 @@ test('a stopped disabled magazine permits manual recovery and robot-pallet edits
   const manualPermissions = ['xRecovery', 'xPneumaticBase', 'Status.xConfirmAllowed', 'Status.xStartAllowed',
     'Status.xSwapAllowed', 'Status.xPowerAllowed', 'Status.xLowerAllowed', 'Status.xRaiseAllowed',
     'Status.xLockAllowed', 'Status.xStopAllowed', 'Status.xHomeAllowed', 'Status.xMoveAllowed',
-    'Status.xJogAllowed', 'Status.xTeachOperatorAllowed', 'Status.xTeachWorkAllowed', 'Status.xEdit2Allowed'];
+    'Status.xJogAllowed', 'Status.xTeachOperatorAllowed', 'Status.xTeachWorkAllowed'];
   for (const magazine of [1, 2]) {
     const stopped = pairedCyclePermissions(magazine, true);
     for (const permission of manualPermissions) assert.equal(stopped[permission], true, permission);
     assert.equal(stopped.xAutoSwapAllowed, false);
     assert.equal(stopped['Status.xEdit1Allowed'], true);
+    assert.equal(stopped['Status.xEdit2Allowed'], true);
     const automatic = pairedCyclePermissions(magazine, false);
     for (const permission of manualPermissions) assert.equal(automatic[permission], false, permission);
     assert.equal(automatic['Status.xEdit1Allowed'], true);
+    assert.equal(automatic['Status.xEdit2Allowed'], true);
     const enabled = pairedCyclePermissions(magazine, true, magazine, { 'Status.xEnabled': true });
     for (const permission of manualPermissions) assert.equal(enabled[permission], false, permission);
+    assert.equal(enabled['Status.xEdit2Allowed'], false);
     assert.equal(pairedCyclePermissions(magazine, true, magazine, { 'Input.xPowered': false })['Status.xConfigAllowed'], true);
     for (const conflict of [{ xSafe: false }, { 'GVL_CELL_MANAGER.Status.xRunning': true },
       { 'GVL_MAGAZINE.astPartStatus[uiTwin].xBusy': true },
@@ -181,14 +184,16 @@ test('PLC explains busy operations, enabled manual setup and the automatic retur
   explain(state); assert.equal(state.Diag.uiReason, 5);
 });
 
-test('v2 test buffer is static-only and mode changes invalidate magazine bases', () => {
+test('v3 test buffer checks explicit mode and mode changes invalidate magazine bases', () => {
   const buffer = read('ST/ST_TEST/ST_TEST_SCENARIO_BUFFER.st');
   const control = read('PLC_PRG.RunTestControl.st');
   const mode = read('PLC_PRG.RunTwoPallet.st');
   const globals = read('GVL/GVL_TWO_PALLET.gvl.st');
   assert.match(buffer, /aauiSlotContent : ARRAY \[1\.\.2, 1\.\.120\] OF UINT/);
   assert.match(globals, /uiMode : UINT := UINT#1/);
-  assert.match(control, /xTestScenarioApplyAllowed := xTestStable\s+AND \(GVL_TWO_PALLET\.uiMode = 0\)\s*\/\/[^\r\n]*\s+AND GVL_HMI\.xTestSessionActive/);
+  assert.match(control, /GVL_HMI.stTestScenario.uiMagazineMode = GVL_TWO_PALLET.uiMode/);
+  assert.match(control, /GVL_TWO_PALLET.astStatus\[1\].xConfirmed/);
+  assert.match(control, /GVL_TWO_PALLET.astStatus\[2\].xConfirmed/);
   assert.match(mode, /xModeChangeAllowed :=[\s\S]*?NOT GVL_HMI\.xTestSessionActive/);
   assert.match(mode, /GVL_TWO_PALLET\.uiMode := stTwinRequest\.uiValue;[\s\S]*?Persistent_Value\.astRetainPoints\[13 \+ uiTwin\]\.xConfigured := FALSE/);
   assert.match(mode, /xPointTableReady := FALSE/);
@@ -369,7 +374,7 @@ test('PLC inventory truth table keeps the operator pallet editable independently
       xActivePalletEditAllowed: released, xManual: manual };
     for (const pallet of [1, 2]) {
       assert.equal(plcPermission(`Status.xEdit${pallet}Allowed`, values),
-        pallet !== robot || (manual && !enabled && released), `${robot}/${enabled}/${released}/${pallet}`);
+        pallet !== robot || (!enabled && released), `${robot}/${enabled}/${released}/${manual}/${pallet}`);
       assert.equal(plcPermission(`Status.xEdit${pallet}Allowed`, { ...values, xSelected: false }), false);
     }
   }

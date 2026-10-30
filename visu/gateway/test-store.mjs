@@ -5,63 +5,18 @@ import { DatabaseSync } from 'node:sqlite';
 const stringify = (value) => JSON.stringify(value ?? null);
 const parse = (value) => value ? JSON.parse(value) : null;
 
-const emptySlots = (types = []) => Array.from({ length: 120 }, (_, index) => ({
-  content: 0,
-  productType: Number(types[index]?.productType ?? 1),
-}));
-
-export function normalizeScenarioState(input) {
-  if (!input || typeof input !== 'object') throw new Error('Сценарий не содержит initialState');
-  const state = structuredClone(input);
-  if (state.magazineMode !== undefined && state.magazineMode !== 0) {
-    throw new Error('Схема v2 описывает только статичные магазины (magazineMode=0)');
-  }
-  state.magazineMode = 0;
-  if (!Array.isArray(state.magazines)) {
-    if (!Array.isArray(state.slots) || state.slots.length !== 120) {
-      throw new Error('Сценарий должен содержать два магазина по 120 слотов');
-    }
-    state.magazines = [
-      { enabled: Boolean(state.magazineEnabled), slots: state.slots },
-      { enabled: false, slots: emptySlots(state.slots) },
-    ];
-    delete state.magazineEnabled;
-    delete state.slots;
-  }
-  if (state.magazines.length !== 2
-    || state.magazines.some((magazine) => !Array.isArray(magazine?.slots) || magazine.slots.length !== 120)) {
-    throw new Error('Сценарий должен содержать два магазина по 120 слотов');
-  }
-  state.magazines = state.magazines.map((magazine) => ({
-    enabled: Boolean(magazine.enabled),
-    slots: magazine.slots.map((slot) => ({ content: Number(slot.content ?? 0), productType: Number(slot.productType ?? 1) })),
-  }));
-  for (let index = 0; index < 120; index += 1) {
-    if (state.magazines[0].slots[index].productType !== state.magazines[1].slots[index].productType) {
-      throw new Error(`Тип слота ${index + 1} должен совпадать в обоих магазинах`);
-    }
-  }
-  const masks = state.faultMasks ?? {};
-  state.faultMasks = {
-    cell: Number(masks.cell ?? 0),
-    robot: Number(masks.robot ?? 0),
-    magazines: Array.isArray(masks.magazines)
-      ? [Number(masks.magazines[0] ?? 0), Number(masks.magazines[1] ?? 0)]
-      : [Number(masks.magazine ?? 0), 0],
-    machines: [0, 1, 2].map((index) => Number(masks.machines?.[index] ?? 0)),
-  };
-  return state;
-}
+export { normalizeScenarioState } from './test-scenario.mjs';
+import { normalizeScenarioState } from './test-scenario.mjs';
 
 const scenarioRow = (row) => row && ({
   id: Number(row.id), name: row.name, description: row.description ?? '',
-  schemaVersion: 2, initialState: normalizeScenarioState(parse(row.initial_state_json)),
+  schemaVersion: 3, initialState: normalizeScenarioState(parse(row.initial_state_json)),
   expectations: parse(row.expectations_json), createdAt: Number(row.created_at), updatedAt: Number(row.updated_at),
 });
 const caseRow = (row) => row && ({
   id: Number(row.id), runId: Number(row.run_id), caseIndex: Number(row.case_index), name: row.name,
   status: row.status, stage: row.stage, reason: row.reason, durationMs: row.duration_ms === null ? null : Number(row.duration_ms),
-  snapshot: parse(row.snapshot_json), scenario: parse(row.scenario_json), createdAt: Number(row.created_at),
+  snapshot: parse(row.snapshot_json), scenario: parse(row.scenario_json), diagnostics: parse(row.diagnostics_json), createdAt: Number(row.created_at),
 });
 const runRow = (row, cases = undefined) => row && ({
   id: Number(row.id), suite: row.suite, environment: row.environment, robotInterface: row.robot_interface,
@@ -101,6 +56,9 @@ export class TestStore {
       CREATE INDEX IF NOT EXISTS idx_test_run_started ON test_run(started_at DESC);
       CREATE INDEX IF NOT EXISTS idx_test_case_run ON test_case_result(run_id, case_index);
     `);
+    if (!this.db.prepare('PRAGMA table_info(test_case_result)').all().some(column => column.name === 'diagnostics_json')) {
+      this.db.exec('ALTER TABLE test_case_result ADD COLUMN diagnostics_json TEXT');
+    }
   }
 
   listScenarios() { return this.db.prepare('SELECT * FROM test_scenario ORDER BY name').all().map(scenarioRow); }
@@ -109,18 +67,19 @@ export class TestStore {
     const now = Date.now();
     const name = String(input.name ?? '').trim();
     if (!name) throw new Error('Укажите имя сценария');
-    if (input.schemaVersion !== undefined && ![1, 2].includes(input.schemaVersion)) {
+    if (input.schemaVersion !== undefined && ![1, 2, 3].includes(input.schemaVersion)) {
       throw new Error('Неподдерживаемая версия схемы сценария');
     }
     const initialState = normalizeScenarioState(input.initialState);
+    if (input.schemaVersion !== 3 && initialState.magazineMode === 1) throw new Error('Двухпалетный сценарий требует схему v3');
     if (id === null) {
       const result = this.db.prepare(`INSERT INTO test_scenario
         (name, description, schema_version, initial_state_json, expectations_json, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)`).run(name, String(input.description ?? ''), 2, stringify(initialState), stringify(input.expectations ?? {}), now, now);
+        VALUES (?, ?, ?, ?, ?, ?, ?)`).run(name, String(input.description ?? ''), 3, stringify(initialState), stringify(input.expectations ?? {}), now, now);
       return this.getScenario(result.lastInsertRowid);
     }
     this.db.prepare(`UPDATE test_scenario SET name=?, description=?, schema_version=?, initial_state_json=?,
-      expectations_json=?, updated_at=? WHERE id=?`).run(name, String(input.description ?? ''), 2, stringify(initialState), stringify(input.expectations ?? {}), now, Number(id));
+      expectations_json=?, updated_at=? WHERE id=?`).run(name, String(input.description ?? ''), 3, stringify(initialState), stringify(input.expectations ?? {}), now, Number(id));
     return this.getScenario(id);
   }
   deleteScenario(id) { return this.db.prepare('DELETE FROM test_scenario WHERE id = ?').run(Number(id)).changes > 0; }
@@ -159,23 +118,25 @@ export class TestStore {
   }
   addCase(id, result) {
     this.db.prepare(`INSERT INTO test_case_result
-      (run_id, case_index, name, status, stage, reason, duration_ms, snapshot_json, scenario_json, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (run_id, case_index, name, status, stage, reason, duration_ms, snapshot_json, scenario_json, diagnostics_json, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(run_id, case_index) DO UPDATE SET status=excluded.status, stage=excluded.stage,
       reason=excluded.reason, duration_ms=excluded.duration_ms, snapshot_json=excluded.snapshot_json,
-      scenario_json=excluded.scenario_json`).run(Number(id), Number(result.caseIndex), String(result.name ?? `Case ${result.caseIndex}`),
+      scenario_json=excluded.scenario_json, diagnostics_json=excluded.diagnostics_json`).run(Number(id), Number(result.caseIndex), String(result.name ?? `Case ${result.caseIndex}`),
       String(result.status), result.stage ?? null, result.reason ?? null, result.durationMs ?? null,
-      stringify(result.snapshot), stringify(result.scenario), Date.now());
+      stringify(result.snapshot), stringify(result.scenario), stringify(result.diagnostics), Date.now());
     this.db.prepare(`UPDATE test_run SET passed=(SELECT COUNT(*) FROM test_case_result WHERE run_id=? AND status='PASS'),
       failed=(SELECT COUNT(*) FROM test_case_result WHERE run_id=? AND status='FAIL'), current_case=? WHERE id=?`).run(Number(id), Number(id), Number(result.caseIndex), Number(id));
     return this.getRun(id);
   }
   finishRun(id, status = null, error = null) {
     const row = this.getRun(id);
-    const finalStatus = status ?? (row?.failed ? 'FAIL' : 'PASS');
-    this.db.prepare('UPDATE test_run SET status=?, stage=?, error=?, finished_at=? WHERE id=?').run(finalStatus, 'finished', error, Date.now(), Number(id));
+    const complete = row?.totalCases > 0 && row.passed === row.totalCases;
+    const finalStatus = status ?? (row?.failed ? 'FAIL' : complete ? 'PASS' : 'ERROR');
+    const reason = error ?? (finalStatus === 'ERROR' && !status ? 'Прогон завершён без полного набора результатов' : null);
+    this.db.prepare('UPDATE test_run SET status=?, stage=?, error=?, finished_at=? WHERE id=?').run(finalStatus, 'finished', reason, Date.now(), Number(id));
     return this.getRun(id);
   }
-  requestAbort(id) { this.db.prepare("UPDATE test_run SET abort_requested=1, status='ABORTING', stage='abort' WHERE id=?").run(Number(id)); return this.getRun(id); }
+  requestAbort(id) { this.db.prepare("UPDATE test_run SET abort_requested=1, status='ABORTING', stage='abort' WHERE id=? AND finished_at IS NULL").run(Number(id)); return this.getRun(id); }
   close() { this.db.close(); }
 }

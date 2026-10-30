@@ -554,7 +554,7 @@ AND (GVL_HMI.udiPointEditorCommandSeq <> udiLastPointEditorCommandSeq) THEN
 				IF GVL_CELL_SETTINGS.eTestEnvironment = E_CELL_TEST_ENVIRONMENT.NORMAL THEN
 					Persistent_Value.astConfig[uiPointEditorGeometryStation] := stGeometryConfig;
 				ELSE
-					GVL_GEOMETRY_CONTROL.astSimulationConfig[uiPointEditorGeometryStation] := stGeometryConfig;
+					Persistent_Value.astSimulationConfig[uiPointEditorGeometryStation] := stGeometryConfig;
 				END_IF;
 				GVL_GEOMETRY_CONTROL.astActiveConfig[uiPointEditorGeometryStation] := stGeometryConfig;
 				GVL_HMI.stPointEditorResultPoint.Name := '';

@@ -30,12 +30,15 @@ export function ControllerSystemDiagnostics({ controller, available }: { control
       <ResourceMeter label="Использование RAM" value={resources?.memoryUsedPercent} />
       <ResourceMeter label="Использование накопителя (ROM)" value={resources?.storageUsedPercent} />
       <dl>
+        <Field label="Передача аварий в PLC" value={!available ? 'Нет связи со шлюзом' : controller?.plc?.status === 'synchronized' ? 'Подтверждено PLC'
+          : controller?.plc?.status === 'error' ? 'Ошибка передачи' : controller?.plc?.status === 'pending' ? 'Ожидается подтверждение PLC' : 'Ожидание PLC'} />
         <Field label="Температура CPU" value={resources?.temperatureCelsius == null ? null : `${resources.temperatureCelsius} °C`} />
         <Field label="Время работы контроллера" value={resources?.uptime} />
         <Field label="Последний опрос ресурсов" value={dateTime(online ? controller.observedAt : null)} />
       </dl>
       <p className="runtime-diagnostics-note">Веб-сервис сообщает общую загрузку CPU. Отдельная нагрузка каждого ядра недоступна в этом ответе.</p>
       {available && controller?.error && <p className="runtime-diagnostics-error">{controller.error}</p>}
+      {available && controller?.plc?.error && <p className="runtime-diagnostics-error">{controller.plc.error}</p>}
     </section>
     <section className="runtime-diagnostics-card">
       <h3>Коды контроллера и сеть</h3>

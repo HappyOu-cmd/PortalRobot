@@ -1,4 +1,18 @@
+export interface ControllerAlarmEvent {
+  id: string;
+  source: 'controller';
+  severity: 'alarm' | 'warning';
+  effect: 'notification';
+  code: string;
+  text: string;
+  active: boolean;
+  stale: boolean;
+  reportedAt: number;
+}
+
 export interface ControllerDiagnostics {
+  alarms?: ControllerAlarmEvent[];
+  plc?: { status: 'waiting' | 'pending' | 'synchronized' | 'error'; error: string | null; ackSeq: number | null };
   url: string;
   status: 'disabled' | 'connecting' | 'online' | 'offline' | 'unauthorized';
   observedAt: number | null;

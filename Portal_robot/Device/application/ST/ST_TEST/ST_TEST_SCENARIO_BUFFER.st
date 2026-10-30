@@ -1,11 +1,19 @@
 TYPE ST_TEST_SCENARIO_BUFFER :
 STRUCT
 	udiLoadSeq : UDINT;
+	uiSchemaVersion : UINT; // v3: explicit magazine owner and both pallets
+	uiMagazineMode : UINT; // Must match the selected mode; never switches mechanics
+	axOperatorLoaded : ARRAY [1..2] OF BOOL;
+	axAutoSwap : ARRAY [1..2] OF BOOL;
+	aauiOperatorSlotContent : ARRAY [1..2, 1..120] OF UINT; // 1..96 in twin mode
+	axGeometryEnabled : ARRAY [1..2] OF BOOL;
+	axGeometryCall : ARRAY [1..3] OF BOOL;
+	xGeometryWaitWhenOccupied : BOOL;
 	uiTypeCount : UINT;
 	axMagazineEnabled : ARRAY [1..2] OF BOOL;
 	auiMachineState : ARRAY [1..3] OF UINT; // 0 disabled, 1 empty, 2 blank processing, 3 detail ready
 	auiMachineType : ARRAY [1..3] OF UINT;
-	aauiSlotContent : ARRAY [1..2, 1..120] OF UINT; // Две статичные кассеты: 0 empty, 1 blank, 2 detail
+	aauiSlotContent : ARRAY [1..2, 1..120] OF UINT; // Robot-side slots: static 1..120; twin 1..96; 0 empty, 1 blank, 2 detail
 	auiSlotType : ARRAY [1..120] OF UINT;
 	auiGripperContent : ARRAY [1..2] OF UINT;
 	auiGripperType : ARRAY [1..2] OF UINT;

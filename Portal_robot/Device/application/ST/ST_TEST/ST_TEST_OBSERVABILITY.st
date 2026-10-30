@@ -1,6 +1,8 @@
 TYPE ST_TEST_OBSERVABILITY :
 STRUCT
 	udiAppliedScenarioSeq : UDINT;
+	uiSchemaVersion : UINT;
+	uiReturnMagazine : UINT;
 	uiCellState : UINT;
 	uiRobotState : UINT;
 	uiRobotAction : UINT;

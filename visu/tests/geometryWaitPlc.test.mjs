@@ -6,6 +6,7 @@ const update = compileSt(readPlc('FB/FB_CELL_MANAGER/FB_CELL_MANAGER.UpdateGeome
 const selectStation = compileSt(readPlc('FB/F_GEOMETRY_SELECT_STATION.st'));
 const eligible = compileSt(readPlc('FB/FB_CELL_MANAGER/FB_CELL_MANAGER.IsMachineEligible.st'));
 const compatible = compileSt(readPlc('FB/FB_CELL_MANAGER/FB_CELL_MANAGER.IsMachineCompatible.st'));
+const workPending = compileSt(readPlc('FB/FB_CELL_MANAGER/FB_CELL_MANAGER.IsMachineWorkPending.st'));
 const selectBeforeTake = compileSt(readPlc('FB/FB_CELL_MANAGER/FB_CELL_MANAGER.SelectMachineBeforeTake.st'));
 const selectHeldBlank = compileSt(readPlc('FB/FB_CELL_MANAGER/FB_CELL_MANAGER.SelectMachineForHeldBlank.st'));
 const selectUnload = compileSt(readPlc('FB/FB_CELL_MANAGER/FB_CELL_MANAGER.SelectMachineForUnload.st'));
@@ -53,6 +54,7 @@ function fixture() {
   s.F_GEOMETRY_SELECT_STATION = args => { const local = { ...s, ...args, uiTry: 0, uiStation: 0, F_GEOMETRY_SELECT_STATION: 0 }; selectStation(local); return local.F_GEOMETRY_SELECT_STATION; };
   s.IsMachineEligible = args => { const local = { ...s, ...args, IsMachineEligible: false }; eligible(local); return local.IsMachineEligible; };
   s.IsMachineCompatible = args => { const local = { ...s, ...args, IsMachineCompatible: false }; compatible(local); return local.IsMachineCompatible; };
+  s.IsMachineWorkPending = args => { const local = { ...s, ...args, IsMachineWorkPending: false }; workPending(local); return local.IsMachineWorkPending; };
   s.scan = (dt = 0) => { s.now += dt; update(s); };
   return s;
 }
@@ -91,7 +93,7 @@ function serviceFixture(operation = 'CHANGE') {
   s.stMagazineStatus.udiProducedPartsTotal = 10;
   Object.assign(s, {
     E_MACHINE_OPERATION: { NONE: 0, LOAD: 1, CHANGE: 2, UNLOAD: 3 },
-    E_CELL_MANAGER_STATE: { SERVICE_TARGET: 7, PLAN_TARGET: 1, SELECT_FALLBACK: 8, ERROR: 10,
+    E_CELL_MANAGER_STATE: { SERVICE_TARGET: 7, PLAN_TARGET: 1, SELECT_FALLBACK: 8, RELEASE_ROBOT_COMMAND: 5, ERROR: 10,
       GEOMETRY_WAIT_FREE: 19, GEOMETRY_DELIVER: 20 },
     eState: 7, uiSelectedMachine: 1, uiSelectedType: 1, uiBlankPayloadType: 1, uiDetailPayloadType: 0,
     xMachineServiceStarted: true, xGeometryHeld: false, xGeometryDetailCounted: false,
@@ -205,7 +207,7 @@ test('late calls are not bound through machine or robot errors or a rejected ser
     if (reason === 'rejected') s.astMachineStatus[1].xServiceRejected = true;
     s.release();
     assert.equal(s.xGeometryHeld, false); assert.equal(s.GVL_GEOMETRY_CONTROL.astCalls[1].uiState, 1);
-    assert.equal(s.eState, reason === 'robot-error' ? s.E_CELL_MANAGER_STATE.ERROR : s.E_CELL_MANAGER_STATE.SELECT_FALLBACK);
+    assert.equal(s.eState, reason === 'robot-error' ? s.E_CELL_MANAGER_STATE.ERROR : s.E_CELL_MANAGER_STATE.RELEASE_ROBOT_COMMAND);
   }
 });
 

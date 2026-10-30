@@ -1,5 +1,8 @@
 {attribute 'qualified_only'}
 VAR_GLOBAL
+    stControllerWebRequest : ST_CONTROLLER_WEB_REQUEST;
+    {attribute 'symbol' := 'read'}
+    stControllerWebStatus : ST_CONTROLLER_WEB_STATUS;
 	stGeometryRequest : ST_GEOMETRY_REQUEST;
 	udiGeometryCommandSeq : UDINT;
 	udiGeometryIssuedAtMs : UDINT;

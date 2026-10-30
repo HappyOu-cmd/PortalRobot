@@ -24,10 +24,10 @@ export function compileSt(source) {
     return `switch (${selector}) { ${branches} break; }`;
   });
   // Named-argument calls с выражениями, в том числе вложенными MAX/SEL.
-  const namedCalls = /\b(a?ton\w+(?:\[\w+\])?|F_GEOMETRY_\w+|IsMachineEligible|IsMachineCompatible)\(/g;
+  const namedCalls = /\b(a?ton\w+(?:\[\w+\])?|F_GEOMETRY_\w+|IsMachineEligible|IsMachineCompatible|IsMachineWorkPending|HasMagazineWork)\(/g;
   code = code.replace(namedCalls, '$1({').replace(/([\w.\[\]]+)\s*:=/g, '$1 __ASSIGN__');
   // Закрываем объект named arguments по парным скобкам.
-  for (const match of [...code.matchAll(/\b(?:a?ton\w+(?:\[\w+\])?|F_GEOMETRY_\w+|IsMachineEligible|IsMachineCompatible)\(\{/g)].reverse()) {
+  for (const match of [...code.matchAll(/\b(?:a?ton\w+(?:\[\w+\])?|F_GEOMETRY_\w+|IsMachineEligible|IsMachineCompatible|IsMachineWorkPending|HasMagazineWork)\(\{/g)].reverse()) {
     let depth = 1, pos = match.index + match[0].length;
     for (; pos < code.length; pos++) { if (code[pos] === '(') depth++; if (code[pos] === ')' && --depth < 1) break; }
     const start = match.index + match[0].length;

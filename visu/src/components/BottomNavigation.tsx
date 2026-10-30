@@ -93,10 +93,8 @@ export function BottomNavigation({ onNavigate, alarmEvents }: {
           aria-controls={open && folderKey === key ? folderId : undefined}
           title={label}
         >
-          <span className={entries.length === 1 ? cn('cell-bottom-nav__single-icon', 'cell-nav-status-icon', toneClass({ tone: alarmTone(alarmEvents, sources) })) : 'cell-bottom-nav__preview'} aria-hidden="true">
-            {entries.length === 1
-              ? <Icon icon={ICONS[entries[0].icon]} />
-              : entries.slice(0, 4).map((entry) => <span key={entry.id} className={cn('cell-nav-status-icon', toneClass({ tone: alarmTone(alarmEvents, entry.sources) }))} title={entry.label}><Icon icon={ICONS[entry.icon]} /></span>)}
+          <span className={cn('cell-bottom-nav__icon', 'cell-nav-status-icon', toneClass({ tone: alarmTone(alarmEvents, sources) }))} aria-hidden="true">
+            <Icon icon={ICONS[key]} />
           </span>
           <span className="cell-bottom-nav__caption">{caption}</span>
         </button>)}

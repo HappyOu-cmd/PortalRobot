@@ -55,7 +55,22 @@ IF xIoManualActive THEN
 	GVL_CELL_CONTROL.xStop := TRUE;
 END_IF;
 
-GVL_CELL_CONTROL.xGlobalError := CELL_SAFETY.Status.xGlobalError;
+CONTROLLER_DIAGNOSTICS(
+    Request := GVL_HMI.stControllerWebRequest,
+    udiNowMs := udiHmiCommandNowMs,
+    xReset := GVL_CELL_CONTROL.xReset,
+    xResetWarnings := GVL_ALARM.Command.xResetWarnings
+);
+GVL_HMI.stControllerWebStatus := CONTROLLER_DIAGNOSTICS.Status;
+GVL_CELL_CONTROL.xGlobalError := CELL_SAFETY.Status.xGlobalError
+    OR CONTROLLER_DIAGNOSTICS.Status.xGlobalStopRequired;
+IF CONTROLLER_DIAGNOSTICS.Status.xAlarmActive THEN
+    // Аппаратная системная авария не допускает обход через прямые ручные DO.
+    xIoManualActive := FALSE;
+    // Подтверждённое исчезновение причины разрешает восстановление, но не Auto.
+    GVL_CELL_CONTROL.xStart := FALSE;
+    GVL_CELL_CONTROL.xEnable := FALSE;
+END_IF;
 
 // HMI записывает payload, затем CommandSeq. Gateway удерживает единственного
 // писателя до AckSeq. Даже запись между RunSafety и PublishHmi не теряется:
@@ -69,7 +84,8 @@ AND (udiCellModeCommandSnapshot <> GVL_HMI.udiCellModeAckSeq) THEN
 	AND NOT GVL_CELL_CONTROL.xGlobalError THEN
 		uiCellModeRejectReason := UINT#2;
 	ELSIF NOT GVL_HMI.xCellManualRequest
-	AND (GVL_CELL_CONTROL.xGlobalError OR GVL_HMI.xIoEmergencyStopActive) THEN
+	AND (GVL_CELL_CONTROL.xGlobalError OR GVL_HMI.xIoEmergencyStopActive
+        OR CONTROLLER_DIAGNOSTICS.Status.xAlarmActive) THEN
 		uiCellModeRejectReason := UINT#3;
 	ELSE
 		GVL_CELL_CONTROL.xManual := GVL_HMI.xCellManualRequest;
@@ -82,7 +98,8 @@ AND (udiCellModeCommandSnapshot <> GVL_HMI.udiCellModeAckSeq) THEN
 	// Ack публикуется после фактического режима в PublishHmi, включая отказ.
 END_IF;
 
-IF GVL_CELL_CONTROL.xGlobalError OR GVL_HMI.xIoEmergencyStopActive THEN
+IF GVL_CELL_CONTROL.xGlobalError OR GVL_HMI.xIoEmergencyStopActive
+OR CONTROLLER_DIAGNOSTICS.Status.xAlarmActive THEN
 	GVL_CELL_CONTROL.xManual := TRUE;
 END_IF;
 

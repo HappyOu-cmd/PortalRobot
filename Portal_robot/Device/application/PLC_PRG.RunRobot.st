@@ -2,6 +2,8 @@ METHOD PRIVATE RunRobot
 
 // --- BEGIN IMPLEMENTATION ---
 
+BuildRobotResetDependencies();
+
 // Старый типизированный канал сохраняется для совместимости. Новый HMI пишет
 // числовые коды, которые преобразуются в enum только внутри PLC.
 stRobotHmiCommand := GVL_HMI.stRobotCommand;
@@ -434,10 +436,12 @@ ROBOT(
 	stMachine_3_command := GVL_MACHINE.Command[3].stRobot,
 	stMagazineCommand := stSelectedMagazineCommand,
 	stCellCommand := GVL_CELL_MANAGER.Command.stRobot,
+	ResetDependencies := stRobotResetDependencies,
 	uiBlankPayloadType := GVL_CELL_MANAGER.Command.uiBlankPayloadType,
 	uiDetailPayloadType := GVL_CELL_MANAGER.Command.uiDetailPayloadType,
 	stHmiCommand := stRobotHmiCommand,
 	xReset := GVL_CELL_CONTROL.xReset OR GVL_HMI.xRobotReset,
+	xResetCancel := GVL_CELL_CONTROL.xStop OR GVL_CELL_CONTROL.xDisable,
 	xManual := GVL_CELL_CONTROL.xManual AND NOT GVL_CELL_MANAGER.Status.xRunning,
 	xMode := GVL_HMI.xModbusMode,
 	xGlobalError := GVL_CELL_CONTROL.xGlobalError,

@@ -63,7 +63,7 @@ CELL_MANAGER(
     xIoEmergencyResetRejected := xIoEmergencyResetRejected,
     xIoEmergencyStopActive := GVL_HMI.xIoEmergencyStopActive,
 	xGlobalError := GVL_CELL_CONTROL.xGlobalError,
-	xSafetyReady := CELL_SAFETY.Status.xReady,
+	xSafetyReady := CELL_SAFETY.Status.xReady AND NOT CONTROLLER_DIAGNOSTICS.Status.xAlarmActive,
 	xDrivesReady := xDrivesReady,
 	xMotionBusy := xMotionBusy,
 	xRobotInterfaceReady := xRobotInterfaceReady,

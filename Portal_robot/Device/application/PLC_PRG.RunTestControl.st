@@ -15,8 +15,14 @@ xTestStable := NOT GVL_CELL_MANAGER.Status.xRunning
 	AND NOT GVL_ROBOT.Status.xBusy
 	AND NOT GVL_MAGAZINE.astStatus[1].xBusy
 	AND NOT GVL_MAGAZINE.astStatus[2].xBusy
-	AND NOT GVL_TWO_PALLET.astInput[1].xPowered
-	AND NOT GVL_TWO_PALLET.astInput[2].xPowered
+	AND NOT GVL_TWO_PALLET.astStatus[1].xBusy
+	AND NOT GVL_TWO_PALLET.astStatus[2].xBusy
+	AND NOT GVL_GEOMETRY_CONTROL.astStatus[1].xDriveRunning
+	AND NOT GVL_GEOMETRY_CONTROL.astStatus[2].xDriveRunning
+	AND NOT GVL_GEOMETRY_CONTROL.astStatus[1].xResetBusy
+	AND NOT GVL_GEOMETRY_CONTROL.astStatus[2].xResetBusy
+	AND NOT GVL_GEOMETRY_CONTROL.astStatus[1].xReserved
+	AND NOT GVL_GEOMETRY_CONTROL.astStatus[2].xReserved
 	AND NOT xMotionBusy
 	AND NOT SIMULATION_DYNAMICS.xBusy;
 FOR uiTestIndex := UINT#1 TO UINT#3 DO
@@ -25,9 +31,22 @@ FOR uiTestIndex := UINT#1 TO UINT#3 DO
 		AND NOT GVL_MACHINE.Status[uiTestIndex].xProcessing;
 END_FOR;
 
-GVL_HMI.xTestEnvironmentChangeAllowed := xTestStable;
+GVL_HMI.xTestEnvironmentChangeAllowed := xTestStable
+	AND NOT GVL_TWO_PALLET.astInput[1].xPowered
+	AND NOT GVL_TWO_PALLET.astInput[2].xPowered;
 GVL_HMI.xTestScenarioApplyAllowed := xTestStable
-	AND (GVL_TWO_PALLET.uiMode = 0) // Existing scenarios describe static 120-slot magazines
+	AND ((GVL_TWO_PALLET.uiMode = 0)
+		OR ((GVL_TWO_PALLET.uiMode = 1)
+			AND (GVL_CELL_SETTINGS.eTestEnvironment = E_CELL_TEST_ENVIRONMENT.SIMULATION)
+			AND NOT GVL_HMI.xModbusMode
+			AND GVL_TWO_PALLET.astStatus[1].xConfirmed
+			AND GVL_TWO_PALLET.astStatus[2].xConfirmed
+			AND (GVL_TWO_PALLET.astStatus[1].uiRobotPallet >= UINT#1)
+			AND (GVL_TWO_PALLET.astStatus[1].uiRobotPallet <= UINT#2)
+			AND (GVL_TWO_PALLET.astStatus[2].uiRobotPallet >= UINT#1)
+			AND (GVL_TWO_PALLET.astStatus[2].uiRobotPallet <= UINT#2)
+			AND GVL_TWO_PALLET.astInput[1].xStandstill
+			AND GVL_TWO_PALLET.astInput[2].xStandstill))
 	AND GVL_HMI.xTestSessionActive
 	AND (GVL_CELL_SETTINGS.eTestEnvironment <> E_CELL_TEST_ENVIRONMENT.NORMAL)
 	AND ((GVL_CELL_SETTINGS.eTestEnvironment <> E_CELL_TEST_ENVIRONMENT.SIMULATION)
@@ -88,7 +107,11 @@ END_IF;
 
 IF rtTestScenarioApply.Q THEN
 	GVL_HMI.uiTestScenarioResult := UINT#0;
-	xTestScenarioValid := GVL_HMI.stTestScenario.udiLoadSeq <> UDINT#0
+	uiTestSlotCount := UINT#120;
+	IF GVL_TWO_PALLET.uiMode = UINT#1 THEN uiTestSlotCount := UINT#96; END_IF;
+	xTestScenarioValid := (GVL_HMI.stTestScenario.uiSchemaVersion = UINT#3)
+		AND (GVL_HMI.stTestScenario.uiMagazineMode = GVL_TWO_PALLET.uiMode)
+		AND (GVL_HMI.stTestScenario.udiLoadSeq <> UDINT#0)
 		AND (GVL_HMI.stTestScenario.uiTypeCount >= UINT#1)
 		AND (GVL_HMI.stTestScenario.uiTypeCount <= UINT#3);
 	FOR uiTestIndex := UINT#1 TO UINT#3 DO
@@ -98,15 +121,27 @@ IF rtTestScenarioApply.Q THEN
 			AND (GVL_HMI.stTestScenario.auiMachineType[uiTestIndex]
 				<= GVL_HMI.stTestScenario.uiTypeCount);
 	END_FOR;
-	FOR uiTestIndex := UINT#1 TO UINT#120 DO
+	FOR uiTestIndex := UINT#1 TO uiTestSlotCount DO
 		xTestScenarioValid := xTestScenarioValid
 			AND (GVL_HMI.stTestScenario.auiSlotType[uiTestIndex] >= UINT#1)
 			AND (GVL_HMI.stTestScenario.auiSlotType[uiTestIndex]
 				<= GVL_HMI.stTestScenario.uiTypeCount);
 		FOR uiTestMagazine := UINT#1 TO UINT#2 DO
 			xTestScenarioValid := xTestScenarioValid
-				AND (GVL_HMI.stTestScenario.aauiSlotContent[uiTestMagazine, uiTestIndex] <= UINT#2);
+				AND (GVL_HMI.stTestScenario.aauiSlotContent[uiTestMagazine, uiTestIndex] <= UINT#2)
+				AND (GVL_HMI.stTestScenario.aauiOperatorSlotContent[uiTestMagazine, uiTestIndex] <= UINT#2);
 		END_FOR;
+	END_FOR;
+	FOR uiTestType := UINT#1 TO MIN(UINT#3, GVL_HMI.stTestScenario.uiTypeCount) DO
+		xTestTypeHasMachine := FALSE;
+		xTestTypeHasSlot := FALSE;
+		FOR uiTestIndex := UINT#1 TO UINT#3 DO
+			xTestTypeHasMachine := xTestTypeHasMachine OR (GVL_HMI.stTestScenario.auiMachineType[uiTestIndex] = uiTestType);
+		END_FOR;
+		FOR uiTestIndex := UINT#1 TO uiTestSlotCount DO
+			xTestTypeHasSlot := xTestTypeHasSlot OR (GVL_HMI.stTestScenario.auiSlotType[uiTestIndex] = uiTestType);
+		END_FOR;
+		xTestScenarioValid := xTestScenarioValid AND xTestTypeHasMachine AND xTestTypeHasSlot;
 	END_FOR;
 	uiTestFaultOwnerCount := UINT#0;
 	IF GVL_HMI.stTestScenario.dwCellFaultMask <> DWORD#0 THEN
@@ -145,30 +180,61 @@ IF rtTestScenarioApply.Q THEN
 		AND (GVL_HMI.stTestScenario.auiGripperType[2]
 			<= GVL_HMI.stTestScenario.uiTypeCount);
 
+	IF GVL_HMI.stTestScenario.axGeometryEnabled[1] OR GVL_HMI.stTestScenario.axGeometryEnabled[2]
+		OR GVL_HMI.stTestScenario.axGeometryCall[1] OR GVL_HMI.stTestScenario.axGeometryCall[2]
+		OR GVL_HMI.stTestScenario.axGeometryCall[3] THEN
+		xTestScenarioValid := xTestScenarioValid
+			AND (GVL_CELL_SETTINGS.eTestEnvironment = E_CELL_TEST_ENVIRONMENT.SIMULATION)
+			AND NOT GVL_HMI.xModbusMode;
+	END_IF;
 	IF NOT GVL_HMI.xTestScenarioApplyAllowed THEN
 		GVL_HMI.uiTestScenarioResult := UINT#1;
 	ELSIF NOT xTestScenarioValid OR (GVL_HMI.stTestScenario.uiOrientation > UINT#1) THEN
 		GVL_HMI.uiTestScenarioResult := UINT#2;
 	ELSE
 		FOR uiTestMagazine := UINT#1 TO UINT#2 DO
+			uiTestPallet := GVL_TWO_PALLET.astStatus[uiTestMagazine].uiRobotPallet;
+			uiTestOtherPallet := UINT#3 - uiTestPallet;
 			FOR uiTestIndex := UINT#1 TO UINT#120 DO
-				GVL_DETAIL.astMagazine[uiTestMagazine].aSlots[uiTestIndex].xInPosition :=
-					GVL_HMI.stTestScenario.aauiSlotContent[uiTestMagazine, uiTestIndex] <> UINT#0;
-				CASE GVL_HMI.stTestScenario.aauiSlotContent[uiTestMagazine, uiTestIndex] OF
-					UINT#1: GVL_DETAIL.astMagazine[uiTestMagazine].aSlots[uiTestIndex].eDetailType := E_DETAIL_TYPE.BLANK;
-					UINT#2: GVL_DETAIL.astMagazine[uiTestMagazine].aSlots[uiTestIndex].eDetailType := E_DETAIL_TYPE.DETAIL;
-				ELSE
-					GVL_DETAIL.astMagazine[uiTestMagazine].aSlots[uiTestIndex].eDetailType := E_DETAIL_TYPE.NONE;
-				END_CASE;
-				IF GVL_HMI.stTestScenario.aauiSlotContent[uiTestMagazine, uiTestIndex] = UINT#0 THEN
-					GVL_DETAIL.astMagazine[uiTestMagazine].aSlots[uiTestIndex].uiProductType := UINT#0;
-				ELSE
-					GVL_DETAIL.astMagazine[uiTestMagazine].aSlots[uiTestIndex].uiProductType :=
-						GVL_HMI.stTestScenario.auiSlotType[uiTestIndex];
+				GVL_DETAIL.astMagazine[uiTestMagazine].aSlots[uiTestIndex].xInPosition := FALSE;
+				GVL_DETAIL.astMagazine[uiTestMagazine].aSlots[uiTestIndex].eDetailType := E_DETAIL_TYPE.NONE;
+				GVL_DETAIL.astMagazine[uiTestMagazine].aSlots[uiTestIndex].uiProductType := UINT#0;
+				IF uiTestIndex <= uiTestSlotCount THEN
+					GVL_DETAIL.astMagazine[uiTestMagazine].aSlots[uiTestIndex].xInPosition :=
+						GVL_HMI.stTestScenario.aauiSlotContent[uiTestMagazine, uiTestIndex] <> UINT#0;
+					CASE GVL_HMI.stTestScenario.aauiSlotContent[uiTestMagazine, uiTestIndex] OF
+						UINT#1: GVL_DETAIL.astMagazine[uiTestMagazine].aSlots[uiTestIndex].eDetailType := E_DETAIL_TYPE.BLANK;
+						UINT#2: GVL_DETAIL.astMagazine[uiTestMagazine].aSlots[uiTestIndex].eDetailType := E_DETAIL_TYPE.DETAIL;
+					END_CASE;
+					IF GVL_DETAIL.astMagazine[uiTestMagazine].aSlots[uiTestIndex].xInPosition THEN
+						GVL_DETAIL.astMagazine[uiTestMagazine].aSlots[uiTestIndex].uiProductType := GVL_HMI.stTestScenario.auiSlotType[uiTestIndex];
+					END_IF;
+				END_IF;
+				IF GVL_TWO_PALLET.uiMode = UINT#1 THEN
+					GVL_TWO_PALLET.astStore[uiTestMagazine].astPallet[uiTestPallet].aSlots[uiTestIndex] := GVL_DETAIL.astMagazine[uiTestMagazine].aSlots[uiTestIndex];
+					GVL_TWO_PALLET.astStore[uiTestMagazine].astPallet[uiTestOtherPallet].aSlots[uiTestIndex].xInPosition := FALSE;
+					GVL_TWO_PALLET.astStore[uiTestMagazine].astPallet[uiTestOtherPallet].aSlots[uiTestIndex].eDetailType := E_DETAIL_TYPE.NONE;
+					GVL_TWO_PALLET.astStore[uiTestMagazine].astPallet[uiTestOtherPallet].aSlots[uiTestIndex].uiProductType := UINT#0;
+					IF uiTestIndex <= uiTestSlotCount THEN
+						GVL_TWO_PALLET.astStore[uiTestMagazine].astPallet[uiTestOtherPallet].aSlots[uiTestIndex].xInPosition := GVL_HMI.stTestScenario.aauiOperatorSlotContent[uiTestMagazine, uiTestIndex] <> UINT#0;
+						CASE GVL_HMI.stTestScenario.aauiOperatorSlotContent[uiTestMagazine, uiTestIndex] OF
+							UINT#1: GVL_TWO_PALLET.astStore[uiTestMagazine].astPallet[uiTestOtherPallet].aSlots[uiTestIndex].eDetailType := E_DETAIL_TYPE.BLANK;
+							UINT#2: GVL_TWO_PALLET.astStore[uiTestMagazine].astPallet[uiTestOtherPallet].aSlots[uiTestIndex].eDetailType := E_DETAIL_TYPE.DETAIL;
+						END_CASE;
+						IF GVL_HMI.stTestScenario.aauiOperatorSlotContent[uiTestMagazine, uiTestIndex] <> UINT#0 THEN
+							GVL_TWO_PALLET.astStore[uiTestMagazine].astPallet[uiTestOtherPallet].aSlots[uiTestIndex].uiProductType := GVL_HMI.stTestScenario.auiSlotType[uiTestIndex];
+						END_IF;
+					END_IF;
 				END_IF;
 			END_FOR;
-			adwTestMagazineFaultMask[uiTestMagazine] :=
-				GVL_HMI.stTestScenario.adwMagazineFaultMask[uiTestMagazine];
+			IF GVL_TWO_PALLET.uiMode = UINT#1 THEN
+				GVL_TWO_PALLET.astStore[uiTestMagazine].axLoaded[uiTestPallet] := FALSE;
+				GVL_TWO_PALLET.astStore[uiTestMagazine].axLoaded[uiTestOtherPallet] := GVL_HMI.stTestScenario.axOperatorLoaded[uiTestMagazine];
+				GVL_TWO_PALLET.axSimulationAutoSwapEnabled[uiTestMagazine] := GVL_HMI.stTestScenario.axAutoSwap[uiTestMagazine];
+			ELSE
+				GVL_TWO_PALLET.astStatic[uiTestMagazine] := GVL_DETAIL.astMagazine[uiTestMagazine];
+			END_IF;
+			adwTestMagazineFaultMask[uiTestMagazine] := GVL_HMI.stTestScenario.adwMagazineFaultMask[uiTestMagazine];
 		END_FOR;
 		// Начальные инъекции: маски переводятся в существующий диагностический
 		// контракт, а не обходят владельцев ошибок.
@@ -236,6 +302,15 @@ IF rtTestScenarioApply.Q THEN
 			OR (GVL_HMI.stTestScenario.adwMachineFaultMask[1] <> DWORD#0)
 			OR (GVL_HMI.stTestScenario.adwMachineFaultMask[2] <> DWORD#0)
 			OR (GVL_HMI.stTestScenario.adwMachineFaultMask[3] <> DWORD#0);
+		IF GVL_CELL_SETTINGS.eTestEnvironment = E_CELL_TEST_ENVIRONMENT.SIMULATION THEN
+			IF NOT xTestGeometrySettingsSaved THEN
+				xTestSavedGeometryAuto := Persistent_Value.xAutoEnabled;
+				xTestSavedGeometryWait := Persistent_Value.xWaitWhenOccupied;
+				xTestGeometrySettingsSaved := TRUE;
+			END_IF;
+			Persistent_Value.xAutoEnabled := FALSE;
+			Persistent_Value.xWaitWhenOccupied := GVL_HMI.stTestScenario.xGeometryWaitWhenOccupied;
+		END_IF;
 		xTestInitializePulse := TRUE;
 	END_IF;
 	// Ack подтверждает обработку конкретного LoadSeq даже при отклонении.
@@ -256,4 +331,11 @@ IF GVL_CELL_SETTINGS.eTestEnvironment = E_CELL_TEST_ENVIRONMENT.SIMULATION THEN
 ELSE
 	GVL_CELL_SETTINGS.xSimulationAccelerationEnable := FALSE;
 	GVL_HMI.xSimulationAccelerationEnable := FALSE;
+END_IF;
+
+// Restore the operator policy even if the runner crashes and gateway releases the session.
+IF xTestGeometrySettingsSaved AND NOT GVL_HMI.xTestSessionActive THEN
+	Persistent_Value.xAutoEnabled := xTestSavedGeometryAuto;
+	Persistent_Value.xWaitWhenOccupied := xTestSavedGeometryWait;
+	xTestGeometrySettingsSaved := FALSE;
 END_IF;

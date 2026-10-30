@@ -9,6 +9,7 @@ import re
 import pytest
 
 from test_hmi_command_contract import execute
+from robot_simulator.plc_model.cell import Cell
 
 
 APP = Path(__file__).resolve().parents[2] / "Portal_robot/Device/application"
@@ -617,6 +618,37 @@ ELIGIBLE = read("FB/FB_CELL_MANAGER/FB_CELL_MANAGER.IsMachineEligible.st")
 def magazine_selection(values):
     source = MANAGER[MANAGER.index("xMagazine1Available :="):
                      MANAGER.index("\nIF (uiActiveMagazine >= UINT#1)")]
+    if "HasMagazineWork(" in source:
+        # The legacy scalar runner cannot parse named method calls. Execute
+        # the production predicate on typed snapshots rather than duplicating
+        # its decision in this fixture or replacing it with an expected answer.
+        cell = Cell(autostart=False)
+        manager = cell.manager
+        manager.Config.uiTypeCount = values["Config.uiTypeCount"]
+        for machine in (1, 2, 3):
+            manager.Config.auiMachineType[machine] = values[f"Config.auiMachineType[{machine}]"]
+            manager.axMachineStartPending[machine] = values[f"axMachineStartPending[{machine}]"]
+            manager.axGeometryUnloadBlocked[machine] = values[f"axGeometryUnloadBlocked[{machine}]"]
+            status = cell.registry.value("ST_MACHINE_PUBLIC", cell.g)
+            prefix = f"astMachineStatus[{machine}]."
+            for field in status._types:
+                if prefix + field in values:
+                    value = values[prefix + field]
+                    if isinstance(value, str) and value.startswith("E_"):
+                        enum, member = value.split(".")
+                        value = getattr(cell.registry.enums[enum], member)
+                    setattr(status, field, value)
+            manager.astMachineStatus[machine] = status
+        for magazine in (1, 2):
+            for product in (1, 2, 3):
+                for field in ("aiBlankSlot", "aiFreeSlot"):
+                    getattr(manager.astMagazineStatus[magazine].stTypeStatus, field)[product] = values[
+                        f"astMagazineStatus[{magazine}].stTypeStatus.{field}[{product}]"]
+            for supply_only in (False, True):
+                alias = f"selection_magazine_{magazine}_work_{int(supply_only)}"
+                values[alias] = manager.HasMagazineWork(uiMagazine=magazine, xSupplyBlankOnly=supply_only)
+                source = re.sub(r"HasMagazineWork\(uiMagazine\s*:=\s*UINT#" + str(magazine)
+                    + r",\s*xSupplyBlankOnly\s*:=\s*" + ("TRUE" if supply_only else "FALSE") + r"\)", alias, source)
     source = source.replace("[uiActiveMagazine]", f"[{values['uiActiveMagazine']}]")
     source = source.replace("[uiDetailPayloadType]", f"[{values['uiDetailPayloadType']}]")
     loop = re.search(r"FOR uiMachine := FIRST_MACHINE TO LAST_MACHINE DO(.*?)END_FOR;", source, re.S)
@@ -665,7 +697,7 @@ def magazine_selection_state(magazine=2, phase="PLAN_TARGET"):
         for field, value in {"xEnabled": machine == 1, "xError": False, "xDisablePending": False,
                              "xProcessing": False, "xCanAcceptService": True,
                              "xServiceRequired": False,
-                             "ePartState": "E_PART_STATE.EMPTY", "ePartType": "E_PART_TYPE.NONE"}.items():
+                             "ePartState": "E_PART_STATE.EMPTY", "ePartType": "E_PART_TYPE.UNKNOWN"}.items():
             values[f"astMachineStatus[{machine}].{field}"] = value
     return values
 
@@ -832,6 +864,9 @@ def test_magazine_selection_keeps_first_destination_for_machine_work(pending):
     else:
         values["astMachineStatus[1].ePartState"] = "E_PART_STATE.LOADED"
         values["astMachineStatus[1].ePartType"] = "E_PART_TYPE." + ("PART" if pending == "part" else "DETAIL")
+        # A short automatic transition remains useful; an operator's LOADED
+        # state with no Processing/pending/Busy/Done must not retain the pallet.
+        values["astMachineStatus[1].xBusy"] = True
     magazine_selection(values)
     assert values["uiActiveMagazine"] == 1
 

@@ -92,6 +92,8 @@ uiMagazine := GVL_CELL_MANAGER.Status.uiActiveMagazine;
 IF (uiMagazine < UINT#1) OR (uiMagazine > UINT#2) THEN
 	uiMagazine := UINT#1;
 END_IF;
+GVL_HMI.stTestObservability.uiSchemaVersion := UINT#3;
+GVL_HMI.stTestObservability.uiReturnMagazine := CELL_MANAGER.uiReturnMagazine;
 GVL_HMI.stTestObservability.udiAppliedScenarioSeq := GVL_HMI.udiTestScenarioAckSeq;
 GVL_HMI.stTestObservability.uiCellState := TO_UINT(GVL_CELL_MANAGER.Diag.eState);
 GVL_HMI.stTestObservability.uiRobotState := TO_UINT(GVL_ROBOT.Diag.eState);

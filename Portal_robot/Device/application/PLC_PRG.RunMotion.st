@@ -2,7 +2,9 @@ METHOD PRIVATE RunMotion
 
 // --- BEGIN IMPLEMENTATION ---
 
+// Отказ самого контроллера не допускает ручной обход глобального останова.
 xManualRecoveryActive := GVL_CELL_CONTROL.xGlobalError
+    AND NOT CONTROLLER_DIAGNOSTICS.Status.xGlobalStopRequired
 	AND GVL_CELL_CONTROL.xManual
 	AND NOT GVL_CELL_MANAGER.Status.xRunning
 	AND NOT GVL_HMI.xModbusMode

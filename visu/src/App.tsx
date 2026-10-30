@@ -116,10 +116,13 @@ import type {
   SlotType,
 } from './model/types';
 import {
-  createPlcClient, mapPlcSnapshot, mapRobotCoordinates, mapRuntimeInfo,
-  ALARM_EFFECT_LABELS, ALARM_SOURCE_LABELS,
+  clearRecoveredConnectionError, createPlcClient, mapPlcSnapshot, mapRobotCoordinates, mapRuntimeInfo,
   type CellLogEvent, type PlcAlarmEvent, type PlcAlarmSource, type PlcCommand, type PlcConnectionInfo, type PlcRuntimeInfo, type RuntimeDiagnostics,
 } from './plc/client';
+import {
+  alarmEventIdentity, controllerAlarmEvents, hmiAlarmEffectLabel, hmiAlarmSourceLabel, hasResettablePlcWarnings,
+  selectLatestActiveEvent, selectNewestReceivedEvent, type HmiAlarmEvent,
+} from './plc/hmiAlarms';
 import { pointBackupApi } from './points/client';
 import { DEMO_OPERATOR } from './statistics/demoData';
 
@@ -215,25 +218,6 @@ const sameAlarmState = (left: PlcRuntimeInfo, right: PlcRuntimeInfo) =>
   && left.activeAlarmCount === right.activeAlarmCount
   && left.activeWarningCount === right.activeWarningCount
   && sameData(left.alarmEvents, right.alarmEvents);
-
-const isNewerAlarmEvent = (candidate: PlcAlarmEvent, current: PlcAlarmEvent) =>
-  candidate.reportedAt > current.reportedAt
-  || (candidate.reportedAt === current.reportedAt && candidate.id > current.id);
-
-const selectLatestActiveEvent = (events: PlcAlarmEvent[]) => events.reduce<PlcAlarmEvent | null>((selected, event) => {
-  if (!event.active) return selected;
-  if (!selected) return event;
-  if (event.severity !== selected.severity) return event.severity === 'alarm' ? event : selected;
-  return isNewerAlarmEvent(event, selected) ? event : selected;
-}, null);
-
-const selectNewestReceivedEvent = (events: PlcAlarmEvent[]) => events.reduce<PlcAlarmEvent | null>((selected, event) => (
-  !selected || isNewerAlarmEvent(event, selected) ? event : selected
-), null);
-
-const alarmEventIdentity = (event: PlcAlarmEvent | null) => event
-  ? `${event.id}:${event.severity}:${event.effect}:${event.source}:${event.code}:${event.reportedAt}`
-  : '';
 
 function SheetGrip({ onClose }: { onClose: () => void }) {
   const gesture = useRef({
@@ -455,6 +439,7 @@ const INITIAL_RUNTIME: PlcRuntimeInfo = {
   activeMagazine: 0,
   activeAlarmCount: 0,
   activeWarningCount: 0,
+  controllerWarningResetAllowed: false,
   alarmEvents: [],
   equipmentLoad: [0, 0, 0, 0],
   modbusMode: false,
@@ -1287,11 +1272,12 @@ function OperatorShiftCard({ user, summary }: {
   </section>;
 }
 
-function AlarmScreen({ events, online, resetAllowed, safetyRelayResetAllowed, safetyRelayResetActive,
+function AlarmScreen({ events, online, resetAllowed, safetyRelayResetAllowed, safetyRelayResetActive, controllerWarningResetAllowed,
   onResetWarnings, onResetAlarms, onResetSafetyRelay, onClose, className }: {
-  events: PlcAlarmEvent[];
+  events: HmiAlarmEvent[];
   online: boolean;
   resetAllowed: boolean;
+  controllerWarningResetAllowed: boolean;
   safetyRelayResetAllowed: boolean;
   safetyRelayResetActive: boolean;
   onResetWarnings: () => void;
@@ -1303,6 +1289,7 @@ function AlarmScreen({ events, online, resetAllowed, safetyRelayResetAllowed, sa
   const [severityFilter, setSeverityFilter] = useState<'all' | 'alarm' | 'warning'>('all');
   const activeAlarms = events.filter((event) => event.active && event.severity === 'alarm').length;
   const activeWarnings = events.filter((event) => event.active && event.severity === 'warning').length;
+  const hasPlcWarnings = hasResettablePlcWarnings(events, controllerWarningResetAllowed);
   const filteredEvents = severityFilter === 'all'
     ? events
     : events.filter((event) => event.severity === severityFilter);
@@ -1318,7 +1305,7 @@ function AlarmScreen({ events, online, resetAllowed, safetyRelayResetAllowed, sa
           onClick={onResetSafetyRelay} disabled={!online || !safetyRelayResetAllowed}>
           <ShieldAlert size={20} />{safetyRelayResetActive ? 'Сброс реле…' : 'Сбросить реле безопасности'}
         </button>
-        <button className="alarm-reset-warnings" type="button" onClick={onResetWarnings} disabled={!online || activeWarnings === 0}><AlertCircle size={20} />Сбросить предупреждения</button>
+        <button className="alarm-reset-warnings" type="button" onClick={onResetWarnings} disabled={!online || !hasPlcWarnings}><AlertCircle size={20} />Сбросить предупреждения</button>
         <button className={`alarm-reset-all ${resetAllowed ? '' : 'command-unavailable'}`} type="button" onClick={onResetAlarms} disabled={!online || !resetAllowed} aria-disabled={!resetAllowed}><RotateCcw size={20} />Сбросить аварии</button>
         <button className="panel-close-button" type="button" onClick={onClose} aria-label="Закрыть аварии" title="Закрыть"><X /></button>
       </div>
@@ -1331,18 +1318,18 @@ function AlarmScreen({ events, online, resetAllowed, safetyRelayResetAllowed, sa
         <button type="button" className={severityFilter === 'alarm' ? 'active alarm' : ''} aria-pressed={severityFilter === 'alarm'} onClick={() => setSeverityFilter('alarm')}>Только аварии</button>
         <button type="button" className={severityFilter === 'warning' ? 'active warning' : ''} aria-pressed={severityFilter === 'warning'} onClick={() => setSeverityFilter('warning')}>Только предупреждения</button>
       </div>
-      <small>{online ? 'Журнал обновляется от PLC' : 'Нет связи с PLC'}</small>
+      <small>{online ? 'PLC и диагностика контроллера' : 'Нет связи с PLC'}</small>
     </div>
     <div className="alarm-table" role="region" aria-label="Журнал аварий" tabIndex={0}>
       <div className="alarm-table-head"><span>Событие</span><span>Механизм</span><span>Дата</span><span>Время</span><span>Статус</span></div>
       {filteredEvents.length === 0
         ? <div className="alarm-empty"><CheckCircle2 /><strong>{events.length === 0 ? 'Событий нет' : 'Событий выбранного типа нет'}</strong><span>{events.length === 0 ? 'Новые аварии и предупреждения появятся здесь.' : 'Выберите другой фильтр журнала.'}</span></div>
         : filteredEvents.map((event) => <article className={`alarm-row ${event.severity}${event.active ? ' active' : ''}`} key={event.id}>
-          <span className="alarm-event-text">{event.severity === 'alarm' ? <TriangleAlert /> : <AlertCircle />}<b>{event.text}</b><small>{ALARM_EFFECT_LABELS[event.effect]}</small></span>
-          <span>{ALARM_SOURCE_LABELS[event.source]}</span>
+          <span className="alarm-event-text">{event.severity === 'alarm' ? <TriangleAlert /> : <AlertCircle />}<b>{event.text}</b><small>{hmiAlarmEffectLabel(event)}</small></span>
+          <span>{hmiAlarmSourceLabel(event)}</span>
           <span>{formatDate(event.reportedAt)}</span>
           <span>{formatTime(event.reportedAt)}</span>
-          <span className="alarm-row-status"><i />{event.active ? 'Активно' : 'Устранено'}</span>
+          <span className="alarm-row-status"><i />{event.source === 'controller' && event.active && event.stale ? 'Нет свежих данных' : event.active ? 'Активно' : 'Устранено'}</span>
         </article>)}
     </div>
   </section>;
@@ -1488,7 +1475,7 @@ function loadVisualEffects(): VisualEffectSettings {
 function sceneAlarmTargets(events: PlcAlarmEvent[]): SceneAlarmTarget[] {
   const targets = new Map<string, SceneAlarmTarget>();
   events.filter((event) => event.active && event.severity === 'alarm').forEach((event) => {
-    const target: SceneAlarmTarget = event.source === 'cell'
+    const target: SceneAlarmTarget = event.source === 'cell' || event.source.startsWith('controller-')
       ? { kind: 'cell' }
       : event.source === 'machine-1'
         ? { kind: 'machine', index: 0 }
@@ -2763,7 +2750,10 @@ export function App() {
     };
 
     plcClient.current = createPlcClient({
-      onConnection: setPlcConnection,
+      onConnection: (connection) => {
+        setPlcConnection(connection);
+        setCommandError((current) => clearRecoveredConnectionError(current, connection.status));
+      },
       onRuntimeDiagnostics: setRuntimeDiagnostics,
       onPhysicalIo: (data) => startTransition(() => setPhysicalIo(data)),
       onRobotFrame: (frame) => {
@@ -2951,12 +2941,17 @@ export function App() {
     .map((machine, index) => machine.mode === 'error' || machine.activeErrors.length > 0 ? index + 1 : 0)
     .filter(Boolean);
   const plcAlarmEvents = usePlcData ? plcRuntime.alarmEvents : [];
-  const activeAlarmEvents = plcAlarmEvents.filter((event) => event.active);
-  const activeAlarms = usePlcData ? plcRuntime.activeAlarmCount : fallbackMachineAlarmIndexes.length
+  const controllerEvents = controllerAlarmEvents(runtimeDiagnostics.controller, plcConnection.endpoint !== '' || isPlcOnline, plcAlarmEvents);
+  const hmiAlarmEvents: HmiAlarmEvent[] = [...plcAlarmEvents, ...controllerEvents].sort((left, right) => right.reportedAt - left.reportedAt);
+  const activeAlarmEvents = hmiAlarmEvents.filter((event) => event.active);
+  const activeControllerEvents = controllerEvents.filter((event) => event.active);
+  const activeAlarms = activeControllerEvents.filter((event) => event.severity === 'alarm').length
+    + (usePlcData ? plcRuntime.activeAlarmCount : fallbackMachineAlarmIndexes.length
     + cellState.magazines.filter((magazine) => magazine.state.error || magazine.state.activeErrors.length > 0).length
     + (cellState.robot.error ? 1 : 0)
-    + (displayedGlobalError && fallbackMachineAlarmIndexes.length === 0 && !cellState.magazines.some((magazine) => magazine.state.error) ? 1 : 0);
-  const activeWarnings = usePlcData ? plcRuntime.activeWarningCount : 0;
+    + (displayedGlobalError && fallbackMachineAlarmIndexes.length === 0 && !cellState.magazines.some((magazine) => magazine.state.error) ? 1 : 0));
+  const activeWarnings = (usePlcData ? plcRuntime.activeWarningCount : 0)
+    + activeControllerEvents.filter((event) => event.severity === 'warning').length;
   const alarmCount = activeAlarms + activeWarnings;
   const alarmTone = activeAlarms > 0 ? 'active' : activeWarnings > 0 ? 'warning' : '';
   const localAlarmMachineIndex = cellState.machines.findIndex((machine) => machine.mode === 'error' || machine.alarm || machine.activeErrors.length > 0);
@@ -2968,18 +2963,22 @@ export function App() {
       : localAlarmMagazineIndex >= 0
         ? `Магазин ${localAlarmMagazineIndex + 1}`
         : 'Нет активных';
-  const alarmSource = activeAlarmEvents.length
-    ? ALARM_SOURCE_LABELS[activeAlarmEvents[0].source]
+  const latestActiveEvent = selectLatestActiveEvent(hmiAlarmEvents);
+  const alarmSource = latestActiveEvent
+    ? hmiAlarmSourceLabel(latestActiveEvent)
     : !usePlcData ? localAlarmSource : 'Нет активных';
-  const latestActiveEvent = selectLatestActiveEvent(plcAlarmEvents);
-  const newestReceivedEventIdentity = alarmEventIdentity(selectNewestReceivedEvent(plcAlarmEvents));
+  const newestReceivedEventIdentity = alarmEventIdentity(selectNewestReceivedEvent(hmiAlarmEvents));
   const activeEventCount = Math.max(alarmCount, activeAlarmEvents.length);
   const sceneActivity = useMemo(
     () => createSceneActivity(usePlcData, cellState, plcRuntime),
     [cellState, plcRuntime, usePlcData],
   );
   const latestEventRecommendation = latestActiveEvent
-    ? latestActiveEvent.severity === 'alarm'
+    ? latestActiveEvent.source === 'controller'
+      ? latestActiveEvent.stale
+        ? 'Нет свежих данных: проверьте связь. Сброс системной причины в PLC требует подтверждённого восстановления.'
+        : 'Откройте диагностику контроллера. Аппаратные коды передаются в PLC; их сброс требует подтверждённого восстановления.'
+      : latestActiveEvent.severity === 'alarm'
       ? 'Проверьте механизм и журнал аварий перед сбросом'
       : 'Устраните указанное условие перед повторной командой'
     : undefined;
@@ -3218,7 +3217,7 @@ export function App() {
     <AnimatedPresence open={latestEventVisible && latestActiveEvent !== null}>
       {latestActiveEvent && <LatestEventNotification
         event={latestActiveEvent}
-        mechanism={ALARM_SOURCE_LABELS[latestActiveEvent.source]}
+        mechanism={hmiAlarmSourceLabel(latestActiveEvent)}
         activeCount={activeEventCount}
         recommendation={latestEventRecommendation}
         onCollapse={() => setLatestEventVisible(false)}
@@ -3435,7 +3434,8 @@ export function App() {
       />}</AnimatedPresence>
       <AnimatedPresence open={page === 'magazine' && cellState.magazineMode !== 1}><MagazineScreen magazine={cellState.magazines[selectedMagazine]} magazineNumber={(selectedMagazine + 1) as 1 | 2} step={usePlcData ? plcRuntime.magazineSteps[selectedMagazine] : 'Локальная модель'} typeCount={plcRuntime.multiTypeCount} onClose={() => setPage('monitoring')} onToggleEnabled={() => toggleMagazineEnabled(selectedMagazine)} onCommand={(action) => sendMagazineCommand(selectedMagazine, action)} onFill={() => fillMagazine(selectedMagazine)} onClear={() => clearMagazine(selectedMagazine)} onSlotApply={(index, content, productType) => applyMagazineSlot(index, content, productType, selectedMagazine)} onSetting={updateMagazineSetting} /></AnimatedPresence>
       <AnimatedPresence open={page === 'magazine' && cellState.magazineMode === 1}><TwoPalletControl full state={cellState} selected={selectedMagazine} onSelect={setSelectedMagazine} onCommand={sendTwin} onSetting={updateMagazineSetting} local={!plcDataEnabled} connected={!plcDataEnabled || usePlcData} manualReady={!plcDataEnabled || (plcRuntime.manualMode && !plcRuntime.cellRunning)} safetyReady={!plcDataEnabled || (plcRuntime.safety.ready && !plcRuntime.globalError)} hmiAlive={!plcDataEnabled || plcRuntime.hmiConnectionAlive} onClose={() => setPage('monitoring')} /></AnimatedPresence>
-      <AnimatedPresence open={page === 'alarms'}><AlarmScreen events={plcAlarmEvents} online={isPlcOnline}
+      <AnimatedPresence open={page === 'alarms'}><AlarmScreen events={hmiAlarmEvents} online={isPlcOnline}
+        controllerWarningResetAllowed={usePlcData && plcRuntime.controllerWarningResetAllowed}
         resetAllowed={usePlcData && plcRuntime.cellResetAllowed}
         safetyRelayResetAllowed={usePlcData && plcRuntime.safety.safetyRelayResetAllowed}
         safetyRelayResetActive={usePlcData && plcRuntime.safety.safetyRelayResetActive}
@@ -3529,7 +3529,7 @@ export function App() {
         <AnimatedPresence open={bottomSection === 'geometry'}><GeometryControlPanel selectedStation={selectedGeometry} onStationChange={setSelectedGeometry} dragHandle={<SheetGrip onClose={() => setBottomSection(null)} />} snapshot={cellState.geometryControl} online={usePlcData} authorized={Boolean(authUser)} simulation={plcRuntime.testEnvironment.applied === 1} onCommand={sendPlcCommand} onRequestState={setGeometryStateStation} onExtended={() => setPage('geometry')} onClose={() => setBottomSection(null)} /></AnimatedPresence>
         <AnimatedPresence open={bottomSection === null}>
           <div className="bottom-overview-stage">
-            <BottomNavigation onNavigate={navigateFromFolder} alarmEvents={activeAlarmEvents} />
+            <BottomNavigation onNavigate={navigateFromFolder} alarmEvents={plcAlarmEvents.filter((event) => event.active)} />
           </div>
         </AnimatedPresence>
       </div>}

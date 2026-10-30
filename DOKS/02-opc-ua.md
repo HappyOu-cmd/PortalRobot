@@ -240,3 +240,20 @@ tHatchUnlock, tChuckOpen, tChuckClose, tCycleStart. TIME передаётся в
 и права символов. Старый gateway с новым PLC и новый gateway со старым PLC
 несовместимы. Бинарный проект и сгенерированные XML этой правкой не редактируются.
 Компиляцию, обновление символов и загрузку через CODESYS выполняет пользователь.
+
+## Системные аварии MC522: вход от gateway
+
+`GVL_HMI.stControllerWebRequest : ST_CONTROLLER_WEB_REQUEST` публикуется целиком
+для чтения/записи; `stControllerWebStatus : ST_CONTROLLER_WEB_STATUS` — целиком
+только для чтения. Gateway пишет текущие/накопленные маски и валидность CPU
+и модулей, `udiIssuedAtMs` по часам PLC и последним — `udiSequence`.
+До `Status.udiAckSeq` payload неизменен. Повтор после неизвестного результата
+использует тот же Seq; новое наблюдение остаётся в очереди следующего пакета.
+Чтение/запись Good не подменяет Ack PLC и не подтверждает норму оборудования.
+
+Структура статуса публикует защёлки, `xCpuFresh/xModulesFresh`,
+`xGlobalStopRequired`, `xResetAllowed/xWarningResetAllowed`. PLC проверяет
+возраст текущего пакета ≤3 с при приёме и ≤12 с на каждом скане; устаревшие
+наблюдения всё равно регистрируются, но не разрешают сброс.
+Коды, очередь, условия сброса и импорт новых ST-объектов:
+[26-mc522-plc-alarms.md](26-mc522-plc-alarms.md).

@@ -60,7 +60,7 @@ def test_generator_is_reproducible() -> None:
 def test_generator_has_fixed_opc_buffer_shape() -> None:
     cases = generated_scenarios(7, 100)
     for case in cases:
-        assert case["schemaVersion"] == 2
+        assert case["schemaVersion"] == 3
         assert len(case["initialState"]["magazines"]) == 2
         assert all(len(magazine["slots"]) == 120 for magazine in case["initialState"]["magazines"])
         assert len(case["initialState"]["machines"]) == 3

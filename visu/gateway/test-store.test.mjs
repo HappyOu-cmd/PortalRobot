@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { TestStore, normalizeScenarioState } from './test-store.mjs';
 
-const initialState = () => ({ typeCount: 1, machines: [], slots: Array.from({ length: 120 }, () => ({ content: 0, productType: 1 })), grippers: [], orientation: 0 });
+const initialState = () => ({ typeCount: 1, machines: [{state: 1, productType: 1}, {state: 0, productType: 1}, {state: 0, productType: 1}], slots: Array.from({ length: 120 }, () => ({ content: 0, productType: 1 })), grippers: [{content: 0, productType: 0}, {content: 0, productType: 0}], orientation: 0 });
 
-test('migrates legacy one-magazine scenarios to schema v2', () => {
+test('migrates legacy one-magazine scenarios to schema v3', () => {
   const state = normalizeScenarioState({ ...initialState(), magazineEnabled: true, faultMasks: { magazine: 3 } });
   assert.equal(state.magazines.length, 2);
   assert.equal(state.magazineMode, 0);
@@ -13,10 +13,10 @@ test('migrates legacy one-magazine scenarios to schema v2', () => {
   assert.deepEqual(state.faultMasks.magazines, [3, 0]);
 });
 
-test('schema v2 cannot hide twin pallet state or silently accept a later schema', () => {
-  assert.throws(() => normalizeScenarioState({ ...initialState(), magazineMode: 1 }), /только статичные/);
+test('rejects incomplete twin pallet state and unknown schemas', () => {
+  assert.throws(() => normalizeScenarioState({ ...initialState(), magazineMode: 1 }), /два магазина/);
   const store = new TestStore();
-  assert.throws(() => store.saveScenario({ name: 'Twin', schemaVersion: 3, initialState: initialState() }), /Неподдерживаемая версия/);
+  assert.throws(() => store.saveScenario({ name: 'Twin', schemaVersion: 4, initialState: initialState() }), /Неподдерживаемая версия/);
   store.close();
 });
 
@@ -32,11 +32,12 @@ test('keeps two magazines and rejects divergent shared slot types', () => {
 test('scenario CRUD and compact run results', () => {
   const store = new TestStore();
   const saved = store.saveScenario({ name: 'Smoke', initialState: initialState(), expectations: {} });
-  assert.equal(saved.schemaVersion, 2);
+  assert.equal(saved.schemaVersion, 3);
   assert.equal(saved.initialState.magazines.length, 2);
   assert.equal(store.listScenarios().length, 1);
   assert.equal(store.saveScenario({ ...saved, name: 'Smoke edited' }, saved.id).name, 'Smoke edited');
   const run = store.createRun({ suite: 'smoke', environment: 'simulation', robotInterface: 'softmotion', count: 10 });
+  store.progress(run.id, { caseCount: 1 });
   store.addCase(run.id, { caseIndex: 1, name: 'case', status: 'PASS', durationMs: 12 });
   assert.equal(store.finishRun(run.id).status, 'PASS');
   assert.equal(store.getRun(run.id).cases.length, 1);

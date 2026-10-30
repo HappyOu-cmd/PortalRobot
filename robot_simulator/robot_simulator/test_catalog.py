@@ -13,7 +13,7 @@ def catalog() -> dict[str, list[dict[str, object]]]:
             {"index": index, "name": case["name"], "description": case["description"]}
             for index, case in enumerate(fixed_scenarios(suite), 1)
         ]
-        for suite in ("smoke", "regression", "general")
+        for suite in ("smoke", "regression", "general", "geometry", "magazines")
     }
 
 

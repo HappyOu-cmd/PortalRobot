@@ -13,7 +13,7 @@ import type { CyclogramHistory, CyclogramUpdate } from '../model/cyclogram';
 export type PlcConnectionStatus = 'connecting' | 'connected' | 'degraded' | 'disconnected';
 export type PlcAlarmSeverity = 'alarm' | 'warning';
 export type PlcAlarmEffect = 'global-stop' | 'robot-stop' | 'equipment-stop' | 'warning';
-export type PlcAlarmSource = 'cell' | 'robot' | 'machine-1' | 'machine-2' | 'machine-3' | 'magazine-1' | 'magazine-2' | 'magazine-axis-1' | 'magazine-axis-2' | 'axis-x' | 'axis-y' | 'axis-z' | 'axis-group' | 'motion-manager' | 'point-manager' | 'gripper' | 'cell-safety' | 'geometry-1' | 'geometry-2';
+export type PlcAlarmSource = 'cell' | 'robot' | 'machine-1' | 'machine-2' | 'machine-3' | 'magazine-1' | 'magazine-2' | 'magazine-axis-1' | 'magazine-axis-2' | 'axis-x' | 'axis-y' | 'axis-z' | 'axis-group' | 'motion-manager' | 'point-manager' | 'gripper' | 'cell-safety' | 'geometry-1' | 'geometry-2' | 'controller-cpu-1' | 'controller-cpu-2' | 'controller-modules';
 
 export interface PlcAlarmEvent {
   id: number;
@@ -39,6 +39,19 @@ export interface PlcConnectionInfo {
   message: string;
   symbols: number;
   missing: string[];
+}
+
+const CONNECTION_COMMAND_ERRORS = new Set([
+  'OPC UA не подключён', 'OPC UA не подключен', 'Нет связи со шлюзом', 'Нет связи с PLC',
+  'Управление ячейкой недоступно без связи с PLC', 'Сброс недоступен без связи с PLC',
+  'Переключение режима недоступно без связи с PLC', 'Управление роботом недоступно без связи с PLC',
+  'Экспорт циклограммы недоступен: нет связи со шлюзом',
+]);
+
+export function clearRecoveredConnectionError(message: string, status: PlcConnectionStatus): string {
+  // Recovery resolves transport errors, but cannot resolve a rejected command or an unknown PLC result.
+  const online = status === 'connected' || status === 'degraded';
+  return online && CONNECTION_COMMAND_ERRORS.has(message) ? '' : message;
 }
 
 export interface RuntimeDiagnostics {
@@ -354,6 +367,7 @@ export interface PlcRuntimeInfo {
   activeMagazine: number;
   activeAlarmCount: number;
   activeWarningCount: number;
+  controllerWarningResetAllowed: boolean;
   alarmEvents: PlcAlarmEvent[];
   equipmentLoad: [number, number, number, number];
   modbusMode: boolean;
@@ -507,6 +521,7 @@ const ALARM_SOURCES: PlcAlarmSource[] = [
   'cell', 'robot', 'machine-1', 'machine-2', 'machine-3', 'magazine-1', 'magazine-2',
   'magazine-axis-1', 'magazine-axis-2', 'axis-x', 'axis-y', 'axis-z', 'axis-group',
   'motion-manager', 'point-manager', 'gripper', 'cell-safety', 'geometry-1', 'geometry-2',
+  'controller-cpu-1', 'controller-cpu-2', 'controller-modules',
 ];
 const ALARM_EFFECTS: PlcAlarmEffect[] = ['global-stop', 'robot-stop', 'equipment-stop', 'warning'];
 export const ALARM_SOURCE_LABELS = alarmCatalog.sources as Record<PlcAlarmSource, string>;
@@ -1074,6 +1089,7 @@ export function mapRuntimeInfo(values: Record<string, unknown>, current: PlcRunt
     activeMagazine,
     activeAlarmCount: numberValue(values, 'stAlarmStatus.uiActiveAlarmCount', current.activeAlarmCount),
     activeWarningCount: numberValue(values, 'stAlarmStatus.uiActiveWarningCount', current.activeWarningCount),
+    controllerWarningResetAllowed: booleanValue(values, 'stControllerWebStatus.xWarningResetAllowed', current.controllerWarningResetAllowed),
     alarmEvents,
     equipmentLoad: [
       percentValue(values, 'rLoadCNC_1', current.equipmentLoad[0]),
@@ -1187,7 +1203,9 @@ export function createPlcClient(callbacks: {
   const sendHeartbeat = () => {
     if (socket?.readyState !== WebSocket.OPEN) return;
     heartbeatValue = (heartbeatValue + 1) >>> 0;
-    socket.send(JSON.stringify({ type: 'command', requestId: crypto.randomUUID(), command: 'hmi.heartbeat', value: heartbeatValue }));
+    const requestId = crypto.randomUUID();
+    backgroundRequests.add(requestId);
+    socket.send(JSON.stringify({ type: 'command', requestId, command: 'hmi.heartbeat', value: heartbeatValue }));
   };
 
   const connect = () => {

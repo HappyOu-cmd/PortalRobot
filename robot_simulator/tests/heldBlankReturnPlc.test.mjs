@@ -4,7 +4,7 @@ import test from 'node:test';
 import { compileSt, conversions, defaultsFromSt, readPlc } from '../../visu/tests/helpers/geometryStRuntime.mjs';
 
 const manager = readPlc('FB/FB_CELL_MANAGER/FB_CELL_MANAGER.st');
-const methodNames = ['IsMachineEligible', 'IsMachineCompatible', 'SelectMachineBeforeTake',
+const methodNames = ['IsMachineEligible', 'IsMachineCompatible', 'IsMachineWorkPending', 'HasMagazineWork', 'SelectMachineBeforeTake',
   'SelectMachineForHeldBlank', 'SelectMachineForUnload', 'CanReturnHeldBlank'];
 const methods = Object.fromEntries(methodNames.map(name =>
   [name, readPlc(`FB/FB_CELL_MANAGER/FB_CELL_MANAGER.${name}.st`)]));

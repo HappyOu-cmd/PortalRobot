@@ -5,7 +5,6 @@ VAR_GLOBAL
 	astActiveConfig : ARRAY [1..2] OF ST_GEOMETRY_CONFIG;
 	astActiveMemory : ARRAY [1..2] OF ST_GEOMETRY_MEMORY;
 	astCalls : ARRAY [1..3] OF ST_GEOMETRY_CALL;
-	astSimulationConfig : ARRAY [1..2] OF ST_GEOMETRY_CONFIG;
 	astSimulationMemory : ARRAY [1..2] OF ST_GEOMETRY_MEMORY;
 	astSimulationCalls : ARRAY [1..3] OF ST_GEOMETRY_CALL;
 	axSimulationAlarm : ARRAY [1..2] OF BOOL;

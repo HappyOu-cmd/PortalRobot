@@ -1,8 +1,8 @@
 import { AlertCircle, ChevronUp, TriangleAlert } from 'lucide-react';
-import type { PlcAlarmEvent } from '../plc/client';
+import type { HmiAlarmEvent } from '../plc/hmiAlarms';
 
 interface LatestEventNotificationProps {
-  event: PlcAlarmEvent;
+  event: HmiAlarmEvent;
   mechanism: string;
   activeCount: number;
   recommendation?: string;
@@ -19,7 +19,7 @@ export function LatestEventNotification({
   className,
 }: LatestEventNotificationProps) {
   const isAlarm = event.severity === 'alarm';
-  const typeLabel = isAlarm ? 'Авария' : 'Предупреждение';
+  const typeLabel = `${isAlarm ? 'Авария' : 'Предупреждение'}${event.source === 'controller' ? ' HMI' : ''}`;
   const EventIcon = isAlarm ? TriangleAlert : AlertCircle;
 
   return <section

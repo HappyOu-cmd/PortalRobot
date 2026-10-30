@@ -5,7 +5,7 @@ import { compileSt, conversions, defaultsFromSt, readPlc } from './helpers/geome
 
 const manager = readPlc('FB/FB_CELL_MANAGER/FB_CELL_MANAGER.st');
 const magazine = readPlc('FB/FB_MAGAZINE.st');
-const methods = Object.fromEntries(['IsMachineEligible', 'IsMachineCompatible', 'SelectMachineBeforeTake', 'SelectMachineForHeldBlank', 'SelectMachineForUnload']
+const methods = Object.fromEntries(['IsMachineEligible', 'IsMachineCompatible', 'IsMachineWorkPending', 'HasMagazineWork', 'SelectMachineBeforeTake', 'SelectMachineForHeldBlank', 'SelectMachineForUnload']
   .map(name => [name, readPlc(`FB/FB_CELL_MANAGER/FB_CELL_MANAGER.${name}.st`)]));
 const enums = {};
 for (const [group, name] of [...[manager, magazine, ...Object.values(methods)].join('\n').matchAll(/\b(E_\w+)\.(\w+)/g)].map(m => m.slice(1))) {

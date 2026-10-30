@@ -39,7 +39,8 @@ import { AuthStore, AuthStoreError } from './auth-store.mjs';
 import { StatisticsStore, StatisticsStoreError } from './statistics-store.mjs';
 import { ArchivePolicyStore, ArchivePolicyError } from './archive-policy.mjs';
 import { TestStore, normalizeScenarioState } from './test-store.mjs';
-import { requireStaticMagazineMode, resolveStaticTestSelection } from './test-contract.mjs';
+import { requireTestMagazineMode, validateTestRun, resolveTestSelection } from './test-contract.mjs';
+import { writeScenarioBuffer } from './test-scenario.mjs';
 import { isHmiCommandAllowedDuringTest } from './test-session.mjs';
 import { PointBackupStore, PointBackupStoreError, POINT_BACKUP_VERSION, POINT_EDITOR_COUNT } from './point-backup-store.mjs';
 import { MobilePointsService, MOBILE_COOKIE, isPhoneAgent } from './mobile-points.mjs';
@@ -47,6 +48,7 @@ import { PointEditorChannel } from './point-editor-channel.mjs';
 import { PrimaryHmiSession } from './primary-hmi-session.mjs';
 import { RuntimeHeartbeat } from './runtime-diagnostics.mjs';
 import { ControllerDiagnostics, controllerWebOptions } from './controller-diagnostics.mjs';
+import { ControllerPlcBridge, controllerPlcSymbols } from './controller-plc.mjs';
 import { ioSymbols, ioSymbolSet, readStableIo, IoJournalIngestor } from './physical-io.mjs';
 import { IoOverrideChannel } from './io-override-channel.mjs';
 import { monitoringIntervals, monitoringBatches, initializeMonitoring, monitoringSummary } from './opcua-monitoring.mjs';
@@ -509,12 +511,18 @@ const requiredSymbols = [...new Set([
   'stAlarmStatus.uiActiveWarningCount',
   'astAlarmEvent[1].udiSequence',
   ...faultRequiredSymbols,
+  ...controllerPlcSymbols,
   ...cyclogramRequiredSymbols,
   'uiTestEnvironmentRequest', 'xTestEnvironmentApply', 'uiTestSpeedProfileRequest', 'xTestSpeedProfileApply',
   'xTestSessionActive', 'xTestScenarioApply', 'uiTestEnvironmentApplied', 'uiTestSpeedProfileApplied',
   'xTestEnvironmentChangeAllowed', 'xTestScenarioApplyAllowed', 'xSc500BenchKeyActive', 'xSc500BenchKeyLost',
   'uiTestRejectReason', 'udiTestScenarioAckSeq', 'uiTestScenarioResult', 'stTestScenario.udiLoadSeq',
   'stTestScenario.uiTypeCount', 'stTestScenario.uiOrientation',
+  'stTestScenario.uiSchemaVersion', 'stTestScenario.uiMagazineMode', 'stTestScenario.xGeometryWaitWhenOccupied',
+  ...[1, 2].flatMap(i => [`stTestScenario.axOperatorLoaded[${i}]`, `stTestScenario.axAutoSwap[${i}]`, `stTestScenario.axGeometryEnabled[${i}]`]),
+  ...[1, 2, 3].map(i => `stTestScenario.axGeometryCall[${i}]`),
+  ...[1, 2].flatMap(i => Array.from({ length: 120 }, (_, n) => `stTestScenario.aauiOperatorSlotContent[${i},${n + 1}]`)),
+  'stTestObservability.uiSchemaVersion', 'stTestObservability.uiReturnMagazine',
   'stTestScenario.dwCellFaultMask', 'stTestScenario.dwRobotFaultMask',
   ...[1, 2].flatMap((index) => [`stTestScenario.axMagazineEnabled[${index}]`, `stTestScenario.adwMagazineFaultMask[${index}]`]),
   ...[1, 2, 3].map((index) => `stTestScenario.adwMachineFaultMask[${index}]`),
@@ -807,7 +815,7 @@ function fixedTestCatalog() {
   if (!fixedTestCatalogPromise) {
     fixedTestCatalogPromise = new Promise((resolve, reject) => {
       const processHandle = spawn(testRunnerPython, ['-m', 'robot_simulator.test_catalog'], {
-        cwd: robotSimulatorDir, windowsHide: true,
+        cwd: robotSimulatorDir, windowsHide: true, env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
       });
       let output = '';
       let errors = '';
@@ -879,7 +887,18 @@ let connectionState = {
 const runtimeHeartbeat = new RuntimeHeartbeat();
 const controllerDiagnostics = new ControllerDiagnostics(controllerWebOptions(
   endpointUrl, join(__dirname, 'data', 'controller-web.json'),
-));
+), undefined, recordCellEvent);
+const controllerPlc = new ControllerPlcBridge({
+  statePath: join(__dirname, 'data', 'controller-plc-outbox.json'),
+  available: () => Boolean(opcua?.session && runtimeDiagnostics.application.mode === 'running'),
+  read: (paths) => {
+    if (!controllerPlcSymbols.every((path) => symbolNodes.has(path))) {
+      throw new Error('PLC не публикует канал системной диагностики: обновите ST-исходники и символы GVL_HMI');
+    }
+    return readSymbolValues(paths);
+  },
+  write: (path, type, value) => writeValue(path, DataType[type], value),
+});
 let runtimeStallLogged = false;
 let runtimeDiagnostics = {
   endpoint: endpointUrl,
@@ -1317,8 +1336,22 @@ async function runtimeDiagnosticsLoop() {
 async function controllerDiagnosticsLoop() {
   if (!controllerDiagnostics.options.enabled) return;
   while (true) {
-    publishRuntimeDiagnostics({ controller: await controllerDiagnostics.poll() });
+    const controller = await controllerDiagnostics.poll();
+    controllerPlc.observe(controller);
+    publishRuntimeDiagnostics({ controller: { ...controller, plc: controllerPlc.status } });
     await new Promise((resolve) => setTimeout(resolve, 3_000));
+  }
+}
+
+async function controllerPlcLoop() {
+  if (!controllerDiagnostics.options.enabled) return;
+  while (true) {
+    const previous = JSON.stringify(controllerPlc.status);
+    await controllerPlc.flush();
+    if (JSON.stringify(controllerPlc.status) !== previous) {
+      publishRuntimeDiagnostics({ controller: { ...controllerDiagnostics.state, plc: controllerPlc.status } });
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
   }
 }
 
@@ -1540,42 +1573,17 @@ async function executeCommandPrepared(message) {
     return requestId;
   }
   if (message.command === 'test.scenario.apply') {
-    requireStaticMagazineMode(latestValues.uiMagazineMode);
     const scenario = normalizeScenarioState(message.scenario);
-    const machines = Array.isArray(scenario.machines) ? scenario.machines : [];
-    const grippers = Array.isArray(scenario.grippers) ? scenario.grippers : [];
-    await writeValue('stTestScenario.uiTypeCount', DataType.UInt16, Number(scenario.typeCount ?? 1));
-    for (let magazine = 1; magazine <= 2; magazine += 1) {
-      await writeValue(`stTestScenario.axMagazineEnabled[${magazine}]`, DataType.Boolean, Boolean(scenario.magazines[magazine - 1].enabled));
-    }
-    for (let index = 1; index <= 3; index += 1) {
-      await writeValue(`stTestScenario.auiMachineState[${index}]`, DataType.UInt16, Number(machines[index - 1]?.state ?? 0));
-      await writeValue(`stTestScenario.auiMachineType[${index}]`, DataType.UInt16, Number(machines[index - 1]?.productType ?? 0));
-    }
-    for (let index = 1; index <= 120; index += 1) {
-      for (let magazine = 1; magazine <= 2; magazine += 1) {
-        await writeValue(`stTestScenario.aauiSlotContent[${magazine},${index}]`, DataType.UInt16, Number(scenario.magazines[magazine - 1].slots[index - 1]?.content ?? 0));
-      }
-      await writeValue(`stTestScenario.auiSlotType[${index}]`, DataType.UInt16, Number(scenario.magazines[0].slots[index - 1]?.productType ?? 0));
-    }
-    for (let index = 1; index <= 2; index += 1) {
-      await writeValue(`stTestScenario.auiGripperContent[${index}]`, DataType.UInt16, Number(grippers[index - 1]?.content ?? 0));
-      await writeValue(`stTestScenario.auiGripperType[${index}]`, DataType.UInt16, Number(grippers[index - 1]?.productType ?? 0));
-    }
-    await writeValue('stTestScenario.uiOrientation', DataType.UInt16, Number(scenario.orientation ?? 0));
-    const faultMasks = scenario.faultMasks ?? {};
-    await writeValue('stTestScenario.dwCellFaultMask', DataType.UInt32, Number(faultMasks.cell ?? 0) >>> 0);
-    await writeValue('stTestScenario.dwRobotFaultMask', DataType.UInt32, Number(faultMasks.robot ?? 0) >>> 0);
-    for (let index = 1; index <= 2; index += 1) {
-      await writeValue(`stTestScenario.adwMagazineFaultMask[${index}]`, DataType.UInt32, Number(faultMasks.magazines?.[index - 1] ?? 0) >>> 0);
-    }
-    for (let index = 1; index <= 3; index += 1) {
-      await writeValue(`stTestScenario.adwMachineFaultMask[${index}]`, DataType.UInt32, Number(faultMasks.machines?.[index - 1] ?? 0) >>> 0);
-    }
-    let loadSeq = Date.now() >>> 0;
-    if (!loadSeq) loadSeq = 1;
-    await writeValue('stTestScenario.udiLoadSeq', DataType.UInt32, loadSeq);
-    message._plcReceipt = { path: 'xTestScenarioApply', sequence: await pulseValue('xTestScenarioApply') };
+    requireTestMagazineMode(latestValues.uiMagazineMode, scenario.magazineMode);
+    if (latestValues['stTestObservability.uiSchemaVersion'] !== 3) throw new Error('PLC не поддерживает тестовый контракт v3');
+    await writeScenarioBuffer(scenario, {
+      previousSequence: Number(latestValues['stTestScenario.udiLoadSeq'] ?? 0),
+      write: ({ path, type, value }) => writeValue(path, DataType[type], value),
+      commit: async loadSeq => {
+        await writeValue('stTestScenario.udiLoadSeq', DataType.UInt32, loadSeq);
+        message._plcReceipt = { path: 'xTestScenarioApply', sequence: await pulseValue('xTestScenarioApply') };
+      },
+    });
     return requestId;
   }
   if (message.command === 'robot.point.capture') {
@@ -2328,31 +2336,47 @@ async function requestJson(request) {
 }
 
 function currentScenario() {
+  if (connectionState.status !== 'connected') throw new Error('Нет актуального снимка PLC');
+  if (latestValues['stCellStatus.xRunning'] || latestValues['stRobotStatus.xBusy']) throw new Error('Снимок сценария доступен после остановки цикла и робота');
+  for (const station of [1, 2]) {
+    if (latestValues[`astGeometryStatus[${station}].xOccupied`]) throw new Error(`ГК ${station} занят: начальную занятость тест создаёт доставкой; освободите виртуальную станцию перед снимком`);
+  }
   const typeCount = Math.max(1, Math.min(3, Number(latestValues['stMultiType.Config.uiTypeCount'] ?? 1)));
   const configuredType = (value) => Math.max(1, Math.min(typeCount, Number(value ?? 1)));
   const machines = [1, 2, 3].map((index) => {
     const enabled = Boolean(latestValues[`astMachineStatus[${index}].xEnabled`]);
     const processing = Boolean(latestValues[`astMachineStatus[${index}].xProcessing`]);
     const partType = Number(latestValues[`astMachineStatus[${index}].ePartType`] ?? 0);
+    if ((!enabled && partType !== 0) || (!processing && partType === 2)) throw new Error(`Станок ${index}: текущее состояние груза не представимо устойчивой схемой теста`);
     return {
       state: !enabled ? 0 : processing ? 2 : partType === 1 ? 3 : 1,
       productType: configuredType(latestValues[`stMultiType.Config.auiMachineType[${index}]`]),
     };
   });
-  const magazines = [1, 2].map((magazine) => ({
-    enabled: Boolean(latestValues[`astMagazineStatus[${magazine}].xEnabled`]),
-    slots: Array.from({ length: 120 }, (_, offset) => {
-      const index = offset + 1;
-      const root = `astMagazineInventory[${magazine}].aSlots[${index}]`;
-      const present = Boolean(latestValues[`${root}.xInPosition`]);
-      return {
-        content: present ? Number(latestValues[`${root}.eDetailType`] ?? 0) : 0,
-        productType: configuredType(latestValues[`stMultiType.Config.auiSlotType[${index}]`]),
-      };
-    }),
-  }));
+  const magazineMode = latestValues.uiMagazineMode;
+  requireTestMagazineMode(magazineMode);
+  const readSlots = (root, size) => Array.from({ length: size }, (_, offset) => {
+    const key = `${root}.aSlots[${offset + 1}]`;
+    if (typeof latestValues[`${key}.xInPosition`] !== 'boolean') throw new Error(`Нет актуального инвентаря ${key}`);
+    return { content: latestValues[`${key}.xInPosition`] ? Number(latestValues[`${key}.eDetailType`]) : 0,
+      productType: configuredType(latestValues[`stMultiType.Config.auiSlotType[${offset + 1}]`]) };
+  });
+  const magazines = [1, 2].map(magazine => {
+    const enabled = Boolean(latestValues[`astMagazineStatus[${magazine}].xEnabled`]);
+    if (magazineMode === 0) return { enabled, slots: readSlots(`astMagazineInventory[${magazine}]`, 120) };
+    if (latestValues[`astTwinStatus[${magazine}].xBusy`] || !latestValues[`astTwinStatus[${magazine}].xConfirmed`]) throw new Error(`Магазин ${magazine}: дождитесь остановки и подтвердите расстановку перед снимком`);
+    const pallet = latestValues[`astTwinStatus[${magazine}].uiRobotPallet`];
+    if (![1, 2].includes(pallet)) throw new Error(`Неизвестна роботная палета магазина ${magazine}`);
+    return { enabled, slots: readSlots(`astTwinStore[${magazine}].astPallet[${pallet}]`, 96),
+      operatorSlots: readSlots(`astTwinStore[${magazine}].astPallet[${3 - pallet}]`, 96),
+      operatorLoaded: Boolean(latestValues[`astTwinStore[${magazine}].axLoaded[${3 - pallet}]`]),
+      autoSwap: Boolean(latestValues[`astTwinStatus[${magazine}].xAutoSwapEnabled`]) };
+  });
   return {
-    typeCount, machines, magazines,
+    magazineMode, typeCount, machines, magazines,
+    geometry: { enabled: [1, 2].map(i => Boolean(latestValues[`astGeometryStatus[${i}].xEnabled`])),
+      calls: [1, 2, 3].map(i => Number(latestValues[`astGeometryCalls[${i}].uiState`]) === 1),
+      waitWhenOccupied: latestValues.xGeometryWaitWhenOccupied !== false },
     grippers: [
       { content: Boolean(latestValues['stRobotStatus.xGripper1Closed']) ? 1 : 0, productType: Boolean(latestValues['stRobotStatus.xGripper1Closed']) ? configuredType(latestValues['stRobotStatus.uiBlankPayloadType']) : 0 },
       { content: Boolean(latestValues['stRobotStatus.xGripper2Closed']) ? 2 : 0, productType: Boolean(latestValues['stRobotStatus.xGripper2Closed']) ? configuredType(latestValues['stRobotStatus.uiDetailPayloadType']) : 0 },
@@ -2393,41 +2417,55 @@ function currentPointBackup(user) {
   };
 }
 
-async function fallbackTestCleanup({ aborted = false } = {}) {
+async function fallbackTestCleanup({ aborted = false, initialEnvironment = 0, initialSpeed = 0 } = {}) {
+  const cleanupErrors = [];
   try {
     if (aborted) await executeCommandDirect({ command: 'test.abort', value: true });
     if (Boolean(latestValues['stCellStatus.xRunning']) && !Boolean(latestValues['stCellStatus.xStopPending'])) {
       await executeCommand({ requestId: `cleanup-${Date.now()}-stop`, command: 'cell.stop' });
     }
     await executeCommand({ requestId: `cleanup-${Date.now()}-faults`, command: 'test.faults.clear' });
-    const stableDeadline = Date.now() + 15_000;
-    while (!Boolean(latestValues.xTestEnvironmentChangeAllowed) && Date.now() < stableDeadline) {
+    for (const station of [1, 2]) {
+      if (latestValues.xGeometrySupported && (latestValues[`astGeometryStatus[${station}].xEnabled`] || latestValues[`astGeometryStatus[${station}].xDriveRunning`])) {
+        await executeCommand({ command: 'geometry.command', action: 6, magazine: station });
+      }
+    }
+    const stableDeadline = Date.now() + 45_000;
+    while ((Boolean(latestValues['stCellStatus.xRunning']) || Boolean(latestValues['stRobotStatus.xBusy'])) && Date.now() < stableDeadline) {
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
-    await executeCommand({ requestId: `cleanup-${Date.now()}-speed`, command: 'test.speed.set', value: 0 });
-    await executeCommand({ requestId: `cleanup-${Date.now()}-environment`, command: 'test.environment.set', value: 0 });
+    if (Boolean(latestValues['stCellStatus.xRunning']) || Boolean(latestValues['stRobotStatus.xBusy'])) throw new Error('Цикл не остановился при резервной очистке');
+    if (Number(latestValues.uiTestEnvironmentApplied) !== initialEnvironment) {
+      await executeCommand({ requestId: `cleanup-${Date.now()}-environment`, command: 'test.environment.set', value: initialEnvironment });
+    } else if (initialEnvironment === 1 && Number(latestValues.uiTestSpeedProfileApplied) !== initialSpeed) {
+      await executeCommand({ requestId: `cleanup-${Date.now()}-speed`, command: 'test.speed.set', value: initialSpeed });
+    }
   } catch (error) {
+    cleanupErrors.push(error instanceof Error ? error.message : String(error));
     console.error(`[Tests] Fallback PLC cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
   } finally {
     try {
       await executeCommandDirect({ command: 'test.abort', value: false });
     } catch (error) {
+      cleanupErrors.push(error instanceof Error ? error.message : String(error));
       console.error(`[Tests] Could not release PLC abort: ${error instanceof Error ? error.message : String(error)}`);
     }
     try {
       await executeCommand({ requestId: `cleanup-${Date.now()}-session`, command: 'test.session', value: false });
     } catch (error) {
+      cleanupErrors.push(error instanceof Error ? error.message : String(error));
       console.error(`[Tests] Could not release PLC test session: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
+  return cleanupErrors.join('; ');
 }
 
 async function launchTestRun(config) {
   if (!testStore) throw new Error(testStoreError || 'Хранилище тестов недоступно');
   if (activeTestRun) throw new Error(`Уже выполняется прогон ${activeTestRun.id}`);
   if (connectionState.status !== 'connected') throw new Error('Нет полной связи gateway с PLC');
-  requireStaticMagazineMode(latestValues.uiMagazineMode);
-  const { suite, fixedCaseIndex, scenarios: selectedScenarios } = resolveStaticTestSelection(config, (id) => testStore.getScenario(id));
+  requireTestMagazineMode(latestValues.uiMagazineMode);
+  const { suite, fixedCaseIndex, scenarios: selectedScenarios } = resolveTestSelection(config, (id) => testStore.getScenario(id));
   if (fixedCaseIndex !== null) {
     const catalog = await fixedTestCatalog();
     if (!catalog[suite]?.some((item) => item.index === fixedCaseIndex)) {
@@ -2452,7 +2490,10 @@ async function launchTestRun(config) {
   if (suite === 'general' && environment !== 'simulation') {
     throw new Error('Генеральные тесты с автоматической перезагрузкой магазинов разрешены только в симуляции');
   }
-  const runConfig = { ...config, suite, fixedCaseIndex, environment, robotInterface, speedProfile, simulationTimeFactor, scenarios: selectedScenarios };
+  const runConfig = { ...config, suite, fixedCaseIndex, environment, robotInterface, speedProfile, simulationTimeFactor,
+    magazineMode: latestValues.uiMagazineMode, seed: config.seed ?? 1, count: config.count ?? 100, scenarios: selectedScenarios };
+  validateTestRun(runConfig, latestValues, selectedScenarios);
+  if (activeTestRun) throw new Error(`Уже выполняется прогон ${activeTestRun.id}`);
   const run = testStore.createRun(runConfig);
   const token = randomUUID();
   const processHandle = spawn(testRunnerPython, ['-m', 'robot_simulator.test_runner'], {
@@ -2460,29 +2501,37 @@ async function launchTestRun(config) {
     windowsHide: true,
     env: {
       ...process.env,
+      PYTHONIOENCODING: 'utf-8',
       PORTAL_TEST_RUN_ID: String(run.id), PORTAL_TEST_RUN_TOKEN: token,
       PORTAL_TEST_WS: `ws://127.0.0.1:${gatewayPort}/ws`,
       PORTAL_ROBOT_SIM_CONTROL_URL: robotSimulatorControlUrl,
     },
   });
-  activeTestRun = { id: run.id, token, config: runConfig, process: processHandle, socket: null, stderr: '', controlStarted: false };
+  activeTestRun = { id: run.id, token, config: runConfig, process: processHandle, socket: null, stderr: '', controlStarted: false, initialEnvironment: Number(latestValues.uiTestEnvironmentApplied ?? 0), initialSpeed: Number(latestValues.uiTestSpeedProfileApplied ?? 0) };
   processHandle.stderr.on('data', (chunk) => {
     const text = chunk.toString();
     if (activeTestRun?.id === run.id) activeTestRun.stderr = `${activeTestRun.stderr}${text}`.slice(-4000);
     console.error(`[Test runner ${run.id}] ${text.trim()}`);
   });
+  processHandle.on('error', (error) => {
+    if (activeTestRun?.id !== run.id) return;
+    testStore.finishRun(run.id, 'ERROR', `Не удалось запустить Python runner: ${error.message}`);
+    activeTestRun = null;
+    broadcast({ type: 'test-run-update', run: testStore.getRun(run.id) });
+  });
   processHandle.on('exit', async (code) => {
     if (activeTestRun?.id !== run.id) return;
     const stored = testStore.getRun(run.id);
     if (!stored?.finishedAt) {
-      if (activeTestRun.controlStarted) await fallbackTestCleanup({ aborted: Boolean(stored?.abortRequested) });
-      if (stored?.abortRequested) testStore.finishRun(run.id, 'ABORTED', 'Прогон остановлен оператором');
+      const cleanupError = activeTestRun.controlStarted ? await fallbackTestCleanup({ aborted: Boolean(stored?.abortRequested), initialEnvironment: activeTestRun.initialEnvironment, initialSpeed: activeTestRun.initialSpeed }) : '';
+      if (cleanupError) testStore.finishRun(run.id, 'ERROR', `Резервная очистка не завершена: ${cleanupError}`);
+      else if (stored?.abortRequested) testStore.finishRun(run.id, 'ABORTED', 'Прогон остановлен оператором');
       else {
         const runnerError = activeTestRun.stderr.trim().split(/\r?\n/).filter(Boolean).at(-1);
         testStore.finishRun(
           run.id,
-          code === 0 ? null : 'ERROR',
-          code === 0 ? null : runnerError || `Python runner завершился с кодом ${code}`,
+          'ERROR',
+          runnerError || `Python runner завершился без итогового отчёта (код ${code})`,
         );
       }
     }
@@ -2850,10 +2899,10 @@ const httpServer = createServer(async (request, response) => {
     }
     if (requestUrl.pathname === '/api/test-system/status') {
       jsonResponse(response, 200, { ...testHealth(), simulatorControl: await simulatorControlHealth(), plc: {
-        connected: connectionState.status === 'connected', requestedEnvironment: Number(latestValues.uiTestEnvironmentRequest ?? 0),
+        connected: connectionState.status === 'connected', testSchemaVersion: Number(latestValues['stTestObservability.uiSchemaVersion'] ?? 0), requestedEnvironment: Number(latestValues.uiTestEnvironmentRequest ?? 0),
         appliedEnvironment: Number(latestValues.uiTestEnvironmentApplied ?? 0), speedProfile: Number(latestValues.uiTestSpeedProfileApplied ?? 0),
         magazineMode: latestValues.uiMagazineMode === 0 || latestValues.uiMagazineMode === 1 ? latestValues.uiMagazineMode : null,
-        magazineModeChangeAllowed: Boolean(latestValues.xMagazineModeAllowed),
+        magazineModeChangeAllowed: Boolean(latestValues.xMagazineModeAllowed), twinConfirmed: [1, 2].map(i => Boolean(latestValues[`astTwinStatus[${i}].xConfirmed`])),
         environmentChangeAllowed: Boolean(latestValues.xTestEnvironmentChangeAllowed), scenarioApplyAllowed: Boolean(latestValues.xTestScenarioApplyAllowed),
         robotReady: Boolean(latestValues['stCellStatus.xRobotReady']),
         simulatorActive: Boolean(latestValues['stRobotModbusStatus.xSimulatorActive']), benchKey: Boolean(latestValues.xSc500BenchKeyActive),
@@ -2868,9 +2917,9 @@ const httpServer = createServer(async (request, response) => {
     if (requestUrl.pathname === '/api/test-scenarios' && request.method === 'GET') { jsonResponse(response, 200, testStore?.listScenarios() ?? []); return; }
     if (requestUrl.pathname === '/api/test-scenarios' && request.method === 'POST') { jsonResponse(response, 201, testStore.saveScenario(await requestJson(request))); return; }
     if (requestUrl.pathname === '/api/test-scenarios/capture-current' && request.method === 'POST') {
-      requireStaticMagazineMode(latestValues.uiMagazineMode);
+      requireTestMagazineMode(latestValues.uiMagazineMode);
       const body = await requestJson(request);
-      jsonResponse(response, 201, testStore.saveScenario({ name: body.name ?? `Снимок ${new Date().toLocaleString('ru-RU')}`, description: body.description ?? 'Создано из текущего состояния PLC', schemaVersion: 2, initialState: currentScenario(), expectations: {} }));
+      jsonResponse(response, 201, testStore.saveScenario({ name: body.name ?? `Снимок ${new Date().toLocaleString('ru-RU')}`, description: body.description ?? 'Создано из текущего состояния PLC', schemaVersion: 3, initialState: currentScenario(), expectations: {} }));
       return;
     }
     if (scenarioMatch && request.method === 'PUT') { jsonResponse(response, 200, testStore.saveScenario(await requestJson(request), scenarioMatch[1])); return; }
@@ -3117,6 +3166,7 @@ httpServer.listen(gatewayPort, gatewayHost, () => {
 opcUaLoop().catch(console.error);
 runtimeDiagnosticsLoop().catch(console.error);
 controllerDiagnosticsLoop().catch(console.error);
+controllerPlcLoop().catch(console.error);
 
 const closeStores = () => {
   clearInterval(archiveExpiryTimer);

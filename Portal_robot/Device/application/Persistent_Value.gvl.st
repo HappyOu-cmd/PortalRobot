@@ -26,4 +26,7 @@ VAR_GLOBAL PERSISTENT RETAIN
 	lrStaticPitchY : LREAL := 60.0;
 	lrTwinPitchX : LREAL := 70.0;
 	lrTwinPitchY : LREAL := 70.0;
+
+	// Базы ГК для SIMULATION сохраняются отдельно от реальных координат.
+	astSimulationConfig : ARRAY [1..2] OF ST_GEOMETRY_CONFIG;
 END_VAR

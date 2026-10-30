@@ -19,6 +19,9 @@ function body(source, label) {
 function compile(source) {
   const calls = [...new Set(source.match(/\b(?:fb\w+|rt\w+|UpdateErrorView)\b/g) ?? [])];
   let prepared = source.replace(/\b(?:UINT|DWORD)#16#([\da-f_]+)/gi, (_, n) => String(parseInt(n.replaceAll('_', ''), 16)))
+    .replace(/\bRETURN\b/g, 'return')
+    .replace(/\b((?:\w+\.)?dw\w+)\s+AND\s+/g, '$1 & ')
+    .replace(/\bNOT\s+((?:\w+\.)?dw\w+)/g, '~$1')
     .replace(/END_(IF|CASE)(?!\w)\s*;?/g, 'END_$1;')
     .replace(/\bBYTE#(\d+)/g, '$1')
     .replace(/\b(Status\.ui\w+)\s+AND\s+(\w+)/g, '$1 & $2')
@@ -68,6 +71,50 @@ function defaults(source) {
 
 const machine = readPlc('FB/FB_MACHINE.st');
 const closeDoor = compile(body(machine, 'E_MACHINE_STATE.DOOR_CLOSE'));
+
+test('physical machine DI bypasses every test switch; virtual alarm and timeout filters remain active', () => {
+  const source = readPlc('FB/FB_FAULT_INJECTOR/FB_MACHINE_FAULT_INJECTOR.st');
+  assert.match(source, /xUsePhysicalInput\s*:\s*BOOL\s*:=\s*TRUE/);
+  const execute = compile(source);
+  for (const physical of [false, true]) for (const enabled of [false, true])
+    for (const alarm of [false, true]) for (let mask = 0; mask < 8; mask++) {
+      const s = { ...defaults(source), xUsePhysicalInput: physical,
+        Request: { xEnabled: enabled, xMachineAlarm: Boolean(mask & 1), xDoorFault: Boolean(mask & 2), xChuckFault: Boolean(mask & 4),
+          xTimeoutRobotMove: true, xTimeoutRobotAction: true, xTimeoutRobotRelease: true,
+          xTimeoutDoorOpen: true, xTimeoutDoorClose: true, xTimeoutHatchUnlock: true,
+          xTimeoutChuckOpen: true, xTimeoutChuckClose: true, xTimeoutCycleStart: true },
+        MachineStatusRaw: { xAlarm: alarm, xDoorOpen: true, xDoorClosed: true, xHatchLocked: false,
+          xChuckUnclamped: true, xChuckClamped: true, xCycleActive: true },
+        RobotStatusRaw: { xDone: true, xBusy: false, xGripper1Open: true, xGripper1Closed: true,
+          xGripper2Open: true, xGripper2Closed: true, xRotatedToBlank: true, xRotatedToDetail: true },
+        NominalTimeouts: Object.fromEntries(['RobotMove', 'RobotAction', 'RobotRelease', 'DoorOpen', 'DoorClose',
+          'HatchUnlock', 'ChuckOpen', 'ChuckClose', 'CycleStart'].map(n => [`t${n}`, 17000])),
+        MachineStatus: {}, RobotStatus: {}, Timeouts: {}, Status: {} };
+      const raw = structuredClone(s.MachineStatusRaw);
+      execute(s);
+      assert.deepEqual(s.MachineStatusRaw, raw);
+      assert.equal(s.MachineStatus.xAlarm, physical ? alarm : alarm && enabled && Boolean(mask));
+      assert.equal(s.Status.xAllowed, !physical && enabled);
+      if (physical || !enabled) {
+        assert.deepEqual(s.RobotStatus, s.RobotStatusRaw);
+        assert.deepEqual(s.Timeouts, s.NominalTimeouts);
+      } else {
+        assert.equal(s.RobotStatus.xDone, false);
+        assert.equal(s.RobotStatus.xBusy, true);
+        assert.equal(s.MachineStatus.xDoorOpen, false);
+        assert.ok(Object.values(s.Timeouts).every(t => t === 2000));
+      }
+      if (physical) {
+        assert.deepEqual(s.MachineStatus, s.MachineStatusRaw);
+        assert.ok(Object.values(s.Status).every(v => v === false));
+      }
+    }
+  const adapter = readPlc('PLC_PRG.RunMachines.st');
+  for (const index of [1, 2, 3]) {
+    assert.match(adapter, new RegExp(`MACHINE_${index}_FAULT\\(\\s*xUsePhysicalInput\\s*:=\\s*GVL_CELL_SETTINGS.eTestEnvironment = E_CELL_TEST_ENVIRONMENT.NORMAL`));
+  }
+});
+
 test('closed hatch without lock confirmation times out; a locked hatch completes even on the limit scan', () => {
   for (const operator of [false, true]) for (const locked of [false, true]) {
     const s = { ...defaults(machine), eState: enums.E_MACHINE_STATE.DOOR_CLOSE,
@@ -209,15 +256,18 @@ const robotSource = readPlc('FB/FB_ROBOT.st');
 const resetRobot = compile(between(robotSource, 'rtReset(CLK := xReset);', '// Недопустимое действие'));
 const clearRobot = compile(between(robotSource, 'IF ((NOT xMode AND', '\nEND_CASE;'));
 const emitReset = compile(between(robotSource, 'IF xMode AND xExternalResetPending THEN', '// ====================================================='));
+const publishResetRecovery = compile(between(robotSource, 'ResetRecovery.xActive :=', 'Status.uiMagazineContext :='));
 function robotReset() {
   const s = { ...defaults(robotSource), eState: enums.E_ROBOT_STATE.ERROR, xHmiPermit: true,
+    ResetRecovery: { udiAttempt: 0, xActive: false, xDependenciesReady: false },
+    ResetDependencies: { dwStopOwners: 0, dwLiveCauses: 0, dwResetBusy: 0 },
     Error: { dwErrorActive: 4, dwErrorLast: 0 }, Status: { xError: true }, Diag: { stWarning: { uiCode: 0, udiSequence: 0 } },
     stMotionManager: { Status: { xError: false } }, fbGripper: { Status: { xError: true } },
     FaultStatus: { stPoint: { xResetAllowed: true }, stGripper: { xResetAllowed: true } },
     stModbusStatus: {}, Command: { xExecute: false, xStop: false }, ModbusCommand: { xReset: false }, rtReset: trigger(),
     tSoftMotionResetTimeout: 1000 };
   s.tonSoftMotionReset = ton(s);
-  s.scan = (dt = 20) => { s.now += dt; resetRobot(s); clearRobot(s); s.ModbusCommand.xReset = false; emitReset(s); };
+  s.scan = (dt = 20) => { s.now += dt; resetRobot(s); clearRobot(s); s.ModbusCommand.xReset = false; emitReset(s); publishResetRecovery(s); };
   return s;
 }
 test('one Reset clears the child gripper first and then the parent without a second command', () => {
@@ -242,6 +292,70 @@ test('a new gripper fault or reset timeout ends the attempt and never auto-clear
     assert.equal(s.Diag.stWarning.uiCode, s.WRN_RESET_GRIPPER_ERROR);
     s.fbGripper.Status.xError = false; s.scan(); assert.equal(s.Status.xError, true);
     s.xReset = true; s.scan(); assert.equal(s.Status.xError, false);
+  }
+});
+
+test('one accepted Reset waits for the equipment terminal result and never clears on Busy alone', () => {
+  for (const outcome of ['success', 'failure']) {
+    const s = robotReset(); s.fbGripper.Status.xError = false;
+    s.Error.dwErrorActive = 16; s.xEquipmentStopRequired = true;
+    Object.assign(s.ResetDependencies, { dwStopOwners: 32, dwResetBusy: 32 });
+    s.xReset = true; s.scan(); s.xReset = false;
+    assert.equal(s.ResetRecovery.udiAttempt, 1);
+    assert.equal(s.ResetRecovery.xActive, true);
+    assert.equal(s.ResetRecovery.xDependenciesReady, true);
+    s.scan(500); assert.equal(s.Status.xError, true);
+    s.ResetDependencies.dwResetBusy = 0;
+    if (outcome === 'success') {
+      s.ResetDependencies.dwStopOwners = 0; s.xEquipmentStopRequired = false;
+    }
+    s.scan();
+    assert.equal(s.ResetRecovery.xActive, false);
+    assert.equal(s.Status.xError, outcome === 'failure');
+    if (outcome === 'failure') {
+      assert.equal(s.Diag.stWarning.uiCode, s.WRN_RESET_EQUIPMENT_ERROR);
+      s.xEquipmentStopRequired = false; s.scan();
+      assert.equal(s.Status.xError, true);
+    }
+    assert.equal(s.ResetRecovery.udiAttempt, 1);
+  }
+});
+
+test('new equipment cause, new owner, Stop and deadline abort a pending Reset without replay', () => {
+  for (const cause of ['new-cause', 'new-owner', 'stop', 'deadline']) {
+    const s = robotReset(); s.fbGripper.Status.xError = false;
+    s.Error.dwErrorActive = 16; s.xEquipmentStopRequired = true;
+    s.ResetDependencies.dwStopOwners = 8;
+    s.xReset = true; s.scan(); s.xReset = false;
+    if (cause === 'new-cause') s.ResetDependencies.dwLiveCauses = 8;
+    if (cause === 'new-owner') s.ResetDependencies.dwStopOwners |= 32;
+    if (cause === 'stop') s.xResetCancel = true;
+    s.scan(cause === 'deadline' ? 1100 : 20);
+    assert.equal(s.xSoftMotionResetPending, false, cause);
+    assert.equal(s.ResetRecovery.xActive, false, cause);
+    assert.equal(s.Status.xError, true, cause);
+    s.xResetCancel = false; s.xEquipmentStopRequired = false;
+    s.ResetDependencies.dwStopOwners = s.ResetDependencies.dwLiveCauses = 0;
+    s.scan(2000);
+    assert.equal(s.Status.xError, true, cause);
+    assert.equal(s.ResetRecovery.udiAttempt, 1, cause);
+  }
+});
+
+test('SoftMotion and external Reset enforce PT minus one, PT and PT plus one boundaries', () => {
+  for (const mode of [false, true]) for (const elapsed of [999, 1000, 1001]) {
+    const s = robotReset(); s.xMode = mode; s.fbGripper.Status.xError = false;
+    Object.assign(s.stModbusStatus, { xCommunicationAlive: true, xResetDone: false, xBusy: false,
+      uiExecutionState: enums.E_ROBOT_MODBUS_EXECUTION_STATE.IDLE });
+    s.Error.dwErrorActive = 16; s.xEquipmentStopRequired = true; s.ResetDependencies.dwStopOwners = 8;
+    s.xReset = true; s.scan(); s.xReset = false;
+    assert.equal(s.ResetRecovery.xActive, true);
+    s.xEquipmentStopRequired = false; s.ResetDependencies.dwStopOwners = 0;
+    s.stModbusStatus.xResetDone = true;
+    s.scan(elapsed);
+    assert.equal(s.Status.xError, elapsed >= 1000, `mode=${mode}, elapsed=${elapsed}`);
+    assert.equal(s.ResetRecovery.xActive, false);
+    assert.equal(s.ResetRecovery.udiAttempt, 1);
   }
 });
 
@@ -356,7 +470,8 @@ test('new and revised recovery alarms match the catalog, reset table and PLC eff
   const warnings = readFileSync(new URL('../../DOKS/16-cell-warnings.md', import.meta.url), 'utf8');
   assert.ok(doc.includes(catalog.alarms['motion-manager'][3]));
   assert.ok(doc.includes(catalog.alarms.robot[3]));
-  for (const code of [4, 5, 6, 12]) { assert.ok(doc.includes(catalog.warnings.robot[code])); assert.ok(warnings.includes(catalog.warnings.robot[code])); }
+  for (const code of [4, 5, 6, 12, 18]) { assert.ok(doc.includes(catalog.warnings.robot[code])); assert.ok(warnings.includes(catalog.warnings.robot[code])); }
+  assert.match(readPlc('FB/FB_ALARM_MANAGER.st'), /eSeverity := E_ALARM_SEVERITY.WARNING,\s*eEffect := E_ALARM_EFFECT.WARNING/);
   const source = readPlc('FB/FB_ALARM_MANAGER.GetAlarmEffect.st');
   const s = { E_ALARM_SOURCE: enumeration('ST/ST_ALARM/E_ALARM_SOURCE.st'), E_ALARM_EFFECT: enumeration('ST/ST_ALARM/E_ALARM_EFFECT.st'),
     eSource: 0, uiCode: 3, xRobotStopRequired: false, xGlobalError: false, GetAlarmEffect: 0 };

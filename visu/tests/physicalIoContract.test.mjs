@@ -285,7 +285,8 @@ test('filter and horn setting IDs append after 36 stable IDs; TIME and permissio
   assert.match(read('PLC_PRG.PublishHmi.st'), /GVL_HMI\.tAlarmHornDuration := GVL_CELL_SETTINGS\.tAlarmHornDuration/);
 });
 function hornRuntime() {
-  const s = { astSource: Array.from({length: 20}, () => ({dwAlarmActive: 0, stWarning: {uiCode: 0}})), adwPrevious: Array(20).fill(0), uiSource: 0, xNewAlarm: false, xActive: false, xSound: false, tDuration: 2000, tLatchedDuration: 0 };
+  const count = Number(read('FB/FB_ALARM_HORN.st').match(/astSource : ARRAY \[1\.\.(\d+)\]/)[1]);
+  const s = { astSource: Array.from({length: count + 1}, () => ({dwAlarmActive: 0, stWarning: {uiCode: 0}})), adwPrevious: Array(count + 1).fill(0), uiSource: 0, xNewAlarm: false, xActive: false, xSound: false, tDuration: 2000, tLatchedDuration: 0 };
   s.tonSound = { Q: false, since: null, update(input, time, now) {
     if (!input) { this.since = null; this.Q = false; return; }
     if (this.since === null) this.since = now;
@@ -331,10 +332,13 @@ test('horn sounds once per new alarm bit, including a second fault while an alar
   assert.equal(h.scan(7100,{1:1}),true);
   assert.equal(h.scan(9100),false);
   assert.equal(h.scan(9200,{19:1}),true);
+  assert.equal(h.scan(11200),false);
+  assert.equal(h.scan(11300,{22:1}),true);
 });
 test('horn ignores warnings; zero mutes immediately and duration is latched for a pulse', () => {
   const h=hornRuntime();
   h.state.astSource[3].stWarning.uiCode=10;
+  h.state.astSource[20].stWarning.uiCode=1;
   assert.equal(h.scan(0),false);
   assert.equal(h.scan(100,{3:1},500),true);
   assert.equal(h.scan(599,{},60000),true);

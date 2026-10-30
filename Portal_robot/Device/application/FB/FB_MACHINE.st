@@ -7,6 +7,8 @@ VAR_INPUT
 	xExecute          : BOOL; // Запуск разрешённой операции обслуживания
     xReset            : BOOL; // Сброс ошибки конкретного станка
 	xResetGlobal      : BOOL; // Общий сброс ошибок ячейки
+	xResetCancel : BOOL; // Stop/Disable отменяет согласованную попытку сброса
+	RobotResetRecovery : ST_ROBOT_RESET_RECOVERY; // Внутреннее подтверждение принятого Reset робота
 	xGlobalError      : BOOL; // Глобальная ошибка ячейки
 	xManualMode       : BOOL; // Ручной режим: открытая операторская дверь не формирует аварию обслуживания
 	xAutomaticUseEnabled : BOOL; // Станок выбран для автоматической обработки
@@ -96,6 +98,10 @@ VAR
 	xDoorRobotStopLatched  : BOOL; // Останов по люку удерживается до полной остановки Motion
 	xRobotStopRequired      : BOOL; // Итоговая реакция ROBOT_STOP, сформированная станком
 	xRobotResetDependencyReady : BOOL; // Каскадная ошибка робота может быть сброшена тем же импульсом
+	xRobotResetDependencyRequired : BOOL;
+	xRobotResetCoordinated : BOOL;
+	udiRobotResetAttempt : UDINT;
+	xRobotResetAttemptReady : BOOL;
 	xDoorRobotRecoveryReady : BOOL; // Люк открыт либо робот уже вышел из рабочей зоны
 	xManualHatchRecoveryOpenAllowed : BOOL; // Разрешено открыть люк для безопасного восстановления
 	xSafetyDoorSafe        : BOOL; // Оба сигнала операторской двери непротиворечиво подтверждают закрытие
@@ -307,6 +313,22 @@ xRobotResetDependencyReady := (((Error.dwErrorActive
 			OR NOT xRobotInsideAtFault))
 	OR NOT stRobotStatus.xError
 	OR stRobotStatus.xResetAllowed;
+
+// Станок участвует в той же принятой попытке, что и родитель FB_ROBOT.
+// Иначе после раннего очищения ERROR робот внутри зоны снова создаёт каскад.
+IF xRobotResetCoordinated
+AND (NOT RobotResetRecovery.xActive
+	OR (RobotResetRecovery.udiAttempt <> udiRobotResetAttempt)
+	OR xGlobalError OR xIoManual OR xExecute OR xResetCancel) THEN
+	xRobotResetCoordinated := FALSE;
+END_IF;
+xRobotResetAttemptReady := xRobotResetCoordinated
+	AND RobotResetRecovery.xActive
+	AND (RobotResetRecovery.udiAttempt = udiRobotResetAttempt)
+	AND RobotResetRecovery.xDependenciesReady;
+xRobotResetDependencyRequired := ((Error.dwErrorActive AND MASK_ALWAYS_ROBOT_STOP) <> DWORD#0)
+	OR (((Error.dwErrorActive AND MASK_EQUIPMENT_ERROR) <> DWORD#0) AND xRobotInsideAtFault);
+xRobotResetDependencyReady := xRobotResetDependencyReady OR xRobotResetAttemptReady;
 
 // Любой сброс формирует одно предупреждение с конкретной причиной отказа.
 IF rtResetMachine.Q
@@ -668,6 +690,7 @@ tofErrorDoor(
 // Для действия захвата сохраняется отдельная диагностическая причина.
 IF xRobotInsideMachine
 AND stRobotStatus.xError
+AND NOT xRobotResetAttemptReady
 AND (eState <> E_MACHINE_STATE.ERROR) THEN
 	IF eState = E_MACHINE_STATE.ROBOT_ACTION THEN
 		Error.dwErrorActive := Error.dwErrorActive OR ERR_ROBOT_ACTION;
@@ -1109,7 +1132,8 @@ CASE eState OF
 			xAutoCycleCommanded := FALSE;
 		END_IF;
 
-		IF (xReset OR xResetGlobal)
+		IF (rtResetMachine.Q OR xRobotResetAttemptReady)
+		AND NOT xResetCancel
 		AND NOT xIoManual
 		AND NOT xGlobalError
 		AND NOT xExecute
@@ -1117,11 +1141,17 @@ CASE eState OF
 		AND xSafetyDoorSafe
 		AND xDoorRobotRecoveryReady
 		AND xRobotResetDependencyReady THEN
-			Error.dwErrorLast := Error.dwErrorActive;
-			Error.dwErrorActive := DWORD#0;
-			xManualHatchUnlockDemand := FALSE;
-			xManualHatchOpenDemand := FALSE;
-        	eState := E_MACHINE_STATE.DISABLED;
+			IF xRobotResetDependencyRequired AND stRobotStatus.xError AND NOT xRobotResetAttemptReady THEN
+				xRobotResetCoordinated := TRUE;
+				udiRobotResetAttempt := RobotResetRecovery.udiAttempt + UDINT#1;
+				IF udiRobotResetAttempt = UDINT#0 THEN udiRobotResetAttempt := UDINT#1; END_IF;
+			ELSE
+				Error.dwErrorLast := Error.dwErrorActive;
+				Error.dwErrorActive := DWORD#0;
+				xManualHatchUnlockDemand := FALSE;
+				xManualHatchOpenDemand := FALSE;
+				eState := E_MACHINE_STATE.DISABLED;
+			END_IF;
     	END_IF;
 END_CASE;
 
@@ -1234,6 +1264,7 @@ Status.xPowerAllowed := (eState <> E_MACHINE_STATE.ERROR)
 			AND xSafetyDoorSafe
 			AND (ePartState <> E_PART_STATE.UNKNOWN)));
 Status.xResetAllowed := (eState = E_MACHINE_STATE.ERROR)
+	AND NOT xRobotResetCoordinated AND NOT xResetCancel
 	AND NOT xIoManual
 	AND (Error.dwErrorActive <> DWORD#0)
 	AND NOT stMachineStatus.xAlarm

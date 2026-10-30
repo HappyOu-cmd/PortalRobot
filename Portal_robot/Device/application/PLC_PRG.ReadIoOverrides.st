@@ -59,6 +59,7 @@ END_FOR;
 // Ручной режим сигналов включается одним запросом. Технологических допусков здесь нет.
 xIoManualEndedByOperator := FALSE;
 IF xIoManualActive AND (NOT GVL_CELL_CONTROL.xManual OR NOT xHmiConnectionAlive
+    OR CONTROLLER_DIAGNOSTICS.Status.xAlarmActive
     OR tonIoOverrideWatchdog.Q OR (uliIoLeaseAgeMs > ULINT#3000)
     OR ((GVL_HMI.udiCellModeCommandSeq <> GVL_HMI.udiCellModeAckSeq) AND NOT GVL_HMI.xCellManualRequest)) THEN
     xIoManualActive := FALSE;
@@ -67,6 +68,7 @@ END_IF;
 // Их задания отменяются при передаче управления; xIoBusy остаётся диагностикой
 // и условием снятия отдельного программного аварийного останова.
 GVL_HMI.xIoManualStartAllowed := GVL_CELL_CONTROL.xManual AND NOT xIoManualActive
+    AND NOT CONTROLLER_DIAGNOSTICS.Status.xAlarmActive
     AND NOT ((GVL_HMI.udiCellModeCommandSeq <> GVL_HMI.udiCellModeAckSeq) AND NOT GVL_HMI.xCellManualRequest);
 xIoOverrideRejected := FALSE;
 udiIoRequestSeq := GVL_HMI.udiIoOverrideCommandSeq;

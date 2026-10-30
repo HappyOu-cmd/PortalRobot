@@ -3,7 +3,8 @@
 Во вкладке «Диагностика → Контроллер и связь» системные показатели устройства
 дополняют существующие ServerStatus OPC UA и контроль `udiPlcHeartbeat`.
 Владелец системных показателей — веб-сервис самого контроллера; gateway только
-читает и нормализует их. PLC, команды управления и каталог аварий не изменяются.
+читает и нормализует их. Аппаратные коды передаются в PLC для формирования
+защёлкнутых аварий и предупреждения 5C: [полный контракт](26-mc522-plc-alarms.md).
 Основная карточка приложения показывает прямой RUN/STOP из `cpuinfo.runstate`.
 Heartbeat используется отдельно для контроля выполнения циклов и существующего
 допуска ручного I/O; остановившийся счётчик сам по себе не выдаётся за точный STOP.
@@ -35,8 +36,30 @@ Heartbeat используется отдельно для контроля вы
 придуманной расшифровки. Ошибки модулей `0..5` расшифрованы по логике родного
 интерфейса: норма, конфигурация, питание, ток/температура, оконечный модуль,
 канал. Остальные коды показаны как коды производителя.
-Это текущие состояния устройства, они не подменяют PLC-аварии ячейки.
+Эти текущие состояния формируют PLC-защёлки через gateway; прямые уведомления
+HMI сохраняются для STOP/исключения до доставки в PLC. Классификация и сброс
+описаны в [контракте аварий MC522](26-mc522-plc-alarms.md).
 Подробную причину исключения и полный журнал проверяют в CODESYS.
+
+## Журнал, PLC-аварии и уведомления HMI
+
+Аппаратные коды CPU и модулей формируют обычные PLC-аварии `GLOBAL_STOP`;
+CPU `5C` — предупреждение `WARNING`. Они защёлкнуты до ручного сброса после
+свежего подтверждения исчезновения причины. Общий Reset не снимает 5C, нужен
+отдельный ResetWarnings. Неизвестный ненулевой код также аварийный.
+
+Gateway хранит исходные наблюдения со слотами/кодами в SQLite источника 8,
+PLC-регистрации идут в обычный журнал источника 7. Статистика учитывает один
+факт PLC без двойного учёта наблюдения gateway. Прямое уведомление HMI
+сохранено для STOP/исключения до фактической регистрации в PLC; отказ HTTP,
+авторизации или неполные данные остаются диагностическими предупреждениями.
+В карточке показаны состояние передачи в PLC и ошибка канала.
+
+Причины не теряются при ожидании RUN/Ack или перезапуске gateway: используется
+локальная очередь `gateway/data/controller-plc-outbox.json`. Пропавший
+аварийный слот не подтверждает норму. Полные условия сброса, защита от старых
+данных, список новых ST-объектов и применение описаны в
+[26-mc522-plc-alarms.md](26-mc522-plc-alarms.md).
 
 ## Подключение gateway
 
@@ -82,7 +105,12 @@ Heartbeat используется отдельно для контроля вы
 реальный нестандартный заголовок, фрагментированный ответ, фиксированный GET,
 401, повреждённый/неполный JSON, ограничения размера/времени, конфигурацию,
 частоты опроса, отсутствие секретов в снимке, неизвестные коды, неполные поля,
-частичные сбои и очистку устаревших показателей. Это unit-тесты gateway;
+частичные сбои и очистку устаревших показателей. Дополнительные проверки
+`controller-alarms.test.mjs` и `hmiAlarms.test.mjs` проверяют возникновение,
+повтор, смену кода и снятие аварии, несколько модулей, отсутствие ложного снятия
+при потере/неполноте данных, ограничение истории, запись в SQLite в памяти,
+фильтры общего журнала и передачу кода `5B` в существующий компонент уведомления
+без PLC-снимка. Это локальные тесты gateway/HMI;
 каталог сценариев Smoke/Regression ячейки ими не изменяется.
 
 Для HMI выполнить `npm run build`. Проверку расположения карточек и внешний
@@ -91,12 +119,15 @@ Heartbeat используется отдельно для контроля вы
 ## Изменённые файлы
 
 - Gateway: `visu/gateway/controller-diagnostics.mjs`,
-  `visu/gateway/controller-diagnostics.test.mjs`, `visu/gateway/server.mjs`,
+  `visu/gateway/controller-diagnostics.test.mjs`, `visu/gateway/controller-alarms.mjs`,
+  `visu/gateway/controller-alarms.test.mjs`, `visu/gateway/server.mjs`,
   `visu/gateway/runtime-diagnostics.test.mjs`.
 - HMI: `visu/src/components/ControllerSystemDiagnostics.tsx`,
   `visu/src/components/RuntimeDiagnosticsPanel.tsx`,
   `visu/src/components/runtime-diagnostics.css`, `visu/src/plc/controllerDiagnostics.ts`,
-  `visu/src/plc/client.ts`, `visu/src/App.tsx`, `visu/package.json`.
+  `visu/src/plc/client.ts`, `visu/src/plc/hmiAlarms.ts`,
+  `visu/src/components/LatestEventNotification.tsx`, `visu/tests/hmiAlarms.test.mjs`,
+  `visu/src/App.tsx`, `visu/package.json`.
 - Документация: этот файл, `DOKS/04-run-and-ip.md`, `DOKS/05-architecture.md`.
 - Локальная конфигурация: `visu/gateway/data/controller-web.json`, вне Git.
 
@@ -106,3 +137,21 @@ Heartbeat используется отдельно для контроля вы
 с временными базами данных. Контроллер показал RUN, код `00`, модуль 0 без ошибки;
 тестовый gateway остановлен. В действующий gateway и журнал ячейки эта проверка
 не вносила изменений; команды в PLC не отправлялись.
+
+29.10.2026, журнал и уведомления: `npm run test:diagnostics` — 21/21;
+`node --test tests/plcConnection.test.mjs gateway/cell-events.test.mjs` — 29/29;
+`npm run build` — PASS; `node --check` для `controller-alarms.mjs`,
+`controller-diagnostics.mjs` и `server.mjs` — PASS. SQLite проверялась в памяти;
+рабочий журнал открывался только для чтения. Проверка внешнего вида и поведения
+на реальном MC522 пользователем ещё не выполнена. Для применения перезапустить
+gateway и обновить HMI.
+
+Состав этой правки:
+
+- `visu/gateway/controller-alarms.mjs`, `controller-alarms.test.mjs`,
+  `controller-diagnostics.mjs`, `server.mjs`;
+- `visu/src/plc/controllerDiagnostics.ts`, `hmiAlarms.ts`,
+  `visu/src/App.tsx`, `visu/src/components/LatestEventNotification.tsx`;
+- `visu/tests/hmiAlarms.test.mjs`, `visu/package.json`;
+- `DOKS/03-alarms-warnings.md`, `10-cell-event-log.md`, `16-cell-warnings.md`,
+  `25-mc522-controller-diagnostics.md`.

@@ -22,10 +22,12 @@ VAR_INPUT
 	uiDetailPayloadType : UINT; // Тип готовой детали из состояния цикла
 	stHmiCommand        : ST_ROBOT_COMMAND; // Ручная команда роботу с HMI
 	xReset              : BOOL; // Сброс ошибок робота
+	xResetCancel        : BOOL; // Stop/Disable отменяет сброс, не меняя обычную политику останова движения
     xMode               : BOOL; // Режим робота: TRUE — Modbus, FALSE — SoftMotion
 	xManual      		: BOOL; // 1 - ручной режим работы, 0 - автоматический режим работы
 	xGlobalError        : BOOL; // Глобальная ошибка ячейки
 	xEquipmentStopRequired : BOOL; // Владелец оборудования требует зависимую ошибку робота
+	ResetDependencies : ST_ROBOT_RESET_DEPENDENCIES; // Снимок отдельных владельцев, только внутренний PLC-контракт
 	xModbusBusy         : BOOL; // Внешний робот выполняет команду
 	xModbusDone         : BOOL; // Внешний робот завершил команду
 	xModbusError        : BOOL; // Ошибка обмена или внешнего робота
@@ -68,6 +70,7 @@ VAR_INPUT
 
 END_VAR
 VAR_OUTPUT
+	ResetRecovery : ST_ROBOT_RESET_RECOVERY; // Подтверждение принятой попытки для зависимых владельцев
 	GripperCommand : ST_GRIPPER_COMMAND; // Команда для страницы физических выходов
 	Command       : ST_ROBOT_COMMAND; // Выбранная команда текущего цикла
 	ModbusCommand : ST_ROBOT_COMMAND; // Команда внешнему роботу по Modbus
@@ -110,6 +113,10 @@ VAR
 	xExternalResetPending : BOOL; // Удерживает асинхронный Reset до подтверждения SC-500
 	xExternalResetIssued  : BOOL; // Reset хотя бы один цикл был передан Modbus-адаптеру
 	xSoftMotionResetPending : BOOL; // Один Reset ждёт группу, Motion и захват
+	dwResetStopOwners : DWORD; // Владельцы, уже присутствовавшие при принятии Reset
+	dwResetLiveCauses : DWORD; // Предыдущий снимок удерживаемых причин этой попытки
+	dwResetBusySeen : DWORD; // Владельцы, чей асинхронный сброс действительно запускался
+	xEquipmentResetFailed : BOOL; // Новая причина/владелец либо неуспешный терминальный сброс
 	tonSoftMotionReset : TON; // Принятая попытка не может оставаться вечной
 	xModbusCommandStarted : BOOL; // Текущая команда получила собственную активную транзакцию
 	tonModbusStartTimeout : TON; // Защита от вечного ожидания приёма команды адаптером
@@ -145,6 +152,7 @@ VAR CONSTANT
 	WRN_DRIVES_ENABLE_ERROR  : UINT := 8; // Команда приводов отклонена владельцем Motion-слоя
 	WRN_STOP_DRIVES_NOT_READY: UINT := 9; // Остановка недоступна при неготовых приводах
 	WRN_SIM_ERROR_NOT_ALLOWED: UINT := 11; // Тестовая команда запрещена текущим состоянием
+	WRN_RESET_EQUIPMENT_ERROR : UINT := 18; // WARNING через общий канал: зависимый сброс прерван/не завершён
 END_VAR
 
 // --- BEGIN IMPLEMENTATION ---
@@ -305,7 +313,8 @@ END_IF;
 // Ошибки вложенных FB считаются сбрасываемыми только после снятия удерживаемого
 // источника и публикации их собственного xResetAllowed.
 rtReset(CLK := xReset);
-xResetAllowed := xHmiPermit
+xResetAllowed := xHmiPermit AND NOT xResetCancel
+	AND NOT xTestAbort AND NOT xHmiStop AND NOT xHmiStopAccepted
 	AND NOT xSoftMotionResetPending
 	AND NOT xExternalResetPending
 	AND (NOT xMode OR NOT stModbusStatus.xResetBusy)
@@ -324,6 +333,24 @@ xResetAllowed := xHmiPermit
 	AND (xMode OR NOT fbGripper.Status.xError
 		OR FaultStatus.stGripper.xResetAllowed);
 xResetAccepted := rtReset.Q AND xResetAllowed;
+IF xResetAccepted THEN
+	ResetRecovery.udiAttempt := ResetRecovery.udiAttempt + UDINT#1;
+	IF ResetRecovery.udiAttempt = UDINT#0 THEN ResetRecovery.udiAttempt := UDINT#1; END_IF;
+	dwResetStopOwners := ResetDependencies.dwStopOwners;
+	dwResetLiveCauses := ResetDependencies.dwLiveCauses;
+	dwResetBusySeen := ResetDependencies.dwResetBusy;
+END_IF;
+xEquipmentResetFailed := FALSE;
+IF (xSoftMotionResetPending OR xExternalResetPending) AND NOT xResetAccepted THEN
+	// Нового владельца или повторный фронт физической причины нельзя принять
+	// за хвост старого сброса. Падение Busy само по себе успехом не является.
+	xEquipmentResetFailed := ((ResetDependencies.dwStopOwners AND NOT dwResetStopOwners) <> DWORD#0)
+		OR ((ResetDependencies.dwLiveCauses AND NOT dwResetLiveCauses) <> DWORD#0)
+		OR ((dwResetBusySeen AND NOT ResetDependencies.dwResetBusy
+			AND ResetDependencies.dwStopOwners) <> DWORD#0);
+	dwResetLiveCauses := ResetDependencies.dwLiveCauses;
+	dwResetBusySeen := dwResetBusySeen OR ResetDependencies.dwResetBusy;
+END_IF;
 // Общий Reset запускает Motion-сброс раньше FB_ROBOT. Если группа была в
 // ErrorStop, одноцикловый импульс уже закончится к моменту её восстановления;
 // защёлкиваем намерение оператора до исчезновения первичной Motion-ошибки.
@@ -341,16 +368,19 @@ ELSIF NOT xMode THEN
 	xExternalResetIssued := FALSE;
 END_IF;
 
-tonSoftMotionReset(IN := xSoftMotionResetPending, PT := tSoftMotionResetTimeout);
+tonSoftMotionReset(IN := xSoftMotionResetPending OR xExternalResetPending, PT := tSoftMotionResetTimeout);
 IF xSoftMotionResetPending AND NOT xResetAccepted
 AND (tonSoftMotionReset.Q
-	OR xTestAbort OR NOT xHmiPermit OR Command.xExecute OR Command.xStop
+	OR xEquipmentResetFailed OR xResetCancel
+	OR xTestAbort OR NOT xHmiPermit OR Command.xExecute OR Command.xStop OR xHmiStop OR xHmiStopAccepted
 	OR (xGlobalError AND NOT xManualRecoveryAllowed)
 	OR (xDriveError AND NOT xMotionResetBusy)
 	OR (fbGripper.Status.xError AND NOT FaultStatus.stGripper.xResetAllowed)
 	OR (stMotionManager.Status.xError AND NOT FaultStatus.stPoint.xResetAllowed)) THEN
 	xSoftMotionResetPending := FALSE;
-	IF fbGripper.Status.xError THEN
+	IF xEquipmentResetFailed OR (tonSoftMotionReset.Q AND xEquipmentStopRequired) THEN
+		Diag.stWarning.uiCode := WRN_RESET_EQUIPMENT_ERROR;
+	ELSIF fbGripper.Status.xError THEN
 		Diag.stWarning.uiCode := WRN_RESET_GRIPPER_ERROR;
 	ELSE
 		Diag.stWarning.uiCode := WRN_RESET_MOTION_ERROR;
@@ -363,11 +393,16 @@ END_IF;
 // чтобы следующее осознанное нажатие Reset снова дошло до его R_TRIG.
 IF xExternalResetPending AND xExternalResetIssued AND NOT xResetAccepted
 AND (stModbusStatus.xResetFailed OR NOT stModbusStatus.xCommunicationAlive
-	OR xTestAbort OR Command.xStop OR NOT xHmiPermit
+	OR tonSoftMotionReset.Q OR xEquipmentResetFailed OR xResetCancel
+	OR xTestAbort OR Command.xStop OR xHmiStop OR xHmiStopAccepted OR NOT xHmiPermit
 	OR (xGlobalError AND NOT xManualRecoveryAllowed)) THEN
 	xExternalResetPending := FALSE;
 	xExternalResetIssued := FALSE;
-	Diag.stWarning.uiCode := WRN_RESET_MODBUS_ERROR;
+	IF xEquipmentResetFailed OR (tonSoftMotionReset.Q AND xEquipmentStopRequired) THEN
+		Diag.stWarning.uiCode := WRN_RESET_EQUIPMENT_ERROR;
+	ELSE
+		Diag.stWarning.uiCode := WRN_RESET_MODBUS_ERROR;
+	END_IF;
 	Diag.stWarning.udiSequence := Diag.stWarning.udiSequence + UDINT#1;
 	IF Diag.stWarning.udiSequence = UDINT#0 THEN Diag.stWarning.udiSequence := UDINT#1; END_IF;
 END_IF;
@@ -718,9 +753,11 @@ CASE eState OF
 					TO_UINT(E_ROBOT_MODBUS_EXECUTION_STATE.IDLE))))
         AND NOT Command.xExecute
         AND NOT Command.xStop
+        AND NOT xEquipmentStopRequired
         AND (NOT xGlobalError OR xManualRecoveryAllowed)
 		AND (xMode OR NOT stMotionManager.Status.xError)
 		AND (xMode OR NOT xDriveError)
+		AND (xMode OR NOT xMotionResetBusy)
 		AND (xMode OR NOT fbGripper.Status.xError)
 		AND (NOT xMode OR stModbusStatus.xCommunicationAlive) THEN
 
@@ -928,6 +965,19 @@ END_IF;
 Status.xPowerAllowed := xPowerAllowed;
 Status.xStopAllowed := xStopAllowed;
 Status.xResetAllowed := xResetAllowed;
+ResetRecovery.xActive := xSoftMotionResetPending OR xExternalResetPending;
+// Положительное подтверждение относится только к первичным зависимостям.
+// Родитель остаётся в ERROR, пока оборудование снимает свой старый каскад.
+ResetRecovery.xDependenciesReady := ResetRecovery.xActive
+	AND xHmiPermit AND NOT xResetCancel AND NOT xTestAbort AND NOT Command.xExecute AND NOT Command.xStop
+	AND NOT xHmiStop AND NOT xHmiStopAccepted AND NOT xMotionBusy
+	AND (NOT xGlobalError OR xManualRecoveryAllowed)
+	AND ((NOT xMode AND NOT xDriveError AND NOT xMotionResetBusy
+		AND NOT stMotionManager.Status.xError AND NOT fbGripper.Status.xError)
+		OR (xMode AND xExternalResetIssued AND stModbusStatus.xResetDone
+			AND NOT xModbusError AND stModbusStatus.xCommunicationAlive
+			AND NOT stModbusStatus.xBusy
+			AND (stModbusStatus.uiExecutionState = TO_UINT(E_ROBOT_MODBUS_EXECUTION_STATE.IDLE))));
 Status.uiMagazineContext := uiRobotMagazineContext;
 
 Diag.eState := eState;

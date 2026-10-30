@@ -137,16 +137,15 @@ IF SelectMachineForUnload = UINT#0 THEN
 END_IF;
 
 // Переход от окончания цикла к готовности двери может занять несколько сканов.
-// В это время сохраняется станок с физически загруженной деталью/заготовкой.
+// В это время сохраняется автоматически продолжающий работу станок.
+// Ожидание решения оператора при LOADED сюда не входит.
 IF SelectMachineForUnload = UINT#0 THEN
 	IF (uiCurrentMachine >= FIRST_MACHINE)
 	AND (uiCurrentMachine <= LAST_MACHINE) THEN
 		IF IsMachineEligible(uiMachine := uiCurrentMachine) THEN
 			uiType := Config.auiMachineType[uiCurrentMachine];
 			IF (stMagazineStatus.stTypeStatus.aiFreeSlot[uiType] > SINT#0)
-			AND (astMachineStatus[uiCurrentMachine].ePartState = E_PART_STATE.LOADED)
-			AND ((astMachineStatus[uiCurrentMachine].ePartType = E_PART_TYPE.PART)
-				OR (astMachineStatus[uiCurrentMachine].ePartType = E_PART_TYPE.DETAIL)) THEN
+			AND IsMachineWorkPending(uiMachine := uiCurrentMachine) THEN
 				SelectMachineForUnload := uiCurrentMachine;
 			END_IF;
 		END_IF;
@@ -157,9 +156,7 @@ IF SelectMachineForUnload = UINT#0 THEN
 		IF IsMachineEligible(uiMachine := uiMachine) THEN
 			IF (SelectMachineForUnload = UINT#0)
 			AND (stMagazineStatus.stTypeStatus.aiFreeSlot[uiType] > SINT#0)
-			AND (astMachineStatus[uiMachine].ePartState = E_PART_STATE.LOADED)
-			AND ((astMachineStatus[uiMachine].ePartType = E_PART_TYPE.PART)
-				OR (astMachineStatus[uiMachine].ePartType = E_PART_TYPE.DETAIL)) THEN
+			AND IsMachineWorkPending(uiMachine := uiMachine) THEN
 				SelectMachineForUnload := uiMachine;
 			END_IF;
 		END_IF;

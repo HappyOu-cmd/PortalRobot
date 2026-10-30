@@ -63,7 +63,7 @@ def test_general_suite_is_available_to_the_runner() -> None:
 def test_fixed_catalog_and_runner_use_the_same_case_order() -> None:
     entries = catalog()
     assert {suite: len(cases) for suite, cases in entries.items()} == {
-        "smoke": 12, "regression": 75, "general": 8,
+        "smoke": 12, "regression": 75, "general": 8, "geometry": 8, "magazines": 8,
     }
     for suite, cases in entries.items():
         source = fixed_scenarios(suite)
@@ -80,12 +80,12 @@ def test_fixed_catalog_and_runner_use_the_same_case_order() -> None:
 def test_twin_mode_rejected_before_static_scenario_command() -> None:
     runner = RecordingRunner()
     runner.values["uiMagazineMode"] = 1
-    with pytest.raises(RuntimeError, match="PLC находится в двухпалетном режиме"):
+    with pytest.raises(RuntimeError, match="magazineMode mismatch"):
         asyncio.run(runner.apply_scenario(object(), smoke_scenarios()[0]))
     assert runner.commands == []
-    with pytest.raises(RuntimeError, match="Не получен достоверный uiMagazineMode"):
-        GatewayRunner.require_static_magazine_mode({})
-    GatewayRunner.require_static_magazine_mode({"uiMagazineMode": 0})
+    with pytest.raises(RuntimeError, match="magazineMode mismatch"):
+        GatewayRunner.require_magazine_mode({}, 0)
+    GatewayRunner.require_magazine_mode({"uiMagazineMode": 0}, 0)
 
 
 def test_general_batch_handover_allows_finished_flag_to_arrive_next_scan() -> None:

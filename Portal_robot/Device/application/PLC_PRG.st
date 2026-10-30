@@ -132,11 +132,13 @@ VAR
 	fbMagazine1    : FB_MAGAZINE; // Первый статичный магазин
 	fbMagazine2    : FB_MAGAZINE; // Второй статичный магазин
 	ROBOT          : FB_ROBOT; // Координация движений и захвата робота
+	stRobotResetDependencies : ST_ROBOT_RESET_DEPENDENCIES; // Внутренний снимок владельцев зависимого Stop
 	ROBOT_MODBUS   : FB_ROBOT_MODBUS; // Modbus TCP транспорт внешнего контроллера
 	TYPE_CONFIG    : FB_MULTI_TYPE_CONFIG_MANAGER; // Конфигурация типов продукции
 	CELL_SAFETY    : FB_CELL_SAFETY; // Дискретный контур безопасности, двери и внешние кнопки
 	CELL_MANAGER   : FB_CELL_MANAGER; // Универсальный автоматический цикл для одного-трёх типов
 	ALARM_MANAGER  : FB_ALARM_MANAGER; // Журнал аварий и предупреждений
+    CONTROLLER_DIAGNOSTICS : FB_CONTROLLER_DIAGNOSTICS;
 	fbAlarmHorn : FB_ALARM_HORN; // Импульс на каждую новую аварийную маску
 	tonSignalTowerBlink : TON; // Полупериод мигания колонны — 500 мс
 	usiSignalTowerMode : USINT; // 1 работа; 2 готова; 3 предупреждение; 4 авария; 5 не готова
@@ -237,7 +239,7 @@ VAR
 	astMagazineFaultRequest : ARRAY [1..2] OF ST_MAGAZINE_FAULT_REQUEST; // Диагностика двух магазинов
 	stCellFaultRequest     : ST_CELL_FAULT_REQUEST; // Запрос локальной ошибки менеджера ячейки
 	stSafetyFaultRequest   : ST_CELL_SAFETY_FAULT_REQUEST; // Независимые инъекции дискретной безопасности
-	astAlarmSource : ARRAY [1..19] OF ST_ALARM_SOURCE_DATA; // Старые коды сохранены; ГК 1/2 добавлены в конец
+	astAlarmSource : ARRAY [1..22] OF ST_ALARM_SOURCE_DATA; // Старые коды сохранены; диагностика MC522 добавлена в конец.
 	astAdditionalCellWarning : ARRAY [1..2] OF ST_WARNING_EVENT; // 1: конфигуратор, 2: общие предупреждения ГК
 	uiPointEditorIndex : UINT; // Компактный индекс фиксированной точки редактора 1..14
 	uiPointEditorGeometryStation : UINT; // 0 прежняя точка, 1/2 база ГК
@@ -294,6 +296,18 @@ VAR
 	uiTestIndex : UINT;
 	uiTestMagazine : UINT;
 	uiTestFaultOwnerCount : UINT;
+	uiTestSlotCount : UINT;
+	uiTestPallet : UINT;
+	uiTestOtherPallet : UINT;
+	uiTestType : UINT;
+	xTestTypeHasMachine : BOOL;
+	xTestTypeHasSlot : BOOL;
+	udiTestGeometryProduced : UDINT;
+	xTestGeometrySettingsSaved : BOOL;
+	xTestSavedGeometryAuto : BOOL;
+	xTestSavedGeometryWait : BOOL;
+	stTestEmptyGeometryMemory : ST_GEOMETRY_MEMORY;
+	stTestEmptyGeometryCall : ST_GEOMETRY_CALL;
 	adwTestMagazineFaultMask : ARRAY [1..2] OF DWORD;
 	xApplicationStartupInitialized : BOOL; // Однократная инициализация безопасных настроек после старта/Online Change
 END_VAR

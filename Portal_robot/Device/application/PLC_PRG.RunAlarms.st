@@ -6,7 +6,8 @@ METHOD PRIVATE RunAlarms
 // и каждый активный владелец общей команды готов принять тот же импульс сброса.
 // Диагностические защёлки симуляторов станков сюда не входят: они обслуживаются
 // отдельной командой «Сброс симулятора» на экране инъекций.
-xAlarmResetRequired := (GVL_GEOMETRY_CONTROL.xSupported AND (GVL_GEOMETRY_CONTROL.astStatus[1].xError
+xAlarmResetRequired := CONTROLLER_DIAGNOSTICS.Status.xAlarmActive
+    OR (GVL_GEOMETRY_CONTROL.xSupported AND (GVL_GEOMETRY_CONTROL.astStatus[1].xError
 	OR GVL_GEOMETRY_CONTROL.astStatus[2].xError))
 	OR GVL_CELL_MANAGER.Status.xError
 	OR (CELL_SAFETY.Error.dwAlarmActive <> DWORD#0)
@@ -28,6 +29,7 @@ xAlarmResetRequired := (GVL_GEOMETRY_CONTROL.xSupported AND (GVL_GEOMETRY_CONTRO
 
 xAlarmResetAllowed := ((GVL_TWO_PALLET.uiMode = 0) OR ((NOT GVL_TWO_PALLET.astStatus[1].xError OR GVL_TWO_PALLET.astStatus[1].xResetAllowed) AND (NOT GVL_TWO_PALLET.astStatus[2].xError OR GVL_TWO_PALLET.astStatus[2].xResetAllowed))) AND xAlarmResetRequired
 	AND (CELL_SAFETY.Error.dwAlarmActive = DWORD#0)
+    AND (NOT CONTROLLER_DIAGNOSTICS.Status.xAlarmActive OR CONTROLLER_DIAGNOSTICS.Status.xResetAllowed)
 	AND (NOT GVL_GEOMETRY_CONTROL.xSupported OR NOT GVL_GEOMETRY_CONTROL.astStatus[1].xError OR GVL_GEOMETRY_CONTROL.astStatus[1].xResetAllowed)
 	AND (NOT GVL_GEOMETRY_CONTROL.xSupported OR NOT GVL_GEOMETRY_CONTROL.astStatus[2].xError OR GVL_GEOMETRY_CONTROL.astStatus[2].xResetAllowed)
 	AND (NOT GVL_CELL_MANAGER.Status.xError OR GVL_CELL_MANAGER.Status.xResetAllowed)
@@ -199,7 +201,20 @@ astAlarmSource[17].xRobotStopRequired := TRUE;
 astAlarmSource[17].xGlobalError := CELL_SAFETY.Status.xGlobalError;
 astAlarmSource[17].stWarning := CELL_SAFETY.Diag.stWarning;
 
+astAlarmSource[20].eSource := E_ALARM_SOURCE.CONTROLLER_CPU_1;
+astAlarmSource[20].dwAlarmActive := CONTROLLER_DIAGNOSTICS.Status.dwCpuAlarm1;
+astAlarmSource[20].xGlobalError := TRUE;
+astAlarmSource[20].stWarning := CONTROLLER_DIAGNOSTICS.stWarning;
+astAlarmSource[21].eSource := E_ALARM_SOURCE.CONTROLLER_CPU_2;
+astAlarmSource[21].dwAlarmActive := CONTROLLER_DIAGNOSTICS.Status.dwCpuAlarm2;
+astAlarmSource[21].xGlobalError := TRUE;
+astAlarmSource[22].eSource := E_ALARM_SOURCE.CONTROLLER_MODULES;
+astAlarmSource[22].dwAlarmActive := CONTROLLER_DIAGNOSTICS.Status.dwModuleAlarm;
+astAlarmSource[22].xGlobalError := TRUE;
+
 ALARM_MANAGER(
+    xControllerWarningResetAllowed := NOT CONTROLLER_DIAGNOSTICS.Status.xMemoryWarning
+        OR CONTROLLER_DIAGNOSTICS.Status.xWarningResetAllowed,
 	xResetWarnings := GVL_ALARM.Command.xResetWarnings,
 	astAdditionalCellWarning := astAdditionalCellWarning,
 	Sources := astAlarmSource,

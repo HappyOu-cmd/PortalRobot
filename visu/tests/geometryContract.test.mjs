@@ -42,9 +42,9 @@ test('appended point and alarm enums preserve old numeric IDs and both GK alarm 
   const points = values('ST/ST_POINT/E_POINT_NAME.st');
   assert.equal(points[17], 'HOME_SAFETY'); assert.equal(points[22], 'MAGAZINE_1_DETAIL'); assert.equal(points[23], 'MAGAZINE_2_DETAIL');
   assert.deepEqual(points.slice(24), ['GEOMETRY_1_PLACE', 'GEOMETRY_1_SAFE', 'GEOMETRY_1_CHANGE', 'GEOMETRY_2_PLACE', 'GEOMETRY_2_SAFE', 'GEOMETRY_2_CHANGE']);
-  assert.deepEqual(values('ST/ST_ALARM/E_ALARM_SOURCE.st').slice(16), ['CELL_SAFETY', 'GEOMETRY_1', 'GEOMETRY_2']);
-  assert.match(readPlc('FB/FB_ALARM_MANAGER.st'), /Sources : ARRAY \[1\.\.19\]/);
-  assert.match(readPlc('FB/FB_ALARM_HORN.st'), /FOR uiSource := 1 TO 19 DO/);
+  assert.deepEqual(values('ST/ST_ALARM/E_ALARM_SOURCE.st').slice(16, 19), ['CELL_SAFETY', 'GEOMETRY_1', 'GEOMETRY_2']);
+  assert.match(readPlc('FB/FB_ALARM_MANAGER.st'), /Sources : ARRAY \[1\.\.22\]/);
+  assert.match(readPlc('FB/FB_ALARM_HORN.st'), /FOR uiSource := 1 TO 22 DO/);
   const alarms = readPlc('PLC_PRG.RunAlarms.st');
   assert.match(alarms, /astAlarmSource\[18\]\.eSource := E_ALARM_SOURCE\.GEOMETRY_1/);
   assert.match(alarms, /astAlarmSource\[19\]\.eSource := E_ALARM_SOURCE\.GEOMETRY_2/);

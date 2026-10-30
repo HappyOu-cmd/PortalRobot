@@ -1,16 +1,23 @@
 /* Operator statistics only; the application's top header is unchanged. */
 .statistics-panel.operator.operator-statistics-redesign {
-  background:
-    radial-gradient(ellipse at 5% 65%, rgb(108 167 248 / 12%), transparent 46%),
-    radial-gradient(ellipse at 96% 14%, rgb(181 209 244 / 15%), transparent 43%),
-    #eef1f5;
+  z-index: 19;
+  padding-top: calc(var(--workspace-page-top) + 20px);
+  background: var(--operator-statistics-backdrop);
+  background-attachment: fixed;
+}
+.tesla-shell.statistics-open .workspace > .statistics-panel.operator.operator-statistics-redesign {
+  top: 0;
 }
 .tesla-shell.statistics-open {
-  background:
+  --workspace-page-top: 0px;
+  --operator-statistics-backdrop:
     radial-gradient(ellipse at 5% 65%, rgb(108 167 248 / 12%), transparent 46%),
     radial-gradient(ellipse at 96% 14%, rgb(181 209 244 / 15%), transparent 43%),
     #eef1f5;
+  background: var(--operator-statistics-backdrop);
+  background-attachment: fixed;
 }
+.tesla-shell.statistics-open .tesla-topbar { display: none; }
 .tesla-shell.statistics-open .workspace { background: transparent; }
 .operator-statistics-heading {
   display: flex;

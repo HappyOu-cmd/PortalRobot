@@ -18,6 +18,9 @@ TYPE E_ALARM_SOURCE :
 	GRIPPER, // Захват робота
 	CELL_SAFETY, // Дискретный контур безопасности; прежние числовые коды сохранены
 	GEOMETRY_1,
-	GEOMETRY_2
+	GEOMETRY_2,
+    CONTROLLER_CPU_1, // Коды 19..21 добавлены без изменения прежней нумерации.
+    CONTROLLER_CPU_2,
+    CONTROLLER_MODULES
 );
 END_TYPE

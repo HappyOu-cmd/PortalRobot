@@ -191,6 +191,11 @@ FOR uiTwin := 1 TO 2 DO
 	END_IF;
 	astTwinCommand[uiTwin].udiRevision := GVL_TWO_PALLET.audiRevision[uiTwin];
 
+	IF xTestInitializePulse AND (GVL_CELL_SETTINGS.eTestEnvironment = E_CELL_TEST_ENVIRONMENT.SIMULATION) THEN
+		astTwinCommand[uiTwin].xEnable := GVL_HMI.stTestScenario.axMagazineEnabled[uiTwin];
+		astTwinCommand[uiTwin].xDisable := NOT GVL_HMI.stTestScenario.axMagazineEnabled[uiTwin];
+	END_IF;
+
 	// Фактическая операция включает удерживаемый запрос и завершение Disable.
 	// Предпочтение возврата удерживает только автообмен до последнего PUT.
 	// Повторное включение и ручная наладка зависят от фактической операции.

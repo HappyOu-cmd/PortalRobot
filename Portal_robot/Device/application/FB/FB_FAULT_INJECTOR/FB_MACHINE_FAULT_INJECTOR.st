@@ -1,5 +1,6 @@
 FUNCTION_BLOCK FB_MACHINE_FAULT_INJECTOR
 VAR_INPUT
+	xUsePhysicalInput  : BOOL := TRUE; // Физический источник никогда не подменяется тестовыми запросами
 	Request            : ST_MACHINE_FAULT_REQUEST; // Запросы диагностической инъекции
 	MachineStatusRaw    : ST_MACHINE_IO_STATUS; // Неизменённая обратная связь станка
 	RobotStatusRaw      : ST_ROBOT_STATUS; // Неизменённая обратная связь робота
@@ -23,6 +24,17 @@ END_VAR
 MachineStatus := MachineStatusRaw;
 RobotStatus := RobotStatusRaw;
 Timeouts := NominalTimeouts;
+
+// Без явно выбранного виртуального источника сохраняем все реальные сигналы
+// и штатные таймауты, даже если в Request остались тестовые переключатели.
+Status.xAllowed := FALSE;
+Status.xActive := FALSE;
+Status.xBusy := FALSE;
+Status.xResetAllowed := FALSE;
+Status.xRejected := FALSE;
+IF xUsePhysicalInput THEN
+	RETURN;
+END_IF;
 
 // Состояние источника аварии не должно оставаться активным после снятия
 // соответствующего переключателя. Сам FB_MACHINE при этом сохраняет свою

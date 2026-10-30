@@ -62,6 +62,7 @@ function outputRuntime() {
     uliIoClockMs: 100, base: bits(), events: [], fresh: true,
     GVL_CELL_SETTINGS: { eTestEnvironment: 0 }, E_CELL_TEST_ENVIRONMENT: { NORMAL: 0 },
     CELL_SAFETY: { Status: { xReady: true } },
+    CONTROLLER_DIAGNOSTICS: { Status: { xAlarmActive: false } },
     xIoInitialized: true, xIoSnapshotPublishing: false, xIoEmergencyResetRequested: false, xIoEmergencyResetRejected: false, udiIoEmergencyRequestSeq: 0, xPointCheckStopRequest: false,
     xRobotHmiPermit: true,
   });
@@ -88,6 +89,21 @@ function outputScan(s) {
   applyOutputs(s);
   for (const signal of map.channels.filter((signal) => signal.direction === 'DO')) s.axIoOutput[signal.index] = s.GVL_PHYSICAL_IO[signal.variable];
 }
+
+test('MC522 alarm ends direct manual I/O and prevents re-entry until its PLC latch is reset', () => {
+  const s = outputRuntime();
+  beginManual(s);
+  outputRequest(s, 5, true);
+  assert.equal(s.axIoDoForced[5], true);
+  s.CONTROLLER_DIAGNOSTICS.Status.xAlarmActive = true;
+  outputScan(s);
+  assert.equal(s.GVL_HMI.xIoManualControlActive, false);
+  assert.equal(s.GVL_HMI.xIoManualStartAllowed, false);
+  assert.equal(s.axIoDoForced[5], false);
+  outputRequest(s, 0, false, 8);
+  assert.notEqual(s.GVL_HMI.uiIoOverrideResult, 1);
+  assert.equal(s.GVL_HMI.xIoManualControlActive, false);
+});
 function outputRequest(s, index, value, action = 4) {
   Object.assign(s.GVL_HMI, { uiIoOverrideAction: action, uiIoOverrideIndex: index, xIoOverrideValue: value,
     udiIoOverrideCommandSeq: s.GVL_HMI.udiIoOverrideCommandSeq + 1 });

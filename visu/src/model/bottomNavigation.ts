@@ -26,7 +26,7 @@ export interface NavigationFolder {
   entries: readonly NavigationEntry[];
 }
 
-const CELL_SOURCES: readonly PlcAlarmSource[] = ['cell', 'cell-safety'];
+const CELL_SOURCES: readonly PlcAlarmSource[] = ['cell', 'cell-safety', 'controller-cpu-1', 'controller-cpu-2', 'controller-modules'];
 const ROBOT_SOURCES: readonly PlcAlarmSource[] = ['robot', 'axis-x', 'axis-y', 'axis-z', 'axis-group', 'motion-manager', 'point-manager', 'gripper'];
 
 export const BOTTOM_NAV_FOLDERS: readonly NavigationFolder[] = [

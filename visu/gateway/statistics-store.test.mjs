@@ -3,6 +3,22 @@ import test from 'node:test';
 import { StatisticsStore, StatisticsStoreError } from './statistics-store.mjs';
 
 const operator = { id: 7, username: 'ivanov', displayName: 'Иванов', role: 'operator' };
+
+test('raw MC522 observations and their ordinary PLC events are counted once', (t) => {
+  let now = 1_000;
+  const store = new StatisticsStore({ now: () => now });
+  t.after(() => store.close());
+  now = 10_000;
+  for (const [index, eventType] of ['alarm', 'warning'].entries()) {
+    assert.equal(store.recordFact({ id: index + 1, timestampMs: 1_000, sourceId: 8, eventType, status: 'active',
+      code: 'controller:led:5B', details: { effect: 'PLC_DIAGNOSTIC_INPUT' } }), false);
+    assert.equal(store.recordFact({ id: index + 3, timestampMs: 1_100, sourceId: 7, eventType, status: 'active',
+      code: `19:${index}`, message: 'Системная диагностика MC522' }), true);
+  }
+  const summary = store.summary({ fromMs: 0, toMs: 10_000 });
+  assert.equal(summary.alarmsActivated, 1);
+  assert.equal(summary.warningsActivated, 1);
+});
 const states = (busy = false) => ({
   robot: { category: busy ? 'robot-active' : 'robot-idle' },
   'machine-1': { category: busy ? 'machine-processing' : 'machine-idle' },

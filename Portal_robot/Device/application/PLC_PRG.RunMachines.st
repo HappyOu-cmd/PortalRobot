@@ -78,18 +78,21 @@ ELSE
 END_IF;
 
 MACHINE_1_FAULT(
+	xUsePhysicalInput := GVL_CELL_SETTINGS.eTestEnvironment = E_CELL_TEST_ENVIRONMENT.NORMAL,
 	Request := astMachineFaultRequest[1],
 	MachineStatusRaw := astMachineStatusRaw[1],
 	RobotStatusRaw := GVL_ROBOT.Status,
 	NominalTimeouts := GVL_CELL_SETTINGS.stMachineTimeouts
 );
 MACHINE_2_FAULT(
+	xUsePhysicalInput := GVL_CELL_SETTINGS.eTestEnvironment = E_CELL_TEST_ENVIRONMENT.NORMAL,
 	Request := astMachineFaultRequest[2],
 	MachineStatusRaw := astMachineStatusRaw[2],
 	RobotStatusRaw := GVL_ROBOT.Status,
 	NominalTimeouts := GVL_CELL_SETTINGS.stMachineTimeouts
 );
 MACHINE_3_FAULT(
+	xUsePhysicalInput := GVL_CELL_SETTINGS.eTestEnvironment = E_CELL_TEST_ENVIRONMENT.NORMAL,
 	Request := astMachineFaultRequest[3],
 	MachineStatusRaw := astMachineStatusRaw[3],
 	RobotStatusRaw := GVL_ROBOT.Status,
@@ -97,6 +100,8 @@ MACHINE_3_FAULT(
 );
 
 MACHINE_1(
+	RobotResetRecovery := ROBOT.ResetRecovery,
+	xResetCancel := GVL_CELL_CONTROL.xStop OR GVL_CELL_CONTROL.xDisable OR GVL_HMI.xRobotStop,
 	xTestInitialize := xTestInitializePulse OR xTestAbortActive,
 	uiTestInitialState := GVL_HMI.stTestScenario.auiMachineState[1],
 	uiTestProductType := GVL_HMI.stTestScenario.auiMachineType[1],
@@ -148,6 +153,8 @@ MACHINE_2.stPoints.eInside := E_POINT_NAME.MACHINE_2_INSIDE;
 MACHINE_2.stPoints.eNone := E_POINT_NAME.NONE;
 
 MACHINE_2(
+	RobotResetRecovery := ROBOT.ResetRecovery,
+	xResetCancel := GVL_CELL_CONTROL.xStop OR GVL_CELL_CONTROL.xDisable OR GVL_HMI.xRobotStop,
 	xTestInitialize := xTestInitializePulse OR xTestAbortActive,
 	uiTestInitialState := GVL_HMI.stTestScenario.auiMachineState[2],
 	uiTestProductType := GVL_HMI.stTestScenario.auiMachineType[2],
@@ -199,6 +206,8 @@ MACHINE_3.stPoints.eInside := E_POINT_NAME.MACHINE_3_INSIDE;
 MACHINE_3.stPoints.eNone := E_POINT_NAME.NONE;
 
 MACHINE_3(
+	RobotResetRecovery := ROBOT.ResetRecovery,
+	xResetCancel := GVL_CELL_CONTROL.xStop OR GVL_CELL_CONTROL.xDisable OR GVL_HMI.xRobotStop,
 	xTestInitialize := xTestInitializePulse OR xTestAbortActive,
 	uiTestInitialState := GVL_HMI.stTestScenario.auiMachineState[3],
 	uiTestProductType := GVL_HMI.stTestScenario.auiMachineType[3],

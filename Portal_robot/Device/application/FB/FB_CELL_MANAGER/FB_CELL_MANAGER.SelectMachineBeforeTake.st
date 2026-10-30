@@ -76,8 +76,7 @@ IF (SelectMachineBeforeTake = UINT#0) AND NOT xTimedFound THEN
 		IF IsMachineEligible(uiMachine := uiMachine) THEN
 			IF (SelectMachineBeforeTake = UINT#0)
 			AND (stMagazineStatus.stTypeStatus.aiBlankSlot[uiType] > SINT#0)
-			AND (astMachineStatus[uiMachine].xProcessing
-				OR axMachineStartPending[uiMachine]) THEN
+			AND IsMachineWorkPending(uiMachine := uiMachine) THEN
 				SelectMachineBeforeTake := uiMachine;
 			END_IF;
 		END_IF;

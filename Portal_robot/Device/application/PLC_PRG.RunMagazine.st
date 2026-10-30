@@ -9,6 +9,8 @@ END_IF;
 auiMagazineEditSlot[2] := GVL_HMI.astMagazineCommand[2].uiEditSlot;
 
 fbMagazine1(
+	RobotResetRecovery := ROBOT.ResetRecovery,
+	xResetCancel := GVL_CELL_CONTROL.xStop OR GVL_CELL_CONTROL.xDisable OR GVL_HMI.xRobotStop,
 	uiMagazineId := UINT#1,
 	xInventoryChanged := axMagazineInventoryChanged[1],
 	xPointsConfigured := axMagazinePointsReady[1],
@@ -66,6 +68,8 @@ fbMagazine1(
 );
 
 fbMagazine2(
+	RobotResetRecovery := ROBOT.ResetRecovery,
+	xResetCancel := GVL_CELL_CONTROL.xStop OR GVL_CELL_CONTROL.xDisable OR GVL_HMI.xRobotStop,
 	uiMagazineId := UINT#2,
 	xInventoryChanged := axMagazineInventoryChanged[2],
 	xPointsConfigured := axMagazinePointsReady[2],

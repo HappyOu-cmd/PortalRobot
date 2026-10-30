@@ -22,6 +22,7 @@ from .test_scenarios import (
     expected_error_owner,
     expected_first_decision,
     fixed_scenarios,
+    for_magazine_mode,
     generated_scenarios,
     validate_inventory,
 )
@@ -62,6 +63,7 @@ class GatewayRunner:
         self._speed_changed = False
         self._plc_control_started = False
         self._abort_requested = False
+        self.case_checks: list[dict[str, Any]] = []
 
     async def send(self, socket: Any, payload: dict[str, Any]) -> None:
         await socket.send(json.dumps(payload, ensure_ascii=False))
@@ -136,13 +138,15 @@ class GatewayRunner:
         await self.send(socket, {
             "type": "test-command", "requestId": request_id, "command": command, **fields,
         })
-        await self.wait_for(
+        receipt = await self.wait_for(
             socket,
             lambda message, _values: message.get("type") == "ack"
-            and message.get("requestId") == request_id and bool(message.get("ok")),
-            15.0,
+            and message.get("requestId") == request_id,
+            60.0 if command == "test.scenario.apply" else 15.0,
             command,
         )
+        if not receipt.get("ok"):
+            raise RuntimeError(f"{command}: {receipt.get('error', 'gateway rejected command')}")
 
     async def maintain_hmi_heartbeat(self, socket: Any) -> None:
         """Keep the PLC HMI watchdog alive while the headless runner owns the cell."""
@@ -175,23 +179,31 @@ class GatewayRunner:
     @staticmethod
     def suite(config: dict[str, Any]) -> list[dict[str, Any]]:
         suite = str(config.get("suite", "smoke")).lower()
-        if suite not in {"smoke", "regression", "general", "generated"}:
+        if suite not in {"smoke", "regression", "general", "generated", "geometry", "magazines"}:
             raise ValueError(f"Неизвестный набор тестов: {suite}")
+        mode = int(config.get("magazineMode", 1 if suite == "magazines" else 0))
+        if suite == "general" and mode != 0:
+            raise ValueError("General requires static magazines")
+        if suite == "magazines" and mode != 1:
+            raise ValueError("Pallet tests require twin magazines")
         fixed_case_index = config.get("fixedCaseIndex")
         if fixed_case_index is not None and config.get("scenarios"):
             raise ValueError("Нельзя одновременно выбрать штатный тест и сохранённые сценарии")
         if config.get("scenarios"):
+            if any(c.get("expectations", {}).get("testKind") == "general-four-batches" for c in config["scenarios"]):
+                if mode != 0 or config.get("environment", "simulation") != "simulation":
+                    raise ValueError("Saved general cycle requires static magazines and simulation")
             for case in config["scenarios"]:
-                if int(case.get("schemaVersion", 2)) != 2 or int(
+                if int(case.get("schemaVersion", 2)) not in (2, 3) or int(
                     case.get("initialState", {}).get("magazineMode", 0)
-                ) != 0:
-                    raise ValueError("Сохранённый сценарий не соответствует статичной схеме v2")
+                ) != int(config.get("magazineMode", 0)):
+                    raise ValueError("Тип магазинов сохранённого сценария не совпадает с прогоном")
             return config["scenarios"]
         if suite == "generated":
             if fixed_case_index is not None:
                 raise ValueError("Generated не содержит фиксированного теста")
-            return generated_scenarios(int(config.get("seed", 1)), int(config.get("count", 100)))
-        cases = fixed_scenarios(suite)
+            return [for_magazine_mode(c, int(config.get("magazineMode", 0))) for c in generated_scenarios(int(config.get("seed", 1)), int(config.get("count", 100)))]
+        cases = [for_magazine_mode(c, int(config.get("magazineMode", 1 if suite == "magazines" else 0))) for c in fixed_scenarios(suite)]
         if fixed_case_index is None:
             return cases
         if isinstance(fixed_case_index, bool) or not isinstance(fixed_case_index, int):
@@ -201,16 +213,10 @@ class GatewayRunner:
         return [cases[fixed_case_index - 1]]
 
     @staticmethod
-    def require_static_magazine_mode(values: dict[str, Any]) -> None:
+    def require_magazine_mode(values: dict[str, Any], expected: int) -> None:
         mode = values.get("uiMagazineMode")
-        if mode == 0:
-            return
-        if mode == 1:
-            raise RuntimeError(
-                "Текущие тестовые сценарии требуют статичные магазины; "
-                "PLC находится в двухпалетном режиме"
-            )
-        raise RuntimeError("Не получен достоверный uiMagazineMode от PLC")
+        if type(mode) is not int or mode not in (0, 1) or mode != expected:
+            raise RuntimeError(f"magazineMode mismatch: PLC={mode}, scenario={expected}")
 
     async def attach_python_simulator(self, fast: bool) -> None:
         health = await asyncio.to_thread(self.simulator_control.health)
@@ -798,6 +804,8 @@ class GatewayRunner:
             return magazine_operation == 2
         if expected == "magazine-put":
             return magazine_operation == 1
+        if expected == "magazine-change":
+            return magazine_operation == 3
         if expected == "return-blank":
             return magazine_operation == 4
         if expected == "held-blank-wait":
@@ -822,6 +830,15 @@ class GatewayRunner:
             return bool(values.get("stCellStatus.xOperatorPromptActive", False))
         if expected == "no-task":
             return not bool(values.get("stCellStatus.xStartCheckTaskAvailable", True))
+        if expected == "geometry-delivery":
+            for machine in (1, 2, 3):
+                station = values.get(f"astGeometryCalls[{machine}].uiStation")
+                if (values.get(f"astGeometryCalls[{machine}].uiState") == 4 and station in (1, 2)
+                        and values.get(f"astGeometryStatus[{station}].xOccupied", False)):
+                    return True
+            return False
+        if expected not in ("cycle-completes", "safe-stop", "robot-error-reset"):
+            return False
         return (
             int(values.get("stTestObservability.uiRobotAction", 0)) != 0
             or magazine_operation != 0
@@ -835,7 +852,7 @@ class GatewayRunner:
         if not isinstance(magazines, list):
             magazines = [{"slots": initial_state.get("slots", [])}]
         for magazine in magazines:
-            for slot in magazine["slots"]:
+            for slot in magazine["slots"] + magazine.get("operatorSlots", []):
                 if int(slot["content"]):
                     counts[int(slot["productType"])] += 1
         for machine in initial_state["machines"]:
@@ -849,13 +866,23 @@ class GatewayRunner:
     @staticmethod
     def observed_inventory(values: dict[str, Any]) -> dict[int, int]:
         counts = {1: 0, 2: 0, 3: 0}
-        for magazine in range(1, 3):
-            for index in range(1, 121):
-                root = f"astMagazineInventory[{magazine}].aSlots[{index}]"
+        mode = values.get("uiMagazineMode", 0)
+        roots = ([f"astTwinStore[{m}].astPallet[{p}]" for m in (1, 2) for p in (1, 2)]
+                 if mode == 1 else [f"astMagazineInventory[{m}]" for m in (1, 2)])
+        for owner in roots:
+            for index in range(1, 97 if mode == 1 else 121):
+                root = f"{owner}.aSlots[{index}]"
                 if bool(values.get(f"{root}.xInPosition", False)):
                     product_type = int(values.get(f"{root}.uiProductType", 0))
-                    if product_type in counts:
-                        counts[product_type] += 1
+                    if product_type not in counts:
+                        raise AssertionError(f"occupied slot has unknown product type: {root}")
+                    counts[product_type] += 1
+        for station in (1, 2):
+            if values.get(f"astGeometryStatus[{station}].xOccupied", False):
+                product_type = int(values.get(f"astGeometryStatus[{station}].uiProductType", 0))
+                if product_type not in counts:
+                    raise AssertionError(f"GK {station}: occupied station has unknown product type")
+                counts[product_type] += 1
         for index in range(1, 4):
             if int(values.get(f"astMachineStatus[{index}].ePartType", 0)) != 0:
                 product_type = int(values.get(f"stMultiType.Config.auiMachineType[{index}]", 0))
@@ -870,6 +897,32 @@ class GatewayRunner:
             if product_type in counts:
                 counts[product_type] += 1
         return counts
+
+    @staticmethod
+    def setup_differences(state: dict[str, Any], values: dict[str, Any]) -> list[str]:
+        differences = []
+        for m, magazine in enumerate(state["magazines"], 1):
+            if state.get("magazineMode", 0) == 1:
+                role = values.get(f"astTwinStatus[{m}].uiRobotPallet")
+                if role not in (1, 2):
+                    differences.append(f"magazine {m}: unknown physical pallet role")
+                    continue
+                owners = [(f"astTwinStore[{m}].astPallet[{role}]", magazine["slots"]),
+                          (f"astTwinStore[{m}].astPallet[{3 - role}]", magazine["operatorSlots"])]
+            else:
+                owners = [(f"astMagazineInventory[{m}]", magazine["slots"])]
+            for owner, slots in owners:
+                for index, slot in enumerate(slots, 1):
+                    root = f"{owner}.aSlots[{index}]"
+                    expected = (bool(slot["content"]), slot["content"], slot["productType"] if slot["content"] else 0)
+                    actual = (values.get(f"{root}.xInPosition"), values.get(f"{root}.eDetailType"), values.get(f"{root}.uiProductType"))
+                    if actual != expected:
+                        differences.append(f"{root}: expected={expected}, actual={actual}")
+        for i, machine in enumerate(state["machines"], 1):
+            part_type = {0: 0, 1: 0, 2: 2, 3: 1}[machine["state"]]
+            if values.get(f"astMachineStatus[{i}].xEnabled") != (machine["state"] != 0) or values.get(f"astMachineStatus[{i}].ePartType") != part_type:
+                differences.append(f"machine {i}: initial state {machine['state']} not applied (check base points)")
+        return differences
 
     @staticmethod
     def magazine_inventory_counts(values: dict[str, Any], magazine: int) -> tuple[int, int, int]:
@@ -1264,8 +1317,9 @@ class GatewayRunner:
             )
 
     async def apply_scenario(self, socket: Any, case: dict[str, Any]) -> bool:
-        self.require_static_magazine_mode(self.values)
+        self.require_magazine_mode(self.values, int(case["initialState"].get("magazineMode", 0)))
         expected_rejection = bool(case.get("expectations", {}).get("applyRejected"))
+        previous_inventory = self.observed_inventory(self.values) if expected_rejection else None
         validation_errors = validate_inventory(case["initialState"])
         if validation_errors and not expected_rejection:
             raise ValueError("; ".join(validation_errors))
@@ -1336,9 +1390,13 @@ class GatewayRunner:
             if expected_rejection:
                 if result != 2:
                     raise AssertionError(f"PLC scenario validation result is {result}, expected 2")
+                self.check("PLC отклонил некорректный сценарий", 2, result)
+                self.check("Отклонённая загрузка сохранила баланс", previous_inventory, self.observed_inventory(self.values))
+                self.check("Отклонённый сценарий не запущен", False, bool(self.values.get("stCellStatus.xRunning", False)))
                 return False
             if result != 0:
                 raise AssertionError(f"PLC rejected a valid scenario, result={result}")
+            self.check("Подтверждение LoadSeq", int(self.values.get("stTestScenario.udiLoadSeq", 0)), int(self.values.get("udiTestScenarioAckSeq", 0)))
             return True
 
         assert last_error is not None
@@ -1378,8 +1436,10 @@ class GatewayRunner:
             socket, lambda values: int(values.get("stTestObservability.uiErrorSource", 0)) == 2,
             15.0, "robot fault was not attributed to the robot",
         )
+        self.check("Инъекция аварии принадлежит роботу", 2, int(self.values.get("stTestObservability.uiErrorSource", 0)))
         await self.clear_fault_sources(socket)
         await self.reset_robot_and_cell(socket, robot_fault_expected=True)
+        self.check("Авария робота сброшена", False, self.robot_fault_active(self.values))
         await self.ensure_safety_home(socket)
 
     async def verify_initial_error(self, socket: Any, case: dict[str, Any], expected_source: int) -> None:
@@ -1391,6 +1451,7 @@ class GatewayRunner:
             20.0,
             f"fault owner is not source {expected_source}",
         )
+        self.check("Первичный владелец ошибки", expected_source, int(self.values.get("stTestObservability.uiErrorSource", 0)))
         await self.clear_fault_sources(socket)
         await self.reset_robot_and_cell(socket, robot_fault_expected=expected_source == 2)
         await self.ensure_safety_home(socket)
@@ -1400,6 +1461,53 @@ class GatewayRunner:
         if not self._simulator_session_acquired:
             return
         await asyncio.to_thread(self.simulator_control.clear)
+
+    async def stop_geometry(self, socket: Any) -> None:
+        if self.environment != "simulation" or self.robot_interface != "softmotion":
+            return
+        for station in (1, 2):
+            root = f"astGeometryStatus[{station}]"
+            if self.values.get(f"{root}.xEnabled") or self.values.get(f"{root}.xDriveRunning"):
+                await self.command(socket, "geometry.command", action=6, magazine=station)
+        await self.wait_value(socket, lambda v: all(not v.get(f"astGeometryStatus[{i}].xDriveRunning", False)
+                                                   and not v.get(f"astGeometryStatus[{i}].xReserved", False) for i in (1, 2)),
+                              45.0, "GK transport did not stop before scenario reset")
+
+    async def initialize_geometry(self, socket: Any, case: dict[str, Any]) -> None:
+        for station, enabled in enumerate(case["initialState"].get("geometry", {}).get("enabled", [False, False]), 1):
+            if not enabled:
+                continue
+            root = f"astGeometryStatus[{station}]"
+            await self.wait_value(socket, lambda v: bool(v.get(f"{root}.xConfirmAllowed")), 10.0,
+                                  f"GK {station}: virtual empty belt confirmation is not allowed")
+            await self.command(socket, "geometry.command", action=3, magazine=station)
+            await self.wait_value(socket, lambda v: bool(v.get(f"{root}.xEnableAllowed")), 10.0,
+                                  f"GK {station}: enable is blocked (check configured base and PLC blockers)")
+            await self.command(socket, "geometry.command", action=1, magazine=station)
+            await self.wait_value(socket, lambda v: bool(v.get(f"{root}.xReady")), 10.0, f"GK {station}: not ready")
+
+    def check(self, label: str, expected: Any, actual: Any) -> None:
+        record = {"label": label, "expected": expected, "actual": actual, "passed": expected == actual}
+        if not hasattr(self, "case_checks"):
+            self.case_checks = []
+        self.case_checks.append(record)
+        if not record["passed"]:
+            raise AssertionError(f"{label}: expected={expected}, actual={actual}")
+
+    def case_diagnostics(self, case: dict[str, Any]) -> dict[str, Any]:
+        keys = ["uiMagazineMode", "stTestObservability.uiSchemaVersion", "stTestObservability.uiCellState",
+                "stTestObservability.uiActiveMagazine", "stTestObservability.uiReturnMagazine",
+                "stTestObservability.uiSelectedMachine", "stTestObservability.uiSelectedType",
+                "stTestObservability.uiMagazineOperation", "stTestObservability.uiRobotAction",
+                "stTestObservability.uiErrorSource", "stTestObservability.dwErrorCode",
+                "stTestScenario.udiLoadSeq", "udiTestScenarioAckSeq", "uiTestScenarioResult",
+                "auiRobotModbusWriteRegisters[8]", "stRobotModbusStatus.uiAckSeq",
+                "auiRobotModbusWriteRegisters[1]", "auiRobotModbusWriteRegisters[2]",
+                "auiRobotModbusWriteRegisters[3]", "auiRobotModbusWriteRegisters[9]",
+                "stRobotModbusStatus.uiExecutionState", "stRobotModbusStatus.uiResultCode"]
+        keys += [f"astGeometryCalls[{i}].{field}" for i in (1, 2, 3) for field in ("udiId", "uiState", "uiStation", "uiMagazine", "uiPallet", "uiSlot", "uiReason")]
+        return {"expectations": case.get("expectations", {}), "checks": getattr(self, "case_checks", []),
+                "observed": {k: self.values[k] for k in keys if k in self.values}}
 
     async def recover_between_cases(self, socket: Any) -> None:
         try:
@@ -1424,6 +1532,7 @@ class GatewayRunner:
             )
             await self.ensure_softmotion_drives(socket)
             await self.ensure_safety_home(socket)
+            await self.stop_geometry(socket)
             await self.wait_value(
                 socket,
                 lambda values: bool(values.get("xTestScenarioApplyAllowed", False)),
@@ -1436,6 +1545,7 @@ class GatewayRunner:
             raise RecoveryError(str(error)) from error
 
     async def run_case(self, socket: Any, case: dict[str, Any], index: int, total: int) -> None:
+        self.case_checks = []
         await self.send(socket, {
             "type": "test-progress", "caseIndex": index, "caseCount": total,
             "stage": "load", "name": case["name"],
@@ -1459,6 +1569,7 @@ class GatewayRunner:
         # reflects the previous case (notably an empty magazine plus a held part).
         if not await self.apply_scenario(socket, case):
             raise AssertionError("valid scenario was rejected during final state synchronization")
+        await self.initialize_geometry(socket, case)
         initial_counts = self.initial_inventory(case["initialState"])
         try:
             await self.wait_value(
@@ -1472,6 +1583,12 @@ class GatewayRunner:
                 "test setup did not synchronize the requested inventory: "
                 f"expected={initial_counts}, observed={self.observed_inventory(self.values)}"
             ) from error
+        try:
+            await self.wait_value(socket, lambda v: not self.setup_differences(case["initialState"], v), 10.0,
+                                  "initial slot locations or machine states were not applied")
+        except TimeoutError as error:
+            raise AssertionError("; ".join(self.setup_differences(case["initialState"], self.values)[:8])) from error
+        self.check("Начальное состояние по слотам и станкам", True, True)
         expected = str(
             case.get("expectations", {}).get("firstDecision")
             or expected_first_decision(case["initialState"])
@@ -1514,7 +1631,11 @@ class GatewayRunner:
                 15.0,
                 "PLC did not report the expected no-task start block",
             )
+            self.check("Пуск без задачи запрещён PLC", False, bool(self.values.get("stCellStatus.xStartAllowed", True)))
             return
+        self._case_magazine_counters = [int(self.values.get(f"astMagazineStatus[{i}].udiProducedPartsTotal", 0)) for i in (1, 2)]
+        self._case_geometry_counters = [int(self.values.get(f"astGeometryStatus[{i}].udiProducedPartsTotal", 0)) for i in (1, 2)]
+        self._case_robot_pallets = [int(self.values.get(f"astTwinStatus[{i}].uiRobotPallet", 0)) for i in (1, 2)]
         await self.start_automatic_cycle(socket)
         if case.get("expectations", {}).get("testKind") == "operator-cancel":
             await self.wait_value(
@@ -1534,6 +1655,7 @@ class GatewayRunner:
             if bool(self.values.get("xGlobalError", False)):
                 raise AssertionError("operator cancellation created a global error")
             observed_counts = self.observed_inventory(self.values)
+            self.check("Баланс изделий", initial_counts, observed_counts)
             if observed_counts != initial_counts:
                 raise AssertionError(
                     f"operator cancellation changed inventory: initial={initial_counts}, observed={observed_counts}"
@@ -1567,6 +1689,7 @@ class GatewayRunner:
                 15.0,
                 f"PLC did not select compatible machine {expected_machine}",
             )
+            self.check("Совместимый станок после ответа оператора", expected_machine, int(self.values.get("stTestObservability.uiSelectedMachine", 0)))
             await self.stop_cell_if_running(socket)
             await self.wait_value(
                 socket,
@@ -1577,10 +1700,55 @@ class GatewayRunner:
             if bool(self.values.get("xGlobalError", False)):
                 raise AssertionError("operator decision test created a global error")
             observed_counts = self.observed_inventory(self.values)
+            self.check("Баланс изделий", initial_counts, observed_counts)
             if observed_counts != initial_counts:
                 raise AssertionError(
                     f"operator decision changed inventory: initial={initial_counts}, observed={observed_counts}"
                 )
+            return
+        special = case.get("expectations", {}).get("testKind") or ("pallet-swap" if expected == "pallet-swap" else None)
+        if special in ("geometry-route", "pallet-swap"):
+            expectations = case["expectations"]
+            if special == "geometry-route":
+                states = expectations.get("callStates", {})
+                if states:
+                    await self.wait_value(socket, lambda v: all(v.get(f"astGeometryCalls[{i}].uiState") == target for i, target in states.items()),
+                                          240.0 if self.speed_profile == "realtime" else 90.0, "GK calls did not reach the expected terminal/waiting states")
+                    for machine, target in states.items():
+                        self.check(f"Вызов со станка {machine}", target, self.values.get(f"astGeometryCalls[{machine}].uiState"))
+                    for machine, target in expectations.get("destinations", {}).items():
+                        self.check(f"Маршрут со станка {machine}", target, self.values.get(f"astGeometryCalls[{machine}].uiStation"))
+                    for machine, target in states.items():
+                        if target == 4:
+                            station = self.values.get(f"astGeometryCalls[{machine}].uiStation")
+                            self.check(f"Назначение вызова {machine} существует", True, station in (1, 2))
+                            self.check(f"ГК {station} занят доставленной деталью", True, bool(self.values.get(f"astGeometryStatus[{station}].xOccupied", False)))
+                        elif target == 1:
+                            self.check(f"Ожидающая деталь осталась в станке {machine}", 1, self.values.get(f"astMachineStatus[{machine}].ePartType"))
+                        elif target == 5:
+                            destination = self.values.get(f"astGeometryCalls[{machine}].uiMagazine", 0)
+                            slot = self.values.get(f"astGeometryCalls[{machine}].uiSlot", 0)
+                            self.check("Обход ГК имеет назначение в магазине", True, destination in (1, 2) and 1 <= slot <= (96 if case["initialState"]["magazineMode"] == 1 else 120))
+                            pallet = self.values.get(f"astGeometryCalls[{machine}].uiPallet", 0)
+                            root = f"astTwinStore[{destination}].astPallet[{pallet}]" if case["initialState"]["magazineMode"] == 1 else f"astMagazineInventory[{destination}]"
+                            self.check("Деталь действительно лежит в слоте обхода", True, bool(self.values.get(f"{root}.aSlots[{slot}].xInPosition", False)) and self.values.get(f"{root}.aSlots[{slot}].eDetailType") == 2)
+                    stations = [self.values.get(f"astGeometryCalls[{i}].uiStation") for i, target in states.items() if target == 4]
+                    self.check("Разные детали занимают разные ГК", len(stations), len(set(stations)))
+                    self.check("Подтверждённый выпуск ГК", len(stations), sum((int(self.values.get(f"astGeometryStatus[{i}].udiProducedPartsTotal", 0)) - self._case_geometry_counters[i - 1]) & 0xFFFFFFFF for i in (1, 2)))
+                else:
+                    await self.wait_value(socket, lambda v: any(int(v.get(f"astMagazineStatus[{i}].udiProducedPartsTotal", 0)) > self._case_magazine_counters[i - 1] for i in (1, 2)),
+                                          180.0, "uncalled detail did not reach the magazine")
+                    self.check("Без вызова выпуск магазина увеличен один раз", 1, sum((int(self.values.get(f"astMagazineStatus[{i}].udiProducedPartsTotal", 0)) - self._case_magazine_counters[i - 1]) & 0xFFFFFFFF for i in (1, 2)))
+                    self.check("Без вызова ГК не занимает станцию", False, any(self.values.get(f"astGeometryStatus[{i}].xOccupied", False) for i in (1, 2)))
+            else:
+                before = self._case_robot_pallets[0]
+                await self.wait_value(socket, lambda v: v.get("astTwinStatus[1].uiRobotPallet") == 3 - before
+                                      and not v.get("astTwinStatus[1].xBusy", True) and v.get("astTwinStatus[1].xReady", False) and v.get("astTwinStatus[1].xConfirmed", False), 120.0, "confirmed operator pallet was not exchanged")
+                self.check("Подана другая физическая палета", 3 - before, self.values.get("astTwinStatus[1].uiRobotPallet"))
+            await self.stop_cell_if_running(socket)
+            await self.wait_value(socket, lambda v: not v.get("stCellStatus.xRunning", True) and not v.get("stRobotStatus.xBusy", True), 60.0, "special scenario did not stop")
+            self.check("Баланс изделий", initial_counts, self.observed_inventory(self.values))
+            self.check("Глобальная авария", False, bool(self.values.get("xGlobalError", False)))
             return
         expected_magazine = int(case.get("expectations", {}).get("expectedMagazine", 0))
         wait_for_decision = self.wait_stable_value if expected == "held-blank-wait" else self.wait_value
@@ -1595,6 +1763,16 @@ class GatewayRunner:
             120.0 if self.speed_profile == "realtime" else 40.0,
             f"unexpected first PLC decision; expected {expected}, magazine={expected_magazine or 'any'}",
         )
+
+        if expected in ("safe-stop", "robot-error-reset"):
+            self.check("Технологическая операция началась", True, self.decision_matches(expected, self.values))
+        else:
+            self.check("Первое решение PLC", expected, expected if self.decision_matches(expected, self.values) else "other")
+        if expected_magazine:
+            self.check("Выбранный магазин", expected_magazine, int(self.values.get("stTestObservability.uiActiveMagazine", 0)))
+        if case.get("expectations", {}).get("returnMagazine"):
+            await self.wait_value(socket, lambda v: v.get("stTestObservability.uiReturnMagazine") == case["expectations"]["returnMagazine"], 90.0, "supply magazine was not reserved for return after TAKE")
+            self.check("Магазин возврата", case["expectations"]["returnMagazine"], self.values.get("stTestObservability.uiReturnMagazine"))
 
         if expected == "safe-stop":
             await self.stop_cell_if_running(socket)
@@ -1623,8 +1801,9 @@ class GatewayRunner:
                 f"code={self.values.get('stTestObservability.dwErrorCode')}"
             )
         observed_counts = self.observed_inventory(self.values)
-        if observed_counts != initial_counts:
-            raise AssertionError(f"inventory balance changed: initial={initial_counts}, observed={observed_counts}")
+        self.check("Цикл остановлен или завершён", False, bool(self.values.get("stCellStatus.xRunning", False)))
+        self.check("Баланс изделий", initial_counts, observed_counts)
+        self.check("Глобальная авария", False, bool(self.values.get("xGlobalError", False)))
 
     async def cleanup_run(self, socket: Any) -> None:
         self._cleanup_active = True
@@ -1664,6 +1843,7 @@ class GatewayRunner:
                 "cell did not stop during cleanup",
             ))
             await cleanup_step("manual mode", self.ensure_manual_control(socket))
+            await cleanup_step("GK stop", self.stop_geometry(socket))
             await cleanup_step("robot and cell reset", self.reset_robot_and_cell(socket))
             if self._simulator_session_acquired:
                 await cleanup_step("robot idle", self.wait_value(
@@ -1734,8 +1914,10 @@ class GatewayRunner:
                 socket, lambda message, _values: message.get("type") == "snapshot",
                 10.0, "initial PLC snapshot",
             )
-            self.require_static_magazine_mode(self.values)
             config = hello["config"]
+            self.require_magazine_mode(self.values, int(config.get("magazineMode", 0)))
+            if self.values.get("stTestObservability.uiSchemaVersion") != 3:
+                raise RuntimeError("PLC test schema v3 is required before any command")
             cases = self.suite(config)
             fail_fast = str(config.get("suite", "smoke")).lower() == "general"
             self._initial_modbus_mode = bool(self.values.get("xModbusMode", False))
@@ -1757,6 +1939,7 @@ class GatewayRunner:
                             await self.send(socket, {
                                 "type": "test-case-result", "status": "PASS", "caseIndex": index,
                                 "name": case["name"], "durationMs": round((time.time() - started) * 1000),
+                                "reason": "Проверки сценария выполнены", "diagnostics": self.case_diagnostics(case), "scenario": case,
                             })
                         except RunAborted:
                             raise
@@ -1764,14 +1947,16 @@ class GatewayRunner:
                             await self.send(socket, {
                                 "type": "test-case-result", "status": "FAIL", "caseIndex": index,
                                 "name": case["name"], "stage": "recovery", "reason": str(error),
-                                "snapshot": self.values, "scenario": case,
+                                "snapshot": self.values, "scenario": case, "diagnostics": self.case_diagnostics(case),
+                                "durationMs": round((time.time() - started) * 1000),
                             })
                             raise
                         except Exception as error:
                             await self.send(socket, {
                                 "type": "test-case-result", "status": "FAIL", "caseIndex": index,
                                 "name": case["name"], "stage": "execute", "reason": str(error),
-                                "snapshot": self.values, "scenario": case,
+                                "snapshot": self.values, "scenario": case, "diagnostics": self.case_diagnostics(case),
+                                "durationMs": round((time.time() - started) * 1000),
                             })
                             await self.stop_cell_if_running(socket)
                             if fail_fast:

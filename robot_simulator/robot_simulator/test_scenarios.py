@@ -89,11 +89,13 @@ def scenario(
     if expected_magazine is not None:
         expectations["expectedMagazine"] = expected_magazine
     return {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "name": name,
         "description": description,
         "initialState": {
             "typeCount": type_count,
+            "magazineMode": 0,
+            "geometry": {"enabled": [False, False], "calls": [False, False, False], "waitWhenOccupied": True},
             "machines": _ensure_machine_types(machines, type_count),
             "magazines": [
                 {"enabled": bool(magazine_enabled[0]), "slots": magazine_1_slots},
@@ -111,7 +113,7 @@ def scenario(
 
 
 def smoke_scenarios() -> list[dict[str, Any]]:
-    """The ten accepted smoke cases from the project test plan."""
+    """The twelve base smoke cases, shared by both magazine layouts."""
     return [
         scenario("Загрузить пустой станок", slots=_slots((1, BLANK, 1)), expected="magazine-take"),
         scenario("Выгрузить готовую деталь", machines=((MACHINE_DETAIL_READY, 1), (0, 0), (0, 0)), slots=_slots((1, EMPTY, 1)), expected="machine-unload"),
@@ -153,13 +155,28 @@ def validate_inventory(initial_state: dict[str, Any]) -> list[str]:
     type_count = int(initial_state.get("typeCount", 0))
     if type_count not in (1, 2, 3):
         errors.append("typeCount must be 1..3")
+    if initial_state.get("orientation", 0) not in (0, 1):
+        errors.append("orientation must be 0 or 1")
+    mode = initial_state.get("magazineMode", 0)
+    if mode not in (0, 1):
+        errors.append("unknown magazineMode")
+    slot_count = 96 if mode == 1 else 120
     magazines = initial_state.get("magazines", [])
     if len(magazines) != MAGAZINE_COUNT:
         errors.append("exactly 2 magazines are required")
     for magazine_index, magazine in enumerate(magazines, 1):
         slots = magazine.get("slots", [])
-        if len(slots) != 120:
-            errors.append(f"magazine {magazine_index}: exactly 120 slots are required")
+        if len(slots) != slot_count:
+            errors.append(f"magazine {magazine_index}: exactly {slot_count} slots are required")
+        if mode == 1:
+            other = magazine.get("operatorSlots", [])
+            if len(other) != slot_count:
+                errors.append(f"magazine {magazine_index}: exactly 96 operator slots are required")
+            for index, item in enumerate(other):
+                if item.get("content") not in (EMPTY, BLANK, DETAIL):
+                    errors.append(f"operator pallet {magazine_index} slot {index + 1}: invalid content")
+                if index < len(slots) and item.get("productType") != slots[index].get("productType"):
+                    errors.append(f"operator pallet {magazine_index} slot {index + 1}: configured type mismatch")
         for index, item in enumerate(slots, 1):
             content = int(item.get("content", -1))
             product_type = int(item.get("productType", -1))
@@ -167,7 +184,7 @@ def validate_inventory(initial_state: dict[str, Any]) -> list[str]:
                 errors.append(f"magazine {magazine_index} slot {index}: invalid content")
             if product_type not in range(1, type_count + 1):
                 errors.append(f"magazine {magazine_index} slot {index}: invalid configured type")
-    if len(magazines) == MAGAZINE_COUNT and all(len(item.get("slots", [])) == 120 for item in magazines):
+    if len(magazines) == MAGAZINE_COUNT and all(len(item.get("slots", [])) == slot_count for item in magazines):
         for index, (first, second) in enumerate(zip(magazines[0]["slots"], magazines[1]["slots"]), 1):
             if int(first.get("productType", -1)) != int(second.get("productType", -1)):
                 errors.append(f"slot {index}: configured type must match in both magazines")
@@ -322,53 +339,23 @@ def expected_first_decision(initial_state: dict[str, Any]) -> str:
     if grippers[1]["content"] == DETAIL:
         return "magazine-put"
 
-    active_magazine = next(
-        (item for item in initial_state["magazines"] if bool(item.get("enabled", False))),
-        initial_state["magazines"][0],
-    )
-    blank_types = {
-        int(slot["productType"])
-        for slot in active_magazine["slots"]
-        if int(slot["content"]) == BLANK
-    }
-    free_types = {
-        int(slot["productType"])
-        for slot in active_magazine["slots"]
-        if int(slot["content"]) == EMPTY
-    }
-    enabled = [
-        machine for machine in initial_state["machines"]
-        if int(machine["state"]) != MACHINE_DISABLED
-    ]
-
-    # SelectMachineBeforeTake walks ready machines in index order. Therefore an
-    # empty compatible machine can legitimately be selected before a later
-    # machine with a finished detail.
-    immediate = next(
-        (
-            machine for machine in enabled
-            if int(machine["productType"]) in blank_types
-            and int(machine["state"]) in (MACHINE_EMPTY_READY, MACHINE_DETAIL_READY)
-        ),
-        None,
-    )
-    if immediate is not None:
-        return (
-            "machine-load"
-            if int(immediate["state"]) == MACHINE_EMPTY_READY
-            else "machine-change"
-        )
-    if any(
-        int(machine["state"]) == MACHINE_BLANK_PROCESSING
-        and int(machine["productType"]) in blank_types
-        for machine in enabled
-    ):
-        return "machine-change"
-    if any(
-        int(machine["state"]) in (MACHINE_BLANK_PROCESSING, MACHINE_DETAIL_READY)
-        and int(machine["productType"]) in free_types
-        for machine in enabled
-    ):
+    masks = initial_state.get("faultMasks", {})
+    magazine_faults = masks.get("magazines", [0, 0])
+    machine_faults = masks.get("machines", [0, 0, 0])
+    available = [m for i, m in enumerate(initial_state["magazines"])
+                 if m.get("enabled") and not magazine_faults[i]]
+    enabled = [m for i, m in enumerate(initial_state["machines"])
+               if int(m["state"]) != MACHINE_DISABLED and not machine_faults[i]]
+    for magazine in available:
+        blank_types = {int(s["productType"]) for s in magazine["slots"] if s["content"] == BLANK}
+        immediate = next((m for m in enabled if m["productType"] in blank_types
+                          and m["state"] in (MACHINE_EMPTY_READY, MACHINE_DETAIL_READY)), None)
+        if immediate:
+            return "machine-load" if immediate["state"] == MACHINE_EMPTY_READY else "machine-change"
+        if any(m["state"] == MACHINE_BLANK_PROCESSING and m["productType"] in blank_types for m in enabled):
+            return "machine-change"
+    if any(any(s["content"] == EMPTY for s in m["slots"]) for m in available) and any(
+            m["state"] in (MACHINE_BLANK_PROCESSING, MACHINE_DETAIL_READY) for m in enabled):
         return "machine-unload"
     return "no-task"
 
@@ -560,8 +547,81 @@ def fixed_scenarios(suite: str) -> list[dict[str, Any]]:
         "smoke": smoke_scenarios,
         "regression": regression_scenarios,
         "general": general_scenarios,
+        "geometry": geometry_scenarios,
+        "magazines": magazine_scenarios,
     }
     try:
         return factories[suite]()
     except KeyError as error:
         raise ValueError(f"Неизвестный фиксированный набор тестов: {suite}") from error
+
+
+def for_magazine_mode(case: dict[str, Any], mode: int) -> dict[str, Any]:
+    """Adapt the fixed scenario's semantic robot/operator sides, without changing PLC mode."""
+    result = copy.deepcopy(case)
+    result["schemaVersion"] = 3
+    state = result["initialState"]
+    state["magazineMode"] = mode
+    state.setdefault("geometry", {"enabled": [False, False], "calls": [False] * 3, "waitWhenOccupied": True})
+    if mode == 1:
+        for magazine in state["magazines"]:
+            # Keep the intentional invalid tail in a generated rejection case.
+            tail = magazine["slots"][-1]
+            magazine["slots"] = magazine["slots"][:96]
+            if result["expectations"].get("applyRejected"):
+                magazine["slots"][-1] = copy.deepcopy(tail)
+            magazine.setdefault("operatorSlots", [{"content": 0, "productType": slot["productType"]}
+                                                  for slot in magazine["slots"]])
+            magazine.setdefault("operatorLoaded", False)
+            magazine.setdefault("autoSwap", False)
+    elif mode != 0:
+        raise ValueError("unknown magazineMode")
+    return result
+
+
+def geometry_scenarios() -> list[dict[str, Any]]:
+    definitions = [
+        ("ГК 1 — вызов готовой детали", [True, False], [True, False, False], [True, False], True, {"1": 4}, {"1": 1}),
+        ("ГК 2 — вызов готовой детали", [False, True], [True, False, False], [True, False], True, {"1": 4}, {"1": 2}),
+        ("ГК — доставка при выключенных магазинах", [True, False], [True, False, False], [False, False], True, {"1": 4}, {"1": 1}),
+        ("ГК — два вызова на разные станции", [True, True], [True, True, False], [True, True], True, {"1": 4, "2": 4}, {}),
+        ("ГК — третий вызов ждёт свободную станцию", [True, True], [True, True, True], [True, True], True, {"1": 4, "2": 4, "3": 1}, {}),
+        ("ГК — обход занятых станций в магазин", [True, True], [True, True, True], [True, True], False, {"1": 4, "2": 4, "3": 5}, {}),
+        ("ГК — вызов со станка 3", [True, False], [False, False, True], [True, False], True, {"3": 4}, {"3": 1}),
+        ("ГК — обычная деталь без вызова идёт в магазин", [True, True], [False] * 3, [True, False], True, {}, {}),
+    ]
+    result = []
+    for name, stations, calls, magazines, wait, call_states, destinations in definitions:
+        machines = tuple((MACHINE_DETAIL_READY if (calls[i] or (not any(calls) and i == 0)) else MACHINE_DISABLED, 1) for i in range(3))
+        item = scenario(name, description="Подтверждение маршрута, состояний вызовов и баланса деталей; без автоматического изъятия с ГК.",
+                        machines=machines, slots=_slots(), magazine_enabled=tuple(magazines),
+                        expected="geometry-delivery" if call_states else "machine-unload", full_cycle=False)
+        item["initialState"]["geometry"] = {"enabled": stations, "calls": calls, "waitWhenOccupied": wait}
+        item["expectations"].update({"testKind": "geometry-route", "callStates": call_states, "destinations": destinations})
+        result.append(item)
+    return result
+
+
+def magazine_scenarios() -> list[dict[str, Any]]:
+    base = [
+        scenario("Палеты — подача из магазина 1", expected="magazine-take", expected_magazine=1, full_cycle=False),
+        scenario("Палеты — подача из магазина 2", slots=_slots(), magazine_2_slots=_slots((1, BLANK, 1)),
+                 magazine_enabled=(False, True), expected="magazine-take", expected_magazine=2, full_cycle=False),
+        scenario("Палеты — второй магазин при пустом первом", slots=_slots(), magazine_2_slots=_slots((1, BLANK, 1)),
+                 magazine_enabled=(True, True), expected="magazine-take", expected_magazine=2, full_cycle=False),
+        scenario("Палеты — CHANGE в одном слоте полной палеты", slots=_slots(*((i, BLANK, 1) for i in range(1, 121))),
+                 machines=((2, 1), (0, 1), (0, 1)), gripper_2=(DETAIL, 1), expected="magazine-change", expected_magazine=1, full_cycle=False),
+        scenario("Палеты — возврат в свой магазин", magazine_enabled=(True, True), expected="magazine-take", expected_magazine=1, full_cycle=False),
+        scenario("Палеты — операторский запас без автообмена", slots=_slots(), expected="no-task", full_cycle=False),
+        scenario("Палеты — неподтверждённая загрузка не подаётся", slots=_slots(), expected="no-task", full_cycle=False),
+        scenario("Палеты — автоматический обмен подтверждённой загрузки", slots=_slots(), expected="pallet-swap", full_cycle=False),
+    ]
+    result = [for_magazine_mode(item, 1) for item in base]
+    result[4]["expectations"]["returnMagazine"] = 1
+    for index in (5, 6, 7):
+        magazine = result[index]["initialState"]["magazines"][0]
+        magazine["operatorSlots"][0]["content"] = BLANK
+        magazine["operatorLoaded"] = index != 6
+        magazine["autoSwap"] = index != 5
+    result[7]["expectations"]["testKind"] = "pallet-swap"
+    return result

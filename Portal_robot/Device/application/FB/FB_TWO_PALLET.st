@@ -1081,12 +1081,13 @@ END_IF;
 
 // Инвентарь операторской палеты редактируется всегда, независимо от режима,
 // движения, подтверждения, питания и ошибок механизма. Роботная палета — только
-// при выключенном магазине после освобождения текущей/выданной операции с ним.
+// при выключенном магазине после освобождения текущей/выданной операции с ним,
+// в том числе в Auto при работающем цикле ячейки.
 // Считаем после команд и обмена, чтобы роль палеты была актуальна в этом скане.
 Status.xEdit1Allowed := xSelected
-	AND ((Status.uiRobotPallet <> UINT#1) OR (xManual AND NOT Status.xEnabled AND xActivePalletEditAllowed));
+	AND ((Status.uiRobotPallet <> UINT#1) OR (NOT Status.xEnabled AND xActivePalletEditAllowed));
 Status.xEdit2Allowed := xSelected
-	AND ((Status.uiRobotPallet <> UINT#2) OR (xManual AND NOT Status.xEnabled AND xActivePalletEditAllowed));
+	AND ((Status.uiRobotPallet <> UINT#2) OR (NOT Status.xEnabled AND xActivePalletEditAllowed));
 Status.xEditAllowed := Status.xEdit1Allowed OR Status.xEdit2Allowed;
 Status.xLoadAllowed := Status.xConfirmed AND NOT Status.xBusy AND NOT xOtherLoaded
 	AND (((Status.uiRobotPallet = UINT#1) AND Status.xEdit2Allowed)

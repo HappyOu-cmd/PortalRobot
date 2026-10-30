@@ -298,6 +298,9 @@ export class StatisticsStore {
 
   recordFact(event) {
     if (!event) return false;
+    // Raw MC522 observations remain in the journal; the corresponding PLC
+    // alarm/warning is the single counted fact of its activation.
+    if (event.details?.effect === 'PLC_DIAGNOSTIC_INPUT') return false;
     let kind = null;
     if ((event.eventType === 'alarm' || event.eventType === 'warning') && event.status === 'active') kind = event.eventType;
     if (event.eventType === 'production' && event.status === 'completed') kind = 'produced';
