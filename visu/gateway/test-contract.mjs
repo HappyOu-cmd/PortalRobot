@@ -1,4 +1,4 @@
-export const TEST_SUITES = new Set(['smoke', 'regression', 'general', 'generated', 'geometry', 'magazines']);
+export const TEST_SUITES = new Set(['acceptance', 'recovery', 'smoke', 'regression', 'general', 'generated', 'geometry', 'magazines']);
 
 export function requireTestMagazineMode(mode, expected) {
   if (![0, 1].includes(mode)) throw new Error('Режим магазинов PLC неизвестен');
@@ -11,6 +11,14 @@ export function validateTestRun(config, values, scenarios = []) {
   if (!['simulation', 'sc500_bench'].includes(config.environment)) throw new Error('Неизвестная среда тестов');
   if (!['softmotion', 'python-modbus', 'sc500-modbus'].includes(config.robotInterface)) throw new Error('Неизвестный интерфейс робота');
   if (!['realtime', 'fast'].includes(config.speedProfile)) throw new Error('Неизвестный профиль скорости');
+  const recovery = ['acceptance', 'recovery'].includes(config.suite) || scenarios.some(s => s.expectations?.testKind === 'fault-recovery');
+  if (recovery && (config.environment !== 'simulation' || config.robotInterface !== 'softmotion')) throw new Error('Приёмка и восстановление требуют симуляцию SoftMotion');
+  for (const s of scenarios.filter(s => s.expectations?.testKind === 'fault-recovery')) {
+    if (s.initialState?.typeCount !== 1 || s.initialState.grippers?.some(g => g.content)
+      || s.initialState.geometry?.enabled?.some(Boolean) || s.initialState.geometry?.calls?.some(Boolean)) {
+      throw new Error('Сценарий восстановления рассчитан на один тип изделия, пустые начальные захваты и выключенные ГК');
+    }
+  }
   if (values.uiMagazineMode === 1) {
     if (values.uiTestEnvironmentApplied !== 1) throw new Error('До запуска примените симуляцию и подготовьте оба двухпалетных магазина');
     if (config.environment !== 'simulation' || config.robotInterface !== 'softmotion') throw new Error('Двухпалетные сценарии доступны в симуляции SoftMotion');
@@ -44,7 +52,7 @@ export function resolveTestSelection(config, getScenario) {
       throw new Error('Номер штатного теста должен быть положительным целым числом');
     }
     if (suite === 'generated') {
-      throw new Error('Выбор одного штатного теста доступен только для Smoke, Regression и General');
+      throw new Error('Выбор одного штатного теста доступен только для фиксированных наборов');
     }
   }
   const ids = config?.scenarioIds ?? [];

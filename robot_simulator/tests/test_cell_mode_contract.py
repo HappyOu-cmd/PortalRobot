@@ -23,7 +23,7 @@ def execute_st_statements(source: str, values: dict) -> None:
         }[m[0]], text)
         text = text.replace("<>", "!=")
         text = re.sub(r"(?<![!<>=])=(?!=)", "==", text)
-        text = re.sub(r"\b(?:GVL_\w+\.[\w.]+|uiCellModeRejectReason|udiCellModeCommandSnapshot)\b",
+        text = re.sub(r"\b(?:GVL_\w+\.[\w.]+|CONTROLLER_DIAGNOSTICS\.[\w.]+|uiCellModeRejectReason|udiCellModeCommandSnapshot)\b",
                       lambda m: f"values[{m[0]!r}]", text)
         return " ".join(text.split())
 
@@ -63,6 +63,7 @@ def state(**overrides):
         "GVL_HMI.xIoEmergencyStopActive": False,
         "GVL_CELL_CONTROL.xManual": False,
         "GVL_CELL_MANAGER.Status.xRunning": False,
+        "CONTROLLER_DIAGNOSTICS.Status.xAlarmActive": False,
         **overrides,
     }
 
@@ -99,7 +100,7 @@ def test_rejected_manual_request_is_consumed_and_never_applied_after_stop():
     assert values["GVL_CELL_CONTROL.xManual"] is True
 
 
-@pytest.mark.parametrize("safety_source", ["GVL_CELL_CONTROL.xGlobalError", "GVL_HMI.xIoEmergencyStopActive"])
+@pytest.mark.parametrize("safety_source", ["GVL_CELL_CONTROL.xGlobalError", "GVL_HMI.xIoEmergencyStopActive", "CONTROLLER_DIAGNOSTICS.Status.xAlarmActive"])
 def test_safety_rejects_automatic_and_keeps_manual_after_recovery(safety_source):
     values = state(**{"GVL_HMI.xCellManualRequest": False, safety_source: True})
     execute_st_statements(MODE_SOURCE, values)

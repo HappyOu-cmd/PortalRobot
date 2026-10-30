@@ -18,6 +18,11 @@ test('workbench does not advertise runnable tests for a stale contract or unknow
   const savedGeneral = freshScenario(0); savedGeneral.expectations.testKind = 'general-four-batches';
   const staticStatus = ready(); staticStatus.plc!.magazineMode = 0;
   assert.match(runBlockedReason(staticStatus, 'smoke', 'sc500-modbus', 'sc500_bench', [savedGeneral]), /симуляцию/);
+  for (const suite of ['acceptance', 'recovery']) {
+    assert.equal(runBlockedReason(staticStatus, suite, 'softmotion', 'simulation'), '');
+    assert.match(runBlockedReason(staticStatus, suite, 'python-modbus', 'simulation'), /SoftMotion/);
+    assert.match(runBlockedReason(staticStatus, suite, 'sc500-modbus', 'sc500_bench'), /SoftMotion/);
+  }
 });
 
 test('all new inventories are independent and legacy captures retain their slot contents', () => {

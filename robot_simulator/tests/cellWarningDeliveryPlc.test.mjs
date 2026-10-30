@@ -9,6 +9,7 @@ const cellSource = readPlc('PLC_PRG.RunCellControl.st');
 const managerSource = readPlc('FB/FB_CELL_MANAGER/FB_CELL_MANAGER.st');
 const alarmSource = readPlc('FB/FB_ALARM_MANAGER.st');
 const addSource = readPlc('FB/FB_ALARM_MANAGER.AddEvent.st');
+const sourceCount = Number(alarmSource.match(/Sources\s*:\s*ARRAY\s*\[1\.\.(\d+)\]/i)[1]);
 const enums = {};
 for (const [, group, name] of [routeSource, managerSource, alarmSource, addSource].join('\n').matchAll(/\b(E_\w+)\.(\w+)/g)) {
   (enums[group] ??= {})[name] = `${group}.${name}`;
@@ -39,7 +40,7 @@ function fixture(typeCount = 1) {
       astStatus: [null, { xRobotStopRequired: false }, { xRobotStopRequired: false }],
       astWarning: [null, emptyWarning(), emptyWarning()] },
     GVL_CELL_CONTROL: { xGlobalError: false },
-    astAlarmSource: [null, ...Array.from({ length: 19 }, () => ({ dwAlarmActive: 0,
+    astAlarmSource: [null, ...Array.from({ length: sourceCount }, () => ({ dwAlarmActive: 0,
       eSource: 'E_ALARM_SOURCE.CELL', xRobotStopRequired: false, xGlobalError: false,
       stWarning: emptyWarning() }))],
     astAdditionalCellWarning: [null, emptyWarning(), emptyWarning()],
@@ -55,7 +56,7 @@ function fixture(typeCount = 1) {
   const alarm = { ...enums, ...conversions, ...defaultsFromSt(alarmSource),
     xResetWarnings: false, Sources: route.astAlarmSource,
     astAdditionalCellWarning: route.astAdditionalCellWarning,
-    adwPreviousAlarm: Array(20).fill(0), audiPreviousWarning: Array(20).fill(0),
+    adwPreviousAlarm: Array(sourceCount + 1).fill(0), audiPreviousWarning: Array(sourceCount + 1).fill(0),
     audiPreviousAdditionalCellWarning: Array(3).fill(0),
     uiWriteIndex: 1, Status: {}, Events: [null, ...Array.from({ length: 100 }, () => ({
       udiSequence: 0, xActive: false }))],

@@ -219,6 +219,20 @@ class RecoveryCell(Cell):
         self.twin.astError = StArray(1, [p.block.Error for p in self.twins] if mode else
                                      [r.value("ST_TWO_PALLET_ERRORS", self.g) for _ in range(2)], "ST_TWO_PALLET_ERRORS")
         self.twin_stop_latched = StArray(1, [False, False], "BOOL")
+        # Execute the actual common-Reset -> twin command adapter as well as the
+        # owner. A global Reset is not an implicit direct clear of twin errors.
+        source = (r.root / "PLC_PRG.RunTwoPallet.st").read_text(encoding="utf-8-sig")
+        start_at = source.index("IF GVL_HMI.astMagazineCommand[uiTwin].xReset")
+        end_at = source.index("END_IF;", start_at) + len("END_IF;")
+        reset_at = source.index("astTwinCommand[uiTwin].xReset :=")
+        reset_end = source.index(";", reset_at) + 1
+        self.twin_reset_program = Program(source[start_at:end_at] + "\n" + source[reset_at:reset_end],
+                                          "RunTwoPallet: common Reset adapter")
+        self.twin_reset_env = {**r.enums, "_types": {}, "uiTwin": 1,
+            "GVL_HMI": record(astMagazineCommand=StArray(1, [record(xReset=False) for _ in range(2)], "RECORD")),
+            "GVL_CELL_CONTROL": record(xReset=False),
+            "GVL_TWO_PALLET": record(auiCommand=StArray(1, [0, 0], "UINT"), astStatus=self.twin.astStatus),
+            "astTwinCommand": StArray(1, [p.block.Command for p in self.twins], "ST_TWO_PALLET_COMMAND")}
         mg = self.g["GVL_MAGAZINE"]
         mg._types.update(astStatus="ARRAY [1..2] OF ST_MAGAZINE_STATUS", astError="ARRAY [1..2] OF ST_MAGAZINE_ERRORS")
         mg.__dict__["astStatus"] = self.public_magazines
@@ -296,6 +310,10 @@ class RecoveryCell(Cell):
             b.xOtherLoaded = self.adapter["xTwinOtherLoaded"]
             b.xStopRequest = self.stop
             b.xRobotMagazineReady = magazine.Status.xEnableCheckNoError and magazine.Status.xEnableCheckGeometry
+            self.twin_reset_env["uiTwin"] = index
+            self.twin_reset_env["GVL_CELL_CONTROL"].xReset = self.reset
+            self.twin_reset_env["GVL_TWO_PALLET"].auiCommand[index] = 0
+            self.twin_reset_program.execute(self.twin_reset_env)
             previous = b.Status.uiRobotPallet
             plant.step()
             self.twin.astStatus[index] = b.Status

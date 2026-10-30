@@ -119,5 +119,23 @@ test('Python catalog crosses the gateway UTF-8 boundary with current names and c
   assert.equal(entries.smoke[0].name, 'Загрузить пустой станок');
   assert.equal(entries.geometry.length, 8);
   assert.equal(entries.magazines.length, 8);
+  assert.equal(entries.acceptance.length, 143);
+  assert.equal(entries.recovery.length, 66);
   assert.ok(entries.geometry.every(c => c.name.includes('ГК')));
+});
+
+test('the twin catalog preserves case numbers for the actual mode of the acceptance run', () => {
+  const directory = fileURLToPath(new URL('../../robot_simulator/', import.meta.url));
+  const bundled = fileURLToPath(new URL(process.platform === 'win32'
+    ? '../../robot_simulator/.venv/Scripts/python.exe' : '../../robot_simulator/.venv/bin/python', import.meta.url));
+  const result = spawnSync(process.env.TEST_RUNNER_PYTHON || (existsSync(bundled) ? bundled : 'python'),
+    ['-m', 'robot_simulator.test_catalog', '--magazine-mode', '1'], {
+      cwd: directory, windowsHide: true, encoding: 'utf8', timeout: 10000,
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+    });
+  assert.equal(result.status, 0, result.stderr);
+  const entries = JSON.parse(result.stdout);
+  assert.equal(entries.acceptance.length, 149);
+  assert.ok(entries.acceptance.slice(-8).every(c => c.name.startsWith('Палеты')));
+  assert.deepEqual(entries.acceptance.map(c => c.index), Array.from({ length: 149 }, (_, i) => i + 1));
 });

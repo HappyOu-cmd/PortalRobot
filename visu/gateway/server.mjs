@@ -810,11 +810,11 @@ function testHealth() {
   return { available: Boolean(testStore), activeRunId: activeTestRun?.id ?? null, error: testStoreError || null };
 }
 
-let fixedTestCatalogPromise;
-function fixedTestCatalog() {
-  if (!fixedTestCatalogPromise) {
-    fixedTestCatalogPromise = new Promise((resolve, reject) => {
-      const processHandle = spawn(testRunnerPython, ['-m', 'robot_simulator.test_catalog'], {
+const fixedTestCatalogPromises = new Map();
+function fixedTestCatalog(mode = latestValues.uiMagazineMode === 1 ? 1 : 0) {
+  if (!fixedTestCatalogPromises.has(mode)) {
+    const catalogPromise = new Promise((resolve, reject) => {
+      const processHandle = spawn(testRunnerPython, ['-m', 'robot_simulator.test_catalog', '--magazine-mode', String(mode)], {
         cwd: robotSimulatorDir, windowsHide: true, env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
       });
       let output = '';
@@ -832,9 +832,10 @@ function fixedTestCatalog() {
         try { resolve(JSON.parse(output)); }
         catch (error) { reject(new Error(`Некорректный каталог штатных тестов: ${error.message}`)); }
       });
-    }).catch((error) => { fixedTestCatalogPromise = null; throw error; });
+    }).catch((error) => { fixedTestCatalogPromises.delete(mode); throw error; });
+    fixedTestCatalogPromises.set(mode, catalogPromise);
   }
-  return fixedTestCatalogPromise;
+  return fixedTestCatalogPromises.get(mode);
 }
 
 async function simulatorControlHealth() {
@@ -2465,9 +2466,10 @@ async function launchTestRun(config) {
   if (activeTestRun) throw new Error(`Уже выполняется прогон ${activeTestRun.id}`);
   if (connectionState.status !== 'connected') throw new Error('Нет полной связи gateway с PLC');
   requireTestMagazineMode(latestValues.uiMagazineMode);
+  const magazineMode = latestValues.uiMagazineMode;
   const { suite, fixedCaseIndex, scenarios: selectedScenarios } = resolveTestSelection(config, (id) => testStore.getScenario(id));
   if (fixedCaseIndex !== null) {
-    const catalog = await fixedTestCatalog();
+    const catalog = await fixedTestCatalog(magazineMode);
     if (!catalog[suite]?.some((item) => item.index === fixedCaseIndex)) {
       throw new Error(`В наборе ${suite} нет теста #${fixedCaseIndex}`);
     }
@@ -2491,7 +2493,7 @@ async function launchTestRun(config) {
     throw new Error('Генеральные тесты с автоматической перезагрузкой магазинов разрешены только в симуляции');
   }
   const runConfig = { ...config, suite, fixedCaseIndex, environment, robotInterface, speedProfile, simulationTimeFactor,
-    magazineMode: latestValues.uiMagazineMode, seed: config.seed ?? 1, count: config.count ?? 100, scenarios: selectedScenarios };
+    magazineMode, seed: config.seed ?? 1, count: config.count ?? 100, scenarios: selectedScenarios };
   validateTestRun(runConfig, latestValues, selectedScenarios);
   if (activeTestRun) throw new Error(`Уже выполняется прогон ${activeTestRun.id}`);
   const run = testStore.createRun(runConfig);

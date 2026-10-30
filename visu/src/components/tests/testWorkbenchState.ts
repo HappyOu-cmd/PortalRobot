@@ -32,6 +32,8 @@ export type TestStatus = {
 };
 export type Catalog = Record<string, { index: number; name: string; description: string }[]>;
 export const suites: Record<string, { label: string; description: string }> = {
+  acceptance: { label: 'Приёмка', description: 'Один прогон после правок: штатная работа, аварии, ручное восстановление и подтверждённый выпуск. Для текущего типа магазинов.' },
+  recovery: { label: 'Аварии и восстановление', description: '66 причин: станки, магазины, захваты, точки, робот, ячейка и безопасность. После Reset и ручного HOME — новый выпуск без перезагрузки состояния.' },
   smoke: { label: 'Основные', description: 'Базовые операции, захваты, выбор станка, Stop и Reset.' },
   regression: { label: 'Регрессия', description: 'Типы изделий, владельцы ошибок, восстановление и воспроизводимые комбинации.' },
   magazines: { label: 'Магазины и палеты', description: 'Две физические палеты, свой магазин возврата, CHANGE и автоматический обмен.' },
@@ -50,6 +52,10 @@ export const stages: Record<string, string> = {
   'general-m1-a': 'Партия М1-A', 'general-reload-m1': 'Перезагрузка М1',
   'general-m2-a': 'Партия М2-A', 'general-reload-m2': 'Перезагрузка М2',
   'general-m1-b': 'Партия М1-B', 'general-m2-b': 'Партия М2-B',
+  'fault-injection': 'Формирование аварии', 'fault-repair': 'Устранение причины',
+  'recovery-reset': 'Общий сброс', 'recovery-home': 'Ручной возврат в HOME',
+  'recovery-production': 'Выпуск после восстановления',
+  'recovery-equipment': 'Подтверждение палет и включение оборудования',
 };
 export const decisions: Record<string, string> = {
   'magazine-take': 'Взять заготовку из магазина', 'magazine-put': 'Уложить деталь в магазин',
@@ -95,6 +101,8 @@ export function runBlockedReason(status: TestStatus, suite: string, robotInterfa
   const mode = status.plc.magazineMode;
   if (mode !== 0 && mode !== 1) return 'Тип магазинов PLC неизвестен';
   if (saved.some(s => s.initialState.magazineMode !== mode)) return 'Тип магазинов сохранённого сценария не совпадает с PLC';
+  if ((['acceptance', 'recovery'].includes(suite) || saved.some(s => s.expectations.testKind === 'fault-recovery'))
+    && (robotInterface !== 'softmotion' || environment !== 'simulation')) return 'Приёмка и восстановление требуют симуляцию SoftMotion';
   if (mode === 1) {
     if (robotInterface !== 'softmotion' || environment !== 'simulation') return 'Двухпалетные сценарии требуют симуляцию SoftMotion';
     if (status.plc.appliedEnvironment !== 1) return 'Сначала примените симуляцию и подготовьте оба двухпалетных магазина';

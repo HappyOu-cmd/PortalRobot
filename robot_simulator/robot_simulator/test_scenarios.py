@@ -541,7 +541,19 @@ def regression_scenarios() -> list[dict[str, Any]]:
     )
 
 
-def fixed_scenarios(suite: str) -> list[dict[str, Any]]:
+def acceptance_scenarios(mode: int = 0) -> list[dict[str, Any]]:
+    """One regression/production/recovery run for the configured magazine type."""
+    from .recovery_scenarios import recovery_scenarios
+
+    # Owner-only/Reset-only cases remain available at their old Regression IDs.
+    # Acceptance replaces them with causal recovery through confirmed production.
+    base = [case for case in regression_scenarios()
+            if case["expectations"]["firstDecision"] not in ("initial-error", "robot-error-reset")]
+    production = general_scenarios()[:2] if mode == 0 else magazine_scenarios()
+    return base + recovery_scenarios() + geometry_scenarios() + production
+
+
+def fixed_scenarios(suite: str, mode: int = 0) -> list[dict[str, Any]]:
     """Single source for the runner and the HMI catalog's fixed case order."""
     factories = {
         "smoke": smoke_scenarios,
@@ -550,6 +562,13 @@ def fixed_scenarios(suite: str) -> list[dict[str, Any]]:
         "geometry": geometry_scenarios,
         "magazines": magazine_scenarios,
     }
+    if suite == "recovery":
+        from .recovery_scenarios import recovery_scenarios
+        return recovery_scenarios()
+    if suite == "acceptance":
+        if mode not in (0, 1):
+            raise ValueError("unknown magazineMode")
+        return acceptance_scenarios(mode)
     try:
         return factories[suite]()
     except KeyError as error:

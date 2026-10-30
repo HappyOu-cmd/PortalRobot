@@ -64,7 +64,7 @@ export function TestWorkbench({ simulationFactor, simulationFactorApplied, simul
   const [catalog, setCatalog] = useState<Catalog>({});
   const [selected, setSelected] = useState<number[]>([]);
   const [source, setSource] = useState('builtin');
-  const [suite, setSuite] = useState('smoke');
+  const [suite, setSuite] = useState('acceptance');
   const [fixedCase, setFixedCase] = useState(0);
   const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
   const [run, setRun] = useState<Run | null>(null);
@@ -81,14 +81,16 @@ export function TestWorkbench({ simulationFactor, simulationFactorApplied, simul
   const [connectionError, setConnectionError] = useState('');
   const [notice, setNotice] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
+  useEffect(() => { setFixedCase(0); }, [status.plc?.magazineMode]);
   useEffect(() => { setFactor(simulationFactor); }, [simulationFactor]);
   useEffect(() => {
     let cancelled = false;
+    setCatalog({});
     Promise.all([api<Scenario[]>('/api/test-scenarios'), api<Catalog>('/api/test-catalog')]).then(([saved, entries]) => {
       if (!cancelled) { setScenarios(saved.map(normalizeScenario)); setCatalog(entries); }
     }).catch(e => { if (!cancelled) setError(String(e)); });
     return () => { cancelled = true; };
-  }, [refreshKey]);
+  }, [refreshKey, status.plc?.magazineMode]);
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;

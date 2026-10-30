@@ -319,6 +319,7 @@ Gateway дополнительно формирует из `lrActualX/Y/Z` ед�
 
 ## Документы
 
+- [Аудит тестов, покрытие аварий и единая приёмка](31-test-coverage-and-acceptance.md)
 - [Элементы визуализации](01-visual-elements.md)
 - [OPC UA](02-opc-ua.md)
 - [Аварии и предупреждения](03-alarms-warnings.md)

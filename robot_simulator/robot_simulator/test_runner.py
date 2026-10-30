@@ -18,6 +18,7 @@ from .control_api import (
     CONTROL_SERVICE_NAME,
     RobotControlClient,
 )
+from .recovery_runner import RecoveryRunnerMixin
 from .test_scenarios import (
     expected_error_owner,
     expected_first_decision,
@@ -36,7 +37,7 @@ class RecoveryError(RuntimeError):
     """The cell is not clean enough to execute another independent test case."""
 
 
-class GatewayRunner:
+class GatewayRunner(RecoveryRunnerMixin):
     def __init__(self) -> None:
         self.run_id = os.environ["PORTAL_TEST_RUN_ID"]
         self.token = os.environ["PORTAL_TEST_RUN_TOKEN"]
@@ -179,17 +180,30 @@ class GatewayRunner:
     @staticmethod
     def suite(config: dict[str, Any]) -> list[dict[str, Any]]:
         suite = str(config.get("suite", "smoke")).lower()
-        if suite not in {"smoke", "regression", "general", "generated", "geometry", "magazines"}:
+        if suite not in {"smoke", "regression", "general", "generated", "geometry", "magazines", "acceptance", "recovery"}:
             raise ValueError(f"Неизвестный набор тестов: {suite}")
         mode = int(config.get("magazineMode", 1 if suite == "magazines" else 0))
         if suite == "general" and mode != 0:
             raise ValueError("General requires static magazines")
         if suite == "magazines" and mode != 1:
             raise ValueError("Pallet tests require twin magazines")
+        recovery = suite in ("acceptance", "recovery") or any(
+            c.get("expectations", {}).get("testKind") == "fault-recovery" for c in config.get("scenarios", []))
+        if recovery and (config.get("environment", "simulation") != "simulation"
+                         or config.get("robotInterface", "softmotion") != "softmotion"):
+            raise ValueError("Acceptance/recovery requires SoftMotion SIMULATION")
         fixed_case_index = config.get("fixedCaseIndex")
         if fixed_case_index is not None and config.get("scenarios"):
             raise ValueError("Нельзя одновременно выбрать штатный тест и сохранённые сценарии")
         if config.get("scenarios"):
+            for case in config["scenarios"]:
+                if case.get("expectations", {}).get("testKind") == "fault-recovery":
+                    state = case.get("initialState", {})
+                    if (state.get("typeCount") != 1
+                            or any(g.get("content") for g in state.get("grippers", []))
+                            or any(state.get("geometry", {}).get("enabled", []))
+                            or any(state.get("geometry", {}).get("calls", []))):
+                        raise ValueError("Recovery supports one product type, initially empty grippers and disabled GK")
             if any(c.get("expectations", {}).get("testKind") == "general-four-batches" for c in config["scenarios"]):
                 if mode != 0 or config.get("environment", "simulation") != "simulation":
                     raise ValueError("Saved general cycle requires static magazines and simulation")
@@ -203,7 +217,7 @@ class GatewayRunner:
             if fixed_case_index is not None:
                 raise ValueError("Generated не содержит фиксированного теста")
             return [for_magazine_mode(c, int(config.get("magazineMode", 0))) for c in generated_scenarios(int(config.get("seed", 1)), int(config.get("count", 100)))]
-        cases = [for_magazine_mode(c, int(config.get("magazineMode", 1 if suite == "magazines" else 0))) for c in fixed_scenarios(suite)]
+        cases = [for_magazine_mode(c, mode) for c in fixed_scenarios(suite, mode)]
         if fixed_case_index is None:
             return cases
         if isinstance(fixed_case_index, bool) or not isinstance(fixed_case_index, int):
@@ -654,7 +668,9 @@ class GatewayRunner:
             "PLC did not enter automatic mode",
         )
 
-    async def start_automatic_cycle(self, socket: Any) -> None:
+    async def start_automatic_cycle(
+        self, socket: Any, *, terminal_ack: Callable[[dict[str, Any]], bool] | None = None,
+    ) -> None:
         """Start only when allowed and wait until PLC runs or asks a prestart question."""
         await self.enter_automatic_mode(socket)
         try:
@@ -673,7 +689,8 @@ class GatewayRunner:
         await self.wait_value(
             socket,
             lambda values: bool(values.get("stCellStatus.xRunning", False))
-            or bool(values.get("stCellStatus.xOperatorPromptActive", False)),
+            or bool(values.get("stCellStatus.xOperatorPromptActive", False))
+            or (terminal_ack is not None and terminal_ack(values)),
             10.0,
             "PLC did not acknowledge automatic cycle start",
         )
@@ -1546,6 +1563,7 @@ class GatewayRunner:
 
     async def run_case(self, socket: Any, case: dict[str, Any], index: int, total: int) -> None:
         self.case_checks = []
+        self._recovery_stage = None
         await self.send(socket, {
             "type": "test-progress", "caseIndex": index, "caseCount": total,
             "stage": "load", "name": case["name"],
@@ -1589,6 +1607,9 @@ class GatewayRunner:
         except TimeoutError as error:
             raise AssertionError("; ".join(self.setup_differences(case["initialState"], self.values)[:8])) from error
         self.check("Начальное состояние по слотам и станкам", True, True)
+        if case.get("expectations", {}).get("testKind") == "fault-recovery":
+            await self.run_fault_recovery(socket, case, index, total, initial_counts)
+            return
         expected = str(
             case.get("expectations", {}).get("firstDecision")
             or expected_first_decision(case["initialState"])
@@ -1919,7 +1940,7 @@ class GatewayRunner:
             if self.values.get("stTestObservability.uiSchemaVersion") != 3:
                 raise RuntimeError("PLC test schema v3 is required before any command")
             cases = self.suite(config)
-            fail_fast = str(config.get("suite", "smoke")).lower() == "general"
+            fail_fast = str(config.get("suite", "smoke")).lower() in ("general", "acceptance", "recovery")
             self._initial_modbus_mode = bool(self.values.get("xModbusMode", False))
             self._initial_environment = int(self.values.get("uiTestEnvironmentApplied", 0))
             self._initial_speed = int(self.values.get("uiTestSpeedProfileApplied", 0))
@@ -1954,7 +1975,7 @@ class GatewayRunner:
                         except Exception as error:
                             await self.send(socket, {
                                 "type": "test-case-result", "status": "FAIL", "caseIndex": index,
-                                "name": case["name"], "stage": "execute", "reason": str(error),
+                                "name": case["name"], "stage": self._recovery_stage or "execute", "reason": str(error),
                                 "snapshot": self.values, "scenario": case, "diagnostics": self.case_diagnostics(case),
                                 "durationMs": round((time.time() - started) * 1000),
                             })

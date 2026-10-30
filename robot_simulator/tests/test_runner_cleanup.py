@@ -64,6 +64,7 @@ def test_fixed_catalog_and_runner_use_the_same_case_order() -> None:
     entries = catalog()
     assert {suite: len(cases) for suite, cases in entries.items()} == {
         "smoke": 12, "regression": 75, "general": 8, "geometry": 8, "magazines": 8,
+        "acceptance": 143, "recovery": 66,
     }
     for suite, cases in entries.items():
         source = fixed_scenarios(suite)
@@ -321,6 +322,30 @@ def test_automatic_start_accepts_plc_prestart_prompt_before_running() -> None:
         ("cell.start", {}),
     ]
     assert runner.values["stCellStatus.xOperatorPromptActive"] is True
+
+
+@pytest.mark.parametrize("alarm_code", [21, 22])
+def test_fast_fault_start_requires_the_exact_new_terminal_event_instead_of_observed_busy(alarm_code):
+    class Runner(RecordingRunner):
+        async def wait_value(self, socket, predicate, timeout, label):
+            if not predicate(self.values):
+                self.values.update({"astAlarmEvent[1].udiSequence": 17,
+                                    "astAlarmEvent[1].uiCode": alarm_code})
+            if not predicate(self.values):
+                raise TimeoutError(label)
+
+    runner = Runner()
+    runner.values.update({"stCellStatus.xStartCheckAutomaticMode": True,
+                          "stCellStatus.xStartAllowed": True, "stCellStatus.xRunning": False,
+                          "astAlarmEvent[1].udiSequence": 16, "astAlarmEvent[1].uiCode": 21})
+    def exact_event(values):
+        return values["astAlarmEvent[1].udiSequence"] == 17 and values["astAlarmEvent[1].uiCode"] == 21
+    if alarm_code == 21:
+        asyncio.run(runner.start_automatic_cycle(None, terminal_ack=exact_event))
+    else:
+        with pytest.raises(TimeoutError):
+            asyncio.run(runner.start_automatic_cycle(None, terminal_ack=exact_event))
+    assert runner.commands == [("cell.manual", {"value": False}), ("cell.start", {})]
 
 
 def test_manual_mode_stops_running_cell_before_requesting_mode() -> None:
