@@ -7,6 +7,16 @@ const capture = (index = 13): PlcPointEditorCommand => ({ command: 'robot.point.
 const point = (x = 8381.11) => ({ x, y: -76.9032, z: 1234.8308, magazineSafeZ: -300, magazineChangeZ: 0, speedFactor: 1, configured: false });
 const reply = (sequence = 8, index = 13) => ({ sequence, index, command: 'robot.point.capture' as const, point: point() });
 
+test('magazine invalidation completes only with its own confirmed unconfigured result', async () => {
+  const requests = new PointEditorRequests();
+  const command: PlcPointEditorCommand = { command: 'robot.point.invalidateMagazine', index: 11, calibrationMethod: 3 };
+  const pending = requests.run('invalidate-11', command, () => {});
+  requests.receive({ requestId: 'invalidate-11', ok: true, pointEditor: { sequence: 10, index: 11, command: command.command, point: point() } });
+  const result = await pending;
+  assert.equal(result.command, 'robot.point.invalidateMagazine');
+  assert.equal(result.point.configured, false);
+});
+
 test('CAPTURE waits for its own complete reply while old ACKs and XYZ telemetry arrive', async () => {
   const requests = new PointEditorRequests();
   let draft = point(3030.9016);

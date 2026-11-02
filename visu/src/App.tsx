@@ -34,6 +34,7 @@ import { ControlCabinetManualControl } from './components/ControlCabinetManualCo
 import { MpgManualControl } from './components/MpgManualControl';
 import { EquipmentLoadPanel } from './components/EquipmentLoadPanel';
 import { LatestEventNotification } from './components/LatestEventNotification';
+import { AlarmEventMessage } from './components/AlarmEventMessage';
 import { RobotExtendedPanel } from './components/RobotExtendedPanel';
 import { RobotTelemetryPanel } from './components/RobotTelemetryPanel';
 import type { PlcPointEditorCommand } from './plc/pointEditorRequests';
@@ -120,10 +121,11 @@ import {
   type CellLogEvent, type PlcAlarmEvent, type PlcAlarmSource, type PlcCommand, type PlcConnectionInfo, type PlcRuntimeInfo, type RuntimeDiagnostics,
 } from './plc/client';
 import {
-  alarmEventIdentity, controllerAlarmEvents, hmiAlarmEffectLabel, hmiAlarmSourceLabel, hasResettablePlcWarnings,
+  alarmEventIdentity, controllerAlarmEvents, hmiAlarmSourceLabel, hasResettablePlcWarnings,
   selectLatestActiveEvent, selectNewestReceivedEvent, type HmiAlarmEvent,
 } from './plc/hmiAlarms';
 import { pointBackupApi } from './points/client';
+import { MagazineCalibrationSettings } from './components/magazine/MagazineCalibrationSettings';
 import { DEMO_OPERATOR } from './statistics/demoData';
 
 type Page = 'monitoring' | 'machines' | 'robot' | 'magazine' | 'geometry' | 'manual' | 'injections' | 'diagnostics' | 'events' | 'alarms' | 'tests' | 'settings' | 'cell-settings' | 'simulation-settings' | 'users' | 'statistics' | 'statistics-settings' | 'admin' | 'cyclogram';
@@ -481,8 +483,9 @@ const INITIAL_RUNTIME: PlcRuntimeInfo = {
     gripper2OpenAllowed: false, gripper2CloseAllowed: false, rotateToBlankAllowed: false, rotateToDetailAllowed: false,
     commandBusy: false, activeAction: 0, activePoint: 0, rejectCode: 1, rejectReason: 'Ожидание данных PLC',
   },
+  magazineCalibration: [1, 2].map(() => ({ method: 1 as const, changeAllowed: false, captureAllowed: false, saveAllowed: false, referenceCaptureAllowed: false, referenceSaveAllowed: false, moveAllowed: [false, false, false], ready: false, reason: 1 })) as PlcRuntimeInfo['magazineCalibration'],
   pointEditor: {
-    points: Array.from({ length: 14 }, (_, offset) => ({
+    points: Array.from({ length: 18 }, (_, offset) => ({
       index: offset + 1, pointId: 0, x: 0, y: 0, z: 0, magazineSafeZ: 0, magazineChangeZ: 0, speedFactor: 0, configured: false,
     })),
     captureAllowed: false, saveAllowed: false, tableReady: false,
@@ -1325,7 +1328,7 @@ function AlarmScreen({ events, online, resetAllowed, safetyRelayResetAllowed, sa
       {filteredEvents.length === 0
         ? <div className="alarm-empty"><CheckCircle2 /><strong>{events.length === 0 ? 'Событий нет' : 'Событий выбранного типа нет'}</strong><span>{events.length === 0 ? 'Новые аварии и предупреждения появятся здесь.' : 'Выберите другой фильтр журнала.'}</span></div>
         : filteredEvents.map((event) => <article className={`alarm-row ${event.severity}${event.active ? ' active' : ''}`} key={event.id}>
-          <span className="alarm-event-text">{event.severity === 'alarm' ? <TriangleAlert /> : <AlertCircle />}<b>{event.text}</b><small>{hmiAlarmEffectLabel(event)}</small></span>
+          <AlarmEventMessage event={event} />
           <span>{hmiAlarmSourceLabel(event)}</span>
           <span>{formatDate(event.reportedAt)}</span>
           <span>{formatTime(event.reportedAt)}</span>
@@ -1942,7 +1945,7 @@ function SettingsPanel({ layout, setLayout, magazineMode, fontPreset, onFontPres
         </div>
       </section>}
       {activeTopic === 'equipment' && selectedEquipmentTarget.kind === 'magazine' && magazineMode === 0 && <section><h3>Статичный {selectedEquipmentTarget.label} · 12 × 10</h3>
-        <p>Одна неподвижно установленная кассета с единой матрицей на 120 изделий. Диаметр и глубина гнёзд автоматически подстраиваются под геометрию изделия; приводов у магазина нет.</p>
+        <p>Одна неподвижно установленная кассета с единой матрицей на 120 изделий. Диаметр и глубина слотов автоматически подстраиваются под геометрию изделия; приводов у магазина нет.</p>
         <div className="field-grid">
           <NumberField label="Позиция X" labelPosition="above" value={layout.staticMagazines[selectedEquipmentTarget.index].position.x} min={0} max={15000} onChange={(v) => change((d) => { d.staticMagazines[selectedEquipmentTarget.index].position.x = v; })} />
           <NumberField label="Позиция Y" labelPosition="above" value={layout.staticMagazines[selectedEquipmentTarget.index].position.y} min={0} max={5000} onChange={(v) => change((d) => { d.staticMagazines[selectedEquipmentTarget.index].position.y = v; })} />
@@ -3401,7 +3404,7 @@ export function App() {
         onNextEasterEgg={showNextEasterEgg}
         onClose={() => setPage('monitoring')}
       /></AnimatedPresence>
-      <AnimatedPresence open={page === 'cell-settings'}><CellSettingsPanel geometryControl={<GeometryCellSettings snapshot={cellState.geometryControl} online={usePlcData} onCommand={sendPlcCommand} />} geometryTimeouts={<GeometryCellSettings snapshot={cellState.geometryControl} online={usePlcData} onCommand={sendPlcCommand} timeouts />} magazineControl={<section><MagazineModeSwitch mode={cellState.magazineMode ?? 1} allowed={!plcDataEnabled || !!cellState.magazineModeAllowed} onChange={changeMagazineMode} /><button onClick={() => setPage('magazine')}>Управление магазинами и восстановление</button></section>} online={usePlcData} modbusMode={plcRuntime.modbusMode} modbus={plcRuntime.robotModbus} testEnvironment={plcRuntime.testEnvironment} configurationValid={plcRuntime.multiTypeConfigurationValid} typeCount={plcRuntime.multiTypeCount} typeCountAllowed={plcRuntime.multiTypeCountAllowed} magazineConfigAllowed={plcRuntime.multiTypeMagazineConfigAllowed} settings={plcRuntime.cellSettings} accelerationEnabled={simulationAccelerationEnabled} accelerationActive={simulationAccelerationActive} accelerationAllowed={simulationControlsAllowed} onModeChange={changeRobotControlMode} onTestEnvironmentChange={(value) => { sendPlcCommand({ command: 'test.environment.set', value }); }} onTypeCountChange={(value) => sendPlcCommand({ command: 'multi.typeCount', value })} onAutoDistribute={() => sendPlcCommand({ command: 'multi.autoDistribute' })} onModbusSettingChange={changeModbusSetting} onModbusApply={applyModbusSettings} onSettingChange={changeCellSetting} onAccelerationChange={changeSimulationAcceleration} onStatisticsSettings={() => setPage('statistics-settings')} showStatisticsSettings={authUser?.role === 'admin'} onClose={() => setPage('monitoring')} /></AnimatedPresence>
+      <AnimatedPresence open={page === 'cell-settings'}><CellSettingsPanel geometryControl={<GeometryCellSettings snapshot={cellState.geometryControl} online={usePlcData} onCommand={sendPlcCommand} />} geometryTimeouts={<GeometryCellSettings snapshot={cellState.geometryControl} online={usePlcData} onCommand={sendPlcCommand} timeouts />} magazineControl={<section><MagazineModeSwitch mode={cellState.magazineMode ?? 1} allowed={!plcDataEnabled || !!cellState.magazineModeAllowed} onChange={changeMagazineMode} /><MagazineCalibrationSettings calibration={plcRuntime.magazineCalibration} online={usePlcData} onChange={(magazine, method) => sendPlcCommand({ command: magazine === 1 ? 'cell.settings.magazine1CalibrationMethod' : 'cell.settings.magazine2CalibrationMethod', value: method })} /><button onClick={() => setPage('magazine')}>Управление магазинами и восстановление</button></section>} online={usePlcData} modbusMode={plcRuntime.modbusMode} modbus={plcRuntime.robotModbus} testEnvironment={plcRuntime.testEnvironment} configurationValid={plcRuntime.multiTypeConfigurationValid} typeCount={plcRuntime.multiTypeCount} typeCountAllowed={plcRuntime.multiTypeCountAllowed} magazineConfigAllowed={plcRuntime.multiTypeMagazineConfigAllowed} settings={plcRuntime.cellSettings} accelerationEnabled={simulationAccelerationEnabled} accelerationActive={simulationAccelerationActive} accelerationAllowed={simulationControlsAllowed} onModeChange={changeRobotControlMode} onTestEnvironmentChange={(value) => { sendPlcCommand({ command: 'test.environment.set', value }); }} onTypeCountChange={(value) => sendPlcCommand({ command: 'multi.typeCount', value })} onAutoDistribute={() => sendPlcCommand({ command: 'multi.autoDistribute' })} onModbusSettingChange={changeModbusSetting} onModbusApply={applyModbusSettings} onSettingChange={changeCellSetting} onAccelerationChange={changeSimulationAcceleration} onStatisticsSettings={() => setPage('statistics-settings')} showStatisticsSettings={authUser?.role === 'admin'} onClose={() => setPage('monitoring')} /></AnimatedPresence>
       <AnimatedPresence open={page === 'manual'}><ManualPanel state={cellState} layout={layout} setState={setCellState} machineIndex={manualMachine} setMachineIndex={setManualMachine} magazineIndex={selectedMagazine} setMagazineIndex={setSelectedMagazine} onClose={() => setPage('monitoring')} plcDataEnabled={plcDataEnabled} onPlcDataChange={changePlcDataSource} onMagazineModeChange={changeMagazineMode} twoPalletControllers={twoPalletControllers} onTwoPalletFocus={(index) => setTwoPalletFocusRequest((current) => ({ revision: current.revision + 1, index }))} /></AnimatedPresence>
       <AnimatedPresence open={page === 'injections'}><FaultInjectionPanel values={faultSimulationValues} online={isPlcOnline} send={sendPlcCommand} onClose={() => setPage('monitoring')} /></AnimatedPresence>
       <AnimatedPresence open={page === 'simulation-settings'}><SimulationSettingsPanel values={faultSimulationValues} online={isPlcOnline} send={sendPlcCommand} onClose={() => setPage('monitoring')} /></AnimatedPresence>

@@ -105,7 +105,7 @@ export function TestScenarioEditor({ editor, setEditor, onSave, onRemove, busy }
       <section className="tw-editor-section"><h3>Геометрический контроль</h3>
         <div className="tw-editor-row">{editor.initialState.geometry.enabled.map((enabled, i) => <label className="tw-check" key={i}><input type="checkbox" checked={enabled} onChange={e => editState(s => { s.geometry.enabled[i] = e.target.checked; })} />ГК {i + 1} включён</label>)}</div>
         <div className="tw-editor-row">{editor.initialState.geometry.calls.map((called, i) => <label className="tw-check" key={i}><input type="checkbox" checked={called} onChange={e => editState(s => { s.geometry.calls[i] = e.target.checked; })} />Вызов со станка {i + 1}</label>)}</div>
-        <label className="tw-check"><input type="checkbox" checked={editor.initialState.geometry.waitWhenOccupied} onChange={e => editState(s => { s.geometry.waitWhenOccupied = e.target.checked; })} />Ждать свободный ГК; при снятой отметке — обход в магазин</label>
+        <label className="tw-check"><input type="checkbox" checked={editor.initialState.geometry.waitWhenOccupied} onChange={e => editState(s => { s.geometry.waitWhenOccupied = e.target.checked; })} />После выгрузки ждать свободный ГК; при снятой отметке — обход в магазин</label>
       </section>
       {editor.initialState.magazines.map((_, index) => <MagazineEditor key={`${editor.initialState.magazineMode}-${index}`} scenario={editor} index={index} editState={editState} />)}
       <section className="tw-editor-section"><h3>Ожидаемый результат</h3>

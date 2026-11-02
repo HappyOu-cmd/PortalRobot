@@ -40,6 +40,7 @@ VAR_INPUT
 	FaultRequest  : ST_MAGAZINE_FAULT_REQUEST; // Единый контракт диагностической инъекции
 END_VAR
 VAR_OUTPUT
+    xInventoryUpdated : BOOL; // Только записи содержимого этим FB в текущем скане
 	Command : ST_ROBOT_COMMAND; // Текущая пошаговая команда роботу
 	Status  : ST_MAGAZINE_STATUS; // Рабочие статусы магазина
 	Diag    : ST_MAGAZINE_DIAG; // Состояние автомата магазина
@@ -52,6 +53,12 @@ VAR_IN_OUT
 	lrPitchY : LREAL; // Общий фактический шаг слотов по Y
 END_VAR
 VAR
+    xInventorySummaryInitialized : BOOL;
+    xInventorySummaryDirty : BOOL;
+    iInventorySummarySlotCount : SINT;
+    uiInventorySummaryTypeCount : UINT;
+    iInventoryFirstBlank : SINT;
+    iInventoryFirstFree : SINT;
 	eGrantedOperation : E_MAGAZINE_OPERATION; // Доступная операция магазина
 	eActualOperation  : E_MAGAZINE_OPERATION; // Выполняемая операция магазина
 
@@ -145,6 +152,8 @@ VAR CONSTANT
 END_VAR
 
 // --- BEGIN IMPLEMENTATION ---
+
+xInventoryUpdated := FALSE;
 
 // Инвентарь загружает владелец банков RunTwoPallet; здесь сбрасывается только автомат.
 IF NOT xStartupInitialized THEN
@@ -278,6 +287,8 @@ END_IF;
 IF rtClear.Q AND Status.xEditAllowed THEN
 	xFinishedLatched := FALSE;
 	FOR iInventoryIndex := 1 TO GVL_CELL_SETTINGS.MagazineSlots DO
+		xInventoryUpdated := TRUE;
+		xInventorySummaryDirty := TRUE;
 		stInventory.aSlots[iInventoryIndex].xInPosition := FALSE;
 		stInventory.aSlots[iInventoryIndex].eDetailType := E_DETAIL_TYPE.NONE;
 		stInventory.aSlots[iInventoryIndex].uiProductType := UINT#0;
@@ -287,6 +298,8 @@ AND (iActiveSlotCount > SINT#0)
 AND Status.xEditAllowed THEN
 	xFinishedLatched := FALSE;
 	FOR iInventoryIndex := 1 TO GVL_CELL_SETTINGS.MagazineSlots DO
+		xInventoryUpdated := TRUE;
+		xInventorySummaryDirty := TRUE;
 		stInventory.aSlots[iInventoryIndex].xInPosition := iInventoryIndex <= iActiveSlotCount;
 		IF iInventoryIndex <= iActiveSlotCount THEN
 			stInventory.aSlots[iInventoryIndex].eDetailType := E_DETAIL_TYPE.BLANK;
@@ -307,14 +320,20 @@ AND ((uiHmiEditDetailType = UINT#0)
 	iInventoryIndex := UINT_TO_SINT(uiHmiEditSlot);
 	CASE uiHmiEditDetailType OF
 		UINT#0:
+			xInventoryUpdated := TRUE;
+			xInventorySummaryDirty := TRUE;
 			stInventory.aSlots[iInventoryIndex].xInPosition := FALSE;
 			stInventory.aSlots[iInventoryIndex].eDetailType := E_DETAIL_TYPE.NONE;
 			stInventory.aSlots[iInventoryIndex].uiProductType := UINT#0;
 		UINT#1:
+			xInventoryUpdated := TRUE;
+			xInventorySummaryDirty := TRUE;
 			stInventory.aSlots[iInventoryIndex].xInPosition := TRUE;
 			stInventory.aSlots[iInventoryIndex].eDetailType := E_DETAIL_TYPE.BLANK;
 			stInventory.aSlots[iInventoryIndex].uiProductType := uiHmiEditProductType;
 		UINT#2:
+			xInventoryUpdated := TRUE;
+			xInventorySummaryDirty := TRUE;
 			stInventory.aSlots[iInventoryIndex].xInPosition := TRUE;
 			stInventory.aSlots[iInventoryIndex].eDetailType := E_DETAIL_TYPE.DETAIL;
 			stInventory.aSlots[iInventoryIndex].uiProductType := uiHmiEditProductType;
@@ -327,10 +346,14 @@ AND (uiHmiEditSlot <= SINT_TO_UINT(iActiveSlotCount)) THEN
 	iInventoryIndex := UINT_TO_SINT(uiHmiEditSlot);
 	IF NOT stInventory.aSlots[iInventoryIndex].xInPosition
 	OR (stInventory.aSlots[iInventoryIndex].eDetailType = E_DETAIL_TYPE.NONE) THEN
+		xInventoryUpdated := TRUE;
+		xInventorySummaryDirty := TRUE;
 		stInventory.aSlots[iInventoryIndex].xInPosition := TRUE;
 		stInventory.aSlots[iInventoryIndex].eDetailType := E_DETAIL_TYPE.BLANK;
 		stInventory.aSlots[iInventoryIndex].uiProductType := auiSlotType[iInventoryIndex];
 	ELSE
+		xInventoryUpdated := TRUE;
+		xInventorySummaryDirty := TRUE;
 		stInventory.aSlots[iInventoryIndex].xInPosition := FALSE;
 		stInventory.aSlots[iInventoryIndex].eDetailType := E_DETAIL_TYPE.NONE;
 		stInventory.aSlots[iInventoryIndex].uiProductType := UINT#0;
@@ -339,15 +362,16 @@ END_IF;
 
 // При смене банка проверка завершения использует его текущую карту типов,
 // а не свободные слоты прежней палеты с прошлого скана.
-UpdateTypeStatus(stMagazineInventory := stInventory);
-
-IF iActiveSlotCount > SINT#0 THEN
-	Status.iCurrentBlank := FindBlank(stDetail := stInventory.aSlots, iSlotCount := iActiveSlotCount);
-	Status.iCurrentFreeSlot := FindFreeSlot(stDetail := stInventory.aSlots, iSlotCount := iActiveSlotCount);
-ELSE
-	Status.iCurrentBlank := SINT#0;
-	Status.iCurrentFreeSlot := SINT#0;
+IF NOT xInventorySummaryInitialized OR xInventoryChanged OR xTestInitialize
+OR (iInventorySummarySlotCount <> iActiveSlotCount)
+OR (uiInventorySummaryTypeCount <> uiTypeCount) THEN
+    xInventorySummaryDirty := TRUE;
 END_IF;
+IF xInventorySummaryDirty THEN
+    UpdateTypeStatus(stMagazineInventory := stInventory);
+END_IF;
+Status.iCurrentBlank := iInventoryFirstBlank;
+Status.iCurrentFreeSlot := iInventoryFirstFree;
 
 Status.xOutBlank := Status.iCurrentBlank = SINT#0;
 Status.xOutFreeSlot := Status.iCurrentFreeSlot = SINT#0;
@@ -1041,6 +1065,8 @@ CASE Diag.eState OF
 			CASE eActualOperation OF
 				E_MAGAZINE_OPERATION.TAKE:
 					IF (uiStep = UINT#3) AND NOT xTakeSlotCommitted THEN
+						xInventoryUpdated := TRUE;
+						xInventorySummaryDirty := TRUE;
 						stInventory.aSlots[iTakeSlot].xInPosition := FALSE;
 						stInventory.aSlots[iTakeSlot].eDetailType := E_DETAIL_TYPE.NONE;
 						stInventory.aSlots[iTakeSlot].uiProductType := UINT#0;
@@ -1049,6 +1075,8 @@ CASE Diag.eState OF
 
 				E_MAGAZINE_OPERATION.PUT:
 					IF (uiStep = UINT#3) AND NOT xPutSlotCommitted THEN
+						xInventoryUpdated := TRUE;
+						xInventorySummaryDirty := TRUE;
 						stInventory.aSlots[iPutSlot].xInPosition := TRUE;
 						stInventory.aSlots[iPutSlot].eDetailType := E_DETAIL_TYPE.DETAIL;
 						stInventory.aSlots[iPutSlot].uiProductType := uiPutProductType;
@@ -1060,6 +1088,8 @@ CASE Diag.eState OF
 					IF (((uiStep = UINT#3) AND NOT xChangeTakeFirst)
 						OR ((uiStep = UINT#8) AND xChangeTakeFirst))
 					AND NOT xPutSlotCommitted THEN
+						xInventoryUpdated := TRUE;
+						xInventorySummaryDirty := TRUE;
 						stInventory.aSlots[iPutSlot].xInPosition := TRUE;
 						stInventory.aSlots[iPutSlot].eDetailType := E_DETAIL_TYPE.DETAIL;
 						stInventory.aSlots[iPutSlot].uiProductType := uiPutProductType;
@@ -1068,6 +1098,8 @@ CASE Diag.eState OF
 					ELSIF (((uiStep = UINT#8) AND NOT xChangeTakeFirst)
 						OR ((uiStep = UINT#3) AND xChangeTakeFirst))
 					AND NOT xTakeSlotCommitted THEN
+						xInventoryUpdated := TRUE;
+						xInventorySummaryDirty := TRUE;
 						stInventory.aSlots[iTakeSlot].xInPosition := FALSE;
 						stInventory.aSlots[iTakeSlot].eDetailType := E_DETAIL_TYPE.NONE;
 						stInventory.aSlots[iTakeSlot].uiProductType := UINT#0;
@@ -1078,6 +1110,8 @@ CASE Diag.eState OF
 					IF (uiStep = UINT#3) AND NOT xPutSlotCommitted THEN
 						xFinishedLatched := FALSE;
 						xFinishedCondition := FALSE;
+						xInventoryUpdated := TRUE;
+						xInventorySummaryDirty := TRUE;
 						stInventory.aSlots[iPutSlot].xInPosition := TRUE;
 						stInventory.aSlots[iPutSlot].eDetailType := E_DETAIL_TYPE.BLANK;
 						stInventory.aSlots[iPutSlot].uiProductType := uiPutProductType;
@@ -1109,6 +1143,8 @@ CASE Diag.eState OF
 			CASE eActualOperation OF
 				E_MAGAZINE_OPERATION.TAKE:
 					IF NOT xTakeSlotCommitted THEN
+						xInventoryUpdated := TRUE;
+						xInventorySummaryDirty := TRUE;
 						stInventory.aSlots[iTakeSlot].xInPosition := FALSE;
 						stInventory.aSlots[iTakeSlot].eDetailType := E_DETAIL_TYPE.NONE;
 						stInventory.aSlots[iTakeSlot].uiProductType := UINT#0;
@@ -1116,6 +1152,8 @@ CASE Diag.eState OF
 					END_IF;
 				E_MAGAZINE_OPERATION.PUT:
 					IF NOT xPutSlotCommitted THEN
+						xInventoryUpdated := TRUE;
+						xInventorySummaryDirty := TRUE;
 						stInventory.aSlots[iPutSlot].xInPosition := TRUE;
 						stInventory.aSlots[iPutSlot].eDetailType := E_DETAIL_TYPE.DETAIL;
 						stInventory.aSlots[iPutSlot].uiProductType := uiPutProductType;
@@ -1127,6 +1165,8 @@ CASE Diag.eState OF
 					// подтверждённую укладку нельзя затереть страховочной фиксацией.
 					IF NOT xTakeSlotCommitted THEN
 						IF NOT xChangeTakeFirst OR NOT xPutSlotCommitted THEN
+							xInventoryUpdated := TRUE;
+							xInventorySummaryDirty := TRUE;
 							stInventory.aSlots[iTakeSlot].xInPosition := FALSE;
 							stInventory.aSlots[iTakeSlot].eDetailType := E_DETAIL_TYPE.NONE;
 							stInventory.aSlots[iTakeSlot].uiProductType := UINT#0;
@@ -1134,6 +1174,8 @@ CASE Diag.eState OF
 						xTakeSlotCommitted := TRUE;
 					END_IF;
 					IF NOT xPutSlotCommitted THEN
+						xInventoryUpdated := TRUE;
+						xInventorySummaryDirty := TRUE;
 						stInventory.aSlots[iPutSlot].xInPosition := TRUE;
 						stInventory.aSlots[iPutSlot].eDetailType := E_DETAIL_TYPE.DETAIL;
 						stInventory.aSlots[iPutSlot].uiProductType := uiPutProductType;
@@ -1144,6 +1186,8 @@ CASE Diag.eState OF
 					IF NOT xPutSlotCommitted THEN
 						xFinishedLatched := FALSE;
 						xFinishedCondition := FALSE;
+						xInventoryUpdated := TRUE;
+						xInventorySummaryDirty := TRUE;
 						stInventory.aSlots[iPutSlot].xInPosition := TRUE;
 						stInventory.aSlots[iPutSlot].eDetailType := E_DETAIL_TYPE.BLANK;
 						stInventory.aSlots[iPutSlot].uiProductType := uiPutProductType;
@@ -1260,5 +1304,8 @@ FaultStatus.xResetAllowed := Status.xError
 	AND NOT xGlobalError
 	AND xRobotResetDependencyReady;
 
-// Сводка публикуется владельцем содержимого после всех изменений слотов.
-UpdateTypeStatus(stMagazineInventory := stInventory);
+// Подтверждение захвата/укладки обновляет сводку в том же скане.
+// В ожидании повторный проход не нужен; выбор операции сохраняет прежний порядок.
+IF xInventorySummaryDirty THEN
+    UpdateTypeStatus(stMagazineInventory := stInventory);
+END_IF;

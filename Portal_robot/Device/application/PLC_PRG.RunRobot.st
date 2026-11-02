@@ -47,6 +47,12 @@ IF GVL_HMI.uiRobotManualAction > UINT#0 THEN
 		20: eHmiRobotStatusPoint := E_POINT_NAME.GEOMETRY_2_SAFE;
 		21: eHmiRobotStatusPoint := E_POINT_NAME.GEOMETRY_2_CHANGE;
 		22: eHmiRobotStatusPoint := E_POINT_NAME.GEOMETRY_2_PLACE;
+		23: eHmiRobotStatusPoint := E_POINT_NAME.MAGAZINE_1_DETAIL;
+		24: eHmiRobotStatusPoint := E_POINT_NAME.MAGAZINE_1_AXIS_X;
+		25: eHmiRobotStatusPoint := E_POINT_NAME.MAGAZINE_1_AXIS_Y;
+		26: eHmiRobotStatusPoint := E_POINT_NAME.MAGAZINE_2_DETAIL;
+		27: eHmiRobotStatusPoint := E_POINT_NAME.MAGAZINE_2_AXIS_X;
+		28: eHmiRobotStatusPoint := E_POINT_NAME.MAGAZINE_2_AXIS_Y;
 	ELSE
 		eHmiRobotStatusPoint := E_POINT_NAME.NONE;
 	END_CASE;
@@ -85,6 +91,12 @@ IF GVL_HMI.xRobotManualExecute THEN
 		20: stRobotHmiCommand.eSetPoint := E_POINT_NAME.GEOMETRY_2_SAFE;
 		21: stRobotHmiCommand.eSetPoint := E_POINT_NAME.GEOMETRY_2_CHANGE;
 		22: stRobotHmiCommand.eSetPoint := E_POINT_NAME.GEOMETRY_2_PLACE;
+		23: stRobotHmiCommand.eSetPoint := E_POINT_NAME.MAGAZINE_1_DETAIL;
+		24: stRobotHmiCommand.eSetPoint := E_POINT_NAME.MAGAZINE_1_AXIS_X;
+		25: stRobotHmiCommand.eSetPoint := E_POINT_NAME.MAGAZINE_1_AXIS_Y;
+		26: stRobotHmiCommand.eSetPoint := E_POINT_NAME.MAGAZINE_2_DETAIL;
+		27: stRobotHmiCommand.eSetPoint := E_POINT_NAME.MAGAZINE_2_AXIS_X;
+		28: stRobotHmiCommand.eSetPoint := E_POINT_NAME.MAGAZINE_2_AXIS_Y;
 	END_CASE;
 	IF GVL_HMI.uiRobotManualSlot <= SINT_TO_UINT(GVL_CELL_SETTINGS.NumberDetail) THEN
 		stRobotHmiCommand.iActiveSlot := UINT_TO_SINT(GVL_HMI.uiRobotManualSlot);
@@ -128,11 +140,48 @@ xHmiRobotActionBaseAllowed := xRobotHmiPermit
 			AND GVL_POINT_MANAGER.PointManager.Diag.xZLimitValid)
 	);
 
+// К сохранённой опоре можно перейти до завершения всей калибровки.
+// Допуск публикуется отдельно для A/B/C; Modbus не принимает их координаты.
+FOR uiCalibrationMagazine := UINT#1 TO UINT#2 DO
+	IF uiCalibrationMagazine = UINT#1 THEN
+		eCalibrationOrigin := E_POINT_NAME.MAGAZINE_1_DETAIL;
+		eCalibrationPointB := E_POINT_NAME.MAGAZINE_1_AXIS_X;
+		eCalibrationPointC := E_POINT_NAME.MAGAZINE_1_AXIS_Y;
+	ELSE
+		eCalibrationOrigin := E_POINT_NAME.MAGAZINE_2_DETAIL;
+		eCalibrationPointB := E_POINT_NAME.MAGAZINE_2_AXIS_X;
+		eCalibrationPointC := E_POINT_NAME.MAGAZINE_2_AXIS_Y;
+	END_IF;
+	GVL_HMI.astMagazineCalibrationStatus[uiCalibrationMagazine].xMoveAAllowed :=
+		xHmiRobotActionBaseAllowed AND NOT GVL_HMI.xModbusMode
+		AND GVL_POINT.Points[eCalibrationOrigin].xConfigured;
+	GVL_HMI.astMagazineCalibrationStatus[uiCalibrationMagazine].xMoveBAllowed :=
+		xHmiRobotActionBaseAllowed AND NOT GVL_HMI.xModbusMode
+		AND (Persistent_Value.astMagazineCalibration[uiCalibrationMagazine].uiMethod = UINT#3)
+		AND GVL_POINT.Points[eCalibrationPointB].xConfigured;
+	GVL_HMI.astMagazineCalibrationStatus[uiCalibrationMagazine].xMoveCAllowed :=
+		xHmiRobotActionBaseAllowed AND NOT GVL_HMI.xModbusMode
+		AND (Persistent_Value.astMagazineCalibration[uiCalibrationMagazine].uiMethod = UINT#3)
+		AND GVL_POINT.Points[eCalibrationPointC].xConfigured;
+END_FOR;
+
 // Ручное движение не зависит от готовности оборудования назначения.
 // Единственное условие оборудования — подтверждённо открытый люк при входе
 // внутрь станка. Оно одинаково для числового и legacy-канала.
 xHmiRobotPointTargetAllowed := TRUE;
 CASE stRobotHmiCommand.eSetPoint OF
+	E_POINT_NAME.MAGAZINE_1_DETAIL:
+		xHmiRobotPointTargetAllowed := GVL_HMI.astMagazineCalibrationStatus[1].xMoveAAllowed;
+	E_POINT_NAME.MAGAZINE_1_AXIS_X:
+		xHmiRobotPointTargetAllowed := GVL_HMI.astMagazineCalibrationStatus[1].xMoveBAllowed;
+	E_POINT_NAME.MAGAZINE_1_AXIS_Y:
+		xHmiRobotPointTargetAllowed := GVL_HMI.astMagazineCalibrationStatus[1].xMoveCAllowed;
+	E_POINT_NAME.MAGAZINE_2_DETAIL:
+		xHmiRobotPointTargetAllowed := GVL_HMI.astMagazineCalibrationStatus[2].xMoveAAllowed;
+	E_POINT_NAME.MAGAZINE_2_AXIS_X:
+		xHmiRobotPointTargetAllowed := GVL_HMI.astMagazineCalibrationStatus[2].xMoveBAllowed;
+	E_POINT_NAME.MAGAZINE_2_AXIS_Y:
+		xHmiRobotPointTargetAllowed := GVL_HMI.astMagazineCalibrationStatus[2].xMoveCAllowed;
 	E_POINT_NAME.MACHINE_1_INSIDE,
 	E_POINT_NAME.MACHINE_1_CHUCK_APROACH,
 	E_POINT_NAME.MACHINE_1_CHUCK_POSITION:
@@ -238,10 +287,18 @@ CASE stMagazinePointCommand.uiMagazineId OF
 	UINT#2: eMagazineBasePoint := E_POINT_NAME.MAGAZINE_2_DETAIL;
 END_CASE;
 
+IF (stMagazinePointCommand.eSetPoint = E_POINT_NAME.MAGAZINE_SAFE)
+OR (stMagazinePointCommand.eSetPoint = E_POINT_NAME.MAGAZINE_CHANGE)
+OR (stMagazinePointCommand.eSetPoint = E_POINT_NAME.MAGAZINE_IN_SLOT) THEN
+	GVL_POINT.Points[stMagazinePointCommand.eSetPoint].xConfigured := FALSE;
+END_IF;
+
 IF NOT GVL_HMI.xModbusMode
 AND (GVL_CELL_SETTINGS.MagazineRows > UINT#0)
 AND (GVL_CELL_SETTINGS.MagazineColumns > UINT#0)
 AND (eMagazineBasePoint <> E_POINT_NAME.NONE)
+AND (stMagazinePointCommand.uiMagazineId >= UINT#1)
+AND (stMagazinePointCommand.uiMagazineId <= UINT#2)
 AND (stMagazinePointCommand.iActiveSlot >= SINT#1)
 AND (SINT_TO_UINT(stMagazinePointCommand.iActiveSlot)
 	<= (GVL_CELL_SETTINGS.MagazineRows * GVL_CELL_SETTINGS.MagazineColumns))
@@ -251,22 +308,25 @@ AND ((stMagazinePointCommand.eSetPoint = E_POINT_NAME.MAGAZINE_SAFE)
 	uiRobotManualMagazineIndex := SINT_TO_UINT(stMagazinePointCommand.iActiveSlot - SINT#1);
 	uiRobotManualMagazineColumn := uiRobotManualMagazineIndex MOD GVL_CELL_SETTINGS.MagazineColumns;
 	uiRobotManualMagazineRow := uiRobotManualMagazineIndex / GVL_CELL_SETTINGS.MagazineColumns;
-	GVL_POINT.Points[stMagazinePointCommand.eSetPoint] := GVL_POINT.Points[eMagazineBasePoint];
-	GVL_POINT.Points[stMagazinePointCommand.eSetPoint].X :=
-		GVL_POINT.Points[stMagazinePointCommand.eSetPoint].X
-		+ UINT_TO_LREAL(uiRobotManualMagazineColumn) * GVL_HMI.MagazinePitchX;
-	GVL_POINT.Points[stMagazinePointCommand.eSetPoint].Y :=
-		GVL_POINT.Points[stMagazinePointCommand.eSetPoint].Y
-		+ UINT_TO_LREAL(uiRobotManualMagazineRow) * GVL_HMI.MagazinePitchY;
-	// Signed-смещение добавляется к базе: отрицательное Z поднимает траверсу, положительное опускает.
-	IF stMagazinePointCommand.eSetPoint = E_POINT_NAME.MAGAZINE_SAFE THEN
-		GVL_POINT.Points[stMagazinePointCommand.eSetPoint].Z :=
-			GVL_POINT.Points[eMagazineBasePoint].Z
-			+ GVL_POINT.Points[eMagazineBasePoint].MagazineSafeZ;
-	ELSIF stMagazinePointCommand.eSetPoint = E_POINT_NAME.MAGAZINE_CHANGE THEN
-		GVL_POINT.Points[stMagazinePointCommand.eSetPoint].Z :=
-			GVL_POINT.Points[eMagazineBasePoint].Z
-			+ GVL_POINT.Points[eMagazineBasePoint].MagazineChangeZ;
+	IF astMagazineFrame[stMagazinePointCommand.uiMagazineId].xReady THEN
+		GVL_POINT.Points[stMagazinePointCommand.eSetPoint] := GVL_POINT.Points[eMagazineBasePoint];
+		GVL_POINT.Points[stMagazinePointCommand.eSetPoint].X := GVL_POINT.Points[eMagazineBasePoint].X
+			+ UINT_TO_LREAL(uiRobotManualMagazineColumn) * GVL_HMI.MagazinePitchX * astMagazineFrame[stMagazinePointCommand.uiMagazineId].stAxisX.X
+			+ UINT_TO_LREAL(uiRobotManualMagazineRow) * GVL_HMI.MagazinePitchY * astMagazineFrame[stMagazinePointCommand.uiMagazineId].stAxisY.X;
+		GVL_POINT.Points[stMagazinePointCommand.eSetPoint].Y := GVL_POINT.Points[eMagazineBasePoint].Y
+			+ UINT_TO_LREAL(uiRobotManualMagazineColumn) * GVL_HMI.MagazinePitchX * astMagazineFrame[stMagazinePointCommand.uiMagazineId].stAxisX.Y
+			+ UINT_TO_LREAL(uiRobotManualMagazineRow) * GVL_HMI.MagazinePitchY * astMagazineFrame[stMagazinePointCommand.uiMagazineId].stAxisY.Y;
+		GVL_POINT.Points[stMagazinePointCommand.eSetPoint].Z := GVL_POINT.Points[eMagazineBasePoint].Z
+			+ UINT_TO_LREAL(uiRobotManualMagazineColumn) * GVL_HMI.MagazinePitchX * astMagazineFrame[stMagazinePointCommand.uiMagazineId].stAxisX.Z
+			+ UINT_TO_LREAL(uiRobotManualMagazineRow) * GVL_HMI.MagazinePitchY * astMagazineFrame[stMagazinePointCommand.uiMagazineId].stAxisY.Z;
+		// Подход остаётся вдоль мировой Z фиксированного захвата, от Z конкретного гнезда.
+		IF stMagazinePointCommand.eSetPoint = E_POINT_NAME.MAGAZINE_SAFE THEN
+			GVL_POINT.Points[stMagazinePointCommand.eSetPoint].Z :=
+				GVL_POINT.Points[stMagazinePointCommand.eSetPoint].Z + GVL_POINT.Points[eMagazineBasePoint].MagazineSafeZ;
+		ELSIF stMagazinePointCommand.eSetPoint = E_POINT_NAME.MAGAZINE_CHANGE THEN
+			GVL_POINT.Points[stMagazinePointCommand.eSetPoint].Z :=
+				GVL_POINT.Points[stMagazinePointCommand.eSetPoint].Z + GVL_POINT.Points[eMagazineBasePoint].MagazineChangeZ;
+		END_IF;
 	END_IF;
 END_IF;
 
@@ -551,6 +611,18 @@ xRobotProgramStopRequest := GVL_ROBOT.Command.xStop AND NOT xHmiStopAccepted;
 // Последняя отклонённая цель не должна блокировать следующую попытку HMI.
 xHmiRobotStatusPointTargetAllowed := TRUE;
 CASE eHmiRobotStatusPoint OF
+	E_POINT_NAME.MAGAZINE_1_DETAIL:
+		xHmiRobotStatusPointTargetAllowed := GVL_HMI.astMagazineCalibrationStatus[1].xMoveAAllowed;
+	E_POINT_NAME.MAGAZINE_1_AXIS_X:
+		xHmiRobotStatusPointTargetAllowed := GVL_HMI.astMagazineCalibrationStatus[1].xMoveBAllowed;
+	E_POINT_NAME.MAGAZINE_1_AXIS_Y:
+		xHmiRobotStatusPointTargetAllowed := GVL_HMI.astMagazineCalibrationStatus[1].xMoveCAllowed;
+	E_POINT_NAME.MAGAZINE_2_DETAIL:
+		xHmiRobotStatusPointTargetAllowed := GVL_HMI.astMagazineCalibrationStatus[2].xMoveAAllowed;
+	E_POINT_NAME.MAGAZINE_2_AXIS_X:
+		xHmiRobotStatusPointTargetAllowed := GVL_HMI.astMagazineCalibrationStatus[2].xMoveBAllowed;
+	E_POINT_NAME.MAGAZINE_2_AXIS_Y:
+		xHmiRobotStatusPointTargetAllowed := GVL_HMI.astMagazineCalibrationStatus[2].xMoveCAllowed;
 	E_POINT_NAME.MACHINE_1_INSIDE,
 	E_POINT_NAME.MACHINE_1_CHUCK_APROACH,
 	E_POINT_NAME.MACHINE_1_CHUCK_POSITION:
@@ -627,7 +699,13 @@ ELSIF GVL_ROBOT.Status.xBusy
 	GVL_HMI.stRobotHmiStatus.eRejectReason := E_HMI_MANUAL_REJECT.ROBOT_BUSY;
 ELSIF xHmiRobotActionAttempt AND (eHmiRobotStatusAction = E_ROBOT_ACTION.MOVE_TO_POINT)
 	AND NOT xHmiRobotStatusPointTargetAllowed THEN
-	GVL_HMI.stRobotHmiStatus.eRejectReason := E_HMI_MANUAL_REJECT.HATCH_CLOSED;
+	CASE eHmiRobotStatusPoint OF
+		E_POINT_NAME.MAGAZINE_1_DETAIL, E_POINT_NAME.MAGAZINE_1_AXIS_X, E_POINT_NAME.MAGAZINE_1_AXIS_Y,
+		E_POINT_NAME.MAGAZINE_2_DETAIL, E_POINT_NAME.MAGAZINE_2_AXIS_X, E_POINT_NAME.MAGAZINE_2_AXIS_Y:
+			GVL_HMI.stRobotHmiStatus.eRejectReason := E_HMI_MANUAL_REJECT.CALIBRATION_POINT_UNAVAILABLE;
+	ELSE
+		GVL_HMI.stRobotHmiStatus.eRejectReason := E_HMI_MANUAL_REJECT.HATCH_CLOSED;
+	END_CASE;
 ELSIF NOT GVL_HMI.xModbusMode AND xMotionBusy THEN
 	GVL_HMI.stRobotHmiStatus.eRejectReason := E_HMI_MANUAL_REJECT.AXIS_BUSY;
 ELSIF NOT GVL_HMI.xModbusMode AND NOT xHmiRobotActionBaseAllowed THEN

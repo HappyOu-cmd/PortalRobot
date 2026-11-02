@@ -5,13 +5,16 @@ import { controllerPlcSymbols } from '../gateway/controller-plc.mjs';
 import alarmCatalog from '../alarm-catalog.json' with { type: 'json' };
 
 const source = readPlc('FB/FB_CONTROLLER_DIAGNOSTICS.st');
-const execute = compileSt(source.replace(/\bULINT#/g, ''));
+const constants = Object.fromEntries([...source.matchAll(/(\w+)\s*:\s*DWORD\s*:=\s*DWORD#16#([\da-f_]+)/gi)]
+  .map(([, name, hex]) => [name, parseInt(hex.replaceAll('_', ''), 16)]));
+const execute = compileSt(source.replace(/\bULINT#/g, '')
+  .replace(/DWORD#16#([\da-f_]+)/gi, (_, hex) => String(parseInt(hex.replaceAll('_', ''), 16))));
 const emptyRequest = () => ({ udiSequence: 0, udiIssuedAtMs: 0, xCpuValid: false, xModulesValid: false,
   dwCpuCurrent1: 0, dwCpuCurrent2: 0, dwModuleCurrent: 0, xMemoryCurrent: false,
   dwCpuObserved1: 0, dwCpuObserved2: 0, dwModuleObserved: 0, xMemoryObserved: false });
 function plc() {
   const status = defaultsFromSt(readPlc('ST/ST_ALARM/ST_CONTROLLER_WEB_STATUS.st').replace('STRUCT', 'VAR').replace('END_STRUCT', 'END_VAR'));
-  const state = { ...defaultsFromSt(source), Request: emptyRequest(), Status: status,
+  const state = { ...defaultsFromSt(source), ...constants, Request: emptyRequest(), Status: status,
     stWarning: { uiCode: 0, udiSequence: 0 }, udiNowMs: 0, now: 0, uliAgeMs: 0,
     xReset: false, xResetWarnings: false, UDINT_TO_ULINT: Number };
   state.scan = (input = {}, dt = 20) => {
@@ -73,6 +76,84 @@ test('observed exceptions survive STOP and cannot be reset in their first regist
   assert.equal(p.Status.xAlarmActive, false);
   p.scan();
   assert.equal(p.Status.xAlarmActive, false, 'unchanged Ack must not replay the same observation');
+});
+
+const stoppedBit = 2 ** alarmCatalog.controllerDiagnostics.cpuAlarmCodes.indexOf('5A');
+const exceptionBit = 2 ** alarmCatalog.controllerDiagnostics.cpuAlarmCodes.indexOf('5B');
+
+test('the RUN filter preserves every CPU alarm code and bit position except application STOP', () => {
+  assert.equal(constants.CPU_APPLICATION_STOPPED, stoppedBit);
+  assert.equal(constants.CPU_RUN_ALARM_MASK, (0xffffffff ^ stoppedBit) >>> 0);
+  alarmCatalog.controllerDiagnostics.cpuAlarmCodes.forEach((code, index) => {
+    const p = plc();
+    const bit = 2 ** (index % 32);
+    p.frame({ [index < 32 ? 'dwCpuCurrent1' : 'dwCpuCurrent2']: bit });
+    assert.equal(p.Status.dwCpuAlarm1 >>> 0, index < 32 && code !== '5A' ? bit : 0, code);
+    assert.equal(p.Status.dwCpuAlarm2 >>> 0, index >= 32 ? bit : 0, code);
+    assert.equal(p.Status.xGlobalStopRequired, code !== '5A', code);
+  });
+});
+
+for (const [name, payload] of [
+  ['observed STOP followed by current 00', { dwCpuObserved1: stoppedBit }],
+  ['current STOP cached before RUN', { dwCpuCurrent1: stoppedBit, dwCpuObserved1: stoppedBit }],
+  ['stale unacknowledged STOP frame', { dwCpuCurrent1: stoppedBit, dwCpuObserved1: stoppedBit, udiIssuedAtMs: 0 }],
+]) {
+  test(`RUN does not latch CPU 5A: ${name}`, () => {
+    const p = plc();
+    p.now = 10_000;
+    p.frame(payload);
+    assert.equal(p.Status.dwCpuAlarm1, 0);
+    assert.equal(p.Status.xAlarmActive, false);
+    assert.equal(p.Status.xGlobalStopRequired, false);
+    assert.equal(p.Status.xResetAllowed, false);
+    assert.equal(p.Status.udiAckSeq, p.Request.udiSequence);
+    p.frame();
+    assert.equal(p.Status.xAlarmActive, false, 'the next normal frame needs no reset or STOP/RUN');
+  });
+}
+
+test('an earlier CPU 5A latch is removed on RUN without erasing other causes', () => {
+  const p = plc();
+  p.Status.dwCpuAlarm1 = stoppedBit;
+  p.scan();
+  assert.equal(p.Status.xAlarmActive, false);
+  assert.equal(p.Status.xGlobalStopRequired, false);
+  p.Status.dwCpuAlarm1 = stoppedBit | exceptionBit;
+  p.Status.dwCpuAlarm2 = 4;
+  p.Status.dwModuleAlarm = 2;
+  p.scan({ xReset: true });
+  assert.deepEqual([p.Status.dwCpuAlarm1, p.Status.dwCpuAlarm2, p.Status.dwModuleAlarm], [exceptionBit, 4, 2]);
+  assert.equal(p.Status.xGlobalStopRequired, true);
+  assert.equal(p.Status.xResetAllowed, false);
+});
+
+test('STOP and a real CPU exception in one frame retain the exception and module fault until reset', () => {
+  const p = plc();
+  p.frame({ dwCpuObserved1: stoppedBit | exceptionBit, dwModuleObserved: 2 }, { xReset: true });
+  assert.equal(p.Status.dwCpuAlarm1, exceptionBit);
+  assert.equal(p.Status.dwModuleAlarm, 2);
+  assert.equal(p.Status.xGlobalStopRequired, true);
+  assert.equal(p.Status.xResetAllowed, false, 'a new real fault cannot be reset in its registration scan');
+  p.scan();
+  assert.equal(p.Status.xResetAllowed, true);
+  p.scan({ xReset: true });
+  assert.equal(p.Status.xAlarmActive, false);
+});
+
+test('a cached current CPU 5A cannot confirm recovery from a real CPU fault', () => {
+  const p = plc();
+  p.frame({ dwCpuCurrent1: exceptionBit });
+  p.frame({ dwCpuCurrent1: stoppedBit });
+  assert.equal(p.Status.xCpuFresh, false, 'a reading from STOP is not fresh evidence of CPU recovery in RUN');
+  p.scan({ xReset: true });
+  assert.equal(p.Status.dwCpuAlarm1, exceptionBit);
+  assert.equal(p.Status.xGlobalStopRequired, true);
+  assert.equal(p.Status.xResetAllowed, false);
+  p.frame();
+  assert.equal(p.Status.xResetAllowed, true);
+  p.scan({ xReset: true });
+  assert.equal(p.Status.xAlarmActive, false);
 });
 
 test('stale committed packets still register history but cannot permit reset; PLC clock wrap is supported', () => {

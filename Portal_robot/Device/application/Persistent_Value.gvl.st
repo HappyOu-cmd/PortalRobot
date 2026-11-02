@@ -29,4 +29,7 @@ VAR_GLOBAL PERSISTENT RETAIN
 
 	// Базы ГК для SIMULATION сохраняются отдельно от реальных координат.
 	astSimulationConfig : ARRAY [1..2] OF ST_GEOMETRY_CONFIG;
+
+	// Добавлено в конце списка: прежние 15 баз и их версия сохраняют раскладку.
+	astMagazineCalibration : ARRAY [1..2] OF ST_MAGAZINE_CALIBRATION;
 END_VAR

@@ -33,7 +33,8 @@ IF NOT xTwinSimulationInitialized THEN
 END_IF;
 FOR uiTwin := 1 TO 2 DO
 	GVL_TWO_PALLET.auiCommand[uiTwin] := UINT#0;
-	axMagazineInventoryChanged[uiTwin] := FALSE;
+    axMagazineInventoryChanged[uiTwin] := NOT xTwinStartup OR xTestInitializePulse;
+    axTwinStoreChanged[uiTwin] := NOT xTwinStartup OR xTestInitializePulse;
 END_FOR;
 IF NOT xTwinStartup THEN
 	IF GVL_TWO_PALLET.uiMode = 0 THEN
@@ -47,6 +48,7 @@ IF NOT xTwinStartup THEN
 		// После перезапуска содержимое сохранено, готовность загрузки подтверждается заново.
 		GVL_TWO_PALLET.astStore[uiTwin].axLoaded[1] := FALSE;
 		GVL_TWO_PALLET.astStore[uiTwin].axLoaded[2] := FALSE;
+		axTwinStoreChanged[uiTwin] := TRUE;
 		IF GVL_TWO_PALLET.uiMode = 0 THEN
 			GVL_DETAIL.astMagazine[uiTwin] := GVL_TWO_PALLET.astStatic[uiTwin];
 		END_IF;
@@ -87,7 +89,7 @@ IF (udiTwinSnapshot <> 0) AND (udiTwinSnapshot <> GVL_HMI.udiTwinAckSeq) THEN
 					axMagazineInventoryChanged[uiTwin] := TRUE;
 					IF GVL_TWO_PALLET.uiMode = 0 THEN GVL_DETAIL.astMagazine[uiTwin] := GVL_TWO_PALLET.astStatic[uiTwin]; END_IF;
 					// Базы меняются вместе с механикой: старые координаты нельзя молча использовать.
-					Persistent_Value.astRetainPoints[13 + uiTwin].xConfigured := FALSE;
+					InvalidateMagazineCalibration(uiMagazine := uiTwin);
 					axMagazinePointsReady[uiTwin] := FALSE;
 				END_FOR;
 				GVL_POINT.Points[E_POINT_NAME.MAGAZINE_1_DETAIL].xConfigured := FALSE;
@@ -326,18 +328,21 @@ FOR uiTwin := 1 TO 2 DO
 	IF GVL_TWO_PALLET.astStatus[uiTwin].xCompleted THEN
 		GVL_TWO_PALLET.astStore[uiTwin].axLoaded[1] := FALSE;
 		GVL_TWO_PALLET.astStore[uiTwin].axLoaded[2] := FALSE;
+		axTwinStoreChanged[uiTwin] := TRUE;
 		axMagazineInventoryChanged[uiTwin] := TRUE;
 	END_IF;
 	// Ручное восстановление может сменить учётную роль без команды обмена.
 	IF uiTwinRobotPalletBefore <> GVL_TWO_PALLET.astStatus[uiTwin].uiRobotPallet THEN
 		GVL_TWO_PALLET.astStore[uiTwin].axLoaded[1] := FALSE;
 		GVL_TWO_PALLET.astStore[uiTwin].axLoaded[2] := FALSE;
+		axTwinStoreChanged[uiTwin] := TRUE;
 		axMagazineInventoryChanged[uiTwin] := TRUE;
 	END_IF;
 	// Ручная смена расходует прежнее подтверждение уже при принятии команды.
 	IF astTwinCommand[uiTwin].xSwap AND GVL_TWO_PALLET.astStatus[uiTwin].xCommandAccepted THEN
 		GVL_TWO_PALLET.astStore[uiTwin].axLoaded[1] := FALSE;
 		GVL_TWO_PALLET.astStore[uiTwin].axLoaded[2] := FALSE;
+		axTwinStoreChanged[uiTwin] := TRUE;
 	END_IF;
 	IF (uiTwinRequestResult = 2) AND (stTwinRequest.uiMagazine = uiTwin)
 		AND (((stTwinRequest.uiCommand >= 1) AND (stTwinRequest.uiCommand <= 19))
@@ -368,6 +373,7 @@ IF xTwinInventoryCommand THEN
 			20:
 				IF GVL_TWO_PALLET.astStatus[uiTwin].xLoadAllowed
 					AND (uiTwinPallet <> GVL_TWO_PALLET.astStatus[uiTwin].uiRobotPallet) THEN
+					axTwinStoreChanged[uiTwin] := TRUE;
 					GVL_TWO_PALLET.astStore[uiTwin].axLoaded[uiTwinPallet] := TRUE;
 					uiTwinRequestResult := 1;
 				END_IF;
@@ -381,6 +387,7 @@ IF xTwinInventoryCommand THEN
 						GVL_TWO_PALLET.astStore[uiTwin].astPallet[uiTwinPallet].aSlots[uiTwinSlot].uiProductType := GVL_MULTI_TYPE.Config.auiSlotType[uiTwinSlot];
 					END_IF;
 				END_FOR;
+				axTwinStoreChanged[uiTwin] := TRUE;
 				GVL_TWO_PALLET.astStore[uiTwin].axLoaded[uiTwinPallet] := FALSE; uiTwinRequestResult := 1;
 			23:
 				IF (stTwinRequest.uiSlot >= 1) AND (stTwinRequest.uiSlot <= 96) AND (stTwinRequest.uiContent <= 2)
@@ -393,6 +400,7 @@ IF xTwinInventoryCommand THEN
 						2: GVL_TWO_PALLET.astStore[uiTwin].astPallet[uiTwinPallet].aSlots[uiTwinSlot].eDetailType := E_DETAIL_TYPE.DETAIL;
 					END_CASE;
 					GVL_TWO_PALLET.astStore[uiTwin].astPallet[uiTwinPallet].aSlots[uiTwinSlot].uiProductType := stTwinRequest.uiProductType;
+					axTwinStoreChanged[uiTwin] := TRUE;
 					GVL_TWO_PALLET.astStore[uiTwin].axLoaded[uiTwinPallet] := FALSE; uiTwinRequestResult := 1;
 				END_IF;
 		END_CASE;
@@ -428,6 +436,8 @@ FOR uiTwin := 1 TO 2 DO
 		IF (uiTwinPallet < UINT#1) OR (uiTwinPallet > UINT#2) THEN
 			uiTwinPallet := UINT#1;
 		END_IF;
-		GVL_DETAIL.astMagazine[uiTwin] := GVL_TWO_PALLET.astStore[uiTwin].astPallet[uiTwinPallet];
+        IF axMagazineInventoryChanged[uiTwin] THEN
+            GVL_DETAIL.astMagazine[uiTwin] := GVL_TWO_PALLET.astStore[uiTwin].astPallet[uiTwinPallet];
+        END_IF;
 	END_IF;
 END_FOR;

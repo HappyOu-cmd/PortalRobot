@@ -18,10 +18,11 @@ function state(index = 13, environment = 0) {
     GVL_ROBOT: { Status: { xBusy: false } }, GVL_MOTION_MANAGER: { stMotionManager: { Status: { xError: false } } },
     GVL_POINT_MANAGER: { PointManager: { Diag: { xXLimitValid: true, xYLimitValid: true, xZLimitValid: true } } },
     Persistent_Value: { astRetainPoints: [null, ...Array.from({ length: 15 }, () => ({ ...point, X: 42 }))],
+      astMagazineCalibration: [null, { uiMethod: 1 }, { uiMethod: 1 }],
       astConfig: [null, { ...config }, { ...config }], astSimulationConfig: [null, { ...config }, { ...config }] },
     GVL_POINT: { Points: Array.from({ length: 100 }, () => ({ ...point })) },
     GVL_GEOMETRY_CONTROL: { astStatus: [null, { xConfigAllowed: true, xPointWriteAllowed: true }, { xConfigAllowed: true, xPointWriteAllowed: true }], astActiveConfig: [null, { ...config }, { ...config }] },
-    GVL_HMI: { udiPointEditorCommandSeq: 8, uiPointEditorCommand: 2, uiPointEditorIndex: index, xModbusMode: false,
+    GVL_HMI: { astMagazineCalibrationStatus: [null, {}, {}], udiPointEditorCommandSeq: 8, uiPointEditorCommand: 2, uiPointEditorIndex: index, xModbusMode: false,
       alrPointEditorDraftXYZ: [null, 100, 200, 500], lrPointEditorDraftMagazineSafeZ: -300, lrPointEditorDraftMagazineChangeZ: 0,
       lrPointEditorDraftSpeedFactor: .1, stPointEditorResultPoint: { ...point } },
   };
@@ -242,11 +243,11 @@ test('PLC repeated CAPTURE returns the complete current XYZ without altering sto
   }
 });
 
-test('editor publishes fourteen stable point IDs while readiness and old retain layout stay unchanged', () => {
+test('editor appends four magazine references while existing IDs, GK readiness and old retain layout stay unchanged', () => {
   const publish = readPlc('PLC_PRG.PublishHmi.st');
   assert.match(publish, /auiPointEditorPointId\[13\] := TO_UINT\(E_POINT_NAME\.GEOMETRY_1_PLACE\)/);
   assert.match(publish, /auiPointEditorPointId\[14\] := TO_UINT\(E_POINT_NAME\.GEOMETRY_2_PLACE\)/);
-  assert.match(readPlc('GVL/GVL_HMI.gvl.st'), /astPointEditorPoints : ARRAY \[1\.\.14\]/);
+  assert.match(readPlc('GVL/GVL_HMI.gvl.st'), /astPointEditorPoints : ARRAY \[1\.\.18\]/);
   const storage = readPlc('GVL/GVL_POINT.gvl.st');
   assert.match(storage, /iPersistentPointCapacity : INT := 15/);
   assert.match(storage, /iRequiredPointCount : INT := 12/);

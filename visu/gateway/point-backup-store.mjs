@@ -3,8 +3,9 @@ import { mkdir, lstat, readFile, readdir, realpath, rename, unlink, writeFile } 
 import { basename, extname, isAbsolute, join, relative, resolve } from 'node:path';
 
 export const POINT_BACKUP_FORMAT = 'portal-robot-points';
-export const POINT_BACKUP_VERSION = 2;
-export const POINT_EDITOR_COUNT = 14;
+export const POINT_BACKUP_VERSION = 3;
+export const POINT_EDITOR_COUNT = 18;
+export const POINT_EDITOR_IDS = [1, 3, 4, 5, 7, 8, 9, 11, 12, 17, 22, 23, 24, 27, 30, 31, 32, 33];
 export const POINT_BACKUP_MAX_BYTES = 256 * 1024;
 
 export class PointBackupStoreError extends Error {
@@ -45,14 +46,18 @@ export function validatePointBackup(value) {
     throw new PointBackupStoreError('Резервная копия должна быть JSON-объектом', 400, 'POINT_BACKUP_SCHEMA_INVALID');
   }
   const sourceVersion = Number(value.version);
-  if (value.format !== POINT_BACKUP_FORMAT || ![1, POINT_BACKUP_VERSION].includes(sourceVersion)) {
+  if (value.format !== POINT_BACKUP_FORMAT || ![1, 2, POINT_BACKUP_VERSION].includes(sourceVersion)) {
     throw new PointBackupStoreError('Неподдерживаемый формат резервной копии точек', 400, 'POINT_BACKUP_VERSION_UNSUPPORTED');
   }
   const exportedAtMs = Date.parse(String(value.exportedAt ?? ''));
   if (!Number.isFinite(exportedAtMs)) {
     throw new PointBackupStoreError('В резервной копии отсутствует корректная дата экспорта', 400, 'POINT_BACKUP_SCHEMA_INVALID');
   }
-  const sourceCapacity = sourceVersion === 1 ? 12 : POINT_EDITOR_COUNT;
+  const sourceCapacity = sourceVersion === 1 ? 12 : sourceVersion === 2 ? 14 : POINT_EDITOR_COUNT;
+  const methods = sourceVersion < 3 ? [1, 1] : value.magazineCalibrationMethods;
+  if (!Array.isArray(methods) || methods.length !== 2 || !methods.every(method => method === 1 || method === 3)) {
+    throw new PointBackupStoreError('Не заданы способы калибровки двух магазинов', 400, 'POINT_BACKUP_SCHEMA_INVALID');
+  }
   if (!Array.isArray(value.points) || value.points.length < 1 || value.points.length > sourceCapacity) {
     throw new PointBackupStoreError(`Резервная копия должна содержать от 1 до ${sourceCapacity} точек`, 400, 'POINT_BACKUP_SCHEMA_INVALID');
   }
@@ -68,8 +73,8 @@ export function validatePointBackup(value) {
     if (!Number.isInteger(pointId) || pointId < 1 || pointIds.has(pointId)) {
       throw new PointBackupStoreError(`Некорректный или повторяющийся PointId ${pointId}`, 400, 'POINT_BACKUP_SCHEMA_INVALID');
     }
-    if (index >= 13 && pointId !== (index === 13 ? 24 : 27)) {
-      throw new PointBackupStoreError(`PointId базы ГК не соответствует индексу ${index}`, 400, 'POINT_BACKUP_SCHEMA_INVALID');
+    if (pointId !== POINT_EDITOR_IDS[index - 1]) {
+      throw new PointBackupStoreError(`PointId не соответствует индексу ${index}`, 400, 'POINT_BACKUP_SCHEMA_INVALID');
     }
     indexes.add(index);
     pointIds.add(pointId);
@@ -78,10 +83,11 @@ export function validatePointBackup(value) {
     // Старые магазинные экспорты без смещений остаются совместимыми.
     const magazineSafeZ = finiteNumber(raw.magazineSafeZ ?? 0, 'magazineSafeZ', index);
     const magazineChangeZ = finiteNumber(raw.magazineChangeZ ?? 0, 'magazineChangeZ', index);
-    if (configured && (speedFactor < 0.1 || (index < 13 && speedFactor === 0.1) || speedFactor > 1)) {
+    const geometryPoint = index === 13 || index === 14;
+    if (configured && (speedFactor < 0.1 || (!geometryPoint && speedFactor === 0.1) || speedFactor > 1)) {
       throw new PointBackupStoreError(`Недопустимая скорость точки ${index}`, 400, 'POINT_BACKUP_SCHEMA_INVALID');
     }
-    if (configured && index >= 13 && (magazineSafeZ >= 0 || magazineSafeZ < -10000)) {
+    if (configured && geometryPoint && (magazineSafeZ >= 0 || magazineSafeZ < -10000)) {
       throw new PointBackupStoreError(`Недопустимое смещение SAFE_Z точки ${index}`, 400, 'POINT_BACKUP_SCHEMA_INVALID');
     }
     return {
@@ -112,6 +118,7 @@ export function validatePointBackup(value) {
   return {
     format: POINT_BACKUP_FORMAT,
     version: POINT_BACKUP_VERSION,
+    magazineCalibrationMethods: [...methods],
     exportedAt: new Date(exportedAtMs).toISOString(),
     ...(value.exportedBy && typeof value.exportedBy === 'object' ? {
       exportedBy: {
@@ -187,13 +194,16 @@ export class PointBackupStore {
   }
 
   describe(id, backup, stat = null) {
+    const required = backup.points.filter(point => point.index < 15
+      || backup.magazineCalibrationMethods[point.index < 17 ? 0 : 1] === 3);
     return {
       id,
       name: id.slice(0, -extname(id).length),
       exportedAt: backup.exportedAt,
       createdAtMs: stat?.mtimeMs ?? Date.parse(backup.exportedAt),
       pointCount: backup.points.length,
-      configuredCount: backup.points.filter((point) => point.configured).length,
+      requiredCount: required.length,
+      configuredCount: required.filter((point) => point.configured).length,
       valid: true,
       error: null,
     };

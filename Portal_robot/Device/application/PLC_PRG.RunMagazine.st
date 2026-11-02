@@ -134,7 +134,11 @@ FOR uiTwin := 1 TO 2 DO
 	IF GVL_TWO_PALLET.uiMode = 1 THEN
 		uiTwinPallet := GVL_TWO_PALLET.astStatus[uiTwin].uiRobotPallet;
 		IF (uiTwinPallet >= UINT#1) AND (uiTwinPallet <= UINT#2) THEN
-			GVL_TWO_PALLET.astStore[uiTwin].astPallet[uiTwinPallet] := GVL_DETAIL.astMagazine[uiTwin];
+            IF ((uiTwin = UINT#1) AND fbMagazine1.xInventoryUpdated)
+            OR ((uiTwin = UINT#2) AND fbMagazine2.xInventoryUpdated) THEN
+                GVL_TWO_PALLET.astStore[uiTwin].astPallet[uiTwinPallet] := GVL_DETAIL.astMagazine[uiTwin];
+                axTwinStoreChanged[uiTwin] := TRUE;
+            END_IF;
 		END_IF;
 		GVL_MAGAZINE.astStatus[uiTwin].xReady := GVL_MAGAZINE.astStatus[uiTwin].xReady AND GVL_TWO_PALLET.astStatus[uiTwin].xReady;
 		GVL_MAGAZINE.astStatus[uiTwin].xEnableSequenceAllowed := GVL_TWO_PALLET.astStatus[uiTwin].xEnableAllowed;
@@ -155,7 +159,10 @@ FOR uiTwin := 1 TO 2 DO
 			GVL_MAGAZINE.astCommand[uiTwin].xExecute := FALSE;
 		END_IF;
 	ELSE
-		GVL_TWO_PALLET.astStatic[uiTwin] := GVL_DETAIL.astMagazine[uiTwin];
+        IF ((uiTwin = UINT#1) AND fbMagazine1.xInventoryUpdated)
+        OR ((uiTwin = UINT#2) AND fbMagazine2.xInventoryUpdated) THEN
+            GVL_TWO_PALLET.astStatic[uiTwin] := GVL_DETAIL.astMagazine[uiTwin];
+        END_IF;
 	END_IF;
 END_FOR;
 

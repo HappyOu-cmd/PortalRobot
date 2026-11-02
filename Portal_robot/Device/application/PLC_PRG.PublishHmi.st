@@ -70,6 +70,10 @@ GVL_HMI.astPointEditorPoints[11] := GVL_POINT.Points[E_POINT_NAME.MAGAZINE_1_DET
 GVL_HMI.astPointEditorPoints[12] := GVL_POINT.Points[E_POINT_NAME.MAGAZINE_2_DETAIL];
 GVL_HMI.astPointEditorPoints[13] := GVL_POINT.Points[E_POINT_NAME.GEOMETRY_1_PLACE];
 GVL_HMI.astPointEditorPoints[14] := GVL_POINT.Points[E_POINT_NAME.GEOMETRY_2_PLACE];
+GVL_HMI.astPointEditorPoints[15] := GVL_POINT.Points[E_POINT_NAME.MAGAZINE_1_AXIS_X];
+GVL_HMI.astPointEditorPoints[16] := GVL_POINT.Points[E_POINT_NAME.MAGAZINE_1_AXIS_Y];
+GVL_HMI.astPointEditorPoints[17] := GVL_POINT.Points[E_POINT_NAME.MAGAZINE_2_AXIS_X];
+GVL_HMI.astPointEditorPoints[18] := GVL_POINT.Points[E_POINT_NAME.MAGAZINE_2_AXIS_Y];
 GVL_HMI.auiPointEditorPointId[1] := TO_UINT(E_POINT_NAME.MACHINE_1_ABOVE);
 GVL_HMI.auiPointEditorPointId[2] := TO_UINT(E_POINT_NAME.MACHINE_1_CHUCK_APROACH);
 GVL_HMI.auiPointEditorPointId[3] := TO_UINT(E_POINT_NAME.MACHINE_1_CHUCK_POSITION);
@@ -84,6 +88,19 @@ GVL_HMI.auiPointEditorPointId[11] := TO_UINT(E_POINT_NAME.MAGAZINE_1_DETAIL);
 GVL_HMI.auiPointEditorPointId[12] := TO_UINT(E_POINT_NAME.MAGAZINE_2_DETAIL);
 GVL_HMI.auiPointEditorPointId[13] := TO_UINT(E_POINT_NAME.GEOMETRY_1_PLACE);
 GVL_HMI.auiPointEditorPointId[14] := TO_UINT(E_POINT_NAME.GEOMETRY_2_PLACE);
+GVL_HMI.auiPointEditorPointId[15] := TO_UINT(E_POINT_NAME.MAGAZINE_1_AXIS_X);
+GVL_HMI.auiPointEditorPointId[16] := TO_UINT(E_POINT_NAME.MAGAZINE_1_AXIS_Y);
+GVL_HMI.auiPointEditorPointId[17] := TO_UINT(E_POINT_NAME.MAGAZINE_2_AXIS_X);
+GVL_HMI.auiPointEditorPointId[18] := TO_UINT(E_POINT_NAME.MAGAZINE_2_AXIS_Y);
+GVL_HMI.astMagazineCalibrationStatus[1].astPoints[1] := GVL_POINT.Points[E_POINT_NAME.MAGAZINE_1_DETAIL];
+GVL_HMI.astMagazineCalibrationStatus[1].astPoints[2] := GVL_POINT.Points[E_POINT_NAME.MAGAZINE_1_AXIS_X];
+GVL_HMI.astMagazineCalibrationStatus[1].astPoints[3] := GVL_POINT.Points[E_POINT_NAME.MAGAZINE_1_AXIS_Y];
+GVL_HMI.astMagazineCalibrationStatus[2].astPoints[1] := GVL_POINT.Points[E_POINT_NAME.MAGAZINE_2_DETAIL];
+GVL_HMI.astMagazineCalibrationStatus[2].astPoints[2] := GVL_POINT.Points[E_POINT_NAME.MAGAZINE_2_AXIS_X];
+GVL_HMI.astMagazineCalibrationStatus[2].astPoints[3] := GVL_POINT.Points[E_POINT_NAME.MAGAZINE_2_AXIS_Y];
+// Метод публикуется после опор: новый режим не сопровождается прежними флагами A/B/C.
+GVL_HMI.astMagazineCalibrationStatus[1].uiMethod := Persistent_Value.astMagazineCalibration[1].uiMethod;
+GVL_HMI.astMagazineCalibrationStatus[2].uiMethod := Persistent_Value.astMagazineCalibration[2].uiMethod;
 GVL_HMI.xModbusMode := GVL_ROBOT_MODBUS.xModeActive;
 GVL_HMI.xRobotModeChangeAllowed := GVL_ROBOT_MODBUS.xRobotModeChangeAllowed;
 GVL_HMI.xModbusSettingsChangeAllowed := GVL_ROBOT_MODBUS.xSettingsChangeAllowed;
@@ -204,10 +221,13 @@ FOR uiMagazine := UINT#1 TO UINT#2 DO
 	GVL_HMI.astMagazineStatus[uiMagazine] := GVL_MAGAZINE.astStatus[uiMagazine];
 	GVL_HMI.astMagazineDiag[uiMagazine] := GVL_MAGAZINE.astDiag[uiMagazine];
 	GVL_HMI.astMagazineError[uiMagazine] := GVL_MAGAZINE.astError[uiMagazine];
-	GVL_HMI.astMagazineInventory[uiMagazine] := GVL_DETAIL.astMagazine[uiMagazine];
 END_FOR;
 GVL_HMI.stAlarmStatus := GVL_ALARM.Status;
-GVL_HMI.astAlarmEvent := GVL_ALARM.Events;
+IF ALARM_MANAGER.xEventsUpdated OR NOT xHmiTablesInitialized THEN
+    GVL_HMI.stHmiDataRevision.udiAlarmEvents := GVL_HMI.stHmiDataRevision.udiAlarmEvents + UDINT#1;
+    GVL_HMI.astAlarmEvent := GVL_ALARM.Events;
+    GVL_HMI.stHmiDataRevision.udiAlarmEvents := GVL_HMI.stHmiDataRevision.udiAlarmEvents + UDINT#1;
+END_IF;
 
 FOR uiMachine := 1 TO 3 DO
 	GVL_HMI.astMachineStatus[uiMachine] := GVL_MACHINE.Status[uiMachine];
@@ -245,9 +265,16 @@ GVL_HMI.astMachineSimError[1] := MACHINE_1_SIM.Error;
 GVL_HMI.astMachineSimError[2] := MACHINE_2_SIM.Error;
 GVL_HMI.astMachineSimError[3] := MACHINE_3_SIM.Error;
 
-FOR iDetail := 1 TO GVL_CELL_SETTINGS.NumberDetail DO
-	GVL_HMI.astMagazineSlot[iDetail] := GVL_DETAIL.astMagazine[1].aSlots[iDetail];
-END_FOR;
+// Нечётная версия закрывает запись; gateway принимает одинаковую чётную до/после Read.
+IF NOT xHmiTablesInitialized OR axMagazineInventoryChanged[1] OR axMagazineInventoryChanged[2]
+OR fbMagazine1.xInventoryUpdated OR fbMagazine2.xInventoryUpdated THEN
+    GVL_HMI.stHmiDataRevision.udiMagazineInventory := GVL_HMI.stHmiDataRevision.udiMagazineInventory + UDINT#1;
+    GVL_HMI.astMagazineInventory := GVL_DETAIL.astMagazine;
+    FOR iDetail := 1 TO GVL_CELL_SETTINGS.NumberDetail DO
+        GVL_HMI.astMagazineSlot[iDetail] := GVL_DETAIL.astMagazine[1].aSlots[iDetail];
+    END_FOR;
+    GVL_HMI.stHmiDataRevision.udiMagazineInventory := GVL_HMI.stHmiDataRevision.udiMagazineInventory + UDINT#1;
+END_IF;
 
 // Ack only the snapshot actually dispatched through all consumers this scan.
 FOR uiHmiCommandIndex := UINT#1 TO UINT#121 DO
@@ -261,4 +288,14 @@ GVL_HMI.uiMagazineMode := GVL_TWO_PALLET.uiMode;
 GVL_HMI.xMagazineModeAllowed := GVL_TWO_PALLET.xModeChangeAllowed;
 GVL_HMI.astTwinStatus := GVL_TWO_PALLET.astStatus;
 GVL_HMI.astTwinConfig := GVL_TWO_PALLET.astActiveConfig;
-GVL_HMI.astTwinStore := GVL_TWO_PALLET.astStore;
+IF NOT xHmiTablesInitialized OR axTwinStoreChanged[1] OR axTwinStoreChanged[2] THEN
+    GVL_HMI.stHmiDataRevision.udiTwinStore := GVL_HMI.stHmiDataRevision.udiTwinStore + UDINT#1;
+    GVL_HMI.astTwinStore := GVL_TWO_PALLET.astStore;
+    GVL_HMI.stHmiDataRevision.udiTwinStore := GVL_HMI.stHmiDataRevision.udiTwinStore + UDINT#1;
+END_IF;
+IF NOT xHmiTablesInitialized THEN
+    GVL_HMI.stHmiDataRevision.udiEpoch := udiHmiCommandNowMs;
+    IF GVL_HMI.stHmiDataRevision.udiEpoch = UDINT#0 THEN GVL_HMI.stHmiDataRevision.udiEpoch := UDINT#1; END_IF;
+    GVL_HMI.stHmiDataRevision.uiVersion := UINT#1;
+    xHmiTablesInitialized := TRUE;
+END_IF;

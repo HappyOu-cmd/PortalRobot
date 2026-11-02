@@ -218,6 +218,8 @@ ALARM_MANAGER(
 	xResetWarnings := GVL_ALARM.Command.xResetWarnings,
 	astAdditionalCellWarning := astAdditionalCellWarning,
 	Sources := astAlarmSource,
-	Status => GVL_ALARM.Status,
-	Events => GVL_ALARM.Events
+	Status => GVL_ALARM.Status
 );
+IF ALARM_MANAGER.xEventsUpdated OR NOT xHmiTablesInitialized THEN
+    GVL_ALARM.Events := ALARM_MANAGER.Events;
+END_IF;

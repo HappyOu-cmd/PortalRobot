@@ -1,5 +1,6 @@
 import { mapTwinSnapshot } from './twoPalletMapping';
 import { PointEditorRequests, type PlcPointEditorCommand, type PlcPointEditorReply } from './pointEditorRequests';
+import type { MagazineCalibrationStatus } from '../points/magazineCalibration';
 import { mapGeometrySnapshot } from '../model/geometryControl';
 import type { PhysicalIoState } from './physicalIo';
 import type { ControllerDiagnostics } from './controllerDiagnostics';
@@ -387,6 +388,7 @@ export interface PlcRuntimeInfo {
   axisManual: [PlcAxisManualStatus, PlcAxisManualStatus, PlcAxisManualStatus];
   robotManual: PlcRobotManualStatus;
   pointEditor: PlcPointEditorStatus;
+  magazineCalibration: [MagazineCalibrationStatus, MagazineCalibrationStatus];
 }
 
 interface GatewayMessage {
@@ -430,6 +432,7 @@ export interface PlcCommand {
   point?: number;
   index?: number;
   speedFactor?: number;
+  calibrationMethod?: 1 | 3;
   draft?: { x: number; y: number; z: number; magazineSafeZ?: number; magazineChangeZ?: number; speedFactor: number };
 }
 
@@ -464,6 +467,7 @@ const HMI_MANUAL_REJECT_REASONS = [
   'Внешний робот не подтвердил готовность',
   'Motion-слой не готов: проверьте состояние группы и автомата оси',
   'Входная точка станка запрещена: люк закрыт',
+  'Опорная точка магазина не настроена или недоступна в этом режиме',
 ];
 const POINT_EDITOR_REJECT_REASONS = [
   '',
@@ -491,6 +495,7 @@ const POINT_EDITOR_REJECT_REASONS = [
   'Смещения Z вне диапазона или SAFE_Z ГК не поднимает робот в пределах оси',
   'Для проверки выключите и освободите ГК, остановите конвейер',
   'Запись точки ГК запрещена: проверьте ручной режим, поддержку ГК, ручной I/O и сброс привода',
+  'Способ калибровки магазина изменён или выбранная опора не используется',
 ];
 const ROBOT_ACTIONS = ['Нет действия', 'Движение к точке', 'Открывает захват 1', 'Закрывает захват 1', 'Открывает захват 2', 'Закрывает захват 2', 'Поворот к заготовке', 'Поворот к детали'];
 const POINT_NAMES = [
@@ -884,9 +889,11 @@ export function mapRuntimeInfo(values: Record<string, unknown>, current: PlcRunt
       stepName: AXIS_MANUAL_STATES[stateCode] ?? `Неизвестное состояние оси (${stateCode})`,
     };
   }) as [PlcAxisManualStatus, PlcAxisManualStatus, PlcAxisManualStatus];
-  const pointEditorPoints = Array.from({ length: 14 }, (_, offset) => {
+  const pointEditorPoints = Array.from({ length: 18 }, (_, offset) => {
     const index = offset + 1;
-    const root = `astPointEditorPoints[${index}]`;
+    const magazine = index === 11 || index === 15 || index === 16 ? 1 : index === 12 || index === 17 || index === 18 ? 2 : 0;
+    const reference = index === 11 || index === 12 ? 1 : index === 15 || index === 17 ? 2 : 3;
+    const root = magazine ? `astMagazineCalibrationStatus[${magazine}].astPoints[${reference}]` : `astPointEditorPoints[${index}]`;
     const previous = current.pointEditor.points[offset] ?? {
       index, pointId: 0, x: 0, y: 0, z: 0, magazineSafeZ: 0, magazineChangeZ: 0, speedFactor: 0, configured: false,
     };
@@ -902,6 +909,22 @@ export function mapRuntimeInfo(values: Record<string, unknown>, current: PlcRunt
       configured: booleanValue(values, `${root}.xConfigured`, previous.configured),
     };
   });
+  const magazineCalibration = [1, 2].map((index) => {
+    const root = `astMagazineCalibrationStatus[${index}]`;
+    const previous = current.magazineCalibration[index - 1];
+    return {
+      method: numberValue(values, `${root}.uiMethod`, previous.method) === 3 ? 3 : 1,
+      changeAllowed: booleanValue(values, `${root}.xChangeAllowed`, previous.changeAllowed),
+      captureAllowed: booleanValue(values, `${root}.xCaptureAllowed`, previous.captureAllowed),
+      saveAllowed: booleanValue(values, `${root}.xSaveAllowed`, previous.saveAllowed),
+      referenceCaptureAllowed: booleanValue(values, `${root}.xReferenceCaptureAllowed`, previous.referenceCaptureAllowed),
+      referenceSaveAllowed: booleanValue(values, `${root}.xReferenceSaveAllowed`, previous.referenceSaveAllowed),
+      moveAllowed: ['A', 'B', 'C'].map((role, offset) =>
+        booleanValue(values, `${root}.xMove${role}Allowed`, previous.moveAllowed?.[offset] ?? false)) as [boolean, boolean, boolean],
+      ready: booleanValue(values, `${root}.xReady`, previous.ready),
+      reason: numberValue(values, `${root}.uiReason`, previous.reason),
+    };
+  }) as [MagazineCalibrationStatus, MagazineCalibrationStatus];
   const pointEditorRejectCode = numberValue(values, 'uiPointEditorRejectReason', current.pointEditor.rejectCode);
   const resultIndex = numberValue(values, 'uiPointEditorIndex', current.pointEditor.resultPoint.index);
   const pointEditor: PlcPointEditorStatus = {
@@ -1173,6 +1196,7 @@ export function mapRuntimeInfo(values: Record<string, unknown>, current: PlcRunt
     axisManual,
     robotManual,
     pointEditor,
+    magazineCalibration,
   };
 }
 

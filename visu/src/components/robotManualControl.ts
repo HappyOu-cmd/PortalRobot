@@ -7,6 +7,17 @@ export const EDITOR_POINT_LABELS = [
   'Магазин 2 — базовая точка детали',
   'ГК 1 — базовая точка',
   'ГК 2 — базовая точка',
+  'Магазин 1 — B', 'Магазин 1 — C',
+  'Магазин 2 — B', 'Магазин 2 — C',
+] as const;
+
+export const CALIBRATION_MANUAL_POINTS = [
+  { value: 23, editorIndex: 11, label: 'Магазин 1 — A' },
+  { value: 24, editorIndex: 15, label: EDITOR_POINT_LABELS[14] },
+  { value: 25, editorIndex: 16, label: EDITOR_POINT_LABELS[15] },
+  { value: 26, editorIndex: 12, label: 'Магазин 2 — A' },
+  { value: 27, editorIndex: 17, label: EDITOR_POINT_LABELS[16] },
+  { value: 28, editorIndex: 18, label: EDITOR_POINT_LABELS[17] },
 ] as const;
 
 export const MANUAL_POINT_OPTIONS = [
@@ -27,6 +38,7 @@ export const MANUAL_POINT_OPTIONS = [
   { value: 19, label: EDITOR_POINT_LABELS[12] },
   { value: 20, label: 'ГК 2 — безопасный подход' },
   { value: 22, label: EDITOR_POINT_LABELS[13] },
+  ...CALIBRATION_MANUAL_POINTS,
 ] as const;
 
 // PLC E_POINT_NAME values differ from the compact manual-selection codes above.
@@ -40,6 +52,9 @@ export const ACTIVE_POINT_LABELS: Record<number, string> = {
   21: MANUAL_POINT_OPTIONS[11].label,
   24: EDITOR_POINT_LABELS[12], 25: 'ГК 1 — безопасный подход', 26: 'ГК 1 — безопасный подход',
   27: EDITOR_POINT_LABELS[13], 28: 'ГК 2 — безопасный подход', 29: 'ГК 2 — безопасный подход',
+  22: CALIBRATION_MANUAL_POINTS[0].label, 23: CALIBRATION_MANUAL_POINTS[3].label,
+  30: EDITOR_POINT_LABELS[14], 31: EDITOR_POINT_LABELS[15],
+  32: EDITOR_POINT_LABELS[16], 33: EDITOR_POINT_LABELS[17],
 };
 
 export function currentRobotPointLabel(point: number, online = true): string {

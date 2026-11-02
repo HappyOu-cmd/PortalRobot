@@ -7,13 +7,15 @@ import { RobotJogConsole } from './RobotJogConsole';
 import { Icon } from '@iconify/react';
 import robotIcon from '@iconify-icons/material-symbols/precision-manufacturing-outline';
 import './robot-extended-panel.css';
-import { ACTIVE_POINT_LABELS, EDITOR_POINT_LABELS, MANUAL_POINT_OPTIONS, robotActionCommand, type RobotManualAction } from './robotManualControl';
+import { ACTIVE_POINT_LABELS, CALIBRATION_MANUAL_POINTS, EDITOR_POINT_LABELS, MANUAL_POINT_OPTIONS, robotActionCommand, type RobotManualAction } from './robotManualControl';
 import { initialRobotControlTab, reconcileRobotControlTab, type RobotControlTab } from './robotControlTabs';
 import { SegmentedControl } from './ui/ControlPrimitives';
 import type { PlcCommand, PlcRuntimeInfo } from '../plc/client';
 import type { PlcPointEditorCommand, PlcPointEditorReply } from '../plc/pointEditorRequests';
 import type { CellState } from '../model/types';
 import type { PointBackupDocument, PointBackupItem } from '../points/client';
+import { MAGAZINE_EDITOR_POINTS, isMagazinePointActive, magazineEditorPointLabel, magazineForEditorPoint, planPointImport } from '../points/magazineCalibration';
+import { MagazineCalibrationPreview } from './magazine/MagazineCalibrationPreview';
 
 type RobotExtendedPanelProps = {
   robot: CellState['robot'];
@@ -42,13 +44,12 @@ const EDITOR_POINT_GROUPS = [
   { title: 'Станок 2', indexes: [4, 5, 6] },
   { title: 'Станок 3', indexes: [7, 8, 9] },
   { title: 'Безопасность', indexes: [10] },
-  { title: 'Магазины', indexes: [11, 12] },
+  { title: 'Магазины', indexes: [11, 15, 16, 12, 17, 18] },
   { title: 'Геом. контроль', indexes: [13, 14] },
 ] as const;
 
 type PointDraft = { x: string; y: string; z: string; magazineSafeZ: string; magazineChangeZ: string; speedFactor: string };
 type PointPendingCommand = 'capture' | 'save' | 'import' | null;
-type ImportedPoint = PointDraft & { index: number; label: string };
 
 function pointDraft(point: PlcPointEditorReply['point'] | undefined): PointDraft {
   return {
@@ -292,11 +293,43 @@ export function RobotExtendedPanel({
   const robotStateTone = robotBusy ? 'blue' : robotReady ? 'green' : 'red';
   const selectedEditorValue = runtime.pointEditor.points[selectedEditorPoint - 1];
   const magazinePointSelected = selectedEditorPoint === 11 || selectedEditorPoint === 12;
+  const editorMagazine = magazineForEditorPoint(selectedEditorPoint);
+  const editorCalibration = editorMagazine ? runtime.magazineCalibration[editorMagazine - 1] : undefined;
+  const editorMagazineState = editorMagazine ? magazines[editorMagazine - 1].state : undefined;
+  const calibrationMethods = runtime.magazineCalibration.map(item => item.method);
+  const visiblePointGroups = EDITOR_POINT_GROUPS.map(group => ({ ...group,
+    indexes: group.indexes.filter(index => isMagazinePointActive(index, calibrationMethods) || index === selectedEditorPoint),
+  }));
+  const visiblePointCount = runtime.pointEditor.points.filter(point => isMagazinePointActive(point.index, calibrationMethods)).length;
+  const editorPointLabel = (index: number) => {
+    const magazine = magazineForEditorPoint(index);
+    return magazine ? magazineEditorPointLabel(index, magazines[magazine - 1].state.rows,
+      magazines[magazine - 1].state.columns, runtime.magazineCalibration[magazine - 1].method)
+      : EDITOR_POINT_LABELS[index - 1];
+  };
+  const visibleManualPoints = MANUAL_POINT_OPTIONS.filter(point => !('editorIndex' in point)
+    || (!modbusMode && isMagazinePointActive(point.editorIndex, calibrationMethods)));
+  const selectedManualPointVisible = visibleManualPoints.some(point => point.value === selectedPoint);
+  useEffect(() => {
+    if (!selectedManualPointVisible) setSelectedPoint(1);
+  }, [selectedManualPointVisible]);
+  const manualCalibrationPoint = CALIBRATION_MANUAL_POINTS.find(point => point.value === selectedPoint);
+  const manualCalibrationMagazine = manualCalibrationPoint ? magazineForEditorPoint(manualCalibrationPoint.editorIndex) : 0;
+  const manualCalibrationReference = manualCalibrationPoint && manualCalibrationMagazine
+    ? MAGAZINE_EDITOR_POINTS[manualCalibrationMagazine - 1].findIndex(index => index === manualCalibrationPoint.editorIndex) : -1;
+  const manualPointAllowed = manualCalibrationMagazine
+    ? !!runtime.magazineCalibration[manualCalibrationMagazine - 1].moveAllowed?.[manualCalibrationReference]
+    : runtime.robotManual.pointsAllowed;
+  const editorCaptureAllowed = editorCalibration
+    ? selectedEditorPoint >= 15 ? editorCalibration.referenceCaptureAllowed : editorCalibration.captureAllowed
+    : runtime.pointEditor.captureAllowed;
   const geometryPointSelected = selectedEditorPoint === 13 || selectedEditorPoint === 14;
   const safeOffsetSelected = magazinePointSelected || geometryPointSelected;
   const editorSaveAllowed = geometryPointSelected
     ? !!geometryControl?.stations[selectedEditorPoint - 13]?.pointWriteAllowed
-    : runtime.pointEditor.saveAllowed;
+    : editorCalibration
+      ? selectedEditorPoint >= 15 ? editorCalibration.referenceSaveAllowed : editorCalibration.saveAllowed
+      : runtime.pointEditor.saveAllowed;
   const editorCoordinates = [editorDraft.x, editorDraft.y, editorDraft.z].map(pointNumber);
   const editorSpeedFactor = pointNumber(editorDraft.speedFactor);
   const editorMagazineSafeZ = pointNumber(editorDraft.magazineSafeZ);
@@ -520,25 +553,7 @@ export function RobotExtendedPanel({
     try {
       const parsed = await onPreparePointImport(backupId);
 
-      const currentIndexesByPointId = new Map(runtime.pointEditor.points.map((point) => [point.pointId, point.index]));
-      const seenPointIds = new Set<number>();
-      const imported = parsed.points.flatMap((raw) => {
-        const pointId = Number(raw.pointId);
-        const index = currentIndexesByPointId.get(pointId);
-        if (!index || seenPointIds.has(pointId) || raw.configured !== true) return [];
-        seenPointIds.add(pointId);
-        const values = [Number(raw.x), Number(raw.y), Number(raw.z), Number(raw.speedFactor), Number(raw.magazineSafeZ), Number(raw.magazineChangeZ)];
-        if (!values.every(Number.isFinite) || (index >= 13 ? values[3] < 0.1 : values[3] <= 0.1) || values[3] > 1
-          || Math.abs(values[4]) > 10000 || Math.abs(values[5]) > 10000) {
-          throw new Error(`Некорректные координаты или скорость точки ${raw.label ?? pointId}.`);
-        }
-        return [{
-          index,
-          label: EDITOR_POINT_LABELS[index - 1] ?? `Точка ${index}`,
-          x: String(values[0]), y: String(values[1]), z: String(values[2]), speedFactor: String(values[3]),
-          magazineSafeZ: String(values[4]), magazineChangeZ: String(values[5]),
-        } satisfies ImportedPoint];
-      }).sort((left, right) => left.index - right.index);
+      const imported = planPointImport(parsed, runtime.pointEditor.points, calibrationMethods);
 
       if (imported.length === 0) throw new Error('В файле нет настроенных точек, совместимых с текущей таблицей PLC.');
       if (editorDirty && !window.confirm('Текущий черновик не сохранён. Отбросить его и начать импорт?')) return;
@@ -550,22 +565,19 @@ export function RobotExtendedPanel({
         if (!editorMountedRef.current) return;
         importIndex = point.index;
         setSelectedEditorPoint(point.index);
-        setEditorDraft(point);
+        setEditorDraft(point.draft ? pointDraft({ ...point.draft,
+          magazineSafeZ: point.draft.magazineSafeZ ?? 0, magazineChangeZ: point.draft.magazineChangeZ ?? 0,
+          configured: false }) : pointDraft(runtime.pointEditor.points[point.index - 1]));
         setEditorDirty(true);
         setImportProgress({ completed: offset, total: imported.length });
         setEditorMessage(`Импорт: запись точки ${offset + 1} из ${imported.length}…`);
-        const reply = await onPointCommand({
-          command: 'robot.point.save', index: point.index,
-          draft: {
-            x: pointNumber(point.x), y: pointNumber(point.y), z: pointNumber(point.z),
-            magazineSafeZ: pointNumber(point.magazineSafeZ), magazineChangeZ: pointNumber(point.magazineChangeZ),
-            speedFactor: pointNumber(point.speedFactor),
-          },
-        });
+        const reply = await onPointCommand(point);
         if (!editorMountedRef.current) return;
         setEditorDraft(pointDraft(reply.point));
         setEditorDirty(false);
-        setEditorMessage(reply.point.configured
+        setEditorMessage(point.command === 'robot.point.invalidateMagazine'
+          ? 'Импорт: настройка магазина сброшена.'
+          : reply.point.configured
           ? `Импорт: PLC подтвердил ${offset + 1} из ${imported.length} точек.`
           : `Импорт: PLC принял ${offset + 1} из ${imported.length} точек. Для базы магазина задайте ненулевые Safe Z и Change Z.`);
       }
@@ -717,17 +729,17 @@ export function RobotExtendedPanel({
           <section className="robot-extended-section points-section">
             <div className="robot-section-title"><div><span>Переход к точке</span><small>Старый список движения оставлен отдельно от редактора</small></div><Crosshair size={19} /></div>
             <select value={selectedPoint} onChange={(event) => setSelectedPoint(Number(event.target.value))} aria-label="Точка робота">
-              {MANUAL_POINT_OPTIONS.map((point) => <option value={point.value} key={point.value}>{point.value}. {point.label}</option>)}
+              {visibleManualPoints.map((point) => <option value={point.value} key={point.value}>{point.value}. {'editorIndex' in point ? editorPointLabel(point.editorIndex) : point.label}</option>)}
             </select>
 			{selectedPoint >= 14 && selectedPoint <= 16 && <><label className="magazine-setting"><span>Магазин</span><select value={selectedMagazine} onChange={(event) => { setSelectedMagazine(Number(event.target.value)); setSelectedSlot(1); }}><option value={1}>Магазин 1</option><option value={2}>Магазин 2</option></select></label><label className="magazine-setting"><span>Активный слот</span><input type="number" min={1} max={Math.max(1, magazines[selectedMagazine - 1].state.rows * magazines[selectedMagazine - 1].state.columns)} value={selectedSlot} onChange={(event) => setSelectedSlot(Math.max(1, Math.min(magazines[selectedMagazine - 1].state.rows * magazines[selectedMagazine - 1].state.columns, Number(event.target.value))))} /></label></>}
-            <button type="button" disabled={!online} className={`point-go-button ${allowedClass(runtime.robotManual.pointsAllowed)}`} aria-disabled={!runtime.robotManual.pointsAllowed} onClick={() => sendAction(1)}>Перейти к точке</button>
+            <button type="button" disabled={!online} className={`point-go-button ${allowedClass(manualPointAllowed)}`} aria-disabled={!manualPointAllowed} onClick={() => sendAction(1)}>Перейти к точке</button>
             <div className="point-state"><span>Активная точка PLC</span><strong>{ACTIVE_POINT_LABELS[runtime.robotManual.activePoint] ?? 'Нет'}</strong></div>
             {!runtime.robotManual.pointsAllowed && runtime.robotManual.rejectReason && <div className="robot-reject-banner"><AlertCircle size={18} />{runtime.robotManual.rejectReason}</div>}
           </section>
 
           <section className="robot-extended-section point-editor-section">
             <div className="robot-section-title point-editor-title">
-              <div><span>Редактор фиксированных точек</span><small>14 точек SoftMotion: станки, магазины и геом. контроль</small></div>
+              <div><span>Редактор фиксированных точек</span><small>{visiblePointCount} точек SoftMotion: станки, магазины и геом. контроль</small></div>
               <div className="point-editor-title-tools">
                 <button type="button" disabled={!editorEditable || Boolean(editorPending)} onClick={() => setBackupMenuOpen(true)}><FolderLock size={14} />Копии точек</button>
                 <b className={runtime.pointEditor.tableReady ? 'ready' : 'blocked'}>{runtime.pointEditor.tableReady ? 'Таблица готова' : 'Таблица не настроена'}</b>
@@ -735,7 +747,7 @@ export function RobotExtendedPanel({
             </div>
             <div className="point-editor-layout">
               <nav className="point-editor-list" aria-label="Фиксированные точки SoftMotion">
-                {EDITOR_POINT_GROUPS.map((group) => <div key={group.title}>
+                {visiblePointGroups.map((group) => <div key={group.title}>
                   <span>{group.title}</span>
                   {group.indexes.map((index) => {
                     const point = runtime.pointEditor.points[index - 1];
@@ -745,16 +757,20 @@ export function RobotExtendedPanel({
                       disabled={Boolean(editorPending)}
                       className={`${selectedEditorPoint === index ? 'active' : ''} ${point?.configured ? 'configured' : 'unconfigured'}`}
                       onClick={() => selectEditorPoint(index)}
-                    ><i /> <span>{EDITOR_POINT_LABELS[index - 1]}</span><small>{point?.configured ? 'Настроена' : 'Не настроена'}</small></button>;
+                    ><i /> <span>{editorPointLabel(index)}</span><small>{point?.configured ? 'Настроена' : 'Не настроена'}</small></button>;
                   })}
                 </div>)}
               </nav>
 
               <div className="point-editor-card">
                 <header>
-                  <div><span>Точка {selectedEditorPoint}</span><strong>{EDITOR_POINT_LABELS[selectedEditorPoint - 1]}</strong></div>
+                  <div><span>Точка {selectedEditorPoint}</span><strong>{editorPointLabel(selectedEditorPoint)}</strong></div>
                   <b className={selectedEditorValue?.configured ? 'configured' : 'unconfigured'}>{selectedEditorValue?.configured ? 'Настроена' : 'Не настроена'}</b>
                 </header>
+                {editorCalibration?.method === 3 && editorMagazineState && editorMagazine > 0 && <MagazineCalibrationPreview
+                  rows={editorMagazineState.rows} columns={editorMagazineState.columns}
+                  selected={MAGAZINE_EDITOR_POINTS[editorMagazine - 1].findIndex(index => index === selectedEditorPoint)}
+                  configured={MAGAZINE_EDITOR_POINTS[editorMagazine - 1].map(index => !!runtime.pointEditor.points[index - 1]?.configured)} />}
                 <div className="point-editor-fields">
                   {(['x', 'y', 'z'] as const).map((field) => <label key={field}>
                     <span>{field.toUpperCase()}</span>
@@ -773,7 +789,7 @@ export function RobotExtendedPanel({
                 {!editorDraftValid && <p className="point-editor-validation"><AlertCircle size={15} />Заполните XYZ числами; скорость — от {geometryPointSelected ? '0.10' : '0.11'} до 1.00{magazinePointSelected ? '; смещения Z — от -10000 до 10000 мм' : geometryPointSelected ? '; SAFE_Z — отрицательное смещение от -10000 мм' : ''}.</p>}
                 {editorDraftValid && !magazineOffsetsConfigured && <p className="point-editor-validation"><AlertCircle size={15} />Точка останется ненастроенной, пока хотя бы одно из смещений Safe Z или Change Z равно нулю.</p>}
                 <div className="point-editor-actions">
-                  <button type="button" disabled={!editorEditable || !online || Boolean(editorPending)} className={allowedClass(runtime.pointEditor.captureAllowed)} aria-disabled={!runtime.pointEditor.captureAllowed || !editorEditable} onClick={captureEditorPoint}><Crosshair size={16} />{editorPending === 'capture' ? 'Фиксация…' : 'Зафиксировать текущие координаты'}</button>
+                  <button type="button" disabled={!editorEditable || !online || Boolean(editorPending)} className={allowedClass(editorCaptureAllowed)} aria-disabled={!editorCaptureAllowed || !editorEditable} onClick={captureEditorPoint}><Crosshair size={16} />{editorPending === 'capture' ? 'Фиксация…' : 'Зафиксировать текущие координаты'}</button>
                   <button type="button" disabled={Boolean(editorPending) || !editorDirty} onClick={cancelEditorDraft}>Отмена</button>
                   <button type="button" disabled={!editorEditable || !online || Boolean(editorPending) || !editorDraftValid} className={`primary ${allowedClass(editorSaveAllowed)}`} aria-disabled={!editorSaveAllowed || !editorEditable} onClick={saveEditorPoint}><Save size={16} />{editorPending === 'save' ? 'Сохранение…' : 'Сохранить'}</button>
                 </div>
@@ -885,7 +901,7 @@ export function RobotExtendedPanel({
             >
               <FileJson aria-hidden="true" />
               <span><b>{item.name}</b><small>{item.valid ? backupDate(item.exportedAt, item.createdAtMs) : item.error}</small></span>
-              <i className={item.valid && item.configuredCount === item.pointCount ? 'complete' : ''}>{item.valid ? `${item.configuredCount}/${item.pointCount}` : 'Ошибка'}</i>
+              <i className={item.valid && item.configuredCount === (item.requiredCount ?? item.pointCount) ? 'complete' : ''}>{item.valid ? `${item.configuredCount}/${item.requiredCount ?? item.pointCount}` : 'Ошибка'}</i>
             </button>)}
           </div>
         </section>
@@ -893,7 +909,7 @@ export function RobotExtendedPanel({
         {backupError && <div className="point-backup-error" role="alert"><AlertCircle /><span>{backupError}</span></div>}
 
         <footer>
-          <span>{selectedBackup?.valid ? `Выбрано: ${selectedBackup.configuredCount} настроенных точек из ${selectedBackup.pointCount}` : 'Выберите исправную резервную копию'}</span>
+          <span>{selectedBackup?.valid ? `Выбрано: ${selectedBackup.configuredCount} настроенных точек из ${selectedBackup.requiredCount ?? selectedBackup.pointCount}` : 'Выберите исправную резервную копию'}</span>
           <button
             type="button"
             disabled={!selectedBackup?.valid || !online || !editorEditable || Boolean(backupBusy) || Boolean(editorPending)}

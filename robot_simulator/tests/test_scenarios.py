@@ -86,6 +86,13 @@ def test_generator_limits_full_cycles_to_ten_percent_and_twenty() -> None:
     assert sum(bool(case["expectations"].get("fullCycle")) for case in generated_scenarios(7, 1000)) == 20
 
 
+def test_generated_unserviceable_blank_types_are_decision_cases_not_full_production() -> None:
+    cases = generated_scenarios(1, 100)
+    for index in (3, 6):
+        assert cases[index]["expectations"]["fullCycle"] is False
+        assert cases[index]["expectations"]["firstDecision"] != "no-task"
+
+
 def test_operator_smoke_cases_have_a_payload_to_identify() -> None:
     cases = [case for case in smoke_scenarios() if case["expectations"]["firstDecision"] == "operator-type-choice"]
     assert len(cases) == 2

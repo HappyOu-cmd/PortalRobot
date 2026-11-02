@@ -7,6 +7,7 @@ export interface PointBackupItem {
   exportedAt: string | null;
   createdAtMs: number;
   pointCount: number;
+  requiredCount?: number;
   configuredCount: number;
   valid: boolean;
   error: string | null;
@@ -14,7 +15,8 @@ export interface PointBackupItem {
 
 export interface PointBackupDocument {
   format: 'portal-robot-points';
-  version: 2;
+  version: 3;
+  magazineCalibrationMethods: [1 | 3, 1 | 3];
   exportedAt: string;
   exportedBy?: { id: number | null; username: string; displayName: string };
   points: Array<PlcPointEditorPoint & { label: string }>;

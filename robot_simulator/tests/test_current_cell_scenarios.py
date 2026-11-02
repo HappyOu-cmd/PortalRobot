@@ -32,6 +32,8 @@ def snapshot(state: dict) -> dict:
     for i, machine in enumerate(state["machines"], 1):
         values[f"astMachineStatus[{i}].xEnabled"] = machine["state"] != 0
         values[f"astMachineStatus[{i}].ePartType"] = {0: 0, 1: 0, 2: 2, 3: 1}[machine["state"]]
+        values[f"astMachineStatus[{i}].xBusy"] = False
+        values[f"astMachineStatus[{i}].xProcessing"] = machine["state"] == 2
         values[f"stMultiType.Config.auiMachineType[{i}]"] = machine["productType"]
     for i, payload in enumerate(state["grippers"], 1):
         values[f"stRobotStatus.xGripper{i}Closed"] = bool(payload["content"])
@@ -40,6 +42,12 @@ def snapshot(state: dict) -> dict:
         values[f"astGeometryStatus[{i}].udiProducedPartsTotal"] = 900 + i
         values[f"astGeometryStatus[{i}].xConfirmAllowed"] = True
         values[f"astGeometryStatus[{i}].xEnableAllowed"] = True
+        values[f"astGeometryStatus[{i}].xPartStored"] = False
+        values[f"astGeometryStatus[{i}].xOccupied"] = True
+        values[f"astGeometryStatus[{i}].xRecoveryRequired"] = True
+        values[f"astGeometryStatus[{i}].uiProductType"] = 0
+    for i, called in enumerate(state["geometry"]["calls"], 1):
+        values[f"astGeometryCalls[{i}].uiState"] = 1 if called else 0
     return values
 
 
@@ -78,6 +86,8 @@ def test_gk_expectation_never_passes_on_unrelated_robot_motion() -> None:
     values.update({"astGeometryCalls[3].uiState": 4, "astGeometryCalls[3].uiStation": 2})
     assert not GatewayRunner.decision_matches("geometry-delivery", values)
     values["astGeometryStatus[2].xOccupied"] = True
+    assert not GatewayRunner.decision_matches("geometry-delivery", values)
+    values["astGeometryStatus[2].xPartStored"] = True
     assert GatewayRunner.decision_matches("geometry-delivery", values)
 
 
@@ -89,11 +99,22 @@ def test_balance_counts_four_physical_pallets_and_gk_once_without_projection() -
     values["astMagazineInventory[1].aSlots[1].xInPosition"] = True
     values["astMagazineInventory[1].aSlots[1].uiProductType"] = 3
     assert GatewayRunner.initial_inventory(state) == GatewayRunner.observed_inventory(values) == {1: 3, 2: 0, 3: 0}
-    values.update({"astGeometryStatus[2].xOccupied": True, "astGeometryStatus[2].uiProductType": 2})
+    values.update({"astGeometryStatus[2].xOccupied": True, "astGeometryStatus[2].xPartStored": True,
+                   "astGeometryStatus[2].uiProductType": 2})
     assert GatewayRunner.observed_inventory(values) == {1: 3, 2: 1, 3: 0}
     values["astGeometryStatus[2].uiProductType"] = 0
     with pytest.raises(AssertionError, match="unknown product type"):
         GatewayRunner.observed_inventory(values)
+
+
+@pytest.mark.parametrize("reason", ["xRecoveryRequired", "xReserved", "xPartAtEnd"])
+def test_gk_occupancy_without_confirmed_part_is_not_inventory(reason):
+    values = {"astGeometryStatus[1].xOccupied": True,
+              "astGeometryStatus[1].xPartStored": False,
+              "astGeometryStatus[1].uiProductType": 0,
+              f"astGeometryStatus[1].{reason}": True}
+    assert GatewayRunner.observed_inventory(values) == {1: 0, 2: 0, 3: 0}
+    assert GatewayRunner.finished_inventory(values) == {1: 0, 2: 0, 3: 0}
 
 
 def test_setup_detects_wrong_slot_with_unchanged_total_and_unknown_pallet_role() -> None:
@@ -177,6 +198,9 @@ class MemoryRunner(GatewayRunner):
         if not predicate(self.values):
             raise TimeoutError(label)
 
+    async def wait_stable_value(self, socket, predicate, timeout, label, **_kwargs):
+        await self.wait_value(socket, predicate, timeout, label)
+
     async def recover_between_cases(self, _socket):
         pass
 
@@ -192,6 +216,7 @@ class MemoryRunner(GatewayRunner):
     async def enter_automatic_mode(self, _socket):
         self.values["stCellStatus.xStartAllowed"] = False
         self.values["stCellStatus.xStartCheckTaskAvailable"] = False
+        self.values["stCellStatus.xStartCheckMagazineReady"] = any(m["enabled"] for m in self.case["initialState"]["magazines"])
 
     async def stop_cell_if_running(self, _socket):
         self.values["stCellStatus.xRunning"] = False
@@ -222,6 +247,7 @@ class MemoryRunner(GatewayRunner):
                 used.add(station)
                 self.values.update({f"astGeometryCalls[{i}].uiStation": station,
                                     f"astGeometryStatus[{station}].xOccupied": True,
+                                    f"astGeometryStatus[{station}].xPartStored": True,
                                     f"astGeometryStatus[{station}].uiProductType": 1})
                 self.values[f"astGeometryStatus[{station}].udiProducedPartsTotal"] += 2 if self.duplicate_production else 1
             else:
@@ -252,3 +278,31 @@ def test_geometry_runner_detects_double_production_even_with_conserved_inventory
     assert runner.case_checks[-1]["passed"] is False
     diagnostics = runner.case_diagnostics(case)
     assert diagnostics["checks"][-1]["label"] == "Подтверждённый выпуск ГК"
+
+
+@pytest.mark.parametrize("delta", [0, 2])
+def test_full_cycle_requires_exact_new_production_even_with_all_parts_stored(delta):
+    case = for_magazine_mode(fixed_scenarios("smoke")[0], 0)
+    runner = MemoryRunner(case)
+    runner.values["astMagazineInventory[1].aSlots[1].eDetailType"] = 2
+    runner._case_magazine_counters = [100, 100]
+    runner._case_geometry_counters = [901, 902]
+    runner.values["astMagazineStatus[1].udiProducedPartsTotal"] += delta
+    with pytest.raises(AssertionError, match="Подтверждён новый выпуск"):
+        asyncio.run(runner.finish_production_case(None, {1: 1, 2: 0, 3: 0}, 0))
+    assert not runner.commands
+    assert runner.case_checks[-1]["passed"] is False
+
+
+@pytest.mark.parametrize("field,value", [
+    ("stRobotStatus.xBusy", True), ("stRobotStatus.xGripper1Closed", True),
+    ("stRobotStatus.xGripper2Closed", True), ("astMachineStatus[1].ePartType", 1),
+    ("astMachineStatus[2].xBusy", True), ("astMachineStatus[3].xProcessing", True),
+])
+def test_full_cycle_requires_empty_grippers_and_idle_empty_machines(field, value):
+    values = snapshot(for_magazine_mode(fixed_scenarios("smoke")[0], 0)["initialState"])
+    values["astMagazineInventory[1].aSlots[1].eDetailType"] = 2
+    expected = {1: 1, 2: 0, 3: 0}
+    assert GatewayRunner.production_complete(values, expected)
+    values[field] = value
+    assert not GatewayRunner.production_complete(values, expected)

@@ -501,6 +501,7 @@ class Block:
 
     def __init__(self, registry, relative, globals):
         object.__setattr__(self, "registry", registry)
+        object.__setattr__(self, "_method_frames", [])
         object.__setattr__(self, "program", registry.program(relative))
         object.__setattr__(self, "state", {**registry.enums, **globals})
         types = {d.name: d.type for d in self.program.declarations}
@@ -517,6 +518,11 @@ class Block:
             unknown = set(args) - {d.name for d in program.declarations if d.block in ("VAR_INPUT", "VAR_IN_OUT")}
             if unknown:
                 raise TypeError(f"Unexpected arguments to {program.name}: {unknown}")
+            # A nested method sees writes to instance fields made by its caller.
+            # Caller-local variables with the same names never shadow FB storage.
+            if self._method_frames:
+                parent, parent_locals = self._method_frames[-1]
+                self.state.update({name: parent[name] for name in self.state["_types"] if name not in parent_locals})
             local = {**self.state, **self.registry.initialize([d for d in program.declarations if d.name not in args], self.state)}
             argument_decls = {d.name: d for d in program.declarations}
             local.update({name: value if argument_decls[name].block == "VAR_IN_OUT" else cast(argument_decls[name].type, value)
@@ -525,10 +531,20 @@ class Block:
             if program.result_type:
                 local[program.name] = self.registry.value(program.result_type, self.state)
                 local["_types"][program.name] = program.result_type
-            program.execute(local)
+            self._method_frames.append((local, local_names))
+            try:
+                program.execute(local)
+            finally:
+                self._method_frames.pop()
             for name in self.state["_types"]:
                 if name not in local_names:
                     self.state[name] = local[name]
+            if self._method_frames:
+                parent, parent_locals = self._method_frames[-1]
+                parent.update({name: self.state[name] for name in self.state["_types"] if name not in parent_locals})
+            # Drivers bind scalar VAR_IN_OUT addresses explicitly; Python scalars
+            # cannot carry the caller's ST lvalue through a keyword argument.
+            call.in_out_values = {d.name: local[d.name] for d in program.declarations if d.block == "VAR_IN_OUT"}
             return local.get(program.name) if program.result_type else None
         return call
 

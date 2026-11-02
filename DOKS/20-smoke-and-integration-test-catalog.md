@@ -147,8 +147,12 @@ W29/W52, отдельные владельцы, сброс и rollover сохр�
 1. PLC принял начальное состояние (`uiTestScenarioResult = 0`).
 2. Фактический инвентарь совпал с заданным.
 3. PLC выбрал ожидаемую первую технологическую операцию, станок и магазин.
-4. В зависимости от сценария цикл завершился либо был штатно остановлен после
-   проверяемого решения.
+4. При `fullCycle=true` весь исходный материал подтверждён как готовые детали
+   в магазинах/ГК, захваты и станки освобождены; прирост счётчиков выпуска равен
+   числу исходных изделий вне готового складского запаса. Затем runner сам
+   останавливает штатное ожидание магазина. Stop до завершения материала — FAIL.
+   Остальные случаи останавливаются после проверяемого решения или проверяют
+   конкретный запрет Start.
 5. Не возникла неожиданная глобальная ошибка, а число изделий каждого типа во
    всей ячейке не изменилось.
 
@@ -181,6 +185,21 @@ W29/W52, отдельные владельцы, сброс и rollover сохр�
 | 10 | Авария робота и Reset | Один тип. С1=`READY/T1`, в М1 есть заготовка T1. Во время отдельного тестового движения вводится ошибка робота. | PLC назначает владельцем ошибки робот (`uiErrorSource=2`). После снятия причины и Reset авария сбрасывается, робот возвращается в `HOME_SAFETY`, затем основной сценарий останавливается штатно. |
 | 11 | Загрузить станок из магазина 2 | М1 отключён и пуст. М2 включён, слот 1 содержит заготовку T1. С1=`READY/T1`, захваты пусты. | PLC выбирает М2 (`uiActiveMagazine=2`), берёт из него заготовку, загружает С1 и завершает цикл без ошибки. |
 | 12 | Уложить готовую деталь в магазин 2 | М1 отключён. М2 включён и имеет свободный слот. Захват 2 держит деталь T1. | PLC выбирает М2 и укладывает в него деталь. После подтверждения операции runner штатно останавливает цикл; баланс сохранён. |
+
+В Smoke №1, 2, 3, 4, 6 и 11 «завершить цикл» означает подтвердить весь материал
+готовыми деталями, затем остановить ячейку штатной командой. При частично заполненном
+магазине PLC вправе продолжать `WAIT_MAGAZINE`; его самостоп не требуется.
+Smoke №1/2/6/11 завершаются одной деталью T1 в выбранном магазине, №3/4 — двумя;
+станки и захваты пусты, счётчики подтверждают все новые укладки. Ранний операторский
+Stop после TAKE с заготовкой в захвате завершает проверку FAIL, даже при сохранённом
+количестве изделий. Переходы ГК в восстановление/резерв без `xPartStored` не создают
+изделий в балансе.
+
+Для Generated полный цикл назначается только при наличии включённых станков для
+всех исходных типов заготовок и допустимого первого задания. Generated `seed=1`
+№4 и №7 содержат недоступный для обработки тип: проверяются решение и штатный Stop,
+а не невозможный выпуск всего материала. При фиксированном seed порядок, начальные
+состояния и намеренно неверные случаи сохранены.
 
 ## General — 8 длительных сценариев
 
@@ -1241,7 +1260,7 @@ W29 → W52 → ложный новый W29; она воспроизведена
 ## Общая подсветка предупреждений — локальная регрессия HMI/3D, 14.10.2026
 
 Запуск из `visu`: `npm run test:warnings`. Набор включает прежние проверки
-`geometryState.test.ts`, `equipmentInspection.test.ts` и `portalRig.test.mjs`, а также следующие
+`geometryState.test.ts`, `equipmentInspection.test.ts`, `portalRig.test.mjs` и `sceneIndications.test.mjs`, а также следующие
 фиксированные проверки `warningTargets.test.ts`. Используется Three.js без
 браузера, WebGL, PLC и рабочих баз данных. Отдельно выполняется `npm run build`;
 внешний вид пользователь проверяет самостоятельно.
@@ -1268,6 +1287,17 @@ W29 → W52 → ложный новый W29; она воспроизведена
 | --- | --- | --- |
 | `robot alarms and warnings colour only the upper moving assembly selected by the operator` | Штатная модель портала; сначала авария и её сброс, затем предупреждение | Красным/оранжевым окрашиваются поперечная балка, колонна Z и цепь Z. Неподвижная балка, длинная цепь X и нижние захваты сохраняют исходные материалы/цвета; сброс возвращает оригиналы |
 | `robot warning halo follows XYZ motion and excludes lower tool heads from its bounds` | Активный ореол верхнего узла; отдельно опущены нижние захваты; затем движение X на 4 м, Y на 0,7 м и Z на 1,5 м | Положение нижних захватов не растягивает ореол. Ореол следует за X, пересчитывает высоту и центр по верхнему узлу при Y/Z, сохраняется в одном экземпляре без дрожания размеров |
+
+Дополнительные проверки `sceneIndications.test.mjs` от 02.11.2026 входят в тот же
+`npm run test:warnings`; браузер, WebGL, PLC и рабочая база не запускаются:
+
+| Фиксированная проверка | Входное состояние | Ожидаемый результат |
+| --- | --- | --- |
+| `both two-pallet magazines show alarms before confirmation without colouring GK or the other magazine` | Поочерёдно М1/М2: PLC передаёт аварию выключенного магазина без подтверждения расстановки; затем положение подтверждено | Видимая рама мигает красным даже при скрытых палетах; после подтверждения подсвечиваются и палеты. Изделия, конвейер ГК и соседний магазин сохраняют цвета |
+| `two-pallet alarm pulses restore original materials during inspection and reset and respect reduced motion` | Активная авария, смена кадров, вход в осмотр, выход с reduced motion, снятие аварии | Цвет пульсирует; осмотр и снятие аварии возвращают исходные материалы. При reduced motion красная подсветка статична, сброс обнуляет её время |
+| `general cell warnings use a pulsing orange rectangle without tinting equipment or GK conveyors` | Общее W4 ячейки при выключенных декоративных маяках; затем предупреждение снято | Только замкнутый прямоугольник на границе ячейки пульсирует оранжевым, клики проходят сквозь него. Оборудование и ГК не окрашены; снятие предупреждения гасит рамку |
+| `specific equipment and GK warnings stay local alongside a general cell warning` | Общее W4 вместе с W9 двери станка1 и предупреждением ГК2; затем W52 с PLC-флагом ГК1 | Адресные эффекты сохраняются только на двери и ГК2; общее предупреждение не распространяется на конвейеры. W52 подсвечивает только указанную PLC станцию |
+| `cell boundary clears on disconnect, keeps red alarm priority and becomes static with reduced motion` | Одновременно предупреждение и включённая красная рамка общей аварии; затем снятие аварии, reduced motion, потеря связи и очистка предупреждений | Красная рамка приоритетна; после снятия аварии рамка оранжевая. Reduced motion убирает пульсацию, потеря актуальных данных и снятие предупреждения гасят рамку |
 
 
 ## Штатное выключение ГК после доставки — локальная регрессия, 15.10.2026
@@ -1455,10 +1485,10 @@ HMI-проекция активной палеты не добавляет ещ�
 | ---: | --- | --- | --- |
 | 1 | ГК 1 — вызов готовой детали | С1 с готовой деталью и вызовом; включён только ГК1. | Вызов С1 достигает 4 (уложена) с назначением ГК1; выпуск +1, баланс сохранён. |
 | 2 | ГК 2 — вызов готовой детали | С1 с готовой деталью и вызовом; включён только ГК2. | Вызов С1 достигает 4 с назначением ГК2; выпуск +1. |
-| 3 | ГК — доставка при выключенных магазинах | Оба магазина выключены; вызвана готовая деталь С1; ГК1 доступен. | Доставка на ГК1 без зависимости от магазина; состояние 4 и выпуск +1. |
+| 3 | ГК — Start запрещён без готового магазина | Оба магазина выключены; вызвана готовая деталь С1; ГК1 доступен. | PLC устойчиво запрещает Start по `xStartCheckMagazineReady=false`; команда Start не отправляется. Вызов остаётся в состоянии 1, деталь — в С1; укладки и ошибок нет, баланс сохранён. |
 | 4 | ГК — два вызова на разные станции | С1 и С2 готовы и вызваны; оба ГК доступны. | Оба вызова в состоянии 4, назначения различны; суммарный выпуск +2. |
 | 5 | ГК — третий вызов ждёт свободную станцию | Три вызванные готовые детали, два ГК; Wait включён. | С1/С2 уложены на разные ГК, С3 остаётся в состоянии 1; выпуск +2, деталь не теряется. |
-| 6 | ГК — обход занятых станций в магазин | Те же три детали, оба ГК; Wait выключен; оба магазина доступны. | С1/С2 в состоянии 4, С3 в состоянии 5 (уложена в магазин); выпуск ГК +2. |
+| 6 | ГК — третий вызов ждёт в станке при выключенном Wait | Те же три детали, оба ГК; Wait выключен; оба магазина доступны. | С1/С2 в состоянии 4, С3 устойчиво остаётся в состоянии 1 с готовой деталью в незанятом станке; выпуск ГК +2. Обход относится к уже выгруженной детали, этот случай его не заявляет. |
 | 7 | ГК — вызов со станка 3 | Готовая вызванная деталь только в С3; доступен ГК1. | Вызов С3 достигает 4 с назначением ГК1; источник не подменяется номером 1. |
 | 8 | ГК — обычная деталь без вызова идёт в магазин | С1 с готовой деталью, вызовов нет; оба ГК включены. | Счётчик укладки магазина увеличен; ни один ГК не занят, баланс сохранён. |
 
@@ -1469,6 +1499,23 @@ HMI-проекция активной палеты не добавляет ещ�
 для маршрутов, ГК и палет. `test_current_cell_scenarios.py` проверяет все новые
 сценарии реальным кодом runner с транспортом в памяти, обе формы generated-данных,
 точную раскладку слотов, баланс без двойной проекции и обнаружение двойного выпуска.
+`test_runtime_scenario_completion.py` исполняет настоящий runner на снимках текущих
+ST (`Cell` с абстрактными движениями и обслуживанием станков), без сети и PLC:
+
+| Проверка | Вход | Ожидаемый результат |
+| --- | --- | --- |
+| Smoke №1/2/3/11, оба типа магазинов | Частичная партия и соответствующее состояние станка; выключенные ГК требуют восстановления | Весь материал доходит готовыми деталями, подтверждён выпуск; runner подаёт один Stop, ожидание магазина не вызывает ложный FAIL |
+| Операторский Stop, оба типа магазинов | Smoke №1; обычный Stop сразу после первого решения TAKE | Заготовка остаётся в захвате, обработки ещё нет; FAIL с причиной незавершённого материала, дополнительного Start нет |
+| Восемь ГК-сценариев, оба типа магазинов | Точные исходные данные строк №1–8 выше | Реальный ST подтверждает маршруты, запрет Start и ожидание при обеих политиках; данные результата не создаются из ожиданий |
+| Переполнение счётчика | Smoke №3, счётчик М1=`16#FFFF_FFFE`, две новые укладки | Счётчик становится 0, прирост 2 принимается без ложного FAIL |
+
+Дополнительные проверки `test_current_cell_scenarios.py`: `xOccupied=true` при
+восстановлении, резерве или конечном датчике и `xPartStored=false` не добавляет деталь;
+подтверждённая укладка с неизвестным типом по-прежнему отклоняется. Готовый складской
+результат без нового выпуска либо с двойным выпуском не получает PASS; занятый робот,
+закрытый захват, деталь/обработка/занятость станка не подтверждают полный цикл.
+`test_scenarios.py` фиксирует для Generated `seed=1` №4/7 проверку решения вместо
+невозможного полного выпуска.
 Эти проверки не заменяют последующий прогон с PLC и компиляцию в CODESYS.
 
 ## Офлайн-модель алгоритма ячейки — 29.10.2026
@@ -1636,3 +1683,107 @@ RecoveryCell, фактических владельцев и текущий Buil
 | --- | --- | --- |
 | `test_two_live_causes_have_a_bounded_exit_in_both_repair_orders` — 24 | GK1/GK2, оба режима магазинов, одновременно авария ГК и группы / потеря физического I/O захвата / авария станка; оба порядка ремонта; ранний Reset при удерживаемой второй причине | Ранняя попытка не скрывает вторую причину и ограниченно завершается; снятие причины не запускает повтор; новый разрешённый Reset/HOME/Start восстанавливает работу, груз/слоты/CallID/выпуск сохранены |
 | `test_all_pair_repair_reset_stop_orderings_leave_an_explicit_recovery_path` — 24 | Группа+ГК при передаче детали; все перестановки Repair GK / Repair Group / Reset / Stop | Для любого порядка после ремонта и снятия Stop остаётся путь явного восстановления; старые команды/Reset сами не возобновляются, учёт не меняется |
+
+
+## Калибровка магазинов по одной/трём точкам и импорт v3 — 02.11.2026
+
+Команда `npm run test:calibration`; дополнительные транспортные проверки входят
+в `npm run test:gateway` и `npm run test:ui-state`. Проверки исполняют фактические
+ветви ST/JS и план импорта без CODESYS и оборудования. Новые фиксированные случаи:
+
+| Фиксированный тест | Входное состояние | Ожидаемый результат |
+| --- | --- | --- |
+| `one-point calibration preserves world axes and all 96/120 slot targets with vertical offsets` | Оба магазина, режим1, сетки12×8/12×10, все N и SAFE/CHANGE/IN_SLOT | Прежние мировые X/Y; Z базы плюс прежнее вертикальное смещение |
+| `three-point calibration maps known corners and slot 23 after a 90 degree turn for each magazine` | A=(1000,500,200), B=(1000,850,200), C=(120,500,200), шаги50/80 | Углы совпадают с опорами; гнездо23=(840,800,200) у каждого магазина |
+| `a spatial frame changes XYZ and approach Z while the second magazine keeps its own one-point calibration` | М1 повёрнут и наклонён, М2 в режиме1, гнездо19 | М1=(138.4,348.8,372); SAFE/CHANGE меняют только мировую Z; М2 сохраняет свою сетку |
+| `normalization removes reference skew without introducing size or tilt tolerances` | Опоры образуют определённую неперпендикулярную пару направлений | Единичные перпендикулярные оси; калибровка принимается без допусков размеров/наклона |
+| `missing references, coincident points and collinear points cannot reuse an old valid target` | После годной точки отсутствует B/C либо опоры совпадают/коллинеарны | М1 теряет готовность, временная точка ненастроена; М2 сохраняет готовность |
+| `missing origin offsets and unsupported Modbus three-point mode block only the affected calibration` | Нулевой Safe Z у A либо внешний Modbus при режиме3; М2 в режиме1 | Причина1/5, нужный магазин не готов; одноточечный М2 не затронут |
+| `invalidation clears A B C atomically and preserves coordinates and the other magazine` | Оба набора записаны; INVALIDATE для М1 | A/B/C М1 ненастроены за одну транзакцию, XYZ сохранены; М2 не изменён |
+| `cell settings select each method separately, invalidate changed calibration and consume rejected requests` | Индексы40/41; годный запрос либо Enabled/Busy/контекст/общий запрет/Check/просроченный запрос/неверное значение | Принятый метод меняет только свой магазин и снимает настройку; отказ сохраняет данные и даёт W28 |
+| `reference SAVE owns its persistent point; stale method and lost permissions cannot write or invalidate` | SAVE индексов15..18; затем SAVE/INVALIDATE при старом методе либо без Home | Нужная B/C сохраняется у своего владельца; отказы25/11 не меняют данные; принятый INVALIDATE возвращает configured=false |
+| `PLC wiring preserves old point IDs and storage and refreshes readiness before magazine automata` | Объявления DUT, persistent-списка и порядок вызовов PLC_PRG | PointId22/23/24/27 сохранены, новые30..33; старый массив15; пересчёт до автоматов, публикация опор перед методом |
+| `one-to-three and three-to-one imports invalidate all magazine points and never overwrite current methods` | Методы файла/PLC противоположны для обоих магазинов | В начале два INVALIDATE; магазинных SAVE нет; методы и исходный документ не меняются |
+| `matching mixed methods import three references for one magazine and only the origin for the other` | Файл и PLC: методы3/1 | После INVALIDATE записываются A/B/C М1 и только A М2 |
+| `a mismatch in one magazine does not discard the compatible calibration of the other magazine` | Файл1/3, PLC3/3 | М1 остаётся ненастроенным; М2 получает все три совместимые точки |
+| `partial three-point backups invalidate old references before importing their configured subset` | Метод3 совпадает, B в файле не записана, в PLC старый полный набор | Вначале INVALIDATE; B остаётся ненастроенной, прежняя B не дополняет новую A/C |
+| `an all-unconfigured magazine file still clears the complete calibration` | В файле есть ненастроенные A/B/C выбранного магазина | Выполняется INVALIDATE даже без единого SAVE |
+| `partial machine or legacy GK imports do not invalidate unrelated magazines` | Копия содержит только станок и незаписанные базы ГК | Записывается настроенная точка станка; магазины и ГК не стираются |
+| `the whole import is validated before any command can run` | В полном файле одна координата NaN | План отклоняется до выполнения первого INVALIDATE/SAVE |
+| `editor reference labels follow the active 12x8 or 12x10 grid and hide unused references` | Сетки12×8/12×10, методы1/1,3/1,3/3 | B/C подписаны «слот 8/89» или «слот 10/111»; активно14/16/18 точек |
+| `calibration moves map all six editor references and report their actual PLC enum labels` | Шесть новых пунктов списка 23..28 и фактические PointId22/30/31/23/32/33 | Пункты связаны с A/B/C нужного магазина, активная точка подписана правильной опорой; прежние коды списка сохранены |
+| `calibration moves clear stale slot and magazine fields instead of selecting a calculated grid target` | Выбрана любая A/B/C; от прежней команды остались слот42 и магазин2 | HMI отправляет фиксированный код опоры со slot=0 и magazine=0 |
+| `numeric calibration moves dispatch to saved A B C points before the complete frame is ready` | Для каждой команды23..28 записана только выбранная опора | PLC выбирает её PointId, разрешает движение без готовности остальных опор и не пересчитывает/не меняет сохранённые XYZ |
+| `PLC rejects unconfigured or inactive calibration references and every calibration move in Modbus` | Незаписанная A/B/C, B/C при методе1 либо любая опора в Modbus | Собственный xMove*Allowed=FALSE; команда не запускается, причина16 и W12; после отказа нет повтора старого импульса |
+| `calibration movement permissions follow common manual motion blocks independently for each reference` | Каждая A/B/C; отдельно потеря HMI, автоматический режим, Busy, ошибка привода, глобальная ошибка | Движение не запускается, PLC снимает xMove*Allowed и публикует W12 |
+| `actual gateway sends calibration manual point codes with their complete payload before Execute` | Переход к каждой опоре23..28; отдельно неизвестный код29 | Gateway записывает action/point/slot/magazine до Execute, возвращает квитанцию; неверный код отклонён до записи |
+| `version two migrates to one-point methods without changing configured coordinates` | Файл версии2 без новых метаданных | Версия3 в памяти, методы1/1; исходный документ и координаты сохранены |
+| `version three roundtrips mixed calibration methods and references without magazine Z offsets` | Версия3, методы3/1, B/C с нулевыми служебными Z-смещениями | Копия проходит roundtrip; requiredCount исключает неиспользуемые B/C М2 |
+| `version three rejects missing methods, illegal methods and misidentified references` | Нет методов, неверные типы/значения либо несовместимые индекс/PointId B | Валидатор отклоняет файл до подготовки импорта |
+| `actual gateway CAPTURE and SAVE include the expected method before publishing CommandSeq` | Реальные ветви server.mjs, Capture B/Save C при методе3 | В буфере записан ожидаемый метод; CommandSeq отправляется последним |
+| `actual gateway invalidates a magazine in one transaction and preserves the import expected method` | План ожидает3, снимок уже показывает1 | Gateway сохраняет ожидаемое3 и отправляет единую команду4; PLC сможет отклонить устаревший план |
+| `invalid invalidation index or absent calibration method fails before allocating a transaction` | INVALIDATE не базы, неверный метод либо нет метода в снимке | Нет OPC-записей и выделенного Seq; следующий запрос не блокируется неопределённым результатом |
+| `version three export takes each method and its points from the same magazine status snapshot` | В общей таблице старые XYZ/flags, в статусе магазинов новый метод и A/B/C | Экспорт использует согласованные метод/точки статусного родителя; прочие точки берутся из прежней таблицы |
+| `magazine invalidation completes only with its own confirmed unconfigured result` | Запрос INVALIDATE, точный requestId/Seq/индекс и configured=false | Клиент завершает соответствующий Promise подтверждённым результатом |
+| `editor appends four magazine references while existing IDs, GK readiness and old retain layout stay unchanged` | Обновлённые публикации редактора и постоянное хранилище | 18 точек; прежние базы ГК/PointId и массив15/required12 сохранены |
+| `all 41 actual gateway settings write a separate payload; horn uses seconds, filters milliseconds, rejections never report applied` | Все фактические команды настроек, включая новые40/41; ответы1/2/3/4 | Отдельный payload, старые единицы и ID сохранены; отказ не выдаёт applied |
+| `v3 test buffer checks explicit mode and mode changes invalidate magazine bases` | Смена статичного/двухпалетного типа при тестовом контракте v3 | Проверяется явный тип; вызывается единая инвалидизация A/B/C, включая прежнюю базу магазина |
+| `appended point and alarm enums preserve old numeric IDs and both GK alarm sources reach the manager` | Перечисления точек/источников после добавления четырёх опор | Прежние коды ГК24..29 и источники аварий сохранены; B/C добавлены только в конец как30..33 |
+
+Существующие регрессии ручного Check, Capture/Save баз ГК, частичной готовности,
+импорта версий1/2 и стабильных индексов настроек сохранены. Статические/локальные
+проверки не означают компиляцию CODESYS, проверку механики или визуальную приёмку.
+
+## CPU 5A после загрузки / STOP → RUN — 02.11.2026
+
+Локальные регрессии в `visu/tests/controllerDiagnosticsPlc.test.mjs` исполняют
+фактический ST `FB_CONTROLLER_DIAGNOSTICS` без CODESYS, сети и оборудования.
+Команда: `npm run test:diagnostics`. Наборы сценариев ячейки не менялись.
+
+| Фиксированный тест | Входное состояние | Ожидаемый результат |
+| --- | --- | --- |
+| `the RUN filter preserves every CPU alarm code and bit position except application STOP` | Все 35 позиций каталога CPU по одной, включая 5B и неизвестный код | Исключается только 5A; остальные биты, банки и GLOBAL_STOP сохранены |
+| `RUN does not latch CPU 5A: observed STOP followed by current 00` | После загрузки накоплен 5A, текущий CPU уже 00 | Пакет подтверждён Ack; аварии, GLOBAL_STOP и требования Reset нет |
+| `RUN does not latch CPU 5A: current STOP cached before RUN` | Текущий и накопленный 5A из опроса до RUN | 5A не защёлкивается, следующий 00 не требует дополнительного STOP/RUN |
+| `RUN does not latch CPU 5A: stale unacknowledged STOP frame` | Неподтверждённый пакет 5A старше 3 с | Ack принимается без PLC-аварии; просроченный STOP не превращается в новую причину |
+| `an earlier CPU 5A latch is removed on RUN without erasing other causes` | Прежняя защёлка только 5A, затем 5A вместе с 5B, вторым банком и модулем | Убирается только бит 24, остальные причины без свежего восстановления/Reset не исчезают |
+| `STOP and a real CPU exception in one frame retain the exception and module fault until reset` | Накопленные 5A/5B/модуль при текущей норме и Reset того же скана | 5A исключён, 5B/модуль защёлкнуты; сброс допускается последующим импульсом |
+| `a cached current CPU 5A cannot confirm recovery from a real CPU fault` | Защёлкнут 5B, следующий текущий код 5A и попытка Reset, затем свежий 00 | Текущий 5A невалиден для восстановления; 5B остаётся до свежей нормы и Reset |
+# Обновление больших таблиц по изменениям — 02.11.2026
+
+Локальные проверки `robot_simulator/tests/test_plc_bulk_tables.py` и
+`visu/gateway/opcua-tables.test.mjs`. Они работают без подключения к PLC.
+Основные Runtime Smoke/Regression/Generated/General сценарии не менялись.
+Приёмка на контроллере и список импорта: [оптимизация нагрузки](34-plc-opcua-load-optimization.md).
+
+| Проверка PLC | Входное состояние | Ожидаемый результат |
+| --- | --- | --- |
+| `idle_magazines_reuse_their_summary_without_scanning_any_slots` | 100 сканов ожидания, содержимое не меняется | Нет вызовов обхода слотов; флаг записи инвентаря FALSE |
+| `accepted_manual_edits_rebuild_once_and_are_not_repeated_while_held` | По отдельности Clear, Fill, ApplySlot, CycleSlot выключенного магазина; команда удержана | Одно обновление сводки и флаг записи; удержание не повторяет изменение |
+| `external_bank_change_and_test_initialization_invalidate_cached_contents` | Новый внешний банк, затем новая тестовая карта | Выбор слотов и количества обновлены сразу, внешняя запись не считается записью FB |
+| `summary_tracks_geometry_and_type_count_without_an_inventory_write` | Матрица 96→120 мест, типы 1→3→0 | Кеш перестроен; свободные места универсальны; неверное число типов даёт нулевую типовую сводку |
+| `nested_alarm_methods_preserve_sequence_write_index_and_event_change_flag` | Два новых бита одного источника | Две последовательные записи, индекс записи 3, флаг изменения TRUE; вложенные методы не теряют поля FB |
+| `alarm_deactivation_marks_the_table_changed_without_a_new_event_sequence` | Авария, неизменный скан, снятие причины | В ожидании флаг FALSE; при снятии TRUE, запись неактивна, её Seq сохранён, сводка обновлена |
+| `warning_acknowledgment_and_a_new_warning_in_the_same_scan_keep_the_new_warning` | Подтверждение старого предупреждения; в том же скане новое | Старое снято, новое активно, таблица помечена изменённой |
+| `controller_warning_cannot_be_acknowledged_before_its_owner_allows_reset` | CPU-предупреждение и Reset до/после разрешения владельца | До разрешения запись активна; после — снята и опубликовано изменение |
+| `first_publication_and_idle_keep_even_revisions_and_do_not_copy_arrays_again` | Первая публикация и 50 неизменных сканов | Версии 2, протокол 1, эпоха задана; массивы повторно не копируются |
+| `each_owner_refreshes_its_table_without_republishing_unrelated_tables` | По отдельности FB магазина 1/2, внешний банк, палетное хранилище, журнал | Растёт только соответствующая версия; совместимый массив первого магазина совпадает с исходным |
+| `table_revision_wrap_remains_even_and_application_restart_changes_epoch` | Версия FFFFFFFE, изменение; затем новая инициализация | Версия 0 остаётся чётной, при повторном старте меняется эпоха |
+| `geometry_fifo_is_copied_only_on_initialization_or_a_new_published_sequence` | Инициализация FIFO, 30 неизменных сканов, новое событие | Без события массив не копируется; новый Seq и запись публикуются вместе |
+
+| Проверка gateway | Входное состояние | Ожидаемый результат |
+| --- | --- | --- |
+| `initial snapshot keeps every field; idle revision notifications never reread tables` | Начальные таблицы и 20 проверок той же ревизии | Все поля присутствуют; после начальной загрузки нет Read больших значений |
+| `one changed inventory reads only that parent and updates compatible legacy fields` | Одна изменённая карта магазина | Читается только её родитель между двумя проверками ревизии; legacy-поля обновлены из той же карты |
+| `an inventory changed during Read is discarded without starving a stable alarm table` | Оба массива изменены, магазин снова меняется во время Read | Журнал принят, неполный магазин отброшен и затем перечитан |
+| `odd revisions delay reading; wrapping uint32 and restarting with the same revision refresh data` | Нечётная версия, FFFFFFFE→0→2, новая эпоха | Нечётная версия ждёт; переполнение и новый запуск не скрывают изменения |
+| `a restart during Read publishes no payload from the previous application epoch` | Смена эпохи между чтениями | Старые данные не публикуются; следующий проход перечитывает таблицы |
+| `old PLC keeps aggregate subscriptions and identical legacy fields` | PLC без `stHmiDataRevision` | Сохраняется прежний мониторинг и полный состав полей HMI |
+| `an unsupported table parent stays on leaf monitoring while other tables use revisions` | Один родитель не читается | Только эта таблица остаётся на leaf fallback, остальные используют ревизии |
+| `missing legacy sources retain the original legacy parent instead of inventing fields` | Для legacy-поля нет точного источника | Исходный legacy-родитель остаётся в подписке |
+| `invalid revisions, bad reads and incomplete decodes fail explicitly` | Неверная версия, ошибка Read либо неполная структура | Явная ошибка, неполное значение не публикуется |
+| `initialization cannot report connected with an unfinished table copy` | Таблица остаётся на нечётной версии | Подключение не объявляется готовым, запускается повторное подключение |
+
+Существующая проверка `conveyor indication follows active cell W52 and stops on warning acknowledgment`
+также использует флаг владельца журнала: изменение включённости ГК сохраняет
+корректную подсветку при закешированном W52; подтверждение предупреждения обновляет кеш.

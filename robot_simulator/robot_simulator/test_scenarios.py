@@ -387,7 +387,16 @@ def generated_scenarios(seed: int, count: int) -> list[dict[str, Any]]:
             orientation=randomizer.randint(0, 1), full_cycle=False,
         )
         item["expectations"]["firstDecision"] = expected_first_decision(item["initialState"])
-        if (not rejected and item["expectations"]["firstDecision"] != "held-blank-wait"
+        # Full production needs a working machine for every initial blank type.
+        # Otherwise keep the useful decision/Stop case without waiting for an
+        # impossible production result (for example Generated 1-4 and 1-7).
+        machine_types = {m["productType"] for m in item["initialState"]["machines"] if m["state"]}
+        blank_types = {s["productType"] for m in item["initialState"]["magazines"]
+                       for s in m["slots"] if s["content"] == BLANK}
+        if gripper_1[0]:
+            blank_types.add(gripper_1[1])
+        if (not rejected and item["expectations"]["firstDecision"] not in ("held-blank-wait", "no-task")
+                and blank_types <= machine_types
                 and full_cycle_assigned < full_cycle_target):
             item["expectations"]["fullCycle"] = True
             full_cycle_assigned += 1
@@ -602,10 +611,10 @@ def geometry_scenarios() -> list[dict[str, Any]]:
     definitions = [
         ("ГК 1 — вызов готовой детали", [True, False], [True, False, False], [True, False], True, {"1": 4}, {"1": 1}),
         ("ГК 2 — вызов готовой детали", [False, True], [True, False, False], [True, False], True, {"1": 4}, {"1": 2}),
-        ("ГК — доставка при выключенных магазинах", [True, False], [True, False, False], [False, False], True, {"1": 4}, {"1": 1}),
+        ("ГК — Start запрещён без готового магазина", [True, False], [True, False, False], [False, False], True, {"1": 1}, {}),
         ("ГК — два вызова на разные станции", [True, True], [True, True, False], [True, True], True, {"1": 4, "2": 4}, {}),
         ("ГК — третий вызов ждёт свободную станцию", [True, True], [True, True, True], [True, True], True, {"1": 4, "2": 4, "3": 1}, {}),
-        ("ГК — обход занятых станций в магазин", [True, True], [True, True, True], [True, True], False, {"1": 4, "2": 4, "3": 5}, {}),
+        ("ГК — третий вызов ждёт в станке при выключенном Wait", [True, True], [True, True, True], [True, True], False, {"1": 4, "2": 4, "3": 1}, {}),
         ("ГК — вызов со станка 3", [True, False], [False, False, True], [True, False], True, {"3": 4}, {"3": 1}),
         ("ГК — обычная деталь без вызова идёт в магазин", [True, True], [False] * 3, [True, False], True, {}, {}),
     ]
@@ -617,6 +626,11 @@ def geometry_scenarios() -> list[dict[str, Any]]:
                         expected="geometry-delivery" if call_states else "machine-unload", full_cycle=False)
         item["initialState"]["geometry"] = {"enabled": stations, "calls": calls, "waitWhenOccupied": wait}
         item["expectations"].update({"testKind": "geometry-route", "callStates": call_states, "destinations": destinations})
+        if not any(magazines):
+            item["expectations"].update(testKind="geometry-start-blocked", firstDecision="start-blocked")
+            item["description"] = "Без готового магазина PLC запрещает Start; вызванная деталь остаётся в станке, выпуск не меняется."
+        elif not wait:
+            item["description"] = "При занятых ГК вызванная деталь ждёт в станке и при выключенном Wait; политика обхода относится к уже выгруженной детали."
         result.append(item)
     return result
 

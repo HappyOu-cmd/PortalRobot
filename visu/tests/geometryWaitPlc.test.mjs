@@ -629,16 +629,19 @@ test('availability is checked again before starting CHANGE or UNLOAD without int
 test('conveyor indication follows active cell W52 and stops on warning acknowledgment', () => {
   const source = readPlc('PLC_PRG.PublishGeometryControl.st');
   const publish = compileSt(source.slice(source.indexOf('// Подсветка'), source.indexOf('GVL_HMI.astGeometryConfig')));
-  const s = fixture(); s.uiGeometry = 0; s.uiWarningEvent = 0; s.xWaitWarningActive = false;
+  const s = fixture(); s.uiGeometry = 0; s.uiWarningEvent = 0; s.xGeometryWaitWarningActive = false;
+  s.xHmiTablesInitialized = true; s.ALARM_MANAGER = { xEventsUpdated: true };
   s.E_ALARM_SOURCE = { CELL: 0 }; s.E_ALARM_SEVERITY = { WARNING: 1 };
   s.GVL_HMI = { astGeometryStatus: [null, {}, {}] };
   s.GVL_ALARM.Events = [null, ...Array.from({ length: 100 }, () => ({ xActive: false, eSource: 0, eSeverity: 1, uiCode: 0 }))];
   Object.assign(s.GVL_ALARM.Events[1], { xActive: true, uiCode: 52 }); publish(s);
   assert.equal(s.GVL_HMI.astGeometryStatus[1].xCallWaitWarning, true);
   assert.equal(s.GVL_HMI.astGeometryStatus[2].xCallWaitWarning, false);
+  s.ALARM_MANAGER.xEventsUpdated = false;
   s.GVL_GEOMETRY_CONTROL.astStatus[1].xEnabled = false; publish(s);
   assert.equal(s.GVL_HMI.astGeometryStatus[2].xCallWaitWarning, true);
   for (const patch of [{ xActive: false }, { xActive: true, eSeverity: 0 }, { xActive: true, eSeverity: 1, eSource: 1 }]) {
+    s.ALARM_MANAGER.xEventsUpdated = true;
     Object.assign(s.GVL_ALARM.Events[1], patch); publish(s);
     assert.equal(s.GVL_HMI.astGeometryStatus[1].xCallWaitWarning, false);
     assert.equal(s.GVL_HMI.astGeometryStatus[2].xCallWaitWarning, false);

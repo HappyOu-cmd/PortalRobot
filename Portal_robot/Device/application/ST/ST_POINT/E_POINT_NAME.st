@@ -31,7 +31,11 @@ TYPE E_POINT_NAME :
 	GEOMETRY_1_CHANGE,
 	GEOMETRY_2_PLACE,
 	GEOMETRY_2_SAFE,
-	GEOMETRY_2_CHANGE
+	GEOMETRY_2_CHANGE,
+	MAGAZINE_1_AXIS_X, // B: последний слот первого ряда магазина 1
+	MAGAZINE_1_AXIS_Y, // C: первый слот последнего ряда магазина 1
+	MAGAZINE_2_AXIS_X,
+	MAGAZINE_2_AXIS_Y
 
 );
 END_TYPE

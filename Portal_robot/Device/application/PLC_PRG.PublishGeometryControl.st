@@ -1,22 +1,23 @@
 METHOD PRIVATE PublishGeometryControl
 VAR
 	uiWarningEvent : UINT;
-	xWaitWarningActive : BOOL;
 END_VAR
 
 // --- BEGIN IMPLEMENTATION ---
 
 GVL_HMI.astGeometryStatus := GVL_GEOMETRY_CONTROL.astStatus;
 // Подсветка следует накопленному предупреждению, включая его сброс в этом скане.
-xWaitWarningActive := FALSE;
+IF ALARM_MANAGER.xEventsUpdated OR NOT xHmiTablesInitialized THEN
+xGeometryWaitWarningActive := FALSE;
 FOR uiWarningEvent := UINT#1 TO UINT#100 DO
 	IF GVL_ALARM.Events[uiWarningEvent].xActive
 	AND (GVL_ALARM.Events[uiWarningEvent].eSource = E_ALARM_SOURCE.CELL)
 	AND (GVL_ALARM.Events[uiWarningEvent].eSeverity = E_ALARM_SEVERITY.WARNING)
-	AND (GVL_ALARM.Events[uiWarningEvent].uiCode = UINT#52) THEN xWaitWarningActive := TRUE; END_IF;
+	AND (GVL_ALARM.Events[uiWarningEvent].uiCode = UINT#52) THEN xGeometryWaitWarningActive := TRUE; END_IF;
 END_FOR;
+END_IF;
 FOR uiGeometry := UINT#1 TO UINT#2 DO
-	GVL_HMI.astGeometryStatus[uiGeometry].xCallWaitWarning := xWaitWarningActive
+	GVL_HMI.astGeometryStatus[uiGeometry].xCallWaitWarning := xGeometryWaitWarningActive
 		AND (GVL_GEOMETRY_CONTROL.astStatus[uiGeometry].xEnabled
 			OR NOT (GVL_GEOMETRY_CONTROL.astStatus[1].xEnabled OR GVL_GEOMETRY_CONTROL.astStatus[2].xEnabled));
 END_FOR;
@@ -36,9 +37,12 @@ GVL_HMI.tGeometryResetPulse := Persistent_Value.tResetPulse;
 GVL_HMI.tGeometryWaitWarningTimeout := Persistent_Value.tWaitWarningTimeout;
 GVL_HMI.xGeometrySettingsAllowed := GVL_GEOMETRY_CONTROL.xSettingsAllowed;
 // Снимок FIFO имеет версию: gateway читает одинаковый Seq до/после payload.
-GVL_HMI.udiGeometryEventSequence := UDINT#0;
-GVL_HMI.astGeometryEvents := GVL_GEOMETRY_CONTROL.astEvents;
-GVL_HMI.udiGeometryEventSequence := Persistent_Value.udiEventSequence;
+IF NOT xHmiTablesInitialized
+OR (GVL_HMI.udiGeometryEventSequence <> Persistent_Value.udiEventSequence) THEN
+    GVL_HMI.udiGeometryEventSequence := UDINT#0;
+    GVL_HMI.astGeometryEvents := GVL_GEOMETRY_CONTROL.astEvents;
+    GVL_HMI.udiGeometryEventSequence := Persistent_Value.udiEventSequence;
+END_IF;
 IF GVL_CELL_SETTINGS.eTestEnvironment = E_CELL_TEST_ENVIRONMENT.NORMAL THEN
 	Persistent_Value.astMemory := GVL_GEOMETRY_CONTROL.astActiveMemory;
 	Persistent_Value.astRetainCalls := GVL_GEOMETRY_CONTROL.astCalls;

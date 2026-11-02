@@ -14,7 +14,7 @@ import './mobile-points-theme-bridge.css';
 
 const labels = EDITOR_POINT_LABELS;
 
-type PointState = { index: number; x: number; y: number; z: number; magazineSafeZ: number; magazineChangeZ: number; speedFactor: number; configured: boolean; checkAllowed: boolean; checkRejectCode: number; saveAllowed?: boolean };
+type PointState = { index: number; label?: string; active?: boolean; captureAllowed?: boolean; x: number; y: number; z: number; magazineSafeZ: number; magazineChangeZ: number; speedFactor: number; configured: boolean; checkAllowed: boolean; checkRejectCode: number; saveAllowed?: boolean };
 type JogDirection = 'positive' | 'negative';
 type MobileAxisState = {
   jogPositiveAllowed: boolean; jogNegativeAllowed: boolean;
@@ -349,6 +349,8 @@ export function MobilePointsApp() {
   const magazineOffsetsConfigured = !magazinePointSelected
     || (parseNumber(draft.magazineSafeZ) !== 0 && parseNumber(draft.magazineChangeZ) !== 0);
   const selected = state?.points[index];
+  const pointLabel = (pointIndex: number) => state?.points[pointIndex]?.label ?? labels[pointIndex];
+  const captureAllowed = selected?.captureAllowed ?? state?.captureAllowed ?? false;
   const saveAllowed = selected?.saveAllowed ?? state?.saveAllowed ?? false;
   const running = Boolean(state?.active && state.owned);
   const controlled = Boolean(state?.owned);
@@ -536,7 +538,7 @@ export function MobilePointsApp() {
         {message && <p className="mobile-points__notice" role="status">{message}</p>}
         {error && <p className="mobile-points__notice is-error" role="alert">{error}</p>}
       </main> : <main className="mobile-points__main">
-      <label className="mobile-points__field">Выберите точку<select value={index} disabled={busy || running || controlled} onChange={(event) => { const next = Number(event.target.value); if (dirty) { setPendingIndex(next); openDialog('discard'); } else choose(next); }}>{labels.map((label, pointIndex) => <option value={pointIndex} key={label}>{label}</option>)}</select></label>
+      <label className="mobile-points__field">Выберите точку<select value={index} disabled={busy || running || controlled} onChange={(event) => { const next = Number(event.target.value); if (dirty) { setPendingIndex(next); openDialog('discard'); } else choose(next); }}>{labels.map((label, pointIndex) => state?.points[pointIndex]?.active !== false || pointIndex === index ? <option value={pointIndex} key={label}>{pointLabel(pointIndex)}</option> : null)}</select></label>
       <div className="mobile-points__meta"><span>Точка {index + 1} из {labels.length}</span><span className={dirty || !selected?.configured ? 'is-dirty' : 'is-saved'}>{dirty || !selected?.configured ? 'Не сохранена' : 'Сохранена'}</span></div>
       <h2>Координаты точки</h2>
       <div className="mobile-points__coordinates">{(['x', 'y', 'z'] as const).map((axis) => <label className="mobile-points__coordinate" key={axis}><span>{axis.toUpperCase()}</span><input aria-label={`Координата ${axis.toUpperCase()}`} inputMode="decimal" value={focusedCoordinate === axis ? draft[axis].replace('.', ',') : formatPointCoordinate(draft[axis])} disabled={busy || running || controlled} onFocus={() => setFocusedCoordinate(axis)} onBlur={() => setFocusedCoordinate(null)} onChange={(event) => { setDraft((current) => ({ ...current, [axis]: event.target.value })); setMessage(''); }} /><span>мм</span></label>)}</div>
@@ -545,7 +547,7 @@ export function MobilePointsApp() {
       <label className="mobile-points__field mobile-points__speed">Коэффициент скорости точки<div><input aria-label="Коэффициент скорости точки" inputMode="decimal" value={draft.speed} disabled={busy || running || controlled} onChange={(event) => setDraft((current) => ({ ...current, speed: event.target.value }))} /><span>×</span></div></label>
       {!valid && <p className="mobile-points__notice is-error" role="alert">XYZ должны быть числами. Скорость: от {geometryPointSelected ? '0,10' : '0,11'} до 1,00{magazinePointSelected ? '. Смещения Z: от −10000 до 10000 мм' : geometryPointSelected ? '. SAFE_Z: отрицательное смещение от −10000 мм' : ''}.</p>}
       {valid && !magazineOffsetsConfigured && <p className="mobile-points__notice is-error" role="alert">Точка останется ненастроенной, пока хотя бы одно из смещений Safe Z или Change Z равно нулю.</p>}
-      <button className={cn(button(), !state?.captureAllowed && 'is-unavailable')} disabled={busy || running || controlled || !state?.online} aria-disabled={!state?.captureAllowed} onClick={() => void perform('capture')}>Взять текущие координаты</button>
+      <button className={cn(button(), !captureAllowed && 'is-unavailable')} disabled={busy || running || controlled || !state?.online} aria-disabled={!captureAllowed} onClick={() => void perform('capture')}>Взять текущие координаты</button>
       <div className="mobile-points__check-speed"><span>Скорость проверки</span><strong>{formatNumber(state?.checkSpeedPercent ?? 10, 1)} %</strong></div>
       {running ? <section className="mobile-points__running" aria-live="polite"><strong>Проверка точки выполняется</strong><p>Дождитесь останова робота.</p><button className={button({ tone: 'danger' })} disabled={busy} onClick={() => void perform('stop')}>Остановить проверку</button></section> : <div className="mobile-points__actions">
         <button className={cn(button({ tone: 'primary' }), !saveAllowed && 'is-unavailable')} disabled={busy || controlled || !valid || !state?.online} aria-disabled={!saveAllowed} onClick={() => void perform('save')}>Сохранить точку</button>
@@ -559,7 +561,7 @@ export function MobilePointsApp() {
     <Dialog.Root open={dialog !== null} onOpenChange={(open) => { if (!open) { checkHold.release(); setDialog(null); } }}><Dialog.Portal><Dialog.Overlay className="mobile-points-dialog__overlay" /><Dialog.Content className="mobile-points-dialog" onCloseAutoFocus={(event) => { event.preventDefault(); lastFocus.current?.focus(); }}>
       <Dialog.Title>{dialogKind === 'check' ? 'Проверка точки' : 'Изменения не сохранены'}</Dialog.Title>
       <Dialog.Description>{dialogKind === 'check' ? 'Освободите рабочую зону. Движение разрешено только пока вы удерживаете кнопку. Отпускание передаёт команду остановки.' : 'Отбросить изменения текущей точки?'}</Dialog.Description>
-      {dialogKind === 'check' && selected && <div className="mobile-points-dialog__summary"><strong>{labels[index]}</strong><span>X {formatPointCoordinate(baseline.x)} · Y {formatPointCoordinate(baseline.y)} · Z {formatPointCoordinate(baseline.z)}</span>{magazinePointSelected && <span>Safe Z {baseline.magazineSafeZ} · Change Z {baseline.magazineChangeZ}</span>}{geometryPointSelected && <span>SAFE_Z {baseline.magazineSafeZ}</span>}<span>Скорость проверки: {formatNumber(state?.checkSpeedPercent ?? 10, 1)} %</span></div>}
+      {dialogKind === 'check' && selected && <div className="mobile-points-dialog__summary"><strong>{pointLabel(index)}</strong><span>X {formatPointCoordinate(baseline.x)} · Y {formatPointCoordinate(baseline.y)} · Z {formatPointCoordinate(baseline.z)}</span>{magazinePointSelected && <span>Safe Z {baseline.magazineSafeZ} · Change Z {baseline.magazineChangeZ}</span>}{geometryPointSelected && <span>SAFE_Z {baseline.magazineSafeZ}</span>}<span>Скорость проверки: {formatNumber(state?.checkSpeedPercent ?? 10, 1)} %</span></div>}
       {dialogKind === 'check' ? <section className="mobile-point-check">
         <p role="status" aria-live="polite">{{ ready: 'Готово к удержанию', starting: 'Передаём команду — удерживайте', moving: 'Движение — удерживайте кнопку', stopping: 'Палец отпущен. Ожидаем остановки PLC…', completed: 'Точка достигнута. Проверка завершена.', stopped: 'Проверка остановлена.', error: 'Проверка прервана. Проверьте сообщение ниже.' }[checkPhase]}</p>
         <MobileHoldButton className="mobile-point-check__hold"

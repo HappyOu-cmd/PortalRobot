@@ -310,8 +310,6 @@ export class CellScene {
         geometryRoot.add(rig.conveyor);
         this.cellRoot.add(geometryRoot);
         this.geometryRoots.push(geometryRoot);
-        rig.root.position.copy(logicalPosition(position.x, position.y, position.z));
-        rig.root.rotation.y = Math.PI / 2;
         rig.root.name = `TwoPalletMagazine_${index + 1}`;
         rig.root.userData.magazineId = index + 1;
         rig.root.visible = this.state.magazineMode === 1;
@@ -356,7 +354,7 @@ export class CellScene {
   private geometryWarningActive(index: number): boolean {
     if (!this.warningsLive || warningTargetHasAlarm({ kind: 'geometry', index }, this.state, this.warningEvents)) return false;
     return !!this.state.geometryControl?.stations[index]?.callWaitWarning || this.warningTargets.some(({ equipment }) =>
-      equipment.kind === 'cell' || equipment.kind === 'geometry' && equipment.index === index);
+      equipment.kind === 'geometry' && equipment.index === index);
   }
 
   private warningEquipmentHasAlarm(equipment: SceneWarningTarget['equipment']): boolean {
@@ -371,13 +369,8 @@ export class CellScene {
     for (const { equipment, node } of this.warningTargets) {
       if (this.warningEquipmentHasAlarm(equipment)) continue;
       if (equipment.kind === 'geometry') continue; // Reuse the original conveyor surfaces/halo.
-      if (equipment.kind === 'cell') {
-        for (const entry of this.inspectionEntries) {
-          if (!this.warningEquipmentHasAlarm(entry.target)) objects.push(
-            entry.target.kind === 'robot' && this.portalRig ? this.portalRig.indicationRoot : entry.root,
-          );
-        }
-      } else if (equipment.kind === 'enclosure-door') {
+      if (equipment.kind === 'cell') continue; // The cell warning uses the perimeter, not equipment surfaces.
+      if (equipment.kind === 'enclosure-door') {
         const door = this.enclosureRig?.doors.find(door => door.id === equipment.id);
         if (door) objects.push(door.pivot);
       } else {
@@ -931,7 +924,14 @@ export class CellScene {
         dt, this.visualEffects.geometryConveyorSpeed, this.reducedMotion.matches,
         this.geometryWarningActive(index),
       ) : undefined;
-      updateTwoPalletMagazine(rig, controller, twin?.pallets, !twin?.live || twin.confirmed, displayPose, geometry);
+      const magazine = this.state.magazines[index];
+      const alarmTargetActive = this.sceneActivity.alarmTargets.some(
+        target => target.kind === 'magazine' && target.index === index,
+      );
+      updateTwoPalletMagazine(rig, controller, twin?.pallets, !twin?.live || twin.confirmed, displayPose, geometry, {
+        active: alarmTargetActive || magazine?.state.error === true || (magazine?.state.activeErrors.length ?? 0) > 0,
+        dt, inspecting: !!this.inspection, reducedMotion: this.reducedMotion.matches,
+      });
       if (twin?.live || twin?.manualLockOut !== undefined || twin?.manualStopOut !== undefined) {
         rig.lock.position.z = (twin.manualLockOut ?? twin.sensors.lockOut) ? 0.022 : 0;
         rig.stop.position.z = (twin.manualStopOut ?? twin.sensors.stopOut) ? 0.022 : 0;
@@ -988,7 +988,8 @@ export class CellScene {
       );
     });
     if (this.operationalEffects) this.updateEffectAnchors();
-    this.operationalEffects?.update(dt, this.sceneActivity, this.effectAnchors);
+    this.operationalEffects?.update(dt, this.sceneActivity, this.effectAnchors,
+      this.warningsLive && this.warningTargets.some(({ equipment }) => equipment.kind === 'cell'));
     this.easterEggController?.update(dt, this.camera);
     this.workshop?.update(dt, this.reducedMotion.matches || !!this.inspection || this.easterEggMode !== 'off');
     this.inspectionWorker?.update(dt, this.reducedMotion.matches || !!this.inspection || this.easterEggMode !== 'off');

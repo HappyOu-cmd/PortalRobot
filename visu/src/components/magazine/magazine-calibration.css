@@ -1,0 +1,58 @@
+.magazine-calibration-settings { display: grid; gap: 10px; padding: 14px 0; }
+.magazine-calibration-settings h3 { margin: 0; }
+.magazine-calibration-setting { display: grid; gap: 6px; }
+.magazine-calibration-setting > div:first-child { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.magazine-calibration-setting strong { color: var(--color-text); font-size: 11px; font-weight: 600; }
+.magazine-calibration-setting span { font-size: 9px; color: var(--color-text-muted); }
+.magazine-calibration-setting span.configured { color: #27814b; }
+.magazine-calibration-setting span.unconfigured { color: #bf443e; }
+.magazine-calibration-setting .command-unavailable { opacity: .52; }
+.magazine-calibration-preview { display: block; width: 100%; height: 246px; border-bottom: 1px solid var(--color-border); padding-bottom: 5px; }
+.magazine-calibration-preview__outline { fill: var(--color-surface-subtle); stroke: var(--color-border); stroke-width: 1; }
+.magazine-calibration-preview__guides { fill: none; stroke: #b7c6d1; stroke-width: .65; stroke-dasharray: 2 3; }
+.magazine-calibration-preview__slot {
+  fill: var(--color-surface);
+  stroke: #9aafbd;
+  stroke-width: .8;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: magazine-slot-appear 400ms cubic-bezier(.16, 1, .3, 1) both;
+}
+.magazine-calibration-preview__reference { fill: var(--color-surface); stroke: #91a4b2; stroke-width: 1.5; transition: fill 180ms, stroke 180ms; }
+.magazine-calibration-preview__reference-core { fill: var(--color-surface); opacity: 0; }
+.magazine-calibration-preview text { fill: var(--color-text-muted); font-size: 9px; font-weight: 600; }
+.magazine-calibration-preview .configured .magazine-calibration-preview__reference { fill: var(--color-success); stroke: #27814b; }
+.magazine-calibration-preview .configured .magazine-calibration-preview__reference-core,
+.magazine-calibration-preview .selected .magazine-calibration-preview__reference-core { opacity: 1; }
+.magazine-calibration-preview .selected .magazine-calibration-preview__reference {
+  fill: var(--ui-accent);
+  stroke: var(--ui-accent);
+  animation: magazine-reference-blink 1.6s ease-in-out infinite;
+}
+.magazine-calibration-preview .selected text { fill: var(--ui-accent); }
+.magazine-calibration-preview__halo {
+  fill: none;
+  stroke: var(--ui-accent);
+  stroke-width: 1;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: magazine-reference-pulse 1.6s ease-out infinite;
+}
+@keyframes magazine-slot-appear {
+  from { opacity: 0; transform: translateY(2px) scale(.8); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes magazine-reference-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .35; }
+}
+@keyframes magazine-reference-pulse {
+  from { opacity: .65; transform: scale(.8); }
+  to { opacity: 0; transform: scale(1.7); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .magazine-calibration-preview__slot,
+  .magazine-calibration-preview .selected .magazine-calibration-preview__reference { animation: none; }
+  .magazine-calibration-preview__reference { transition: none; }
+  .magazine-calibration-preview__halo { display: none; }
+}

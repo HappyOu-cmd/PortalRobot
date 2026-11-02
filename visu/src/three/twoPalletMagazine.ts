@@ -7,7 +7,7 @@ import type { TwoPalletPose, TwoPalletPreviewController } from '../model/twoPall
 import { INSPECTION_BELT_SPAN, INSPECTION_SAMPLE_SPAN } from '../model/twoPalletPreview';
 import { createCableChain, type CableChain } from './cableChain';
 import { createWarningGlow, updateWarningGlow, type WarningGlowRig } from './warningGlow';
-import { COLORS, mm } from './primitives';
+import { alarmPulse, collectAlarmSurfaceMaterials, COLORS, logicalPosition, mm, setAlarmSurfaceMaterials, type AlarmSurfaceMaterial } from './primitives';
 
 // Photo reconstruction, metres. Reference: all ten images in «2 итерация».
 // These dimensions describe the local preview, not PLC positions or a fabrication drawing.
@@ -81,6 +81,15 @@ export interface TwoPalletMagazineRig {
   lastDriveX: number;
   lastP2X: number;
   lastBeltPhase: number;
+  alarmSurfaceMaterials: AlarmSurfaceMaterial[];
+  alarmElapsed: number;
+}
+
+interface MagazineAlarmIndication {
+  active: boolean;
+  dt: number;
+  inspecting: boolean;
+  reducedMotion: boolean;
 }
 
 function roundedRect(path: THREE.Shape | THREE.Path, x: number, y: number, w: number, h: number, r: number) {
@@ -136,7 +145,10 @@ function batchDetails(root: THREE.Group) {
 export function createTwoPalletMagazine(layout: CellLayout, magazineIndex: number): TwoPalletMagazineRig {
   const root = new THREE.Group();
   root.name = 'TwoPalletMagazine_local_preview';
-  root.position.set(mm(layout.floor.lengthX) * 0.56, 0, 0.8);
+  // Alarm wave bounds must use the same placement as the rendered scene.
+  const position = layout.twoPalletMagazines[magazineIndex].position;
+  root.position.copy(logicalPosition(position.x, position.y, position.z));
+  root.rotation.y = Math.PI / 2;
   const legRise = mm(layout.twoPalletMagazines[magazineIndex].legHeightMm - 735);
   const material = (name: string, color: number, metalness = 0.48, roughness = 0.42) => {
     const result = new THREE.MeshStandardMaterial({ color, metalness, roughness });
@@ -302,7 +314,7 @@ export function createTwoPalletMagazine(layout: CellLayout, magazineIndex: numbe
       mesh.name = `P${index + 1}_${kind}_type_${type + 1}`;
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       mesh.frustumCulled = false; mesh.castShadow = true;
-      mesh.count = 0; pallet.add(mesh); return mesh;
+      mesh.count = 0; return mesh;
     });
     return { blank: createProducts('blank'), detail: createProducts('detail') };
   });
@@ -439,6 +451,14 @@ export function createTwoPalletMagazine(layout: CellLayout, magazineIndex: numbe
   for (let i = 0; i < 19; i++) box(tray, 'tray_rung', [0.023, 0.005, 0.067], [-0.91 + i * 0.078, 0.757, -0.487], m.dark);
   box(liftBase, 'chain_moving_attachment', [0.063, 0.025, 0.08], [0.015, 0.863, -0.446], m.steel);
 
+  batchDetails(root);
+  // The independent GK conveyor must keep its own colours during a magazine alarm.
+  for (const key of Object.keys(m) as (keyof typeof m)[]) m[key] = m[key].clone();
+  // Collect the mechanism before attaching workpieces and the independent GK conveyor.
+  // The fixed frame remains visible even before the pallet arrangement is confirmed.
+  const alarmSurfaceMaterials = collectAlarmSurfaceMaterials(root);
+  productMeshes.forEach((sets, index) => pallets[index].add(...sets.blank, ...sets.detail));
+
   // Slim blue conveyor, separate side plates, rounded belt returns and gearmotor.
   const conveyor = group(elevated, 'Inspection_conveyor', [0, CONVEYOR_SHIFT, 0]);
   for (const x of [-0.85, 0.85]) {
@@ -500,7 +520,7 @@ export function createTwoPalletMagazine(layout: CellLayout, magazineIndex: numbe
   beltMarks.frustumCulled = false; conveyor.add(beltMarks);
   const sample = mesh(conveyor, 'Inspection_sample', partGeometry, m.chrome);
   sample.visible = false; sample.userData.animated = true;
-  batchDetails(root);
+  batchDetails(conveyor);
   const conveyorWarning = createWarningGlow([INSPECTION_BELT_SPAN + BELT_RADIUS * 2, 0.10, 0.14], [m.blue, m.blueSteel]);
   conveyorWarning.root.position.set(0, BELT_AXIS_Y, BELT_Z);
   conveyor.add(conveyorWarning.root);
@@ -511,10 +531,23 @@ export function createTwoPalletMagazine(layout: CellLayout, magazineIndex: numbe
   return { root, conveyor, conveyorWarning, operatorConveyorGlow, pallets, carriage, liftBase, liftRods: [piston], lock, stop, chain,
     beltMarks, driveTeeth, driveRollers, rollers, sample, sampleHeight: partHeight / 2,
     productMeshes, inventorySources: [undefined, undefined], inventorySignatures: ['', ''],
+    alarmSurfaceMaterials, alarmElapsed: 0,
     lastDriveX: Number.NaN, lastP2X: Number.NaN, lastBeltPhase: Number.NaN };
 }
 
-export function updateTwoPalletMagazine(rig: TwoPalletMagazineRig, controller: TwoPalletPreviewController, inventory?: PalletInventory[], configurationKnown = true, pose?: TwoPalletPose, geometry?: GeometryBeltVisual): void {
+export function updateTwoPalletMagazine(
+  rig: TwoPalletMagazineRig,
+  controller: TwoPalletPreviewController,
+  inventory?: PalletInventory[],
+  configurationKnown = true,
+  pose?: TwoPalletPose,
+  geometry?: GeometryBeltVisual,
+  indication?: MagazineAlarmIndication,
+): void {
+  const { active = false, dt = 0, inspecting = false, reducedMotion = false } = indication ?? {};
+  rig.alarmElapsed = active ? rig.alarmElapsed + dt : 0;
+  setAlarmSurfaceMaterials(rig.alarmSurfaceMaterials, active && !inspecting,
+    alarmPulse(rig.alarmElapsed, reducedMotion), rig.alarmElapsed, reducedMotion);
   const p = pose ?? controller.pose;
   const x = (t: number) => OPERATOR_X + (ROBOT_X - OPERATOR_X) * t;
   rig.pallets[0].position.set(x(p.p1), D.top, 0);

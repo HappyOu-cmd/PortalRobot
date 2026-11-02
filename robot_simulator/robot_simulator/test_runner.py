@@ -851,7 +851,7 @@ class GatewayRunner(RecoveryRunnerMixin):
             for machine in (1, 2, 3):
                 station = values.get(f"astGeometryCalls[{machine}].uiStation")
                 if (values.get(f"astGeometryCalls[{machine}].uiState") == 4 and station in (1, 2)
-                        and values.get(f"astGeometryStatus[{station}].xOccupied", False)):
+                        and values.get(f"astGeometryStatus[{station}].xPartStored", False)):
                     return True
             return False
         if expected not in ("cycle-completes", "safe-stop", "robot-error-reset"):
@@ -895,7 +895,7 @@ class GatewayRunner(RecoveryRunnerMixin):
                         raise AssertionError(f"occupied slot has unknown product type: {root}")
                     counts[product_type] += 1
         for station in (1, 2):
-            if values.get(f"astGeometryStatus[{station}].xOccupied", False):
+            if values.get(f"astGeometryStatus[{station}].xPartStored", False):
                 product_type = int(values.get(f"astGeometryStatus[{station}].uiProductType", 0))
                 if product_type not in counts:
                     raise AssertionError(f"GK {station}: occupied station has unknown product type")
@@ -914,6 +914,75 @@ class GatewayRunner(RecoveryRunnerMixin):
             if product_type in counts:
                 counts[product_type] += 1
         return counts
+
+    @staticmethod
+    def finished_inventory(values: dict[str, Any]) -> dict[int, int]:
+        """Finished parts at their destinations, excluding held/machined material."""
+        counts = {1: 0, 2: 0, 3: 0}
+        mode = values.get("uiMagazineMode", 0)
+        roots = ([f"astTwinStore[{m}].astPallet[{p}]" for m in (1, 2) for p in (1, 2)]
+                 if mode == 1 else [f"astMagazineInventory[{m}]" for m in (1, 2)])
+        for owner in roots:
+            for index in range(1, 97 if mode == 1 else 121):
+                root = f"{owner}.aSlots[{index}]"
+                if values.get(f"{root}.xInPosition") and values.get(f"{root}.eDetailType") == 2:
+                    product = int(values.get(f"{root}.uiProductType", 0))
+                    if product not in counts:
+                        raise AssertionError(f"finished slot has unknown product type: {root}")
+                    counts[product] += 1
+        for station in (1, 2):
+            if values.get(f"astGeometryStatus[{station}].xPartStored", False):
+                product = int(values.get(f"astGeometryStatus[{station}].uiProductType", 0))
+                if product not in counts:
+                    raise AssertionError(f"GK {station}: stored part has unknown product type")
+                counts[product] += 1
+        return counts
+
+    @classmethod
+    def production_complete(cls, values: dict[str, Any], initial_counts: dict[int, int]) -> bool:
+        return (cls.finished_inventory(values) == initial_counts
+                and cls.observed_inventory(values) == initial_counts
+                and values.get("stRobotStatus.xBusy") is False
+                and all(values.get(f"stRobotStatus.xGripper{i}Closed") is False for i in (1, 2))
+                and all(values.get(f"astMachineStatus[{i}].ePartType") == 0
+                        and values.get(f"astMachineStatus[{i}].xBusy") is False
+                        and values.get(f"astMachineStatus[{i}].xProcessing") is False for i in (1, 2, 3)))
+
+    async def finish_production_case(self, socket: Any, initial_counts: dict[int, int], initial_finished: int) -> None:
+        expected_produced = sum(initial_counts.values()) - initial_finished
+
+        def produced(values):
+            return sum((int(values.get(f"astMagazineStatus[{i}].udiProducedPartsTotal", 0))
+                        - self._case_magazine_counters[i - 1]) & 0xFFFFFFFF for i in (1, 2)) + sum(
+                (int(values.get(f"astGeometryStatus[{i}].udiProducedPartsTotal", 0))
+                 - self._case_geometry_counters[i - 1]) & 0xFFFFFFFF for i in (1, 2))
+
+        def finished(values):
+            if not self.recovery_errors_clear(values):
+                raise AssertionError("unexpected equipment error during full production cycle")
+            return self.production_complete(values, initial_counts) and produced(values) == expected_produced
+
+        def verify_finished():
+            self.check("Готовые изделия по типам", initial_counts, self.finished_inventory(self.values))
+            self.check("Робот и станки освобождены", True, self.production_complete(self.values, initial_counts))
+            self.check("Подтверждён новый выпуск", expected_produced, produced(self.values))
+
+        try:
+            await self.wait_value(socket, lambda v: finished(v) or not v.get("stCellStatus.xRunning", True),
+                                  180.0 if self.speed_profile == "realtime" else 60.0,
+                                  "full production did not finish the initial material")
+            # State, inventory and counters can arrive in different OPC UA notifications.
+            # A stopped cell must still prove completion; Stop alone cannot earn PASS.
+            await self.wait_value(socket, finished, 3.0, "production stopped before all initial material was finished")
+        except TimeoutError:
+            # Keep an explicit expected/actual failed check in the HMI report.
+            verify_finished()
+            raise
+        verify_finished()
+        await self.stop_cell_if_running(socket)
+        await self.wait_value(socket, lambda v: not v.get("stCellStatus.xRunning", True)
+                              and not v.get("stRobotStatus.xBusy", True), 45.0, "completed production did not stop")
+        self.check("Готовые изделия сохранены после Stop", initial_counts, self.finished_inventory(self.values))
 
     @staticmethod
     def setup_differences(state: dict[str, Any], values: dict[str, Any]) -> list[str]:
@@ -1523,6 +1592,11 @@ class GatewayRunner(RecoveryRunnerMixin):
                 "auiRobotModbusWriteRegisters[3]", "auiRobotModbusWriteRegisters[9]",
                 "stRobotModbusStatus.uiExecutionState", "stRobotModbusStatus.uiResultCode"]
         keys += [f"astGeometryCalls[{i}].{field}" for i in (1, 2, 3) for field in ("udiId", "uiState", "uiStation", "uiMagazine", "uiPallet", "uiSlot", "uiReason")]
+        keys += [f"astGeometryStatus[{i}].{field}" for i in (1, 2)
+                 for field in ("xPartStored", "xOccupied", "xRecoveryRequired", "uiProductType", "udiProducedPartsTotal")]
+        keys += [f"astMagazineStatus[{i}].udiProducedPartsTotal" for i in (1, 2)]
+        keys += [f"astMachineStatus[{i}].{field}" for i in (1, 2, 3) for field in ("ePartType", "xBusy", "xProcessing")]
+        keys += [f"stRobotStatus.{field}" for field in ("xBusy", "xGripper1Closed", "xGripper2Closed", "uiBlankPayloadType", "uiDetailPayloadType")]
         return {"expectations": case.get("expectations", {}), "checks": getattr(self, "case_checks", []),
                 "observed": {k: self.values[k] for k in keys if k in self.values}}
 
@@ -1643,6 +1717,20 @@ class GatewayRunner(RecoveryRunnerMixin):
             "type": "test-progress", "caseIndex": index, "caseCount": total,
             "stage": "running", "name": case["name"],
         })
+        if case.get("expectations", {}).get("testKind") == "geometry-start-blocked":
+            await self.enter_automatic_mode(socket)
+            await self.wait_stable_value(socket, lambda v: v.get("stCellStatus.xStartCheckMagazineReady") is False
+                                         and v.get("stCellStatus.xStartAllowed") is False
+                                         and v.get("stCellStatus.xRunning") is False,
+                                         15.0, "Start without a ready magazine was not blocked")
+            self.check("Start без готового магазина запрещён", False, self.values["stCellStatus.xStartAllowed"])
+            self.check("Причина запрета — нет готового магазина", False, self.values["stCellStatus.xStartCheckMagazineReady"])
+            self.check("Вызов С1 остался ожидающим", 1, self.values.get("astGeometryCalls[1].uiState"))
+            self.check("Деталь осталась в С1", 1, self.values.get("astMachineStatus[1].ePartType"))
+            self.check("ГК не получил деталь", {1: 0, 2: 0, 3: 0}, self.finished_inventory(self.values))
+            self.check("Баланс изделий", initial_counts, self.observed_inventory(self.values))
+            self.check("Ошибок оборудования нет", True, self.recovery_errors_clear(self.values))
+            return
         if expected == "no-task":
             await self.enter_automatic_mode(socket)
             await self.wait_value(
@@ -1657,6 +1745,7 @@ class GatewayRunner(RecoveryRunnerMixin):
         self._case_magazine_counters = [int(self.values.get(f"astMagazineStatus[{i}].udiProducedPartsTotal", 0)) for i in (1, 2)]
         self._case_geometry_counters = [int(self.values.get(f"astGeometryStatus[{i}].udiProducedPartsTotal", 0)) for i in (1, 2)]
         self._case_robot_pallets = [int(self.values.get(f"astTwinStatus[{i}].uiRobotPallet", 0)) for i in (1, 2)]
+        initial_finished = sum(self.finished_inventory(self.values).values())
         await self.start_automatic_cycle(socket)
         if case.get("expectations", {}).get("testKind") == "operator-cancel":
             await self.wait_value(
@@ -1733,8 +1822,15 @@ class GatewayRunner(RecoveryRunnerMixin):
             if special == "geometry-route":
                 states = expectations.get("callStates", {})
                 if states:
-                    await self.wait_value(socket, lambda v: all(v.get(f"astGeometryCalls[{i}].uiState") == target for i, target in states.items()),
-                                          240.0 if self.speed_profile == "realtime" else 90.0, "GK calls did not reach the expected terminal/waiting states")
+                    def routes_ready(values):
+                        return (all(values.get(f"astGeometryCalls[{i}].uiState") == target for i, target in states.items())
+                                and all(values.get(f"astMachineStatus[{i}].ePartType") == 1
+                                        and values.get(f"astMachineStatus[{i}].xBusy") is False
+                                        and values.get(f"astMachineStatus[{i}].xProcessing") is False
+                                        for i, target in states.items() if target == 1))
+                    wait_routes = self.wait_stable_value if 1 in states.values() else self.wait_value
+                    await wait_routes(socket, routes_ready, 240.0 if self.speed_profile == "realtime" else 90.0,
+                                      "GK calls did not reach the expected terminal/waiting states")
                     for machine, target in states.items():
                         self.check(f"Вызов со станка {machine}", target, self.values.get(f"astGeometryCalls[{machine}].uiState"))
                     for machine, target in expectations.get("destinations", {}).items():
@@ -1743,7 +1839,7 @@ class GatewayRunner(RecoveryRunnerMixin):
                         if target == 4:
                             station = self.values.get(f"astGeometryCalls[{machine}].uiStation")
                             self.check(f"Назначение вызова {machine} существует", True, station in (1, 2))
-                            self.check(f"ГК {station} занят доставленной деталью", True, bool(self.values.get(f"astGeometryStatus[{station}].xOccupied", False)))
+                            self.check(f"ГК {station} подтвердил укладку детали", True, bool(self.values.get(f"astGeometryStatus[{station}].xPartStored", False)))
                         elif target == 1:
                             self.check(f"Ожидающая деталь осталась в станке {machine}", 1, self.values.get(f"astMachineStatus[{machine}].ePartType"))
                         elif target == 5:
@@ -1760,7 +1856,7 @@ class GatewayRunner(RecoveryRunnerMixin):
                     await self.wait_value(socket, lambda v: any(int(v.get(f"astMagazineStatus[{i}].udiProducedPartsTotal", 0)) > self._case_magazine_counters[i - 1] for i in (1, 2)),
                                           180.0, "uncalled detail did not reach the magazine")
                     self.check("Без вызова выпуск магазина увеличен один раз", 1, sum((int(self.values.get(f"astMagazineStatus[{i}].udiProducedPartsTotal", 0)) - self._case_magazine_counters[i - 1]) & 0xFFFFFFFF for i in (1, 2)))
-                    self.check("Без вызова ГК не занимает станцию", False, any(self.values.get(f"astGeometryStatus[{i}].xOccupied", False) for i in (1, 2)))
+                    self.check("Без вызова ГК не получает деталь", False, any(self.values.get(f"astGeometryStatus[{i}].xPartStored", False) for i in (1, 2)))
             else:
                 before = self._case_robot_pallets[0]
                 await self.wait_value(socket, lambda v: v.get("astTwinStatus[1].uiRobotPallet") == 3 - before
@@ -1804,11 +1900,7 @@ class GatewayRunner(RecoveryRunnerMixin):
         elif case.get("expectations", {}).get("testKind") == "general-four-batches":
             await self.run_general_cycle(socket, case, index, total, initial_counts)
         elif expected != "held-blank-wait" and bool(case.get("expectations", {}).get("fullCycle", True)):
-            await self.wait_value(
-                socket, lambda values: not bool(values.get("stCellStatus.xRunning", True)),
-                180.0 if self.speed_profile == "realtime" else 60.0,
-                "automatic cycle did not finish",
-            )
+            await self.finish_production_case(socket, initial_counts, initial_finished)
         else:
             await self.stop_cell_if_running(socket)
             await self.wait_value(

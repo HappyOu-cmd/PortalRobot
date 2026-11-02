@@ -1,7 +1,7 @@
 import type { PlcCommand, PlcPointEditorPoint } from './client';
 
 export type PlcPointEditorCommand = PlcCommand & {
-  command: 'robot.point.capture' | 'robot.point.save';
+  command: 'robot.point.capture' | 'robot.point.save' | 'robot.point.invalidateMagazine';
   index: number;
 };
 export interface PlcPointEditorReply {

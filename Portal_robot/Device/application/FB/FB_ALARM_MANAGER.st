@@ -8,10 +8,12 @@ VAR_IN_OUT
 	Sources : ARRAY [1..22] OF ST_ALARM_SOURCE_DATA;
 END_VAR
 VAR_OUTPUT
+    xEventsUpdated : BOOL; // Добавление, деактивация или подтверждение записи
 	Status : ST_ALARM_STATUS; // Сводный статус журнала
 	Events : ARRAY [1..100] OF ST_ALARM_EVENT; // Журнал активных и зафиксированных событий
 END_VAR
 VAR
+    xSummaryInitialized : BOOL;
 	uiWriteIndex : UINT := 1; // Следующая ячейка кольцевого журнала
 	udiSequence  : UDINT; // Общий порядковый номер события
 	adwPreviousAlarm : ARRAY [1..22] OF DWORD;
@@ -22,6 +24,8 @@ END_VAR
 
 // --- BEGIN IMPLEMENTATION ---
 
+xEventsUpdated := FALSE;
+
 // Предупреждения подтверждаются только отдельной командой HMI.
 // Общий сброс ошибок ячейки не изменяет журнал предупреждений.
 IF xResetWarnings THEN
@@ -31,6 +35,7 @@ IF xResetWarnings THEN
         AND ((Events[uiIndex].eSource <> E_ALARM_SOURCE.CONTROLLER_CPU_1)
             OR xControllerWarningResetAllowed) THEN
 			Events[uiIndex].xActive := FALSE;
+            xEventsUpdated := TRUE;
 		END_IF;
 	END_FOR;
 END_IF;
@@ -78,6 +83,7 @@ FOR uiIndex := UINT#1 TO UINT#2 DO
 	END_IF;
 END_FOR;
 
+IF xEventsUpdated OR NOT xSummaryInitialized THEN
 Status.uiActiveAlarmCount := 0;
 Status.uiActiveWarningCount := 0;
 Status.uiHistoryCount := 0;
@@ -98,3 +104,5 @@ END_FOR;
 Status.uiActiveEventCount := Status.uiActiveAlarmCount + Status.uiActiveWarningCount;
 Status.xAlarmActive := Status.uiActiveAlarmCount > 0;
 Status.xWarningActive := Status.uiActiveWarningCount > 0;
+    xSummaryInitialized := TRUE;
+END_IF;

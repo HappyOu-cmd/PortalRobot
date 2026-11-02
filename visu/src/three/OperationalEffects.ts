@@ -44,6 +44,9 @@ export class OperationalEffects {
     this.root.renderOrder = 8;
 
     this.cellBoundaryGeometry.setAttribute('position', new THREE.BufferAttribute(this.cellBoundaryPositions, 3));
+    this.cellBoundary.name = 'cell_boundary_indication';
+    this.cellBoundary.renderOrder = 8;
+    this.cellBoundary.raycast = () => {};
     this.cellBoundary.visible = false;
     this.root.add(this.cellBoundary);
 
@@ -71,7 +74,7 @@ export class OperationalEffects {
     this.settings = settings;
   }
 
-  update(dt: number, activity: SceneActivity, anchors: SceneEffectAnchors): void {
+  update(dt: number, activity: SceneActivity, anchors: SceneEffectAnchors, cellWarning = false): void {
     this.time += dt;
     this.updateObjectAlarmGlows(activity, anchors);
     if (!activity.live) {
@@ -79,7 +82,7 @@ export class OperationalEffects {
       return;
     }
 
-    this.updateAlarmEffects(activity, anchors);
+    this.updateAlarmEffects(activity, anchors, cellWarning);
   }
 
   dispose(): void {
@@ -98,15 +101,10 @@ export class OperationalEffects {
     this.reducedMotion = event.matches;
   };
 
-  private updateAlarmEffects(activity: SceneActivity, anchors: SceneEffectAnchors): void {
-    if (!this.settings.alarmBeacons) {
-      // Object halos are the primary alarm indication and stay available even
-      // when the optional full-cell boundary is disabled in settings.
-      this.cellBoundary.visible = false;
-      return;
-    }
-
-    this.updateCellBoundary(activity.alarmTargets.some((target) => target.kind === 'cell'), anchors.cell);
+  private updateAlarmEffects(activity: SceneActivity, anchors: SceneEffectAnchors, cellWarning: boolean): void {
+    const cellAlarm = this.settings.alarmBeacons && activity.alarmTargets.some((target) => target.kind === 'cell');
+    // The primary warning contour stays available when optional alarm beacons are disabled.
+    this.updateCellBoundary(cellAlarm || cellWarning, anchors.cell, cellAlarm);
   }
 
   private createAlarmGlow(name: string, diameter: number): THREE.Group {
@@ -164,9 +162,10 @@ export class OperationalEffects {
     );
   }
 
-  private updateCellBoundary(visible: boolean, cell: SceneEffectAnchors['cell']): void {
+  private updateCellBoundary(visible: boolean, cell: SceneEffectAnchors['cell'], alarm: boolean): void {
     this.cellBoundary.visible = visible;
     if (!visible) return;
+    this.cellBoundaryMaterial.color.setHex(alarm ? COLORS.red : 0xff6500);
     const halfLength = cell.length / 2;
     const halfWidth = cell.width / 2;
     const y = cell.center.y + 0.024;
@@ -190,7 +189,9 @@ export class OperationalEffects {
     this.cellBoundaryPositions[13] = y;
     this.cellBoundaryPositions[14] = near;
     (this.cellBoundaryGeometry.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
-    const wave = this.reducedMotion ? 0.45 : (Math.sin(this.time * 4.6) + 1) / 2;
+    const wave = this.reducedMotion ? 0.45 : alarm
+      ? (Math.sin(this.time * 4.6) + 1) / 2
+      : (Math.cos(this.time * Math.PI) + 1) / 2;
     this.cellBoundaryMaterial.opacity = 0.32 + wave * 0.42;
   }
 

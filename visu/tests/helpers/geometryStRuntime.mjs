@@ -24,10 +24,10 @@ export function compileSt(source) {
     return `switch (${selector}) { ${branches} break; }`;
   });
   // Named-argument calls с выражениями, в том числе вложенными MAX/SEL.
-  const namedCalls = /\b(a?ton\w+(?:\[\w+\])?|F_GEOMETRY_\w+|IsMachineEligible|IsMachineCompatible|IsMachineWorkPending|HasMagazineWork)\(/g;
+  const namedCalls = /\b(a?ton\w+(?:\[\w+\])?|F_(?:GEOMETRY|MAGAZINE)_\w+|InvalidateMagazineCalibration|IsHmiCommandFresh|IsMachineEligible|IsMachineCompatible|IsMachineWorkPending|HasMagazineWork)\(/g;
   code = code.replace(namedCalls, '$1({').replace(/([\w.\[\]]+)\s*:=/g, '$1 __ASSIGN__');
   // Закрываем объект named arguments по парным скобкам.
-  for (const match of [...code.matchAll(/\b(?:a?ton\w+(?:\[\w+\])?|F_GEOMETRY_\w+|IsMachineEligible|IsMachineCompatible|IsMachineWorkPending|HasMagazineWork)\(\{/g)].reverse()) {
+  for (const match of [...code.matchAll(/\b(?:a?ton\w+(?:\[\w+\])?|F_(?:GEOMETRY|MAGAZINE)_\w+|InvalidateMagazineCalibration|IsHmiCommandFresh|IsMachineEligible|IsMachineCompatible|IsMachineWorkPending|HasMagazineWork)\(\{/g)].reverse()) {
     let depth = 1, pos = match.index + match[0].length;
     for (; pos < code.length; pos++) { if (code[pos] === '(') depth++; if (code[pos] === ')' && --depth < 1) break; }
     const start = match.index + match[0].length;
@@ -52,7 +52,7 @@ export function compileSt(source) {
 
 export function defaultsFromSt(source, block = 'VAR') {
   const declarations = source.match(new RegExp(`(?:^|\\n)${block}\\r?\\n([\\s\\S]*?)END_VAR`))?.[1] ?? '';
-  return Object.fromEntries([...declarations.matchAll(/(\w+)\s*:\s*(BOOL|UDINT|UINT|REAL|TIME|DWORD|ST_GEOMETRY_CALL)\b/g)].map(([, name, type]) => [name, type === 'BOOL' ? false : type === 'ST_GEOMETRY_CALL' ? emptyCall() : 0]));
+  return Object.fromEntries([...declarations.matchAll(/(\w+)\s*:\s*(BOOL|UDINT|UINT|LREAL|REAL|TIME|DWORD|ST_GEOMETRY_CALL)\b/g)].map(([, name, type]) => [name, type === 'BOOL' ? false : type === 'ST_GEOMETRY_CALL' ? emptyCall() : 0]));
 }
 export const emptyCall = () => ({ udiId: 0, uiMachine: 0, uiProductType: 0, uiStation: 0, xForced: false, uiState: 0, uiReason: 0, uiMagazine: 0, uiPallet: 0, uiSlot: 0 });
 export const conversions = { MAX: Math.max, MIN: Math.min, SEL: (condition, a, b) => condition ? b : a,

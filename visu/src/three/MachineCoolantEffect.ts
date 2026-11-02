@@ -9,6 +9,9 @@ const COOLANT_WHITE = 0xffffff;
 const JET_SEGMENTS = 32;
 const JET_SIDES = 8;
 const SPLASH_DROPS = 96;
+const SPLASH_RIBBONS = 10;
+const SPLASH_SEGMENTS = 12;
+const SPLASH_GRAVITY = 6.5;
 const NOZZLE_OUTLET_RADIUS = 0.0065;
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -17,6 +20,7 @@ interface CoolantJet {
   outlet: THREE.Object3D;
   curve: THREE.QuadraticBezierCurve3;
   impact: THREE.Mesh;
+  fan: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
   splash: THREE.InstancedMesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>;
   surfaceNormal: THREE.Vector3;
 }
@@ -152,10 +156,29 @@ export class MachineCoolantEffect {
     this.materials.add(impactSurface);
     const impact = new THREE.Mesh(impactGeometry, impactSurface);
     impact.name = `${name}_impact`;
-    impact.scale.set(1.5, 0.3, 1.2);
+    impact.scale.set(1.05, 0.22, 1.05);
     impact.quaternion.setFromUnitVectors(UP, surfaceNormal);
     impact.renderOrder = 3;
     this.root.add(impact);
+    const fanGeometry = new THREE.BufferGeometry();
+    fanGeometry.setAttribute('position', new THREE.BufferAttribute(
+      new Float32Array(SPLASH_RIBBONS * (SPLASH_SEGMENTS + 1) * 2 * 3), 3,
+    ).setUsage(THREE.DynamicDrawUsage));
+    const fanIndices: number[] = [];
+    for (let i = 0; i < SPLASH_RIBBONS; i++) for (let j = 0; j < SPLASH_SEGMENTS; j++) {
+      const a = (i * (SPLASH_SEGMENTS + 1) + j) * 2;
+      fanIndices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+    }
+    fanGeometry.setIndex(fanIndices);
+    const fanSurface = new THREE.MeshBasicMaterial({ color: COOLANT_WHITE, transparent: true,
+      opacity: 0, depthWrite: false, side: THREE.DoubleSide });
+    this.geometries.add(fanGeometry);
+    this.materials.add(fanSurface);
+    const fan = new THREE.Mesh(fanGeometry, fanSurface);
+    fan.name = `${name}_impact_fan`;
+    fan.frustumCulled = false;
+    fan.renderOrder = 3;
+    this.root.add(fan);
     const dropGeometry = new THREE.SphereGeometry(1, 6, 4);
     const dropSurface = new THREE.MeshBasicMaterial({ color: COOLANT_WHITE, transparent: true, opacity: 0, depthWrite: false });
     this.geometries.add(dropGeometry);
@@ -166,7 +189,7 @@ export class MachineCoolantEffect {
     splash.frustumCulled = false;
     splash.renderOrder = 3;
     this.root.add(splash);
-    return { mesh, outlet, curve: new THREE.QuadraticBezierCurve3(), impact, splash, surfaceNormal };
+    return { mesh, outlet, curve: new THREE.QuadraticBezierCurve3(), impact, fan, splash, surfaceNormal };
   }
 
   setActive(active: boolean): void {
@@ -237,25 +260,68 @@ export class MachineCoolantEffect {
     jet.mesh.material.opacity = this.intensity * 0.92;
   }
 
+  private sampleSplash(jet: CoolantJet, seed: number, spread: number, age: number): void {
+    const sideways = (spread - 0.5) * 0.24;
+    let fallAge = age;
+    if (jet.surfaceNormal.y > 0.5) {
+      // The top jet first washes around either side of the cylinder. Starting
+      // its fall at the impact itself would send the liquid through the stock.
+      const radius = mm(this.geometry.diameter) / 2 + 0.001;
+      const side = seed < 0.5 ? -1 : 1;
+      const speed = 0.34 + spread * 0.1;
+      const wrapAngle = Math.PI * 0.42;
+      const wrapTime = radius * wrapAngle / speed;
+      const surfaceAge = Math.min(age, wrapTime);
+      const angle = surfaceAge / wrapTime * wrapAngle;
+      this.dropletPosition.set(jet.curve.v2.x + sideways * surfaceAge,
+        this.stockCenter.y + radius * Math.cos(angle),
+        this.stockCenter.z + side * radius * Math.sin(angle));
+      this.dropletVelocity.set(sideways, -speed * Math.sin(angle), side * speed * Math.cos(angle));
+      fallAge = Math.max(0, age - wrapTime);
+      this.dropletPosition.addScaledVector(this.dropletVelocity, fallAge);
+    } else {
+      // At the cutter, the surface is vertical: a small outward deflection
+      // keeps the splash in front of the stock while most of the flow falls.
+      this.dropletVelocity.set(sideways, -0.12 - seed * 0.14, -0.08 - spread * 0.1);
+      this.dropletPosition.copy(jet.curve.v2).addScaledVector(jet.surfaceNormal, 0.001)
+        .addScaledVector(this.dropletVelocity, age);
+    }
+    this.dropletPosition.y -= 0.5 * SPLASH_GRAVITY * fallAge * fallAge;
+    this.dropletVelocity.y -= SPLASH_GRAVITY * fallAge;
+  }
+
   private updateSplash(jet: CoolantJet): void {
-    // Short ballistic droplets originate at the impact, rather than filling
-    // the enclosure with the old, uniformly distributed mist particles.
+    // Short, rippling ligaments join the impact to the falling droplets.
+    const positions = jet.fan.geometry.getAttribute('position');
+    for (let i = 0; i < SPLASH_RIBBONS; i++) {
+      const seed = (i + 0.5) / SPLASH_RIBBONS;
+      const spread = (i * 0.754878 + 0.31) % 1;
+      for (let j = 0; j <= SPLASH_SEGMENTS; j++) {
+        const fraction = j / SPLASH_SEGMENTS;
+        this.sampleSplash(jet, seed, spread, fraction * (0.1 + seed * 0.035));
+        this.normal.crossVectors(this.dropletVelocity, jet.surfaceNormal).normalize();
+        const ripple = 0.85 + 0.15 * Math.sin(fraction * 18 - this.time * 24 + i * 2.4);
+        const width = 0.003 * (1 - fraction * 0.8) * ripple
+          * (1 - THREE.MathUtils.smoothstep(fraction, 0.7, 1));
+        const n = (i * (SPLASH_SEGMENTS + 1) + j) * 2;
+        positions.setXYZ(n, this.dropletPosition.x - this.normal.x * width,
+          this.dropletPosition.y - this.normal.y * width, this.dropletPosition.z - this.normal.z * width);
+        positions.setXYZ(n + 1, this.dropletPosition.x + this.normal.x * width,
+          this.dropletPosition.y + this.normal.y * width, this.dropletPosition.z + this.normal.z * width);
+      }
+    }
+    positions.needsUpdate = true;
+    jet.fan.material.opacity = this.intensity * 0.62;
+
     for (let i = 0; i < SPLASH_DROPS; i++) {
       const seed = (i * 0.618034) % 1;
-      const phase = (this.time * 2.8 + seed) % 1;
-      const age = phase * 0.36;
-      const angle = i * 2.39996;
-      this.dropletVelocity.set(Math.cos(angle) * 0.22, 0.12 + seed * 0.28, Math.sin(angle) * 0.25);
-      this.dropletVelocity.addScaledVector(jet.surfaceNormal, 0.22);
-      // Tangential component from the rotating workpiece.
-      this.dropletVelocity.y -= jet.surfaceNormal.z * 0.18;
-      this.dropletVelocity.z += jet.surfaceNormal.y * 0.18;
-      this.dropletPosition.copy(jet.curve.v2).addScaledVector(this.dropletVelocity, age);
-      this.dropletPosition.y -= 0.5 * 5.5 * age * age;
-      this.dropletVelocity.y -= 5.5 * age;
+      const spread = (i * 0.754878 + 0.31) % 1;
+      const lifetime = 0.2 + spread * 0.04;
+      const phase = (this.time / lifetime + seed) % 1;
+      this.sampleSplash(jet, seed, spread, phase * lifetime);
       this.dropletRotation.setFromUnitVectors(UP, this.dropletVelocity.normalize());
-      const size = (0.0012 + seed * 0.0015) * (1 - THREE.MathUtils.smoothstep(phase, 0.65, 1));
-      this.dropletScale.set(size, size * (2 + phase * 3), size);
+      const size = (0.0007 + seed * 0.00065) * (1 - THREE.MathUtils.smoothstep(phase, 0.7, 1));
+      this.dropletScale.set(size, size * (1.3 + phase * 1.4), size);
       this.dropletMatrix.compose(this.dropletPosition, this.dropletRotation, this.dropletScale);
       jet.splash.setMatrixAt(i, this.dropletMatrix);
     }

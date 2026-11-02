@@ -195,7 +195,10 @@ test('v3 test buffer checks explicit mode and mode changes invalidate magazine b
   assert.match(control, /GVL_TWO_PALLET.astStatus\[1\].xConfirmed/);
   assert.match(control, /GVL_TWO_PALLET.astStatus\[2\].xConfirmed/);
   assert.match(mode, /xModeChangeAllowed :=[\s\S]*?NOT GVL_HMI\.xTestSessionActive/);
-  assert.match(mode, /GVL_TWO_PALLET\.uiMode := stTwinRequest\.uiValue;[\s\S]*?Persistent_Value\.astRetainPoints\[13 \+ uiTwin\]\.xConfigured := FALSE/);
+  assert.match(mode, /GVL_TWO_PALLET\.uiMode := stTwinRequest\.uiValue;[\s\S]*?InvalidateMagazineCalibration\(uiMagazine := uiTwin\)/);
+  const invalidate = read('PLC_PRG.InvalidateMagazineCalibration.st');
+  assert.match(invalidate, /astRetainPoints\[UINT#13 \+ uiMagazine\]\.xConfigured := FALSE/);
+  for (const reference of [1, 2]) assert.ok(invalidate.includes(`astReference[${reference}].xConfigured := FALSE`));
   assert.match(mode, /xPointTableReady := FALSE/);
 });
 

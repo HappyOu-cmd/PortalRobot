@@ -16,8 +16,8 @@ IF NOT xApplicationStartupInitialized THEN
 	// тип на старте. При реальной смене типа старые базы магазинов недействительны.
 	IF GVL_TWO_PALLET.uiMode <> UINT#1 THEN
 		GVL_TWO_PALLET.uiMode := UINT#1;
-		Persistent_Value.astRetainPoints[UINT#14].xConfigured := FALSE;
-		Persistent_Value.astRetainPoints[UINT#15].xConfigured := FALSE;
+		InvalidateMagazineCalibration(uiMagazine := UINT#1);
+		InvalidateMagazineCalibration(uiMagazine := UINT#2);
 		xPointTableReady := FALSE;
 	END_IF;
 	GVL_CELL_SETTINGS.eTestEnvironment := E_CELL_TEST_ENVIRONMENT.SIMULATION;

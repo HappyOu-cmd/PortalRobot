@@ -166,7 +166,9 @@ export const settingPaths = [
   "lrRobotHaltJerk",
   "tInputFilterRise",
   "tInputFilterFall",
-  "tAlarmHornDuration"
+  "tAlarmHornDuration",
+  "astMagazineCalibrationStatus[1].uiMethod",
+  "astMagazineCalibrationStatus[2].uiMethod"
 ];
 export const settingProtocol = { issued: 'udiCellSettingIssuedAtMs', request: 'udiCellSettingCommandSeq', ack: 'udiCellSettingAckSeq', result: 'uiCellSettingResult' };
 export const commandSymbols = [...pulseProtocols.values()].flatMap((protocol) => Object.values(protocol)).concat(Object.values(settingProtocol), ['uiCellSettingIndex', 'lrCellSettingRequest', 'udiHmiCommandClockMs']);

@@ -15,5 +15,6 @@ FOR uiIndex := 1 TO 100 DO
 	AND (Events[uiIndex].eSource = eSource)
 	AND (Events[uiIndex].uiCode = uiCode) THEN
 		Events[uiIndex].xActive := FALSE;
+        xEventsUpdated := TRUE;
 	END_IF;
 END_FOR;

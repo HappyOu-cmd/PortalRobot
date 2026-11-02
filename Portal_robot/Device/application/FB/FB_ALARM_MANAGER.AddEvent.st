@@ -8,6 +8,7 @@ END_VAR
 
 // --- BEGIN IMPLEMENTATION ---
 
+xEventsUpdated := TRUE;
 udiSequence := udiSequence + 1;
 IF udiSequence = UDINT#0 THEN
 	udiSequence := UDINT#1;

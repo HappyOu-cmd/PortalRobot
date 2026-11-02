@@ -53,7 +53,7 @@ import { ioSymbols, ioSymbolSet, readStableIo, IoJournalIngestor } from './physi
 import { IoOverrideChannel } from './io-override-channel.mjs';
 import { monitoringIntervals, monitoringBatches, initializeMonitoring, monitoringSummary } from './opcua-monitoring.mjs';
 import { browseSymbolChildren, collectSymbolLayout } from './opcua-symbols.mjs';
-import { prepareAggregateMonitoring } from './opcua-aggregate.mjs';
+import { prepareTableMonitoring, withTableAliases, tableRevisionRoot } from './opcua-tables.mjs';
 import { opcuaUserIdentity } from './opcua-user-identity.mjs';
 
 const endpointUrl = process.env.OPCUA_ENDPOINT ?? 'opc.tcp://127.0.0.1:4840';
@@ -114,6 +114,7 @@ const pointBackupLabels = [
   'Магазин 1 — базовая точка детали',
   'Магазин 2 — базовая точка детали',
   'ГК 1 — базовая точка', 'ГК 2 — базовая точка',
+  'Магазин 1 — B', 'Магазин 1 — C', 'Магазин 2 — B', 'Магазин 2 — C',
 ];
 
 const faultStatusLeaves = ['xAllowed', 'xActive', 'xBusy', 'xResetAllowed', 'xRejected', 'udiRejectSequence'];
@@ -374,6 +375,11 @@ const requiredSymbols = [...new Set([
   'udiPointCheckRunSeq',
   'rPointCheckAppliedSpeedPercent',
   'xPointTableReady',
+  'uiPointEditorCalibrationMethod',
+  ...[1, 2].flatMap(index => ['uiMethod', 'xChangeAllowed', 'xCaptureAllowed', 'xSaveAllowed', 'xReferenceCaptureAllowed', 'xReferenceSaveAllowed', 'xMoveAAllowed', 'xMoveBAllowed', 'xMoveCAllowed', 'xReady', 'uiReason']
+    .map(leaf => `astMagazineCalibrationStatus[${index}].${leaf}`)),
+  ...[1, 2].flatMap(magazine => [1, 2, 3].flatMap(point => ['X', 'Y', 'Z', 'MagazineSafeZ', 'MagazineChangeZ', 'SpeedFactor', 'xConfigured']
+    .map(leaf => `astMagazineCalibrationStatus[${magazine}].astPoints[${point}].${leaf}`))),
   'stPointEditorResultPoint.X',
   'stPointEditorResultPoint.Y',
   'stPointEditorResultPoint.Z',
@@ -604,6 +610,8 @@ const commandMap = {
   'cell.settings.robotJerkPercent': { path: 'rRobotJerkPercent', dataType: DataType.Float, transform: (v) => Math.max(1, Math.min(100, Number(v))) },
   'cell.settings.robotHaltDeceleration': { path: 'lrRobotHaltDeceleration', dataType: DataType.Double, transform: (v) => Math.max(1, Math.min(100000, Number(v))) },
   'cell.settings.robotHaltJerk': { path: 'lrRobotHaltJerk', dataType: DataType.Double, transform: (v) => Math.max(1, Math.min(1000000, Number(v))) },
+  'cell.settings.magazine1CalibrationMethod': { path: 'astMagazineCalibrationStatus[1].uiMethod', dataType: DataType.UInt16, transform: Number },
+  'cell.settings.magazine2CalibrationMethod': { path: 'astMagazineCalibrationStatus[2].uiMethod', dataType: DataType.UInt16, transform: Number },
   'multi.autoDistribute': { path: 'stMultiType.Command.xAutoDistribute', dataType: DataType.Boolean, pulse: true },
   'fault.enable': { path: 'xErrorSimulationEnable', dataType: DataType.Boolean },
   'simulation.accelerationEnable': { path: 'xSimulationAccelerationEnable', dataType: DataType.Boolean },
@@ -913,6 +921,25 @@ let runtimeDiagnostics = {
 let pointEditorSequence = 0;
 const pendingPointEditorAudits = new Map();
 let pointEditorAuditTimer = null;
+const robotManualRejectReasons = [
+  '',
+  'Нет связи с HMI',
+  'Требуется ручной режим и остановленная ячейка',
+  'Активно управление по Modbus',
+  'В аварийном восстановлении разрешён только непрерывный Jog',
+  'Обнаружена ошибка привода',
+  'Приводы не включены',
+  'Другая ось уже выполняет ручное движение',
+  'Перед шаговым движением выполните Home',
+  'Команда выходит за программный предел оси',
+  'Одновременно запрошены несовместимые команды',
+  'Робот уже выполняет команду',
+  'Механизм уже находится в требуемом состоянии',
+  'Внешний робот не подтвердил готовность',
+  'Motion-слой не готов: проверьте состояние группы и автомата оси',
+  'Входная точка станка запрещена: люк закрыт',
+  'Опорная точка магазина не настроена или недоступна в этом режиме',
+];
 const pointEditorRejectReasons = [
   '', 'неизвестная команда', 'недопустимый индекс точки', 'нет связи с HMI',
   'требуется ручной режим', 'требуется SoftMotion', 'автоматический цикл не остановлен',
@@ -924,7 +951,31 @@ const pointEditorRejectReasons = [
   'смещения Z вне допустимого диапазона или SAFE_Z ГК не поднимает робот в пределах оси',
   'для проверки выключите и освободите ГК, остановите конвейер',
   'запись точки ГК запрещена: проверьте ручной режим, поддержку ГК, ручной I/O и сброс привода',
+  'способ калибровки магазина изменён или выбранная опора не используется',
 ];
+
+const calibrationMagazineForPoint = index => index === 11 || index === 15 || index === 16 ? 1
+  : index === 12 || index === 17 || index === 18 ? 2 : 0;
+const pointSnapshotRoot = index => {
+  const magazine = calibrationMagazineForPoint(index);
+  const reference = index === 11 || index === 12 ? 1 : index === 15 || index === 17 ? 2 : 3;
+  return magazine ? `astMagazineCalibrationStatus[${magazine}].astPoints[${reference}]` : `astPointEditorPoints[${index}]`;
+};
+function pointSnapshotLabel(index) {
+  const magazine = calibrationMagazineForPoint(index);
+  if (!magazine || latestValues[`astMagazineCalibrationStatus[${magazine}].uiMethod`] !== 3) return pointBackupLabels[index - 1];
+  const role = index === 11 || index === 12 ? 0 : index === 15 || index === 17 ? 1 : 2;
+  const columns = Number(latestValues.MagazineColumns ?? 8);
+  const slot = role === 0 ? 1 : role === 1 ? columns : (Number(latestValues.MagazineRows ?? 12) - 1) * columns + 1;
+  return `Магазин ${magazine} — ${['A', 'B', 'C'][role]} · слот ${slot}`;
+}
+function pointCalibrationMethod(message, index) {
+  const magazine = calibrationMagazineForPoint(index);
+  if (!magazine) return 0;
+  const method = message.calibrationMethod ?? latestValues[`astMagazineCalibrationStatus[${magazine}].uiMethod`];
+  if (method !== 1 && method !== 3) throw new Error('PLC не сообщил способ калибровки магазина');
+  return method;
+}
 
 const pointEditorChannel = new PointEditorChannel({
   ack: () => Number(latestValues.udiPointEditorAckSeq ?? 0) >>> 0,
@@ -1596,10 +1647,12 @@ async function executeCommandPrepared(message) {
     if (!Number.isInteger(index) || index < 1 || index > POINT_EDITOR_COUNT) throw new Error('Неверный индекс инженерной точки');
     if (!Number.isFinite(speedFactor)) throw new Error('Неверный коэффициент скорости точки');
     if (![magazineSafeZ, magazineChangeZ].every(Number.isFinite)) throw new Error('Смещения точки магазина должны быть конечными числами');
+    const calibrationMethod = pointCalibrationMethod(message, index);
     const sequence = nextPointEditorSequence();
     message._pointEditorSequence = sequence;
     if (message._pointEditorAudit) pendingPointEditorAudits.set(sequence, { ...message._pointEditorAudit, pointIndex: index });
     await writeValue('uiPointEditorIndex', DataType.UInt16, index);
+    await writeValue('uiPointEditorCalibrationMethod', DataType.UInt16, calibrationMethod);
     await writeValue('lrPointEditorDraftSpeedFactor', DataType.Double, speedFactor);
     await writeValue('lrPointEditorDraftMagazineSafeZ', DataType.Double, magazineSafeZ);
     await writeValue('lrPointEditorDraftMagazineChangeZ', DataType.Double, magazineChangeZ);
@@ -1616,17 +1669,19 @@ async function executeCommandPrepared(message) {
     const magazineChangeZ = index >= 11 ? Number(point.magazineChangeZ ?? 0) : 0;
     if (!Number.isInteger(index) || index < 1 || index > POINT_EDITOR_COUNT) throw new Error('Неверный индекс инженерной точки');
     if (!coordinates.every(Number.isFinite)) throw new Error('Координаты точки должны быть конечными числами');
-    if (!Number.isFinite(speedFactor) || speedFactor < 0.1 || (index < 13 && speedFactor === 0.1) || speedFactor > 1) {
+    if (!Number.isFinite(speedFactor) || speedFactor < 0.1 || ((index !== 13 && index !== 14) && speedFactor === 0.1) || speedFactor > 1) {
       throw new Error('Недопустимый коэффициент скорости точки');
     }
     if (![magazineSafeZ, magazineChangeZ].every(Number.isFinite)
       || Math.abs(magazineSafeZ) > 10000 || Math.abs(magazineChangeZ) > 10000) {
       throw new Error('Смещения Safe Z и Change Z должны быть от -10000 до 10000 мм');
     }
+    const calibrationMethod = pointCalibrationMethod(message, index);
     const sequence = nextPointEditorSequence();
     message._pointEditorSequence = sequence;
     if (message._pointEditorAudit) pendingPointEditorAudits.set(sequence, { ...message._pointEditorAudit, pointIndex: index });
     await writeValue('uiPointEditorIndex', DataType.UInt16, index);
+    await writeValue('uiPointEditorCalibrationMethod', DataType.UInt16, calibrationMethod);
     for (let axis = 1; axis <= 3; axis += 1) {
       await writeValue(`alrPointEditorDraftXYZ[${axis}]`, DataType.Double, coordinates[axis - 1]);
     }
@@ -1635,6 +1690,19 @@ async function executeCommandPrepared(message) {
     await writeValue('lrPointEditorDraftMagazineChangeZ', DataType.Double, magazineChangeZ);
     await writeValue('uiPointEditorCommand', DataType.UInt16, 2);
     // CommandSeq пишется последним: частично подготовленный черновик PLC не применит.
+    await writeValue('udiPointEditorCommandSeq', DataType.UInt32, sequence);
+    return requestId;
+  }
+  if (message.command === 'robot.point.invalidateMagazine') {
+    const index = Number(message.index);
+    if (index !== 11 && index !== 12) throw new Error('Неверная базовая точка магазина');
+    const calibrationMethod = pointCalibrationMethod(message, index);
+    const sequence = nextPointEditorSequence();
+    message._pointEditorSequence = sequence;
+    if (message._pointEditorAudit) pendingPointEditorAudits.set(sequence, { ...message._pointEditorAudit, pointIndex: index });
+    await writeValue('uiPointEditorIndex', DataType.UInt16, index);
+    await writeValue('uiPointEditorCalibrationMethod', DataType.UInt16, calibrationMethod);
+    await writeValue('uiPointEditorCommand', DataType.UInt16, 4);
     await writeValue('udiPointEditorCommandSeq', DataType.UInt32, sequence);
     return requestId;
   }
@@ -1648,10 +1716,12 @@ async function executeCommandPrepared(message) {
     if (!Number.isInteger(index) || index < 1 || index > POINT_EDITOR_COUNT) throw new Error('Неверный индекс инженерной точки');
     if (!coordinates.every(Number.isFinite) || !Number.isFinite(speedFactor)
       || ![magazineSafeZ, magazineChangeZ].every(Number.isFinite)) throw new Error('Неверный снимок сохранённой точки');
+    const calibrationMethod = pointCalibrationMethod(message, index);
     const sequence = nextPointEditorSequence();
     message._pointEditorSequence = sequence;
     if (message._pointEditorAudit) pendingPointEditorAudits.set(sequence, { ...message._pointEditorAudit, pointIndex: index });
     await writeValue('uiPointEditorIndex', DataType.UInt16, index);
+    await writeValue('uiPointEditorCalibrationMethod', DataType.UInt16, calibrationMethod);
     for (let axis = 1; axis <= 3; axis += 1) await writeValue(`alrPointEditorDraftXYZ[${axis}]`, DataType.Double, coordinates[axis - 1]);
     await writeValue('lrPointEditorDraftSpeedFactor', DataType.Double, speedFactor);
     await writeValue('lrPointEditorDraftMagazineSafeZ', DataType.Double, magazineSafeZ);
@@ -1702,7 +1772,7 @@ async function executeCommandPrepared(message) {
     const point = Math.round(Number(message.point ?? 0));
     const slot = Math.round(Number(message.slot ?? 0));
     if (!Number.isInteger(action) || action < 1 || action > 7) throw new Error('Неверное ручное действие робота');
-    const allowedManualPoints = new Set([1, 3, 4, 5, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]);
+    const allowedManualPoints = new Set([1, 3, 4, 5, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]);
     if (action === 1 && (!Number.isInteger(point) || !allowedManualPoints.has(point))) throw new Error('Для перехода укажите существующую точку робота');
     const magazine = Math.round(Number(message.magazine ?? 1));
     if (action === 1 && point >= 14 && point <= 16 && (!Number.isInteger(slot) || slot < 1 || slot > 120)) throw new Error('Для магазинной точки укажите слот');
@@ -1892,7 +1962,7 @@ async function executeCommandPrepared(message) {
 }
 
 async function executeCommand(message) {
-  if (message.command === 'robot.point.capture' || message.command === 'robot.point.save' || message.command === 'robot.point.check') {
+  if (message.command === 'robot.point.capture' || message.command === 'robot.point.save' || message.command === 'robot.point.check' || message.command === 'robot.point.invalidateMagazine') {
     return pointEditorChannel.run(message, executeCommandDirect);
   }
   return executeCommandDirect(message);
@@ -1914,6 +1984,10 @@ async function connectOpcUa() {
   let ioPolling = false;
   let geometryPollTimer = null;
   let geometryPolling = false;
+  let tableRefreshTimer = null;
+  let tableRefreshActive = true;
+  let tableRefreshing = false;
+  let tableRefreshPending = false;
   try {
     await client.connect(endpointUrl);
     const session = await client.createSession(plcUserIdentity);
@@ -1927,7 +2001,7 @@ async function connectOpcUa() {
     robotSourceClockOffsetMs = null;
     lastRobotSourceTimestampMs = null;
     latestRobotCoordinateFrame = null;
-    const prepared = await prepareAggregateMonitoring(layout, entries, nodeIds =>
+    const prepared = await prepareTableMonitoring(layout, entries, nodeIds =>
       session.read(nodeIds.map(nodeId => ({ nodeId, attributeId: AttributeIds.Value }))));
     for (const [path, value] of Object.entries(prepared.initial)) latestValues[path] = jsonValue(value);
     for (const path of robotCoordinatePaths) {
@@ -1948,6 +2022,80 @@ async function connectOpcUa() {
     }, 100);
     const monitoringPlan = monitoringBatches(prepared.channels.map(channel => [channel.path, channel.nodeId]),
       samplingIntervals, 50, path => channels.get(path).tier);
+    const applyValues = (expanded, sourceTimestampMs = null) => {
+      let anyChanged = false, cyclogramChanged = false;
+      for (const [path, raw] of withTableAliases(expanded, prepared.aliases)) {
+        const value = jsonValue(raw);
+        if (Object.is(latestValues[path], value)) continue;
+        anyChanged = true;
+        latestValues[path] = value;
+        changedValues[path] = value;
+        if (path === 'udiPointEditorAckSeq' || path === 'uiPointEditorResult' || path === 'uiPointEditorRejectReason') {
+          schedulePointEditorAudit();
+        }
+        if (robotCoordinatePathSet.has(path)) {
+          if (sourceTimestampMs !== null) robotCoordinateSourceTimestamps.set(path, sourceTimestampMs);
+        }
+        if (cyclogramSymbolSet.has(path)) cyclogramChanged = true;
+      }
+      if (!anyChanged) return;
+      if (cellEventTimer !== null) clearTimeout(cellEventTimer);
+      cellEventTimer = setTimeout(() => {
+        cellEventTimer = null;
+        recordCellSnapshot(Date.now());
+      }, cyclogramSettleMs);
+      if (cyclogramChanged) {
+        if (cyclogramChangeTimer !== null) clearTimeout(cyclogramChangeTimer);
+        cyclogramChangeTimer = setTimeout(() => {
+          cyclogramChangeTimer = null;
+          recordCyclogram(Date.now());
+        }, cyclogramSettleMs);
+      }
+      if (publishTimer === null) {
+        publishTimer = setTimeout(() => {
+          publishTimer = null;
+          const delta = changedValues;
+          changedValues = {};
+          if (Object.keys(delta).length > 0) publishSnapshot(delta, false);
+        }, uiRefreshIntervalMs);
+      }
+    };
+    // One reader per session. Notifications arriving during Read request another pass.
+    // An unstable table is retried; accepted values always belong to a complete revision.
+    const refreshTables = async () => {
+      if (!tableRefreshActive || !prepared.reader || tableRefreshing) return;
+      tableRefreshing = true;
+      tableRefreshPending = false;
+      try {
+        const result = await prepared.reader.refresh();
+        if (tableRefreshActive) {
+          applyValues(result.expanded);
+          tableRefreshPending ||= result.unsettled;
+        }
+      } catch (error) {
+        if (tableRefreshActive && monitoringError === null) {
+          monitoringError = error instanceof Error ? error : new Error(String(error));
+          void subscription.terminate().catch(() => {});
+        }
+      } finally {
+        tableRefreshing = false;
+        if (tableRefreshActive && tableRefreshPending && monitoringError === null) {
+          tableRefreshTimer = setTimeout(() => {
+            tableRefreshTimer = null;
+            void refreshTables();
+          }, 100);
+        }
+      }
+    };
+    const requestTableRefresh = () => {
+      if (!prepared.reader) return;
+      tableRefreshPending = true;
+      if (tableRefreshing || tableRefreshTimer !== null) return;
+      tableRefreshTimer = setTimeout(() => {
+        tableRefreshTimer = null;
+        void refreshTables();
+      }, 0);
+    };
     const monitored = await initializeMonitoring(monitoringPlan, (batch) =>
       ClientMonitoredItemGroup.create(
         subscription,
@@ -1965,47 +2113,13 @@ async function connectOpcUa() {
           }
           return;
         }
-        let anyChanged = false, cyclogramChanged = false;
-        for (const [path, raw] of expanded) {
-          const value = jsonValue(raw);
-          if (Object.is(latestValues[path], value)) continue;
-          anyChanged = true;
-          latestValues[path] = value;
-          changedValues[path] = value;
-          if (path === 'udiPointEditorAckSeq' || path === 'uiPointEditorResult' || path === 'uiPointEditorRejectReason') {
-            schedulePointEditorAudit();
-          }
-          if (robotCoordinatePathSet.has(path)) {
-            const timestampMs = dataValueTimestampMs(dataValue);
-            if (timestampMs !== null) robotCoordinateSourceTimestamps.set(path, timestampMs);
-          }
-          if (cyclogramSymbolSet.has(path)) cyclogramChanged = true;
-        }
-        if (!anyChanged) return;
-        if (cellEventTimer !== null) clearTimeout(cellEventTimer);
-        cellEventTimer = setTimeout(() => {
-          cellEventTimer = null;
-          recordCellSnapshot(Date.now());
-        }, cyclogramSettleMs);
-        if (cyclogramChanged) {
-          if (cyclogramChangeTimer !== null) clearTimeout(cyclogramChangeTimer);
-          cyclogramChangeTimer = setTimeout(() => {
-            cyclogramChangeTimer = null;
-            recordCyclogram(Date.now());
-          }, cyclogramSettleMs);
-        }
-        if (publishTimer === null) {
-          publishTimer = setTimeout(() => {
-            publishTimer = null;
-            const delta = changedValues;
-            changedValues = {};
-            if (Object.keys(delta).length > 0) publishSnapshot(delta, false);
-          }, uiRefreshIntervalMs);
-        }
+        applyValues(expanded, dataValueTimestampMs(dataValue));
+        if (channelPath === tableRevisionRoot) requestTableRefresh();
       });
     if (monitoringError !== null) throw monitoringError;
     const monitoring = monitoringSummary(monitoringPlan, monitored, subscription.publishingInterval);
     monitoring.logicalItems = entries.length;
+    monitoring.tables = prepared.tableMonitoring;
     monitoring.aggregateItems = prepared.channels.filter(channel => channel.members.length > 1).length;
     monitoring.fallbackRoots = prepared.fallbackRoots;
     console.log(`[OPC UA] monitoring ${monitoring.items} items / ${monitoring.logicalItems} fields: ${Object.entries(monitoring.tiers)
@@ -2069,6 +2183,8 @@ async function connectOpcUa() {
     });
     if (monitoringError !== null) throw monitoringError;
   } finally {
+    tableRefreshActive = false;
+    if (tableRefreshTimer !== null) clearTimeout(tableRefreshTimer);
     if (ioPollTimer !== null) clearInterval(ioPollTimer);
     if (geometryPollTimer !== null) clearInterval(geometryPollTimer);
     if (cyclogramCheckpoint !== null) clearInterval(cyclogramCheckpoint);
@@ -2194,7 +2310,7 @@ const mobilePointsSnapshot = () => ({
     resetAllowed: Boolean(latestValues['stRobotHmiStatus.xResetAllowed']),
     stopAllowed: Boolean(latestValues['stRobotHmiStatus.xStopAllowed']),
     commandBusy: Boolean(latestValues['stRobotHmiStatus.xCommandBusy']),
-    rejectReason: pointEditorRejectReasons[Number(latestValues['stRobotHmiStatus.eRejectReason'] ?? 0)]
+    rejectReason: robotManualRejectReasons[Number(latestValues['stRobotHmiStatus.eRejectReason'] ?? 0)]
       ?? `Неизвестная причина запрета (${Number(latestValues['stRobotHmiStatus.eRejectReason'] ?? 0)})`,
   },
   axes: [1, 2, 3].map((index) => ({
@@ -2217,18 +2333,25 @@ const mobilePointsSnapshot = () => ({
     const index = offset + 1;
     return {
       index,
-      x: Number(latestValues[`astPointEditorPoints[${index}].X`] ?? 0),
-      y: Number(latestValues[`astPointEditorPoints[${index}].Y`] ?? 0),
-      z: Number(latestValues[`astPointEditorPoints[${index}].Z`] ?? 0),
-      magazineSafeZ: Number(latestValues[`astPointEditorPoints[${index}].MagazineSafeZ`] ?? 0),
-      magazineChangeZ: Number(latestValues[`astPointEditorPoints[${index}].MagazineChangeZ`] ?? 0),
-      speedFactor: Number(latestValues[`astPointEditorPoints[${index}].SpeedFactor`] ?? 0),
-      configured: Boolean(latestValues[`astPointEditorPoints[${index}].xConfigured`]),
+      label: pointSnapshotLabel(index),
+      x: Number(latestValues[`${pointSnapshotRoot(index)}.X`] ?? 0),
+      y: Number(latestValues[`${pointSnapshotRoot(index)}.Y`] ?? 0),
+      z: Number(latestValues[`${pointSnapshotRoot(index)}.Z`] ?? 0),
+      magazineSafeZ: Number(latestValues[`${pointSnapshotRoot(index)}.MagazineSafeZ`] ?? 0),
+      magazineChangeZ: Number(latestValues[`${pointSnapshotRoot(index)}.MagazineChangeZ`] ?? 0),
+      speedFactor: Number(latestValues[`${pointSnapshotRoot(index)}.SpeedFactor`] ?? 0),
+      configured: Boolean(latestValues[`${pointSnapshotRoot(index)}.xConfigured`]),
       checkAllowed: Boolean(latestValues[`axPointCheckAllowed[${index}]`]),
       checkRejectCode: Number(latestValues[`auiPointCheckRejectReason[${index}]`] ?? 0),
-      saveAllowed: index >= 13
+      active: index < 15 || latestValues[`astMagazineCalibrationStatus[${calibrationMagazineForPoint(index)}].uiMethod`] === 3,
+      captureAllowed: calibrationMagazineForPoint(index)
+        ? Boolean(latestValues[`astMagazineCalibrationStatus[${calibrationMagazineForPoint(index)}].${index >= 15 ? 'xReferenceCaptureAllowed' : 'xCaptureAllowed'}`])
+        : Boolean(latestValues.xPointEditorCaptureAllowed),
+      saveAllowed: index === 13 || index === 14
         ? Boolean(latestValues[`astGeometryStatus[${index - 12}].xPointWriteAllowed`])
-        : Boolean(latestValues.xPointEditorSaveAllowed),
+        : calibrationMagazineForPoint(index)
+          ? Boolean(latestValues[`astMagazineCalibrationStatus[${calibrationMagazineForPoint(index)}].${index >= 15 ? 'xReferenceSaveAllowed' : 'xSaveAllowed'}`])
+          : Boolean(latestValues.xPointEditorSaveAllowed),
     };
   }),
   captureAllowed: Boolean(latestValues.xPointEditorCaptureAllowed),
@@ -2394,6 +2517,11 @@ function currentPointBackup(user) {
   return {
     format: 'portal-robot-points',
     version: POINT_BACKUP_VERSION,
+    magazineCalibrationMethods: [1, 2].map(index => {
+      const method = latestValues[`astMagazineCalibrationStatus[${index}].uiMethod`];
+      if (method !== 1 && method !== 3) throw new PointBackupStoreError('Нет способа калибровки магазина в снимке PLC', 409, 'POINT_BACKUP_PLC_INCOMPLETE');
+      return method;
+    }),
     exportedAt: new Date().toISOString(),
     exportedBy: {
       id: user.id,
@@ -2405,14 +2533,14 @@ function currentPointBackup(user) {
       return {
         index,
         pointId: Number(latestValues[`auiPointEditorPointId[${index}]`] ?? 0),
-        label: pointBackupLabels[offset],
-        x: Number(latestValues[`astPointEditorPoints[${index}].X`] ?? 0),
-        y: Number(latestValues[`astPointEditorPoints[${index}].Y`] ?? 0),
-        z: Number(latestValues[`astPointEditorPoints[${index}].Z`] ?? 0),
-        magazineSafeZ: Number(latestValues[`astPointEditorPoints[${index}].MagazineSafeZ`] ?? 0),
-        magazineChangeZ: Number(latestValues[`astPointEditorPoints[${index}].MagazineChangeZ`] ?? 0),
-        speedFactor: Number(latestValues[`astPointEditorPoints[${index}].SpeedFactor`] ?? 0),
-        configured: Boolean(latestValues[`astPointEditorPoints[${index}].xConfigured`]),
+        label: pointSnapshotLabel(index),
+        x: Number(latestValues[`${pointSnapshotRoot(index)}.X`] ?? 0),
+        y: Number(latestValues[`${pointSnapshotRoot(index)}.Y`] ?? 0),
+        z: Number(latestValues[`${pointSnapshotRoot(index)}.Z`] ?? 0),
+        magazineSafeZ: Number(latestValues[`${pointSnapshotRoot(index)}.MagazineSafeZ`] ?? 0),
+        magazineChangeZ: Number(latestValues[`${pointSnapshotRoot(index)}.MagazineChangeZ`] ?? 0),
+        speedFactor: Number(latestValues[`${pointSnapshotRoot(index)}.SpeedFactor`] ?? 0),
+        configured: Boolean(latestValues[`${pointSnapshotRoot(index)}.xConfigured`]),
       };
     }),
   };
@@ -3116,7 +3244,7 @@ webSocketServer.on('connection', (socket, request) => {
       const actorDetails = { ...description.details, actor: liveSession ? {
         id: liveSession.user.id, username: liveSession.user.username, role: liveSession.user.role,
       } : null };
-      if (message.command === 'robot.point.capture' || message.command === 'robot.point.save' || message.command === 'robot.point.check') {
+      if (message.command === 'robot.point.capture' || message.command === 'robot.point.save' || message.command === 'robot.point.check' || message.command === 'robot.point.invalidateMagazine') {
         message._pointEditorAudit = {
           requestId, label: description.label, actor: liveSession?.user ?? null, details: actorDetails,
         };

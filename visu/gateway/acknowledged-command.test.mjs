@@ -158,7 +158,7 @@ test('all mapped pulse gateway commands use the acknowledged transport', async (
   assert.doesNotMatch(source, /setTimeout\([^\n]*writeValue[^\n]*150/);
 });
 
-test('all 39 actual gateway settings write a separate payload; horn uses seconds, filters milliseconds, rejections never report applied', async () => {
+test('all 41 actual gateway settings write a separate payload; horn uses seconds, filters milliseconds, rejections never report applied', async () => {
   const source = readFileSync(new URL('./server.mjs', import.meta.url), 'utf8');
   const start = source.indexOf('async function executeCommandPrepared(');
   const body = source.slice(start, source.indexOf('async function executeCommand(message)', start));
@@ -186,7 +186,7 @@ test('all 39 actual gateway settings write a separate payload; horn uses seconds
     assert.equal(message._plcApplied, true);
     assert.equal(message._plcReceipt.sequence, 9);
   }
-  assert.equal(tested, 39);
+  assert.equal(tested, 41);
   for (const [seconds, milliseconds] of [[0, 0], [0.1, 100], [2, 2000], [60, 60000]]) {
     writes.length = 0;
     await command({ command: 'cell.settings.alarmHornDuration', value: seconds });

@@ -1,5 +1,9 @@
 PROGRAM PLC_PRG
 VAR
+    xHmiTablesInitialized : BOOL;
+    axTwinStoreChanged : ARRAY [1..2] OF BOOL; // Изменения владельцев, без обхода слотов при публикации
+    xGeometryWaitWarningActive : BOOL;
+    STATISTIC_MAIN : FB_STATISTIC; // Сбор каждый скан, расчёт раз в 100 мс
 	GEOMETRY : ARRAY [1..2] OF FB_GEOMETRY_CONTROL;
 	GEOMETRY_SIM : ARRAY [1..2] OF FB_GEOMETRY_CONTROL_SIMULATION;
 	xGeometryInitialized : BOOL;
@@ -247,7 +251,17 @@ VAR
 	ePointEditorName : E_POINT_NAME; // Фактический enum выбранной инженерной точки
 	xPointTableReady : BOOL; // Все 12 базовых точек подтверждены редактором
 	axMachinePointsReady : ARRAY [1..3] OF BOOL; // Три рабочие точки каждого станка
-	axMagazinePointsReady : ARRAY [1..2] OF BOOL; // База и оба Z-смещения каждого магазина
+	axMagazinePointsReady : ARRAY [1..2] OF BOOL; // Полная калибровка выбранного метода каждого магазина
+	astMagazineFrame : ARRAY [1..2] OF ST_MAGAZINE_FRAME;
+	uiCalibrationMagazine : UINT;
+	eCalibrationOrigin : E_POINT_NAME;
+	eCalibrationPointB : E_POINT_NAME;
+	eCalibrationPointC : E_POINT_NAME;
+	uiPointEditorMagazine : UINT;
+	uiPointEditorReference : UINT;
+	uiCalibrationSettingMagazine : UINT;
+	xMagazineCalibrationEditAllowed : ARRAY [1..2] OF BOOL;
+	stMagazineReferenceDraft : ST_POINT;
 	xCellPointsReady : BOOL; // HOME_SAFETY и точки только включённого оборудования
 	xPointEditorBaseAllowed : BOOL; // Общие безопасные условия Capture/Save
 	xPointEditorAllHomed : BOOL; // Все оси XYZ прошли Home
@@ -316,15 +330,17 @@ VAR CONSTANT
 	WRN_HMI_MANUAL_REJECTED : UINT := 12; // PLC отклонил команду расширенного ручного управления
 	WRN_ROBOT_MODE_REJECTED : UINT := 13; // PLC отклонил переключение источника управления
 	WRN_MODBUS_SETTINGS_REJECTED : UINT := 14; // PLC отклонил применение параметров соединения
-	WRN_POINT_EDIT_REJECTED : UINT := 15; // PLC отклонил Capture/Save инженерной точки
+	WRN_POINT_EDIT_REJECTED : UINT := 15; // PLC отклонил Capture/Save/Invalidate инженерной точки
 	WRN_POINT_CHECK_REJECTED : UINT := 16; // Проверка точки отклонена
 	WRN_POINT_CHECK_INTERRUPTED : UINT := 17; // Проверка остановлена потерей связи/разрешений
-	aePointCheckNames : ARRAY [1..14] OF E_POINT_NAME := [
+	aePointCheckNames : ARRAY [1..18] OF E_POINT_NAME := [
 		E_POINT_NAME.MACHINE_1_ABOVE, E_POINT_NAME.MACHINE_1_CHUCK_APROACH, E_POINT_NAME.MACHINE_1_CHUCK_POSITION,
 		E_POINT_NAME.MACHINE_2_ABOVE, E_POINT_NAME.MACHINE_2_CHUCK_APROACH, E_POINT_NAME.MACHINE_2_CHUCK_POSITION,
 		E_POINT_NAME.MACHINE_3_ABOVE, E_POINT_NAME.MACHINE_3_CHUCK_APROACH, E_POINT_NAME.MACHINE_3_CHUCK_POSITION,
 		E_POINT_NAME.HOME_SAFETY, E_POINT_NAME.MAGAZINE_1_DETAIL, E_POINT_NAME.MAGAZINE_2_DETAIL,
-		E_POINT_NAME.GEOMETRY_1_PLACE, E_POINT_NAME.GEOMETRY_2_PLACE];
+		E_POINT_NAME.GEOMETRY_1_PLACE, E_POINT_NAME.GEOMETRY_2_PLACE,
+		E_POINT_NAME.MAGAZINE_1_AXIS_X, E_POINT_NAME.MAGAZINE_1_AXIS_Y,
+		E_POINT_NAME.MAGAZINE_2_AXIS_X, E_POINT_NAME.MAGAZINE_2_AXIS_Y];
 	alrRobotManualFallbackVelocity : ARRAY [1..3] OF LREAL := [1000.0, 1000.0, 1000.0]; // Резерв, если привод не публикует динамический предел
 	alrRobotManualAcceleration : ARRAY [1..3] OF LREAL := [1000.0, 1000.0, 1000.0]; // Резерв ускорения, если привод не публикует предел
 	alrRobotManualDeceleration : ARRAY [1..3] OF LREAL := [1000.0, 1000.0, 1000.0]; // Резерв замедления, если привод не публикует предел
@@ -343,6 +359,7 @@ ResetIoEmergencyStop();
 RunMotion();
 RunRobotModbus();
 RunTestControl();
+RunMagazineCalibration();
 RunTwoPallet();
 RunGeometryControl();
 RunCellControl();
@@ -350,6 +367,7 @@ RunMachines();
 RunMagazine();
 RunTwoPalletAxis();
 RunRobot();
+RunStatistics();
 RunAlarms();
 RunSignalTower();
 WritePhysicalOutputs();

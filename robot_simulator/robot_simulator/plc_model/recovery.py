@@ -395,7 +395,9 @@ class RecoveryCell(Cell):
             mg.astCommand[index] = magazine.Command
             mg.astError[index] = magazine.Error
             self.g["GVL_DETAIL"].astMagazine[index] = magazine.stInventory
-        environment = {**self.g, "_types": {}, "axTwinRobotStopLatched": self.twin_stop_latched}
+        environment = {**self.g, "_types": {}, "axTwinRobotStopLatched": self.twin_stop_latched,
+            "fbMagazine1": self.magazines[0], "fbMagazine2": self.magazines[1],
+            "axTwinStoreChanged": StArray(1, [False, False], "BOOL")}
         self.magazine_publish_program.execute(environment)
         if self.mode:
             for index, magazine in enumerate(self.magazines, 1):

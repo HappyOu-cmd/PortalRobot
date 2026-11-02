@@ -267,9 +267,10 @@ test('physical gripper requires one correct sensor, and timeout cannot synthesiz
   assert.match(gripper, /IF xUsePhysicalFeedback THEN\s*tActionTime := tPhysicalActionTimeout/);
 });
 test('filter and horn setting IDs append after 36 stable IDs; TIME and permissions stay in PLC', () => {
-  assert.equal(settingPaths.length, 39);
+  assert.equal(settingPaths.length, 41);
+  assert.deepEqual(settingPaths.slice(39), ["astMagazineCalibrationStatus[1].uiMethod", "astMagazineCalibrationStatus[2].uiMethod"]);
   assert.equal(settingPaths[35], 'lrRobotHaltJerk');
-  assert.deepEqual(settingPaths.slice(36), ['tInputFilterRise', 'tInputFilterFall', 'tAlarmHornDuration']);
+  assert.deepEqual(settingPaths.slice(36, 39), ['tInputFilterRise', 'tInputFilterFall', 'tAlarmHornDuration']);
   const hmiRead = read('PLC_PRG.ReadHmiInputs.st');
   for (const [i, name] of [[37, 'tInputFilterRise'], [38, 'tInputFilterFall']]) {
     assert.match(hmiRead, new RegExp(`UINT#${i}:\\s*IF \\(GVL_HMI\\.lrCellSettingRequest >= 0\\.0\\) AND \\(GVL_HMI\\.lrCellSettingRequest <= 5000\\.0\\) THEN\\s*GVL_CELL_SETTINGS\\.${name} := UDINT_TO_TIME\\(LREAL_TO_UDINT\\(GVL_HMI\\.lrCellSettingRequest\\)\\)`));

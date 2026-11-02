@@ -9,6 +9,10 @@ VAR_OUTPUT
     Status : ST_CONTROLLER_WEB_STATUS;
     stWarning : ST_WARNING_EVENT;
 END_VAR
+VAR CONSTANT
+    CPU_APPLICATION_STOPPED : DWORD := DWORD#16#0100_0000; // CPU 5A, исторический бит 19:24.
+    CPU_RUN_ALARM_MASK : DWORD := DWORD#16#FEFF_FFFF; // Все причины, кроме состояния STOP приложения.
+END_VAR
 VAR
     uliAgeMs : ULINT;
     udiLastFrameAtMs : UDINT;
@@ -18,6 +22,7 @@ VAR
     xModulesValid : BOOL;
     dwCpuCurrent1 : DWORD;
     dwCpuCurrent2 : DWORD;
+    dwCpuStoppedCurrent : DWORD;
     dwModuleCurrent : DWORD;
     xMemoryCurrent : BOOL;
     dwNext1 : DWORD;
@@ -33,10 +38,15 @@ END_VAR
 xFrameAccepted := FALSE;
 xNewAlarm := FALSE;
 xNewMemory := FALSE;
+// В STOP этот FB не исполняется: 5A в доставленном пакете относится к прошлой
+// остановке/загрузке, а не к аварии уже работающего приложения. Убираем только
+// этот бит, в том числе из прежней защёлки при online change; остальные причины
+// сохраняют GLOBAL_STOP и прежний порядок сброса. История STOP остаётся в gateway.
+Status.dwCpuAlarm1 := Status.dwCpuAlarm1 AND CPU_RUN_ALARM_MASK;
 IF (Request.udiSequence <> UDINT#0) AND (Request.udiSequence <> Status.udiAckSeq) THEN
     // История обнаружений доставляется и после STOP; свежесть текущей нормы
     // проверяется отдельно и не следует из одного факта получения пакета.
-    dwNext1 := Status.dwCpuAlarm1 OR Request.dwCpuObserved1 OR Request.dwCpuCurrent1;
+    dwNext1 := (Status.dwCpuAlarm1 OR Request.dwCpuObserved1 OR Request.dwCpuCurrent1) AND CPU_RUN_ALARM_MASK;
     dwNext2 := Status.dwCpuAlarm2 OR Request.dwCpuObserved2 OR Request.dwCpuCurrent2;
     dwNextModule := Status.dwModuleAlarm OR Request.dwModuleObserved OR Request.dwModuleCurrent;
     xNewAlarm := (dwNext1 <> Status.dwCpuAlarm1) OR (dwNext2 <> Status.dwCpuAlarm2)
@@ -60,7 +70,9 @@ IF (Request.udiSequence <> UDINT#0) AND (Request.udiSequence <> Status.udiAckSeq
     xFrameAccepted := uliAgeMs <= ULINT#3000;
     xHaveFreshFrame := xFrameAccepted;
     IF xFrameAccepted THEN udiLastFrameAtMs := Request.udiIssuedAtMs; END_IF;
-    xCpuValid := xFrameAccepted AND Request.xCpuValid;
+    // Кешированный 5A также не подтверждает восстановление настоящей аварии CPU.
+    dwCpuStoppedCurrent := Request.dwCpuCurrent1 AND CPU_APPLICATION_STOPPED;
+    xCpuValid := xFrameAccepted AND Request.xCpuValid AND (dwCpuStoppedCurrent = DWORD#0);
     xModulesValid := xFrameAccepted AND Request.xModulesValid;
     dwCpuCurrent1 := Request.dwCpuCurrent1;
     dwCpuCurrent2 := Request.dwCpuCurrent2;

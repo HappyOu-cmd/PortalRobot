@@ -11,6 +11,7 @@ function section(start, end, text = source) {
   return text.slice(first, last);
 }
 const attempt = compileSt(source.match(/xHmiRobotActionAttempt :=[^;]+;/)[0]);
+const numericCommand = compileSt(section('stRobotHmiCommand := GVL_HMI.stRobotCommand;', '// Два FB_MAGAZINE'));
 const dispatch = compileSt(section('xHmiRobotActionBaseAllowed :=', '// Общая ошибка запрещает'));
 const feedback = compileSt(section('xHmiRobotStatusPointTargetAllowed :=', 'IF uiRobotInterfaceWarningCode'));
 const selectCommand = compileSt(section('IF NOT xManual THEN', '// Внешний Stop', readPlc('FB/FB_ROBOT.st')));
@@ -32,6 +33,7 @@ const enums = {
 function state(point, magazine = 1, slot = 1) {
   return {
     ...defaultsFromSt(readPlc('PLC_PRG.st')), ...conversions, ...enums,
+    UINT_TO_SINT: Number,
     WRN_HMI_MANUAL_REJECTED: 12, WRN_POINT_CHECK_REJECTED: 16, WRN_POINT_CHECK_INTERRUPTED: 17,
     xRobotHmiPermit: true, xHmiConnectionAlive: true,
     xDrivesReady: true, xDrivesPowered: true,
@@ -40,9 +42,12 @@ function state(point, magazine = 1, slot = 1) {
     stRobotHmiCommand: { xExecute: false, eAction: enums.E_ROBOT_ACTION.MOVE_TO_POINT,
       eSetPoint: enums.E_POINT_NAME[point], iActiveSlot: slot, uiMagazineId: magazine },
     GVL_HMI: { xModbusMode: false, xRobotManualExecute: false, stRobotCommand: { xExecute: false },
+      astMagazineCalibrationStatus: [null, {}, {}],
       uiRobotManualSlot: slot, uiRobotManualMagazine: magazine, stRobotHmiStatus: {} },
     GVL_CELL_CONTROL: { xGlobalError: false },
     GVL_CELL_SETTINGS: { MagazineRows: 12, MagazineColumns: 10 },
+    Persistent_Value: { astMagazineCalibration: [null, { uiMethod: 3 }, { uiMethod: 3 }] },
+    GVL_POINT: { Points: Array.from({ length: 34 }, () => ({ X: 0, Y: 0, Z: 0, SpeedFactor: .5, xConfigured: true })) },
     GVL_ROBOT: { Status: { xBusy: false, xError: false },
       GripperError: { dwAlarmActive: 0 }, GripperDiag: { eState: enums.E_GRIPPER_STATE.IDLE },
       Diag: { eState: enums.E_ROBOT_STATE.IDLE, eActiveAction: 0, eActivePoint: 0, stWarning: { uiCode: 0, udiSequence: 0 } } },
@@ -107,6 +112,64 @@ test('opening the hatch accepts the same target without a different move or warn
     assert.equal(s.stRobotHmiCommand.xExecute, true);
     assert.equal(s.GVL_HMI.stRobotHmiStatus.xPointsAllowed, true);
     assert.equal(s.GVL_ROBOT.Diag.stWarning.udiSequence, 1, 'acceptance must not require clearing W12');
+  }
+});
+
+const calibrationTargets = [
+  [23, 'MAGAZINE_1_DETAIL', 1, 'A'], [24, 'MAGAZINE_1_AXIS_X', 1, 'B'], [25, 'MAGAZINE_1_AXIS_Y', 1, 'C'],
+  [26, 'MAGAZINE_2_DETAIL', 2, 'A'], [27, 'MAGAZINE_2_AXIS_X', 2, 'B'], [28, 'MAGAZINE_2_AXIS_Y', 2, 'C'],
+];
+test('numeric calibration moves dispatch to saved A B C points before the complete frame is ready', () => {
+  for (const [code, target, magazine, role] of calibrationTargets) {
+    const s = state(target, 0, 0);
+    s.GVL_HMI.uiRobotManualAction = 1;
+    s.GVL_HMI.uiRobotManualPoint = code;
+    s.GVL_HMI.xRobotManualExecute = true;
+    s.GVL_CELL_SETTINGS.NumberDetail = 120;
+    for (const [, other] of calibrationTargets) s.GVL_POINT.Points[enums.E_POINT_NAME[other]].xConfigured = other === target;
+    const original = structuredClone(s.GVL_POINT.Points);
+    numericCommand(s);
+    assert.equal(s.stRobotHmiCommand.eSetPoint, enums.E_POINT_NAME[target]);
+    assert.equal(s.eHmiRobotStatusPoint, enums.E_POINT_NAME[target]);
+    assert.equal(s.stRobotHmiCommand.iActiveSlot, 0);
+    scan(s, true);
+    assert.equal(s.stRobotHmiCommand.xExecute, true);
+    assert.equal(s.GVL_HMI.astMagazineCalibrationStatus[magazine][`xMove${role}Allowed`], true);
+    assert.deepEqual(s.GVL_POINT.Points, original, 'direct calibration moves must not calculate or overwrite reference coordinates');
+  }
+});
+
+test('PLC rejects unconfigured or inactive calibration references and every calibration move in Modbus', () => {
+  for (const [, target, magazine, role] of calibrationTargets) for (const blocked of ['unconfigured', 'one-point', 'modbus']) {
+    if (blocked === 'one-point' && role === 'A') continue;
+    const s = state(target, 0, 0);
+    if (blocked === 'unconfigured') s.GVL_POINT.Points[enums.E_POINT_NAME[target]].xConfigured = false;
+    if (blocked === 'one-point') s.Persistent_Value.astMagazineCalibration[magazine].uiMethod = 1;
+    if (blocked === 'modbus') s.GVL_HMI.xModbusMode = true;
+    scan(s, true);
+    assert.equal(s.GVL_HMI.astMagazineCalibrationStatus[magazine][`xMove${role}Allowed`], false);
+    assert.equal(s.stRobotHmiCommand.xExecute, false);
+    assert.equal(s.GVL_HMI.stRobotHmiStatus.eRejectReason, enums.E_HMI_MANUAL_REJECT.CALIBRATION_POINT_UNAVAILABLE);
+    assert.equal(s.GVL_ROBOT.Diag.stWarning.uiCode, 12);
+    assert.equal(s.GVL_ROBOT.Diag.stWarning.udiSequence, 1);
+    scan(s);
+    assert.equal(s.stRobotHmiCommand.xExecute, false, 'rejection must not queue an automatic retry');
+    assert.equal(s.GVL_ROBOT.Diag.stWarning.udiSequence, 1);
+  }
+});
+
+test('calibration movement permissions follow common manual motion blocks independently for each reference', () => {
+  for (const [, target, magazine, role] of calibrationTargets) for (const block of ['offline', 'automatic', 'busy', 'drive-error', 'global-error']) {
+    const s = state(target, 0, 0);
+    if (block === 'offline') s.xHmiConnectionAlive = false;
+    if (block === 'automatic') s.xRobotHmiPermit = false;
+    if (block === 'busy') s.GVL_ROBOT.Status.xBusy = true;
+    if (block === 'drive-error') s.xDriveError = true;
+    if (block === 'global-error') s.GVL_CELL_CONTROL.xGlobalError = true;
+    scan(s, true);
+    assert.equal(s.stRobotHmiCommand.xExecute, false);
+    assert.equal(s.GVL_HMI.astMagazineCalibrationStatus[magazine][`xMove${role}Allowed`], false);
+    assert.equal(s.GVL_ROBOT.Diag.stWarning.uiCode, 12);
   }
 });
 

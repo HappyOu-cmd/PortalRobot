@@ -16,7 +16,8 @@ const backup = () => ({
 test('validates and normalizes a point backup', () => {
   const value = validatePointBackup(backup());
   assert.equal(value.points.length, 4);
-  assert.equal(value.version, 2);
+  assert.equal(value.version, 3);
+  assert.deepEqual(value.magazineCalibrationMethods, [1, 1]);
   assert.equal(value.points[0].configured, true);
   assert.equal(value.points[0].magazineSafeZ, 0);
   assert.equal(value.points[0].magazineChangeZ, 0);
@@ -71,7 +72,7 @@ test('migrates all twelve legacy points without changing their values or configu
   const original = structuredClone(legacy);
   const migrated = validatePointBackup(legacy);
   assert.deepEqual(legacy, original);
-  assert.equal(migrated.version, 2);
+  assert.equal(migrated.version, 3);
   assert.equal(migrated.points.length, 14);
   assert.deepEqual(migrated.points.slice(0, 12), legacy.points);
   assert.deepEqual(migrated.points.slice(12).map(p => [p.index, p.pointId, p.configured]), [[13, 24, false], [14, 27, false]]);
@@ -112,4 +113,36 @@ test('does not accept traversal, oversized files or symbolic links', async (t) =
   } catch (error) {
     if (error?.code !== 'EPERM') throw error;
   }
+});
+
+test('version two migrates to one-point methods without changing configured coordinates', () => {
+  const legacy = { ...backup(), version: 2 };
+  const original = structuredClone(legacy);
+  const document = validatePointBackup(legacy);
+  assert.deepEqual(document.magazineCalibrationMethods, [1, 1]);
+  assert.deepEqual(legacy, original);
+  assert.equal(document.version, 3);
+});
+
+test('version three roundtrips mixed calibration methods and references without magazine Z offsets', () => {
+  const document = validatePointBackup(backup());
+  document.magazineCalibrationMethods = [3, 1];
+  document.points.push(...[30, 31, 32, 33].map((pointId, offset) => ({
+    index: 15 + offset, pointId, label: `Reference ${offset}`, x: 100 + offset, y: 200, z: 300,
+    magazineSafeZ: 0, magazineChangeZ: 0, speedFactor: .5, configured: offset < 2,
+  })));
+  assert.deepEqual(validatePointBackup(document), document);
+  const store = new PointBackupStore('.');
+  const item = store.describe('mixed.json', document);
+  assert.equal(item.requiredCount, document.points.length - 2);
+});
+
+test('version three rejects missing methods, illegal methods and misidentified references', () => {
+  const document = validatePointBackup(backup());
+  for (const methods of [undefined, [1], [1, 2], ['3', 1]]) {
+    assert.throws(() => validatePointBackup({ ...document, magazineCalibrationMethods: methods }), /калибровки/);
+  }
+  document.points.push({ index: 15, pointId: 31, label: 'B', x: 0, y: 0, z: 0,
+    magazineSafeZ: 0, magazineChangeZ: 0, speedFactor: .5, configured: true });
+  assert.throws(() => validatePointBackup(document), /PointId/);
 });

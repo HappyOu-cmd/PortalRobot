@@ -161,6 +161,20 @@ GVL_CELL_SETTINGS.xIoFilterSettingsChangeAllowed := xHmiConnectionAlive
 	AND NOT GVL_TWO_PALLET.astStatus[1].xBusy AND NOT GVL_TWO_PALLET.astStatus[2].xBusy
 	AND NOT GVL_TWO_PALLET.astInput[1].xPowered AND NOT GVL_TWO_PALLET.astInput[2].xPowered;
 
+// Допуск принадлежит конкретному магазину; общий редактор не обходит занятость зоны.
+FOR uiCalibrationMagazine := UINT#1 TO UINT#2 DO
+	xMagazineCalibrationEditAllowed[uiCalibrationMagazine] :=
+		NOT GVL_MAGAZINE.astStatus[uiCalibrationMagazine].xEnabled
+		AND NOT GVL_MAGAZINE.astStatus[uiCalibrationMagazine].xBusy
+		AND NOT GVL_TWO_PALLET.astStatus[uiCalibrationMagazine].xEnabled
+		AND NOT GVL_TWO_PALLET.astStatus[uiCalibrationMagazine].xBusy
+		AND (GVL_ROBOT.Status.uiMagazineContext <> uiCalibrationMagazine);
+	GVL_HMI.astMagazineCalibrationStatus[uiCalibrationMagazine].xChangeAllowed :=
+		GVL_CELL_SETTINGS.xCellSettingsChangeAllowed
+		AND xMagazineCalibrationEditAllowed[uiCalibrationMagazine]
+		AND NOT xPointCheckActive;
+END_FOR;
+
 // Independent requested value; publication cannot overwrite an incoming write.
 xCellSettingRejected := FALSE;
 udiCellSettingSnapshot := GVL_HMI.udiCellSettingCommandSeq;
@@ -376,13 +390,24 @@ AND (udiCellSettingSnapshot <> GVL_HMI.udiCellSettingAckSeq) THEN
 					GVL_CELL_SETTINGS.tAlarmHornDuration := UDINT_TO_TIME(LREAL_TO_UDINT(GVL_HMI.lrCellSettingRequest));
 					GVL_HMI.uiCellSettingResult := UINT#1;
 				END_IF;
+			UINT#40, UINT#41:
+				uiCalibrationSettingMagazine := GVL_HMI.uiCellSettingIndex - UINT#39;
+				IF NOT GVL_HMI.astMagazineCalibrationStatus[uiCalibrationSettingMagazine].xChangeAllowed THEN
+					GVL_HMI.uiCellSettingResult := UINT#2;
+				ELSIF (GVL_HMI.lrCellSettingRequest = 1.0) OR (GVL_HMI.lrCellSettingRequest = 3.0) THEN
+					IF Persistent_Value.astMagazineCalibration[uiCalibrationSettingMagazine].uiMethod <> LREAL_TO_UINT(GVL_HMI.lrCellSettingRequest) THEN
+						Persistent_Value.astMagazineCalibration[uiCalibrationSettingMagazine].uiMethod := LREAL_TO_UINT(GVL_HMI.lrCellSettingRequest);
+						InvalidateMagazineCalibration(uiMagazine := uiCalibrationSettingMagazine);
+					END_IF;
+					GVL_HMI.uiCellSettingResult := UINT#1;
+				END_IF;
 		END_CASE;
 	END_IF;
 	xCellSettingRejected := GVL_HMI.uiCellSettingResult <> UINT#1;
 END_IF;
 
 // =============================================================================
-// Транзакционный редактор 14 фиксированных инженерных точек
+// Транзакционный редактор 18 фиксированных инженерных точек
 // =============================================================================
 xPointEditorAllHomed := GVL_AXIS.arrAxis[1].Status.xHomed
 	AND GVL_AXIS.arrAxis[2].Status.xHomed
@@ -404,6 +429,18 @@ GVL_HMI.xPointEditorSaveAllowed := xPointEditorBaseAllowed
 	AND GVL_POINT_MANAGER.PointManager.Diag.xXLimitValid
 	AND GVL_POINT_MANAGER.PointManager.Diag.xYLimitValid
 	AND GVL_POINT_MANAGER.PointManager.Diag.xZLimitValid;
+FOR uiCalibrationMagazine := UINT#1 TO UINT#2 DO
+	GVL_HMI.astMagazineCalibrationStatus[uiCalibrationMagazine].xCaptureAllowed :=
+		GVL_HMI.xPointEditorCaptureAllowed;
+	GVL_HMI.astMagazineCalibrationStatus[uiCalibrationMagazine].xSaveAllowed :=
+		GVL_HMI.xPointEditorSaveAllowed;
+	GVL_HMI.astMagazineCalibrationStatus[uiCalibrationMagazine].xReferenceCaptureAllowed :=
+		GVL_HMI.astMagazineCalibrationStatus[uiCalibrationMagazine].xCaptureAllowed
+		AND (Persistent_Value.astMagazineCalibration[uiCalibrationMagazine].uiMethod = UINT#3);
+	GVL_HMI.astMagazineCalibrationStatus[uiCalibrationMagazine].xReferenceSaveAllowed :=
+		GVL_HMI.astMagazineCalibrationStatus[uiCalibrationMagazine].xSaveAllowed
+		AND (Persistent_Value.astMagazineCalibration[uiCalibrationMagazine].uiMethod = UINT#3);
+END_FOR;
 
 IF (GVL_HMI.udiPointEditorCommandSeq <> UDINT#0)
 AND (GVL_HMI.udiPointEditorCommandSeq <> udiLastPointEditorCommandSeq) THEN
@@ -413,6 +450,8 @@ AND (GVL_HMI.udiPointEditorCommandSeq <> udiLastPointEditorCommandSeq) THEN
 	xPointEditorRequestValid := FALSE;
 	xPointEditorMagazinePoint := FALSE;
 	uiPointEditorGeometryStation := UINT#0;
+	uiPointEditorMagazine := UINT#0;
+	uiPointEditorReference := UINT#0;
 	ePointEditorName := E_POINT_NAME.NONE;
 	uiPointStorageIndex := UINT#0;
 
@@ -427,13 +466,18 @@ AND (GVL_HMI.udiPointEditorCommandSeq <> udiLastPointEditorCommandSeq) THEN
 		UINT#8: ePointEditorName := E_POINT_NAME.MACHINE_3_CHUCK_APROACH; uiPointStorageIndex := UINT#11;
 		UINT#9: ePointEditorName := E_POINT_NAME.MACHINE_3_CHUCK_POSITION; uiPointStorageIndex := UINT#12;
 		UINT#10: ePointEditorName := E_POINT_NAME.HOME_SAFETY; uiPointStorageIndex := UINT#13;
-		UINT#11: ePointEditorName := E_POINT_NAME.MAGAZINE_1_DETAIL; uiPointStorageIndex := UINT#14;
-		UINT#12: ePointEditorName := E_POINT_NAME.MAGAZINE_2_DETAIL; uiPointStorageIndex := UINT#15;
+		UINT#11: ePointEditorName := E_POINT_NAME.MAGAZINE_1_DETAIL; uiPointStorageIndex := UINT#14; uiPointEditorMagazine := UINT#1;
+		UINT#12: ePointEditorName := E_POINT_NAME.MAGAZINE_2_DETAIL; uiPointStorageIndex := UINT#15; uiPointEditorMagazine := UINT#2;
 		UINT#13: ePointEditorName := E_POINT_NAME.GEOMETRY_1_PLACE; uiPointEditorGeometryStation := UINT#1;
 		UINT#14: ePointEditorName := E_POINT_NAME.GEOMETRY_2_PLACE; uiPointEditorGeometryStation := UINT#2;
+		UINT#15: ePointEditorName := E_POINT_NAME.MAGAZINE_1_AXIS_X; uiPointEditorMagazine := UINT#1; uiPointEditorReference := UINT#1;
+		UINT#16: ePointEditorName := E_POINT_NAME.MAGAZINE_1_AXIS_Y; uiPointEditorMagazine := UINT#1; uiPointEditorReference := UINT#2;
+		UINT#17: ePointEditorName := E_POINT_NAME.MAGAZINE_2_AXIS_X; uiPointEditorMagazine := UINT#2; uiPointEditorReference := UINT#1;
+		UINT#18: ePointEditorName := E_POINT_NAME.MAGAZINE_2_AXIS_Y; uiPointEditorMagazine := UINT#2; uiPointEditorReference := UINT#2;
 	END_CASE;
 	xPointEditorRequestValid := (ePointEditorName <> E_POINT_NAME.NONE)
-		AND ((uiPointStorageIndex <> UINT#0) OR (uiPointEditorGeometryStation <> UINT#0));
+		AND ((uiPointStorageIndex <> UINT#0) OR (uiPointEditorGeometryStation <> UINT#0)
+			OR (uiPointEditorReference <> UINT#0));
 	xPointEditorMagazinePoint := (ePointEditorName = E_POINT_NAME.MAGAZINE_1_DETAIL)
 		OR (ePointEditorName = E_POINT_NAME.MAGAZINE_2_DETAIL);
 	xPointEditorGeometrySave := (GVL_HMI.uiPointEditorCommand = UINT#2)
@@ -441,9 +485,11 @@ AND (GVL_HMI.udiPointEditorCommandSeq <> udiLastPointEditorCommandSeq) THEN
 
 	IF (GVL_HMI.uiPointEditorCommand <> UINT#1)
 	AND (GVL_HMI.uiPointEditorCommand <> UINT#2)
-	AND (GVL_HMI.uiPointEditorCommand <> UINT#3) THEN
+	AND (GVL_HMI.uiPointEditorCommand <> UINT#3)
+	AND (GVL_HMI.uiPointEditorCommand <> UINT#4) THEN
 		GVL_HMI.uiPointEditorRejectReason := UINT#1; // Неизвестная команда
-	ELSIF NOT xPointEditorRequestValid THEN
+	ELSIF NOT xPointEditorRequestValid
+	OR ((GVL_HMI.uiPointEditorCommand = UINT#4) AND NOT xPointEditorMagazinePoint) THEN
 		GVL_HMI.uiPointEditorRejectReason := UINT#2; // Неверный индекс точки
 	ELSIF NOT xHmiConnectionAlive THEN
 		GVL_HMI.uiPointEditorRejectReason := UINT#3; // HMI offline
@@ -476,15 +522,26 @@ AND (GVL_HMI.udiPointEditorCommandSeq <> udiLastPointEditorCommandSeq) THEN
 		GVL_HMI.uiPointEditorRejectReason := UINT#11; // Не выполнен Home
 	ELSIF NOT GVL_AXIS_GROUP.AxisGroup.Status.xPositionValid THEN
 		GVL_HMI.uiPointEditorRejectReason := UINT#12; // Недостоверные координаты
-	ELSIF (GVL_HMI.uiPointEditorCommand = UINT#2)
+	ELSIF ((GVL_HMI.uiPointEditorCommand = UINT#2) OR (GVL_HMI.uiPointEditorCommand = UINT#4))
 	AND (NOT GVL_POINT_MANAGER.PointManager.Diag.xXLimitValid
 		OR NOT GVL_POINT_MANAGER.PointManager.Diag.xYLimitValid
 		OR NOT GVL_POINT_MANAGER.PointManager.Diag.xZLimitValid) THEN
 		GVL_HMI.uiPointEditorRejectReason := UINT#13; // Software limits недоступны
 	END_IF;
 
+	IF (GVL_HMI.uiPointEditorRejectReason = UINT#0) AND (uiPointEditorMagazine <> UINT#0) THEN
+		IF (GVL_HMI.uiPointEditorCalibrationMethod <> Persistent_Value.astMagazineCalibration[uiPointEditorMagazine].uiMethod)
+		OR ((uiPointEditorReference <> UINT#0) AND (Persistent_Value.astMagazineCalibration[uiPointEditorMagazine].uiMethod <> UINT#3)) THEN
+			GVL_HMI.uiPointEditorRejectReason := UINT#25;
+		END_IF;
+	END_IF;
+
 	IF GVL_HMI.uiPointEditorRejectReason = UINT#0 THEN
-		IF GVL_HMI.uiPointEditorCommand = UINT#1 THEN
+		IF GVL_HMI.uiPointEditorCommand = UINT#4 THEN
+			InvalidateMagazineCalibration(uiMagazine := uiPointEditorMagazine);
+			GVL_HMI.stPointEditorResultPoint := GVL_POINT.Points[ePointEditorName];
+			GVL_HMI.uiPointEditorResult := UINT#1;
+		ELSIF GVL_HMI.uiPointEditorCommand = UINT#1 THEN
 			// CAPTURE возвращает согласованный снимок одного PLC-цикла и не пишет Persistent.
 			GVL_HMI.stPointEditorResultPoint.Name := '';
 			GVL_HMI.stPointEditorResultPoint.X := GVL_AXIS_GROUP.AxisGroup.Status.ActualX;
@@ -565,6 +622,19 @@ AND (GVL_HMI.udiPointEditorCommandSeq <> udiLastPointEditorCommandSeq) THEN
 				GVL_HMI.stPointEditorResultPoint.MagazineChangeZ := LREAL#0.0;
 				GVL_HMI.stPointEditorResultPoint.SpeedFactor := stGeometryConfig.lrSpeedFactor;
 				GVL_HMI.stPointEditorResultPoint.xConfigured := TRUE;
+				GVL_HMI.uiPointEditorResult := UINT#1;
+			ELSIF uiPointEditorReference <> UINT#0 THEN
+				stMagazineReferenceDraft.Name := '';
+				stMagazineReferenceDraft.X := GVL_HMI.alrPointEditorDraftXYZ[1];
+				stMagazineReferenceDraft.Y := GVL_HMI.alrPointEditorDraftXYZ[2];
+				stMagazineReferenceDraft.Z := GVL_HMI.alrPointEditorDraftXYZ[3];
+				stMagazineReferenceDraft.MagazineSafeZ := 0.0;
+				stMagazineReferenceDraft.MagazineChangeZ := 0.0;
+				stMagazineReferenceDraft.SpeedFactor := GVL_HMI.lrPointEditorDraftSpeedFactor;
+				stMagazineReferenceDraft.xConfigured := TRUE;
+				Persistent_Value.astMagazineCalibration[uiPointEditorMagazine].astReference[uiPointEditorReference] := stMagazineReferenceDraft;
+				GVL_POINT.Points[ePointEditorName] := stMagazineReferenceDraft;
+				GVL_HMI.stPointEditorResultPoint := stMagazineReferenceDraft;
 				GVL_HMI.uiPointEditorResult := UINT#1;
 			ELSE
 				Persistent_Value.astRetainPoints[uiPointStorageIndex].Name := '';

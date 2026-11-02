@@ -1,5 +1,7 @@
 {attribute 'qualified_only'}
 VAR_GLOBAL
+    {attribute 'symbol' := 'read'}
+    stHmiDataRevision : ST_HMI_DATA_REVISION; // Готовность и версии больших таблиц для gateway
     stControllerWebRequest : ST_CONTROLLER_WEB_REQUEST;
     {attribute 'symbol' := 'read'}
     stControllerWebStatus : ST_CONTROLLER_WEB_STATUS;
@@ -293,7 +295,9 @@ VAR_GLOBAL
 	{attribute 'symbol' := 'readwrite'}
 	lrPointEditorDraftMagazineChangeZ : LREAL; // Смещение Change Z базовой точки магазина
 	{attribute 'symbol' := 'readwrite'}
-	uiPointEditorCommand : UINT; // 1 CAPTURE, 2 SAVE, 3 CHECK сохранённой точки
+	uiPointEditorCommand : UINT; // 1 CAPTURE, 2 SAVE, 3 CHECK, 4 INVALIDATE всех опор магазина
+	{attribute 'symbol' := 'readwrite'}
+	uiPointEditorCalibrationMethod : UINT; // Ожидаемый метод магазина; защищает очередь импорта от смены настройки
 	{attribute 'symbol' := 'readwrite'}
 	udiPointEditorCommandSeq : UDINT;
 	{attribute 'symbol' := 'readwrite'}
@@ -461,16 +465,17 @@ VAR_GLOBAL
 	lrActualX       : LREAL; // Текущая координата X
 	lrActualY       : LREAL; // Текущая координата Y
 	lrActualZ       : LREAL; // Текущая координата Z
-	astPointEditorPoints : ARRAY [1..14] OF ST_POINT; // Прежние 12 точек и базы ГК 1/2
-	auiPointEditorPointId : ARRAY [1..14] OF UINT; // Фактические числовые E_POINT_NAME
+	astPointEditorPoints : ARRAY [1..18] OF ST_POINT; // Прежние 14 точек и B/C двух магазинов
+	auiPointEditorPointId : ARRAY [1..18] OF UINT; // Фактические числовые E_POINT_NAME
+	astMagazineCalibrationStatus : ARRAY [1..2] OF ST_MAGAZINE_CALIBRATION_STATUS;
 	stPointEditorResultPoint : ST_POINT; // Результат Capture либо подтверждённого Save
 	udiPointEditorAckSeq : UDINT; // Последняя обработанная транзакция
 	uiPointEditorResult : UINT; // 0 ожидание, 1 выполнено, 2 отклонено
 	uiPointEditorRejectReason : UINT; // Подробная причина отклонения для HMI
 	xPointEditorCaptureAllowed : BOOL; // Авторитетное разрешение PLC на Capture
 	xPointEditorSaveAllowed : BOOL; // Авторитетное разрешение PLC на Save
-	axPointCheckAllowed : ARRAY [1..14] OF BOOL;
-	auiPointCheckRejectReason : ARRAY [1..14] OF UINT;
+	axPointCheckAllowed : ARRAY [1..18] OF BOOL;
+	auiPointCheckRejectReason : ARRAY [1..18] OF UINT;
 	xPointCheckActive : BOOL;
 	uiPointCheckIndex : UINT;
 	uiPointCheckState : UINT; // 0 idle, 1 running, 2 completed, 3 stopped, 4 failed

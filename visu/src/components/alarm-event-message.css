@@ -1,0 +1,65 @@
+.alarm-event-trigger {
+  width: 100%;
+  min-height: 48px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.alarm-event-trigger:hover,
+.alarm-event-trigger[data-state="open"] { background: #f5f8fa; }
+.alarm-event-trigger:focus-visible { outline: 2px solid #1769d2; outline-offset: -2px; }
+
+.alarm-message-card {
+  --alarm-message-enter-y: -8px;
+  z-index: 120;
+  width: min(640px, calc(100vw - 24px));
+  max-width: var(--radix-popover-content-available-width);
+  max-height: min(480px, calc(100dvh - 24px), var(--radix-popover-content-available-height));
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: #c9d4db transparent;
+  border: 1px solid #d8e3ea;
+  border-radius: 6px;
+  background: #fff;
+  color: #40515d;
+  box-shadow: 0 8px 22px rgba(31, 45, 56, .14);
+  font-size: 14px;
+  transform-origin: var(--radix-popover-content-transform-origin);
+}
+.alarm-message-card[data-side="top"] { --alarm-message-enter-y: 8px; }
+.alarm-message-card[data-state="open"] { animation: alarm-message-in 380ms cubic-bezier(.16, 1, .3, 1) both; }
+.alarm-message-card[data-state="closed"] { animation: alarm-message-out 240ms cubic-bezier(.32, 0, .67, 0) both; pointer-events: none; }
+.alarm-message-heading {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 8px 6px 16px;
+  border-bottom: 1px solid #e6edf1;
+  background: #fff;
+}
+.alarm-message-heading strong { color: #344651; font-weight: 600; }
+.alarm-message-close { flex-shrink: 0; border-radius: 4px; }
+.alarm-message-body { margin: 0; padding: 14px 16px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; }
+.alarm-message-meta { display: grid; gap: 4px; padding: 10px 16px 12px; border-top: 1px solid #e6edf1; color: #788793; font-size: 12px; overflow-wrap: anywhere; }
+
+@keyframes alarm-message-in {
+  from { opacity: 0; transform: translateY(var(--alarm-message-enter-y)) scale(.99); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes alarm-message-out {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to { opacity: 0; transform: translateY(var(--alarm-message-enter-y)) scale(.99); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .alarm-message-card[data-state] { animation: none; }
+}
